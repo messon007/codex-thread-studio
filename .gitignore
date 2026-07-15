@@ -1,0 +1,15 @@
+# Rust and Tauri build output
+/target/
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# JavaScript tooling (runtime assets are vendored; dependency installs stay local)
+/node_modules/
+/dist/
+
+# Local runtime and editor state
+/.codex-thread-studio/
+*.log
+.DS_Store
+.idea/
+.vscode/

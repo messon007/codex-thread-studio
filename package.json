@@ -1,0 +1,14 @@
+{
+  "name": "codex-thread-studio-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "vendor:markdown": "node scripts/vendor-markdown.mjs",
+    "test": "node --test ui/*.test.mjs"
+  },
+  "dependencies": {
+    "dompurify": "3.4.12",
+    "github-markdown-css": "5.8.1",
+    "marked": "17.0.2"
+  }
+}

@@ -50,6 +50,11 @@ export function applyCodexNotification(model, message) {
     item.text = `${item.text || ''}${params.delta || ''}`
     return true
   }
+  if (method === 'item/plan/delta') {
+    const item = ensureItem(model, params.turnId, params.itemId, 'plan')
+    item.text = `${item.text || ''}${params.delta || ''}`
+    return true
+  }
   if (method === 'item/reasoning/summaryTextDelta') {
     const item = ensureItem(model, params.turnId, params.itemId, 'reasoning')
     if (!Array.isArray(item.summary)) item.summary = []

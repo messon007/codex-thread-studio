@@ -72,7 +72,16 @@
           <button id="selection-popover" class="selection-popover hidden" type="button">＋ 添加批注</button>
 
           <form id="composer-form" class="composer">
-            <textarea id="composer-input" rows="3" placeholder="向 Codex 发送消息…  Enter 发送，Shift+Enter 换行"></textarea>
+            <div id="composer-menu" class="composer-menu hidden" role="listbox" aria-label="Codex 输入建议"></div>
+            <textarea
+              id="composer-input"
+              rows="3"
+              autocomplete="off"
+              spellcheck="false"
+              aria-controls="composer-menu"
+              aria-autocomplete="list"
+              placeholder="向 Codex 发送消息… 输入 @ 引用文件，输入 / 查看命令"
+            ></textarea>
             <div class="composer-footer">
               <span id="composer-hint">将开始一个新的 Turn</span>
               <div>
@@ -147,6 +156,7 @@
     </dialog>
 
     <dialog id="backend-dialog" class="dialog small-dialog"><header class="dialog-header"><div><span class="eyebrow">CODEX BACKEND</span><h2>App Server</h2></div><button id="close-backend" class="icon-button">×</button></header><div id="backend-dialog-content" class="backend-dialog-content"></div></dialog>
+    <dialog id="command-dialog" class="dialog command-dialog"><header class="dialog-header"><div><span class="eyebrow">CODEX COMMAND</span><h2 id="command-title">命令</h2></div><button id="close-command" class="icon-button" type="button">×</button></header><div id="command-content" class="command-content"></div></dialog>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
   </body>
 </html>

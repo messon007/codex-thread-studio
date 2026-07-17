@@ -5,6 +5,14 @@ import {
   resolveCodexApproval,
   textFromUserContent,
 } from './codex-native.mjs'
+import {
+  composerTrigger,
+  fuzzyFileLabel,
+  matchingSlashCommands,
+  replaceComposerTrigger,
+  selectedFileReference,
+  transcriptUpdateKind,
+} from './composer-tools.mjs'
 import { marked } from './vendor/marked.esm.js'
 import DOMPurify from './vendor/purify.es.mjs'
 
@@ -51,11 +59,17 @@ const state = {
   annotationAdditional: {},
   annotationPromptTemplate: annotationPromptDefault,
   pendingSelection: null,
+  composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
+  turnOptions: {},
+  pendingSkills: {},
 }
 
 let preferencesReady = false
 let preferencesWriteChain = Promise.resolve()
 let annotationPersistTimer = null
+let transcriptFrame = null
+const dirtyStreamItems = new Map()
+let composerSearchTimer = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 
@@ -88,12 +102,10 @@ function bindUI() {
   $('#delete-thread').addEventListener('click', deleteSelectedThread)
   $('#retry-native').addEventListener('click', connectAppServer)
   $('#composer-form').addEventListener('submit', sendComposer)
-  $('#composer-input').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault()
-      $('#composer-form').requestSubmit()
-    }
-  })
+  $('#composer-input').addEventListener('input', handleComposerInput)
+  $('#composer-input').addEventListener('keydown', handleComposerKeydown)
+  $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
+  $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#transcript').addEventListener('click', handleTranscriptClick)
@@ -115,6 +127,7 @@ function bindUI() {
   $('#reset-settings').addEventListener('click', resetSettings)
   $('#backend-details').addEventListener('click', openBackendDialog)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
+  $('#close-command').addEventListener('click', () => $('#command-dialog').close())
 
   document.addEventListener('mousedown', (event) => {
     if (!event.target.closest('#selection-popover, #comment-selection')) hideSelectionPopover()
@@ -204,6 +217,20 @@ function handleAppServerMessage(message) {
     console.debug('codex app-server', message.params?.line)
     return
   }
+  if (message.method === 'studio/appServer/lagged') {
+    const skipped = Number(message.params?.skipped || 0)
+    if (!state.selectedId) {
+      toast(`界面错过了 ${skipped} 条 App Server 事件`, 'error')
+      return
+    }
+    setNativeError(`界面错过了 ${skipped} 条 App Server 事件，正在从 Codex 重新同步当前会话…`)
+    refreshSelectedThread({ quiet: true }).then((refreshed) => {
+      if (!refreshed) return
+      setNativeError(null)
+      toast('已从 Codex 重新同步会话')
+    })
+    return
+  }
   if (message.method?.startsWith('studio/appServer/')) {
     const error = message.params?.message || message.method
     setNativeError(error)
@@ -260,7 +287,11 @@ function handleAppServerMessage(message) {
   }
 
   if (applyCodexNotification(state.model, message)) {
-    renderTranscript(message.method?.includes('/delta') || message.method === 'item/started')
+    const updateKind = transcriptUpdateKind(message.method)
+    if (updateKind === 'stream') queueStreamingItemPatch(message.params)
+    else if (updateKind === 'item') replaceCompletedItem(message.params)
+    else if (updateKind === 'full') renderTranscript(message.method === 'item/started')
+    if (updateKind === 'metadata') renderUsage()
     renderComposerState()
     updateSelectedThreadStatus(message)
   }
@@ -346,12 +377,23 @@ function projectGroups(threads) {
 
 async function selectThread(id, { force = false } = {}) {
   if (!force && state.selectedId === id) return
+  const previousId = state.selectedId
+  if (previousId && previousId !== id && state.ready) {
+    try {
+      await rpc('thread/unsubscribe', { threadId: previousId })
+    } catch (error) {
+      console.warn(`Could not unsubscribe from ${previousId}`, error)
+    }
+  }
+  hideComposerMenu()
+  resetStreamingPatches()
   state.selectedId = id
   state.model = createCodexViewModel()
   state.model.threadId = id
   persistPreferences()
   renderThreadList()
   renderWorkspace()
+  renderTranscript(false)
   await resumeThread(id)
 }
 
@@ -375,16 +417,23 @@ async function resumeThread(id) {
   }
 }
 
-async function refreshSelectedThread() {
-  if (!state.selectedId) return
+async function refreshSelectedThread({ quiet = false } = {}) {
+  if (!state.selectedId) return false
+  const threadId = state.selectedId
   try {
-    const result = await rpc('thread/read', { threadId: state.selectedId, includeTurns: true })
+    const result = await rpc('thread/read', { threadId, includeTurns: true })
+    if (state.selectedId !== threadId) return false
     hydrateCodexThread(state.model, result.thread)
     mergeThreadMetadata(result.thread)
     renderWorkspace()
     renderTranscript(false)
-    toast('会话已刷新')
-  } catch (error) { showError(error) }
+    if (!quiet) toast('会话已刷新')
+    return true
+  } catch (error) {
+    if (quiet) setNativeError(`无法重新同步当前 Codex 会话：${error.message}`)
+    else showError(error)
+    return false
+  }
 }
 
 function mergeThreadMetadata(incoming) {
@@ -425,8 +474,15 @@ function renderWorkspace() {
   renderAnnotationRail()
 }
 
+function resetStreamingPatches() {
+  if (transcriptFrame != null) cancelAnimationFrame(transcriptFrame)
+  transcriptFrame = null
+  dirtyStreamItems.clear()
+}
+
 function renderTranscript(followOutput) {
   if (!state.selectedId) return
+  resetStreamingPatches()
   const container = $('#transcript')
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
   const turns = state.model.turns || []
@@ -434,6 +490,80 @@ function renderTranscript(followOutput) {
   bindApprovalButtons()
   if (followOutput && nearBottom) requestAnimationFrame(() => { container.scrollTop = container.scrollHeight })
   renderUsage()
+}
+
+function queueStreamingItemPatch(params = {}) {
+  const key = `${params.turnId || ''}:${params.itemId || ''}`
+  dirtyStreamItems.set(key, { turnId: params.turnId, itemId: params.itemId })
+  if (transcriptFrame != null) return
+  transcriptFrame = requestAnimationFrame(flushStreamingItemPatches)
+}
+
+function flushStreamingItemPatches() {
+  transcriptFrame = null
+  const container = $('#transcript')
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
+  let needsFullRender = false
+  for (const identity of dirtyStreamItems.values()) {
+    if (!patchStreamingItem(identity.turnId, identity.itemId)) needsFullRender = true
+  }
+  dirtyStreamItems.clear()
+  if (needsFullRender) renderTranscript(nearBottom)
+  else if (nearBottom) container.scrollTop = container.scrollHeight
+}
+
+function modelItem(turnId, itemId) {
+  const turn = state.model.turns.find((candidate) => candidate.id === turnId)
+  return turn?.items?.find((candidate) => candidate.id === itemId) || null
+}
+
+function renderedItem(turnId, itemId) {
+  return [...$('#transcript').querySelectorAll('[data-item-id]')]
+    .find((element) => element.dataset.turnId === String(turnId || '') && element.dataset.itemId === String(itemId || '')) || null
+}
+
+function patchStreamingItem(turnId, itemId) {
+  const item = modelItem(turnId, itemId)
+  const element = renderedItem(turnId, itemId)
+  if (!item || !element) return false
+  if (item.type === 'agentMessage' || item.type === 'plan') {
+    const body = element.querySelector('.markdown-body')
+    if (!body) return false
+    body.classList.add('streaming-markdown')
+    body.textContent = item.text || ''
+    return true
+  }
+  if (item.type === 'reasoning') {
+    const body = element.querySelector('.markdown-body')
+    if (!body) return false
+    body.classList.add('streaming-markdown')
+    body.textContent = arrayText(item.summary) || arrayText(item.content) || ''
+    return true
+  }
+  if (item.type === 'commandExecution') {
+    let output = element.querySelector('pre')
+    if (!output) {
+      output = document.createElement('pre')
+      element.append(output)
+    }
+    output.textContent = item.aggregatedOutput || ''
+    return true
+  }
+  return false
+}
+
+function replaceCompletedItem(params = {}) {
+  const itemId = params.item?.id || params.itemId
+  dirtyStreamItems.delete(`${params.turnId || ''}:${itemId || ''}`)
+  const item = modelItem(params.turnId, itemId)
+  const element = renderedItem(params.turnId, itemId)
+  if (!item || !element) {
+    renderTranscript(false)
+    return
+  }
+  const template = document.createElement('template')
+  template.innerHTML = renderItem(item, params.turnId)
+  element.replaceWith(template.content)
 }
 
 function renderTurn(turn, index) {
@@ -585,14 +715,319 @@ function answerApproval(id, decision) {
   renderTranscript(false)
 }
 
+function handleComposerInput() {
+  const input = $('#composer-input')
+  const trigger = composerTrigger(input.value, input.selectionStart)
+  if (!trigger) {
+    hideComposerMenu()
+    return
+  }
+  if (trigger.type === 'slash') {
+    clearTimeout(composerSearchTimer)
+    state.composerMenu = {
+      type: 'slash',
+      trigger,
+      options: matchingSlashCommands(trigger.query),
+      selected: 0,
+      generation: state.composerMenu.generation + 1,
+    }
+    renderComposerMenu()
+    return
+  }
+  searchComposerFiles(trigger)
+}
+
+function handleComposerKeydown(event) {
+  if (event.isComposing) return
+  const menuOpen = !$('#composer-menu').classList.contains('hidden')
+  if (menuOpen && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+    event.preventDefault()
+    const direction = event.key === 'ArrowDown' ? 1 : -1
+    const count = state.composerMenu.options.length
+    if (count) state.composerMenu.selected = (state.composerMenu.selected + direction + count) % count
+    renderComposerMenu()
+    return
+  }
+  if (menuOpen && (event.key === 'Enter' || event.key === 'Tab') && state.composerMenu.options.length) {
+    event.preventDefault()
+    selectComposerOption(state.composerMenu.selected)
+    return
+  }
+  if (menuOpen && event.key === 'Escape') {
+    event.preventDefault()
+    hideComposerMenu()
+    return
+  }
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    $('#composer-form').requestSubmit()
+  }
+}
+
+function handleComposerMenuClick(event) {
+  const option = event.target.closest('[data-composer-index]')
+  if (option) selectComposerOption(Number(option.dataset.composerIndex))
+}
+
+function hideComposerMenu() {
+  clearTimeout(composerSearchTimer)
+  state.composerMenu.type = null
+  state.composerMenu.options = []
+  state.composerMenu.trigger = null
+  $('#composer-menu').classList.add('hidden')
+  $('#composer-input').removeAttribute('aria-activedescendant')
+}
+
+function renderComposerMenu(message = '') {
+  const menu = $('#composer-menu')
+  const options = state.composerMenu.options
+  menu.classList.remove('hidden')
+  if (!options.length) {
+    menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(message || (state.composerMenu.type === 'file' ? '没有匹配文件' : '没有匹配命令'))}</div>`
+    return
+  }
+  menu.innerHTML = options.map((option, index) => {
+    const selected = index === state.composerMenu.selected
+    const command = state.composerMenu.type === 'slash'
+    const title = command ? `/${option.name}` : fuzzyFileLabel(option)
+    const detail = command ? option.description : option.root
+    return `<button id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" type="button" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small></button>`
+  }).join('')
+  $('#composer-input').setAttribute('aria-activedescendant', `composer-option-${state.composerMenu.selected}`)
+  menu.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
+}
+
+function searchComposerFiles(trigger) {
+  const thread = selectedThread()
+  if (!thread?.cwd) {
+    hideComposerMenu()
+    return
+  }
+  const generation = state.composerMenu.generation + 1
+  state.composerMenu = { type: 'file', trigger, options: [], selected: 0, generation }
+  renderComposerMenu('正在由 Codex App Server 搜索文件…')
+  clearTimeout(composerSearchTimer)
+  composerSearchTimer = setTimeout(() => performComposerFileSearch(trigger, generation, thread.cwd), 120)
+}
+
+async function performComposerFileSearch(trigger, generation, cwd) {
+  try {
+    const result = await rpc('fuzzyFileSearch', {
+      query: trigger.query,
+      roots: [cwd],
+      cancellationToken: randomId(),
+    }, 15_000)
+    if (generation !== state.composerMenu.generation || state.composerMenu.type !== 'file') return
+    state.composerMenu.options = Array.isArray(result?.files) ? result.files.slice(0, 30) : []
+    state.composerMenu.selected = 0
+    renderComposerMenu()
+  } catch (error) {
+    if (generation !== state.composerMenu.generation) return
+    renderComposerMenu(`文件搜索失败：${error.message}`)
+  }
+}
+
+function selectComposerOption(index) {
+  const option = state.composerMenu.options[index]
+  const trigger = state.composerMenu.trigger
+  if (!option || !trigger) return
+  const input = $('#composer-input')
+  if (state.composerMenu.type === 'file') {
+    const replacement = replaceComposerTrigger(input.value, trigger, selectedFileReference(option))
+    input.value = replacement.value
+    input.setSelectionRange(replacement.cursor, replacement.cursor)
+    hideComposerMenu()
+    input.focus()
+    return
+  }
+  const replacement = replaceComposerTrigger(input.value, trigger, '')
+  input.value = replacement.value
+  hideComposerMenu()
+  executeSlashCommand(option.action).catch(showError)
+}
+
+function showCommandDialog(title, content) {
+  $('#command-title').textContent = title
+  const commandContent = $('#command-content')
+  commandContent.onclick = null
+  commandContent.innerHTML = content
+  const dialog = $('#command-dialog')
+  if (dialog.open) dialog.close()
+  dialog.showModal()
+}
+
+function currentTurnOptions() {
+  if (!state.selectedId) return {}
+  state.turnOptions[state.selectedId] ||= {}
+  return state.turnOptions[state.selectedId]
+}
+
+async function openModelCommand() {
+  showCommandDialog('模型', '<div class="command-empty">正在从 App Server 读取模型…</div>')
+  const result = await rpc('model/list', { limit: 100, includeHidden: false })
+  const models = Array.isArray(result?.data) ? result.data : []
+  if (!models.length) {
+    $('#command-content').innerHTML = '<div class="command-empty">没有可用模型。</div>'
+    return
+  }
+  $('#command-content').innerHTML = `<div class="command-list">${models.map((model) => {
+    const efforts = model.supportedReasoningEfforts || []
+    const effortOptions = efforts.map((entry) => `<option value="${escapeHtml(entry.reasoningEffort)}"${entry.reasoningEffort === model.defaultReasoningEffort ? ' selected' : ''}>${escapeHtml(entry.reasoningEffort)}</option>`).join('')
+    return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? ' · 默认' : ''}</small>${effortOptions ? `<select aria-label="推理强度">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">使用</button></div>`
+  }).join('')}</div>`
+  $('#command-content').onclick = (event) => {
+    const button = event.target.closest('[data-model]')
+    if (!button) return
+    const options = currentTurnOptions()
+    options.model = button.dataset.model
+    const effort = button.closest('.command-card')?.querySelector('select')?.value
+    if (effort) options.effort = effort
+    else delete options.effort
+    $('#command-dialog').close()
+    renderComposerState()
+    toast(`已选择模型 ${options.model}${effort ? ` · ${effort}` : ''}`)
+  }
+}
+
+function openPermissionsCommand() {
+  const choices = [
+    ['readOnly', '只读', '文件只读；需要操作时由 Codex 请求批准'],
+    ['workspaceWrite', '项目可写', '允许修改当前项目，网络默认关闭'],
+    ['dangerFullAccess', '完全访问', '关闭沙箱限制；仅用于可信项目'],
+  ]
+  showCommandDialog('权限', `<div class="command-list">${choices.map(([id, title, detail]) => `<button class="command-card" type="button" data-permission="${id}"><strong>${title}</strong><small>${detail}</small><span>选择</span></button>`).join('')}</div>`)
+  $('#command-content').onclick = (event) => {
+    const button = event.target.closest('[data-permission]')
+    if (!button) return
+    const type = button.dataset.permission
+    if (type === 'dangerFullAccess' && !confirm('确认对后续 Turn 使用完全访问权限？')) return
+    const options = currentTurnOptions()
+    options.approvalPolicy = type === 'dangerFullAccess' ? 'never' : 'on-request'
+    options.sandboxPolicy = type === 'workspaceWrite'
+      ? { type, writableRoots: [selectedThread()?.cwd].filter(Boolean), networkAccess: false }
+      : { type }
+    $('#command-dialog').close()
+    renderComposerState()
+    toast('后续 Turn 权限已更新')
+  }
+}
+
+function openStatusCommand() {
+  const thread = selectedThread()
+  const options = currentTurnOptions()
+  const rows = [
+    ['Thread', thread?.name || thread?.id || '—'],
+    ['状态', statusLabel(state.model.status)],
+    ['目录', thread?.cwd || '—'],
+    ['模型', options.model || thread?.model || 'Codex 默认'],
+    ['推理强度', options.effort || 'Codex 默认'],
+    ['审批策略', options.approvalPolicy || '继承会话'],
+    ['沙箱', options.sandboxPolicy?.type || '继承会话'],
+    ['Token', state.model.usage ? valueText(state.model.usage) : '暂无数据'],
+  ]
+  showCommandDialog('会话状态', `<div class="command-summary">${rows.map(([label, value]) => `<div class="detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`)
+}
+
+async function compactCurrentThread() {
+  if (state.model.activeTurnId) throw new Error('当前 Turn 仍在运行，完成或停止后才能压缩。')
+  await rpc('thread/compact/start', { threadId: state.selectedId })
+  toast('Codex 已开始压缩会话上下文')
+}
+
+async function reviewCurrentChanges() {
+  if (state.model.activeTurnId) throw new Error('当前 Turn 仍在运行，完成或停止后才能开始 Review。')
+  const result = await rpc('review/start', { threadId: state.selectedId, target: { type: 'uncommittedChanges' }, delivery: 'inline' })
+  if (result?.turn) {
+    applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
+    renderTranscript(true)
+    renderComposerState()
+  }
+}
+
+function openDiffCommand() {
+  showCommandDialog('当前修改', state.model.diff
+    ? `<pre class="command-pre">${escapeHtml(state.model.diff)}</pre>`
+    : '<div class="command-empty">当前 Turn 还没有可显示的 Diff。</div>')
+}
+
+async function openMcpCommand() {
+  showCommandDialog('MCP Server', '<div class="command-empty">正在从 App Server 读取 MCP 状态…</div>')
+  const result = await rpc('mcpServerStatus/list', { limit: 100 })
+  const servers = Array.isArray(result?.data) ? result.data : []
+  $('#command-content').innerHTML = servers.length
+    ? `<div class="command-list">${servers.map((server) => `<div class="command-card"><strong>${escapeHtml(server.name)}</strong><small>${Object.keys(server.tools || {}).length} 个工具 · ${server.resources?.length || 0} 个资源</small><span>${escapeHtml(valueText(server.authStatus || 'unknown'))}</span></div>`).join('')}</div>`
+    : '<div class="command-empty">没有配置 MCP Server。</div>'
+}
+
+async function openSkillsCommand() {
+  const cwd = selectedThread()?.cwd
+  showCommandDialog('技能', '<div class="command-empty">正在由 App Server 发现技能…</div>')
+  const result = await rpc('skills/list', { cwds: cwd ? [cwd] : [], forceReload: false })
+  const skills = (result?.data || []).flatMap((entry) => entry.skills || []).filter((skill) => skill.enabled)
+  $('#command-content').innerHTML = skills.length
+    ? `<div class="command-list">${skills.map((skill) => `<button class="command-card" type="button" data-skill-name="${escapeHtml(skill.name)}" data-skill-path="${escapeHtml(skill.path)}"><strong>$${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description || skill.shortDescription || '')}</small><span>引用</span></button>`).join('')}</div>`
+    : '<div class="command-empty">当前目录没有已启用的技能。</div>'
+  $('#command-content').onclick = (event) => {
+    const button = event.target.closest('[data-skill-name]')
+    if (!button || !state.selectedId) return
+    const skillsForThread = state.pendingSkills[state.selectedId] ||= []
+    if (!skillsForThread.some((skill) => skill.path === button.dataset.skillPath)) {
+      skillsForThread.push({ type: 'skill', name: button.dataset.skillName, path: button.dataset.skillPath })
+    }
+    const input = $('#composer-input')
+    input.value = `${input.value}${input.value && !input.value.endsWith(' ') ? ' ' : ''}$${button.dataset.skillName} `
+    $('#command-dialog').close()
+    renderComposerState()
+    input.focus()
+  }
+}
+
+async function copyLatestAgentResponse() {
+  const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
+  const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
+  if (!message) throw new Error('当前会话还没有可复制的 Codex 回复。')
+  await navigator.clipboard.writeText(message.text)
+  toast('已复制最近一条 Codex 回复')
+}
+
+async function executeSlashCommand(action) {
+  if (!state.selectedId && !['new'].includes(action)) throw new Error('请先选择一个 Codex 会话。')
+  const actions = {
+    model: openModelCommand,
+    permissions: openPermissionsCommand,
+    status: openStatusCommand,
+    compact: compactCurrentThread,
+    review: reviewCurrentChanges,
+    diff: openDiffCommand,
+    skills: openSkillsCommand,
+    mcp: openMcpCommand,
+    rename: openRenameThreadDialog,
+    fork: forkSelectedThread,
+    new: openNewThreadDialog,
+    copy: copyLatestAgentResponse,
+    archive: archiveSelectedThread,
+    delete: deleteSelectedThread,
+  }
+  const handler = actions[action]
+  if (!handler) throw new Error(`尚未支持命令：/${action}`)
+  await handler()
+}
+
 function renderComposerState() {
   const active = Boolean(state.model.activeTurnId)
+  const options = currentTurnOptions()
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#stop-thread').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active
   $('#delete-thread').disabled = active
   $('#send-message').textContent = active ? '追加意见' : '发送'
-  $('#composer-hint').textContent = active ? '将通过 turn/steer 加入当前 Turn' : '将通过 turn/start 开始新 Turn'
+  const details = [
+    options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
+    options.sandboxPolicy?.type,
+    state.pendingSkills[state.selectedId]?.length && `${state.pendingSkills[state.selectedId].length} 个技能`,
+  ].filter(Boolean)
+  const baseHint = active ? '将通过 turn/steer 加入当前 Turn' : '将通过 turn/start 开始新 Turn'
+  $('#composer-hint').textContent = `${baseHint}${details.length ? ` · ${details.join(' · ')}` : ''}`
   $('#send-message').disabled = !state.ready || !state.selectedId
   $('#thread-status').textContent = statusLabel(state.model.status)
   $('#thread-status').className = `status-badge ${state.model.status}`
@@ -602,7 +1037,21 @@ async function sendComposer(event) {
   event.preventDefault()
   const input = $('#composer-input')
   const text = input.value.trim()
+  const slashName = text.match(/^\/([\w-]+)$/)?.[1]
+  const slash = slashName && matchingSlashCommands(slashName).find((command) => command.name === slashName)
+  if (slash) {
+    input.value = ''
+    hideComposerMenu()
+    try {
+      await executeSlashCommand(slash.action)
+    } catch (error) {
+      showError(error)
+    }
+    return
+  }
   if (!text || !state.selectedId) return
+  const skillInputs = state.pendingSkills[state.selectedId] || []
+  const turnInput = [{ type: 'text', text }, ...skillInputs]
   const button = $('#send-message')
   button.disabled = true
   try {
@@ -611,14 +1060,15 @@ async function sendComposer(event) {
         threadId: state.selectedId,
         expectedTurnId: state.model.activeTurnId,
         clientUserMessageId: randomId(),
-        input: [{ type: 'text', text }],
+        input: turnInput,
       })
       toast('意见已加入当前 Turn')
     } else {
       const result = await rpc('turn/start', {
         threadId: state.selectedId,
         clientUserMessageId: randomId(),
-        input: [{ type: 'text', text }],
+        input: turnInput,
+        ...currentTurnOptions(),
       })
       if (result?.turn) {
         applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
@@ -626,6 +1076,8 @@ async function sendComposer(event) {
       }
     }
     input.value = ''
+    state.pendingSkills[state.selectedId] = []
+    hideComposerMenu()
     renderComposerState()
   } catch (error) { showError(error) }
   finally { button.disabled = false }

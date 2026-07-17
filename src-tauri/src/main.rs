@@ -134,6 +134,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/codex-native.mjs", get(codex_native_js))
+        .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
@@ -160,6 +161,10 @@ async fn app_js() -> impl IntoResponse {
 
 async fn codex_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/codex-native.mjs"))
+}
+
+async fn composer_tools_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/composer-tools.mjs"))
 }
 
 async fn marked_js() -> impl IntoResponse {

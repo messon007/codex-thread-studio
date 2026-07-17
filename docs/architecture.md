@@ -51,6 +51,24 @@ The browser keeps only a render model reconstructed from `thread/resume` plus li
 
 Agent prose and reasoning summaries pass through locally vendored Marked (GFM parsing), then DOMPurify (HTML sanitization), then GitHub Markdown CSS plus Studio theme overrides. Code-copy and table wrappers are added only after sanitization. The outer structured Item element remains the selection/comment anchor.
 
+## Streaming render path
+
+App Server delta notifications update only the affected Item in the browser model. Studio batches high-frequency updates with `requestAnimationFrame` and patches the active message, plan, reasoning, or command-output node directly. Markdown parsing and sanitization run after Item completion, not once for every token delta. Structural notifications still trigger a full transcript render.
+
+When the selected Thread changes, Studio first calls `thread/unsubscribe` for the previous Thread and then resumes the new one. This keeps background activity out of the visible render model while Codex continues to own all durable history.
+
+## Composer orchestration
+
+The composer is a structured App Server client rather than a terminal command parser:
+
+- `@query` invokes `fuzzyFileSearch` with the active Thread working directory and inserts the chosen relative path.
+- `/model`, `/skills`, and `/mcp` populate controls through `model/list`, `skills/list`, and `mcpServerStatus/list`.
+- `/compact` and `/review` invoke `thread/compact/start` and `review/start`.
+- `/permissions` stores a valid approval/sandbox override for the next `turn/start`.
+- Local Thread operations such as rename, fork, archive, and delete reuse the same structured RPCs as their toolbar actions.
+
+Slash commands are client-side affordances over App Server capabilities; they are never forwarded as ordinary model text. Selected skills are sent as structured `skill` input Items in addition to the visible `$skill-name` reference.
+
 ## Comment model
 
 A comment draft is stored as:

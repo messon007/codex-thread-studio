@@ -230,3 +230,28 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 
 @media (max-width: 1000px) { :root { --sidebar-width: 250px; --rail-width: 340px; --workspace-gutter: 20px; }.thread-actions .toolbar-button { padding: 0 7px; } }
 @media (max-width: 790px) { :root { --sidebar-width: 220px; }.brand-copy span, .new-thread-button kbd, .search-box kbd, .thread-copy small { display: none; }.annotation-rail { position: absolute; top: 0; right: 0; }.title-line h1 { max-width: 260px; } }
+.composer { position: relative; }
+.composer-menu { position: absolute; z-index: 30; right: 8px; bottom: calc(100% + 8px); left: 8px; max-height: min(360px, 48vh); overflow: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 11px; background: var(--panel); box-shadow: var(--shadow-md); }
+.composer-option { width: 100%; padding: 9px 10px; display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 12px; align-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; }
+.composer-option:hover, .composer-option.selected { background: var(--brand-soft); }
+.composer-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 650 11px/1.3 var(--ui-font-family); }
+.composer-option small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.composer-menu-empty { padding: 14px; color: var(--muted); font-size: 10px; text-align: center; }
+.streaming-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
+.command-dialog { width: min(720px, calc(100vw - 48px)); }
+.command-content { max-height: min(620px, 72vh); padding: 16px 20px 22px; overflow: auto; }
+.command-list { display: grid; gap: 8px; }
+.command-card { width: 100%; padding: 11px 12px; display: grid; grid-template-columns: minmax(150px, 0.5fr) 1fr auto auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-soft); color: var(--text); text-align: left; }
+.command-card:hover { border-color: var(--brand); background: var(--brand-soft); }
+.command-card strong { font-size: 11px; }
+.command-card small { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.command-card select { min-width: 110px; height: 30px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); color: var(--text); }
+.command-summary { display: grid; gap: 1px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.command-summary .detail-row { padding: 10px 12px; background: var(--panel-soft); }
+.command-empty { padding: 24px; color: var(--muted); text-align: center; }
+.command-pre { max-height: 50vh; margin: 0; padding: 13px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; background: var(--code-bg); color: var(--text); white-space: pre-wrap; }
+
+@media (max-width: 720px) {
+  .composer-option, .command-card { grid-template-columns: 1fr; gap: 4px; }
+  .composer-option small { white-space: normal; }
+}

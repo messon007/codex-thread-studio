@@ -10,7 +10,9 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 
 - Groups Threads by project directory; lists, starts, automatically resumes, reloads, renames, forks, archives, and deletes persisted Codex Threads; and shows native session-tree/fork/parent metadata.
 - Renders user and agent messages, reasoning summaries, plans, commands, command output, file changes, tool calls, turn status, errors, and usage. Agent prose uses locally vendored, sanitized GitHub-flavored Markdown with readable code blocks and tables.
+- Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals.
+- Provides `@` project-file search and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
 - Provides persistent light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and a configurable annotation prompt template.
 - Uses the installed Codex CLI and existing Codex authentication; Studio stores no model credential.
@@ -61,12 +63,12 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace --locked
-node --test ui/codex-native.test.mjs
+npm test
 ```
 
 The desktop runtime has no Node.js or network dependency. Markdown browser assets and their license texts are committed under `ui/vendor`; maintainers can refresh the lockfile-pinned copies with `npm ci && npm run vendor:markdown`.
 
-See [Architecture](docs/architecture.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
+See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
 
 ## Current lifecycle boundary
 

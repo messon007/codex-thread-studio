@@ -47,8 +47,9 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 20. Streaming `agentMessage`, `plan`, reasoning, and command output does not replace the transcript container or rerun Markdown parsing until Item completion.
 21. Typing `$query` filters enabled skills returned by `skills/list`; choosing a skill inserts `$skill-name`, supplies its `name` and `path` as a structured `skill` UserInput, and never relies only on visible text.
 22. Submitting `!command` while the Thread is idle calls `thread/shellCommand` with the exact selected Thread ID, visibly distinguishes local shell mode, and explains that this user-invoked command does not inherit the model Turn sandbox. Empty commands and commands submitted during an active Turn are not run.
-21. Switching Threads calls `thread/unsubscribe` for the previous Thread before resuming the next one.
-22. With two or more Turns, the navigator creates one marker per Turn, highlights the Turn at the reading position, exposes a normalized user-prompt preview on hover/focus, and scrolls to the selected Turn. It stays hidden for a single Turn and narrow windows.
+23. When the transcript is following live output, streaming deltas, Item completion, Markdown reflow, and structural rerenders keep it pinned to the latest content. A deliberate upward scroll pauses following, and returning to the bottom or sending a new interaction resumes it.
+24. Switching Threads calls `thread/unsubscribe` for the previous Thread before resuming the next one.
+25. With two or more Turns, the navigator creates one marker per Turn, highlights the Turn at the reading position, exposes a normalized user-prompt preview on hover/focus, and scrolls to the selected Turn. It stays hidden for a single Turn and narrow windows.
 
 ## Deferred
 
@@ -57,4 +58,4 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 - App Server daemon/control-socket ownership so active Turns survive window close.
 - Full `requestUserInput`, MCP elicitation forms, authentication/login, app/plugin pickers, images, math/diagram rendering, and diff syntax highlighting.
 - Notifications for completed background work while Studio is closed.
-- Packaging/signing and native Windows process management.
+- Package signing and native Windows process management.

@@ -138,6 +138,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
+        .route("/transcript-scroll.mjs", get(transcript_scroll_js))
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
@@ -172,6 +173,10 @@ async fn composer_tools_js() -> impl IntoResponse {
 
 async fn turn_navigator_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/turn-navigator.mjs"))
+}
+
+async fn transcript_scroll_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/transcript-scroll.mjs"))
 }
 
 async fn marked_js() -> impl IntoResponse {
@@ -510,6 +515,7 @@ mod tests {
                 "/codex-native.mjs",
                 "/composer-tools.mjs",
                 "/turn-navigator.mjs",
+                "/transcript-scroll.mjs",
                 "/styles.css",
             ] {
                 let response = router

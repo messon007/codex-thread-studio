@@ -4,6 +4,10 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep an active transcript pinned to the latest streaming output across Item completion and Markdown layout changes, while still respecting deliberate upward scrolling.
+
 ## [0.2.0] - 2026-07-20
 
 ### Added

@@ -22,6 +22,7 @@ import {
   turnNavigationLabel,
   turnPromptPreview,
 } from './turn-navigator.mjs'
+import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
 marked.setOptions({
@@ -80,6 +81,7 @@ let transcriptFrame = null
 const dirtyStreamItems = new Map()
 let composerSearchTimer = null
 let turnNavigatorFrame = null
+const transcriptScrollFollower = createTranscriptScrollFollower()
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 
@@ -118,7 +120,7 @@ function bindUI() {
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
-  $('#transcript').addEventListener('scroll', scheduleTurnNavigatorSync, { passive: true })
+  $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#transcript').addEventListener('click', handleTranscriptClick)
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
@@ -303,7 +305,7 @@ function handleAppServerMessage(message) {
       toast(`Codex 请求了尚未支持的交互：${message.method}`, 'error')
       return
     }
-    renderTranscript(false)
+    renderTranscript()
     return
   }
 
@@ -311,7 +313,7 @@ function handleAppServerMessage(message) {
     const updateKind = transcriptUpdateKind(message.method)
     if (updateKind === 'stream') queueStreamingItemPatch(message.params)
     else if (updateKind === 'item') replaceCompletedItem(message.params)
-    else if (updateKind === 'full') renderTranscript(message.method === 'item/started')
+    else if (updateKind === 'full') renderTranscript()
     if (updateKind === 'metadata') renderUsage()
     renderComposerState()
     updateSelectedThreadStatus(message)
@@ -408,13 +410,14 @@ async function selectThread(id, { force = false } = {}) {
   }
   hideComposerMenu()
   resetStreamingPatches()
+  transcriptScrollFollower.reset()
   state.selectedId = id
   state.model = createCodexViewModel()
   state.model.threadId = id
   persistPreferences()
   renderThreadList()
   renderWorkspace()
-  renderTranscript(false)
+  renderTranscript()
   await resumeThread(id)
 }
 
@@ -428,7 +431,7 @@ async function resumeThread(id) {
     mergeThreadMetadata(result.thread)
     $('#native-connection').textContent = '已连接'
     renderWorkspace()
-    renderTranscript(false)
+    renderTranscript()
   } catch (error) {
     if (state.selectedId !== id) return
     state.model.error = error.message
@@ -447,7 +450,7 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     hydrateCodexThread(state.model, result.thread)
     mergeThreadMetadata(result.thread)
     renderWorkspace()
-    renderTranscript(false)
+    renderTranscript()
     if (!quiet) toast('会话已刷新')
     return true
   } catch (error) {
@@ -501,17 +504,29 @@ function resetStreamingPatches() {
   dirtyStreamItems.clear()
 }
 
-function renderTranscript(followOutput) {
+function renderTranscript() {
   if (!state.selectedId) return
   resetStreamingPatches()
   const container = $('#transcript')
-  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
   const turns = state.model.turns || []
   container.innerHTML = turns.map((turn, index) => renderTurn(turn, index)).join('') + renderApprovals()
   bindApprovalButtons()
   renderTurnNavigator()
-  if (followOutput && nearBottom) requestAnimationFrame(() => { container.scrollTop = container.scrollHeight })
+  followTranscriptOutput()
   renderUsage()
+}
+
+function handleTranscriptScroll() {
+  const transcript = $('#transcript')
+  transcriptScrollFollower.handleScroll(transcript)
+  scheduleTurnNavigatorSync()
+}
+
+function followTranscriptOutput() {
+  if (!transcriptScrollFollower.following) return
+  const transcript = $('#transcript')
+  transcript.scrollTop = transcript.scrollHeight
+  scheduleTurnNavigatorSync()
 }
 
 function renderTurnNavigator() {
@@ -578,6 +593,7 @@ function handleTurnNavigatorClick(event) {
   const target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
     .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
   if (!target) return
+  transcriptScrollFollower.pause()
   const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
   setActiveTurnNavigator(button.dataset.turnNavId)
   transcript.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
@@ -592,15 +608,13 @@ function queueStreamingItemPatch(params = {}) {
 
 function flushStreamingItemPatches() {
   transcriptFrame = null
-  const container = $('#transcript')
-  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
   let needsFullRender = false
   for (const identity of dirtyStreamItems.values()) {
     if (!patchStreamingItem(identity.turnId, identity.itemId)) needsFullRender = true
   }
   dirtyStreamItems.clear()
-  if (needsFullRender) renderTranscript(nearBottom)
-  else if (nearBottom) container.scrollTop = container.scrollHeight
+  if (needsFullRender) renderTranscript()
+  else followTranscriptOutput()
 }
 
 function modelItem(turnId, itemId) {
@@ -649,13 +663,14 @@ function replaceCompletedItem(params = {}) {
   const item = modelItem(params.turnId, itemId)
   const element = renderedItem(params.turnId, itemId)
   if (!item || !element) {
-    renderTranscript(false)
+    renderTranscript()
     return
   }
   const template = document.createElement('template')
   template.innerHTML = renderItem(item, params.turnId)
   element.replaceWith(template.content)
   if (item.type === 'userMessage') renderTurnNavigator()
+  followTranscriptOutput()
 }
 
 function renderTurn(turn, index) {
@@ -804,7 +819,7 @@ function answerApproval(id, decision) {
   }
   sendRaw({ id: approval.id, result })
   resolveCodexApproval(state.model, approval.id)
-  renderTranscript(false)
+  renderTranscript()
 }
 
 function handleComposerInput() {
@@ -1089,10 +1104,11 @@ async function compactCurrentThread() {
 
 async function reviewCurrentChanges() {
   if (state.model.activeTurnId) throw new Error('当前 Turn 仍在运行，完成或停止后才能开始 Review。')
+  transcriptScrollFollower.reset()
   const result = await rpc('review/start', { threadId: state.selectedId, target: { type: 'uncommittedChanges' }, delivery: 'inline' })
   if (result?.turn) {
     applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
-    renderTranscript(true)
+    renderTranscript()
     renderComposerState()
   }
 }
@@ -1212,6 +1228,7 @@ async function sendComposer(event) {
     }
     const button = $('#send-message')
     button.disabled = true
+    transcriptScrollFollower.reset()
     try {
       await rpc('thread/shellCommand', { threadId: state.selectedId, command: shellCommand }, 120_000)
       input.value = ''
@@ -1239,6 +1256,7 @@ async function sendComposer(event) {
   const turnInput = [{ type: 'text', text }, ...skillInputs]
   const button = $('#send-message')
   button.disabled = true
+  transcriptScrollFollower.reset()
   try {
     if (state.model.activeTurnId) {
       await rpc('turn/steer', {
@@ -1257,7 +1275,7 @@ async function sendComposer(event) {
       })
       if (result?.turn) {
         applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
-        renderTranscript(true)
+        renderTranscript()
       }
     }
     input.value = ''

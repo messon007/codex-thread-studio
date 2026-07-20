@@ -27,6 +27,7 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 - [x] App Server backed model, permissions, status, compact, review, diff, skills, and MCP actions.
 - [x] Local copy/new plus existing rename/fork/archive/delete actions in the same command palette.
 - [x] Select-and-comment review workflow with persisted drafts.
+- [x] Compact in-session Turn navigator with reading-position tracking, prompt previews, and direct jump.
 
 ### Rich composer and tool interaction
 

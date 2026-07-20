@@ -13,6 +13,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals.
 - Provides `@` project-file search and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
+- Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
 - Provides persistent light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and a configurable annotation prompt template.
 - Uses the installed Codex CLI and existing Codex authentication; Studio stores no model credential.

@@ -17,7 +17,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 
 1. Thread navigation: project-directory grouping, list, search, select, automatic resume, reload, create, rename, fork, archive, and delete. Native session-tree, fork, parent, source, and CLI metadata are visible when supplied by Codex.
 2. Structured transcript: messages, reasoning summaries, plan, commands/output, file changes/diffs, supported tool calls, token usage, and explicit Turn completion status/error. Agent prose supports sanitized GitHub-flavored Markdown, including headings, lists, links, quotes, tables, task lists, inline code, and fenced code with copy controls.
-3. Interaction: start a Turn, steer an active Turn, interrupt it from the composer or Thread toolbar, and handle command/file/permission approvals. Typing `@` searches the active project through App Server and inserts a selected path. Typing `/` opens a keyboard-navigable command palette.
+3. Interaction: start a Turn, steer an active Turn, interrupt it from the composer or Thread toolbar, and handle command/file/permission approvals. Typing `@` searches the active project through App Server and inserts a selected path. Typing `/` opens a keyboard-navigable command palette. A compact right-side navigator maps each user/Codex interaction to its structured Turn and supports direct navigation within long sessions.
 4. Comments: select rendered text, enter a comment in a dialog, repeat across items, persist by Thread, edit through delete/clear/additional guidance, and insert the assembled prompt without automatic send.
 5. Appearance: light/dark theme, configurable UI/code font family and weight, code size, high-contrast secondary text, and persisted Comfortable/Wide/Full transcript width.
 6. Diagnostics: show App Server state, resolved Codex binary, protocol/transport, reconnect state, and actionable spawn/protocol errors.
@@ -46,6 +46,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 19. Selecting a model, reasoning effort, or permission profile supplies valid override fields on the next `turn/start`; selecting a skill adds both `$skill-name` text and a structured `skill` input Item.
 20. Streaming `agentMessage`, `plan`, reasoning, and command output does not replace the transcript container or rerun Markdown parsing until Item completion.
 21. Switching Threads calls `thread/unsubscribe` for the previous Thread before resuming the next one.
+22. With two or more Turns, the navigator creates one marker per Turn, highlights the Turn at the reading position, exposes a normalized user-prompt preview on hover/focus, and scrolls to the selected Turn. It stays hidden for a single Turn and narrow windows.
 
 ## Deferred
 

@@ -14,6 +14,11 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import { marked } from './vendor/marked.esm.js'
+import {
+  activeTurnAtMarker,
+  turnNavigationLabel,
+  turnPromptPreview,
+} from './turn-navigator.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
 marked.setOptions({
@@ -70,6 +75,7 @@ let annotationPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
 let composerSearchTimer = null
+let turnNavigatorFrame = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 
@@ -107,9 +113,12 @@ function bindUI() {
   $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
+  $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
+  $('#transcript').addEventListener('scroll', scheduleTurnNavigatorSync, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#transcript').addEventListener('click', handleTranscriptClick)
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
+  window.addEventListener('resize', scheduleTurnNavigatorSync)
   $('#comment-selection').addEventListener('click', openAnnotationFromSelection)
   $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
   $('#selection-popover').addEventListener('click', openAnnotationFromSelection)
@@ -488,8 +497,78 @@ function renderTranscript(followOutput) {
   const turns = state.model.turns || []
   container.innerHTML = turns.map((turn, index) => renderTurn(turn, index)).join('') + renderApprovals()
   bindApprovalButtons()
+  renderTurnNavigator()
   if (followOutput && nearBottom) requestAnimationFrame(() => { container.scrollTop = container.scrollHeight })
   renderUsage()
+}
+
+function renderTurnNavigator() {
+  const navigator = $('#turn-navigator')
+  const list = $('#turn-navigator-list')
+  const turns = state.model.turns || []
+  if (turns.length < 2) {
+    navigator.classList.add('hidden')
+    list.innerHTML = ''
+    return
+  }
+
+  list.innerHTML = turns.map((turn, index) => {
+    const label = turnNavigationLabel(turn, index)
+    const title = turnPromptPreview(turn) || `Turn ${index + 1}`
+    return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(turn.id || '')}" aria-label="${escapeHtml(label)}"><span class="turn-nav-title">${escapeHtml(title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
+  }).join('')
+  navigator.classList.remove('hidden')
+  scheduleTurnNavigatorSync()
+}
+
+function scheduleTurnNavigatorSync() {
+  if (turnNavigatorFrame != null) return
+  turnNavigatorFrame = requestAnimationFrame(syncTurnNavigator)
+}
+
+function syncTurnNavigator() {
+  turnNavigatorFrame = null
+  const navigator = $('#turn-navigator')
+  if (navigator.classList.contains('hidden')) return
+  const transcript = $('#transcript')
+  const transcriptRect = transcript.getBoundingClientRect()
+  const marker = transcriptRect.top + Math.min(transcript.clientHeight * 0.28, 160)
+  const positions = [...transcript.querySelectorAll('.turn[data-turn-id]')]
+    .map((element) => ({ id: element.dataset.turnId, top: element.getBoundingClientRect().top }))
+  const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 8
+  setActiveTurnNavigator(activeTurnAtMarker(positions, marker, atBottom))
+}
+
+function setActiveTurnNavigator(turnId) {
+  const list = $('#turn-navigator-list')
+  let activeButton = null
+  list.querySelectorAll('[data-turn-nav-id]').forEach((button) => {
+    const active = button.dataset.turnNavId === String(turnId || '')
+    button.classList.toggle('active', active)
+    if (active) {
+      button.setAttribute('aria-current', 'true')
+      activeButton = button
+    } else {
+      button.removeAttribute('aria-current')
+    }
+  })
+  if (!activeButton) return
+  if (activeButton.offsetTop < list.scrollTop) list.scrollTop = activeButton.offsetTop
+  else if (activeButton.offsetTop + activeButton.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTop = activeButton.offsetTop + activeButton.offsetHeight - list.clientHeight
+  }
+}
+
+function handleTurnNavigatorClick(event) {
+  const button = event.target.closest('[data-turn-nav-id]')
+  if (!button) return
+  const transcript = $('#transcript')
+  const target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
+    .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
+  if (!target) return
+  const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
+  setActiveTurnNavigator(button.dataset.turnNavId)
+  transcript.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
 }
 
 function queueStreamingItemPatch(params = {}) {
@@ -564,6 +643,7 @@ function replaceCompletedItem(params = {}) {
   const template = document.createElement('template')
   template.innerHTML = renderItem(item, params.turnId)
   element.replaceWith(template.content)
+  if (item.type === 'userMessage') renderTurnNavigator()
 }
 
 function renderTurn(turn, index) {

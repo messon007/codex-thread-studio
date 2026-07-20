@@ -12,7 +12,7 @@
 - 结构化显示用户/Agent 消息、推理摘要、执行计划、命令及输出、文件修改、工具调用、Turn 状态、错误和 Token 用量；Agent 正文使用完全本地、经过安全清洗的 GitHub 风格 Markdown，代码块和表格也有专门排版。
 - 对 App Server 的高频增量事件进行批处理，只更新当前活动 Item；长响应不再反复解析整段历史记录。
 - 支持开始 Turn、向运行中的 Turn 追加意见、停止 Turn，以及处理命令、文件修改和权限审批。
-- 支持 `@` 搜索当前项目文件，并提供键盘优先的 `/` 命令面板，用于选择模型、推理强度、权限、查看状态、压缩上下文、发起审查、查看 Diff、选择技能、查看 MCP 服务和执行 Thread 操作。
+- 支持 `@` 搜索当前项目文件、直接输入 `$技能名` 发现并发送 App Server 结构化技能输入、以 `!命令` 运行本地 Shell，并提供键盘优先的 `/` 命令面板，用于选择模型、推理强度、权限、查看状态、压缩上下文、发起审查、查看 Diff、选择技能、查看 MCP 服务和执行 Thread 操作。
 - 提供紧凑的会话内 Turn 导航：高亮当前交互，悬停显示用户提示摘要，点击短线直接滚动到对应 Turn。
 - 可以选择结构化输出、输入意见并反复积累批注；每条批注保留来源 Turn/Item 锚点，最终提示词只插入输入框，不自动发送。
 - 持久化浅色/深色主题、字体、对比度、舒适/宽屏/全宽内容宽度、当前 Thread、批注草稿和可配置批注模板。
@@ -51,9 +51,16 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/Codex/绝对路径 cargo run -p codex-thread-stud
 cargo fmt --all -- --check
 cargo test --workspace --locked
 npm test
+npm run version:check
 ```
 
 桌面程序运行时不依赖 Node.js 或网络。Markdown 浏览器资源及许可证已经提交到 `ui/vendor`；维护者可运行 `npm ci && npm run vendor:markdown`，从锁定版本重新生成这些文件。
+
+## 版本与发布
+
+`src-tauri/Cargo.toml` 是唯一需要人工维护的应用版本来源，Tauri 会自动继承；About 面板显示相同的编译期版本。
+
+发布说明记录在 [CHANGELOG.md](CHANGELOG.md)。维护者先在 **Unreleased** 下填写变更，运行 `npm run version:bump -- <semver>`，再以 `npm run version:check` 验证。提交后推送匹配的 `v<semver>` Tag，GitHub 工作流会核对所有版本信息，并创建包含 Linux、macOS 安装包的草稿 Release。
 
 详细内容参见[成熟度路线图](docs/maturity-roadmap.md)、[系统架构](docs/architecture.md)、[产品需求与验收标准](docs/product.md)、[开发指南](docs/development.md)和[故障排查](docs/troubleshooting.md)。
 

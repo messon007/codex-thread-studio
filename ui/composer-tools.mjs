@@ -23,10 +23,21 @@ export function composerTrigger(value, cursor = value.length) {
     return { type: 'slash', query: slash[1].toLowerCase(), start: slashIndex, end: cursor }
   }
 
+  const skill = before.match(/(?:^|\s)\$([^\s$]*)$/u)
+  if (skill) {
+    const start = before.lastIndexOf('$')
+    return { type: 'skill', query: skill[1].toLowerCase(), start, end: cursor }
+  }
+
   const mention = before.match(/(?:^|\s)@([^\s@]*)$/u)
   if (!mention) return null
   const start = before.lastIndexOf('@')
   return { type: 'file', query: mention[1], start, end: cursor }
+}
+
+export function shellCommandFromComposer(value) {
+  const match = String(value || '').match(/^\s*!(.*)$/su)
+  return match ? match[1].trim() : null
 }
 
 export function matchingSlashCommands(query, commands = SLASH_COMMANDS) {
@@ -54,6 +65,23 @@ export function selectedFileReference(file) {
   if (!path) return ''
   const needsQuotes = /\s/u.test(path) && !path.includes('"')
   return `${needsQuotes ? `"${path}"` : path} `
+}
+
+export function matchingSkills(query, skills = []) {
+  const needle = String(query || '').toLowerCase()
+  return skills
+    .filter((skill) => skill?.enabled !== false)
+    .filter((skill) => {
+      if (!needle) return true
+      return [skill.name, skill.description, skill.shortDescription, skill.interface?.displayName]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(needle))
+    })
+    .slice(0, 30)
+}
+
+export function selectedSkillReference(skill) {
+  return skill?.name ? `$${skill.name} ` : ''
 }
 
 export function transcriptUpdateKind(method) {

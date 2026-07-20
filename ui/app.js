@@ -8,9 +8,12 @@ import {
 import {
   composerTrigger,
   fuzzyFileLabel,
+  matchingSkills,
   matchingSlashCommands,
   replaceComposerTrigger,
   selectedFileReference,
+  selectedSkillReference,
+  shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import { marked } from './vendor/marked.esm.js'
@@ -65,6 +68,7 @@ const state = {
   annotationPromptTemplate: annotationPromptDefault,
   pendingSelection: null,
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
+  skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
   pendingSkills: {},
 }
@@ -282,6 +286,14 @@ function handleAppServerMessage(message) {
     }
     renderThreadList()
     renderWorkspace()
+    return
+  }
+
+  if (message.method === 'skills/changed') {
+    state.skillCatalog = { cwd: null, skills: [], request: null, loaded: false }
+    const input = $('#composer-input')
+    const trigger = composerTrigger(input.value, input.selectionStart)
+    if (trigger?.type === 'skill') searchComposerSkills(trigger)
     return
   }
 
@@ -797,6 +809,11 @@ function answerApproval(id, decision) {
 
 function handleComposerInput() {
   const input = $('#composer-input')
+  renderComposerState()
+  if (shellCommandFromComposer(input.value) !== null) {
+    hideComposerMenu()
+    return
+  }
   const trigger = composerTrigger(input.value, input.selectionStart)
   if (!trigger) {
     hideComposerMenu()
@@ -812,6 +829,10 @@ function handleComposerInput() {
       generation: state.composerMenu.generation + 1,
     }
     renderComposerMenu()
+    return
+  }
+  if (trigger.type === 'skill') {
+    searchComposerSkills(trigger)
     return
   }
   searchComposerFiles(trigger)
@@ -863,14 +884,23 @@ function renderComposerMenu(message = '') {
   const options = state.composerMenu.options
   menu.classList.remove('hidden')
   if (!options.length) {
-    menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(message || (state.composerMenu.type === 'file' ? '没有匹配文件' : '没有匹配命令'))}</div>`
+    const empty = state.composerMenu.type === 'file'
+      ? '没有匹配文件'
+      : state.composerMenu.type === 'skill'
+        ? '没有匹配技能'
+        : '没有匹配命令'
+    menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(message || empty)}</div>`
     return
   }
   menu.innerHTML = options.map((option, index) => {
     const selected = index === state.composerMenu.selected
-    const command = state.composerMenu.type === 'slash'
-    const title = command ? `/${option.name}` : fuzzyFileLabel(option)
-    const detail = command ? option.description : option.root
+    const type = state.composerMenu.type
+    const title = type === 'slash' ? `/${option.name}` : type === 'skill' ? `$${option.name}` : fuzzyFileLabel(option)
+    const detail = type === 'slash'
+      ? option.description
+      : type === 'skill'
+        ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
+        : option.root
     return `<button id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" type="button" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small></button>`
   }).join('')
   $('#composer-input').setAttribute('aria-activedescendant', `composer-option-${state.composerMenu.selected}`)
@@ -907,6 +937,39 @@ async function performComposerFileSearch(trigger, generation, cwd) {
   }
 }
 
+function searchComposerSkills(trigger) {
+  const cwd = selectedThread()?.cwd || ''
+  const generation = state.composerMenu.generation + 1
+  state.composerMenu = { type: 'skill', trigger, options: [], selected: 0, generation }
+  renderComposerMenu('正在由 Codex App Server 发现技能…')
+  loadSkillCatalog(cwd).then((skills) => {
+    if (generation !== state.composerMenu.generation || state.composerMenu.type !== 'skill') return
+    state.composerMenu.options = matchingSkills(trigger.query, skills)
+    state.composerMenu.selected = 0
+    renderComposerMenu()
+  }).catch((error) => {
+    if (generation !== state.composerMenu.generation) return
+    renderComposerMenu(`技能读取失败：${error.message}`)
+  })
+}
+
+async function loadSkillCatalog(cwd, forceReload = false) {
+  const catalog = state.skillCatalog
+  if (!forceReload && catalog.cwd === cwd && catalog.loaded) return catalog.skills
+  if (!forceReload && catalog.cwd === cwd && catalog.request) return catalog.request
+  const request = rpc('skills/list', { cwds: cwd ? [cwd] : [], forceReload })
+    .then((result) => (result?.data || []).flatMap((entry) => entry.skills || []).filter((skill) => skill.enabled))
+  state.skillCatalog = { cwd, skills: [], request, loaded: false }
+  try {
+    const skills = await request
+    if (state.skillCatalog.request === request) state.skillCatalog = { cwd, skills, request: null, loaded: true }
+    return skills
+  } catch (error) {
+    if (state.skillCatalog.request === request) state.skillCatalog = { cwd: null, skills: [], request: null, loaded: false }
+    throw error
+  }
+}
+
 function selectComposerOption(index) {
   const option = state.composerMenu.options[index]
   const trigger = state.composerMenu.trigger
@@ -917,6 +980,16 @@ function selectComposerOption(index) {
     input.value = replacement.value
     input.setSelectionRange(replacement.cursor, replacement.cursor)
     hideComposerMenu()
+    input.focus()
+    return
+  }
+  if (state.composerMenu.type === 'skill') {
+    const replacement = replaceComposerTrigger(input.value, trigger, selectedSkillReference(option))
+    input.value = replacement.value
+    input.setSelectionRange(replacement.cursor, replacement.cursor)
+    addPendingSkill(option)
+    hideComposerMenu()
+    renderComposerState()
     input.focus()
     return
   }
@@ -1042,23 +1115,27 @@ async function openMcpCommand() {
 async function openSkillsCommand() {
   const cwd = selectedThread()?.cwd
   showCommandDialog('技能', '<div class="command-empty">正在由 App Server 发现技能…</div>')
-  const result = await rpc('skills/list', { cwds: cwd ? [cwd] : [], forceReload: false })
-  const skills = (result?.data || []).flatMap((entry) => entry.skills || []).filter((skill) => skill.enabled)
+  const skills = await loadSkillCatalog(cwd || '')
   $('#command-content').innerHTML = skills.length
     ? `<div class="command-list">${skills.map((skill) => `<button class="command-card" type="button" data-skill-name="${escapeHtml(skill.name)}" data-skill-path="${escapeHtml(skill.path)}"><strong>$${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description || skill.shortDescription || '')}</small><span>引用</span></button>`).join('')}</div>`
     : '<div class="command-empty">当前目录没有已启用的技能。</div>'
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-skill-name]')
     if (!button || !state.selectedId) return
-    const skillsForThread = state.pendingSkills[state.selectedId] ||= []
-    if (!skillsForThread.some((skill) => skill.path === button.dataset.skillPath)) {
-      skillsForThread.push({ type: 'skill', name: button.dataset.skillName, path: button.dataset.skillPath })
-    }
+    addPendingSkill({ name: button.dataset.skillName, path: button.dataset.skillPath })
     const input = $('#composer-input')
     input.value = `${input.value}${input.value && !input.value.endsWith(' ') ? ' ' : ''}$${button.dataset.skillName} `
     $('#command-dialog').close()
     renderComposerState()
     input.focus()
+  }
+}
+
+function addPendingSkill(skill) {
+  if (!state.selectedId || !skill?.name || !skill?.path) return
+  const skillsForThread = state.pendingSkills[state.selectedId] ||= []
+  if (!skillsForThread.some((candidate) => candidate.path === skill.path)) {
+    skillsForThread.push({ type: 'skill', name: skill.name, path: skill.path })
   }
 }
 
@@ -1096,19 +1173,28 @@ async function executeSlashCommand(action) {
 function renderComposerState() {
   const active = Boolean(state.model.activeTurnId)
   const options = currentTurnOptions()
+  const shellCommand = shellCommandFromComposer($('#composer-input').value)
+  const shellMode = shellCommand !== null
+  $('#composer-form').classList.toggle('shell-mode', shellMode)
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#stop-thread').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = active ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? '运行' : active ? '追加意见' : '发送'
   const details = [
     options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
     options.sandboxPolicy?.type,
     state.pendingSkills[state.selectedId]?.length && `${state.pendingSkills[state.selectedId].length} 个技能`,
   ].filter(Boolean)
-  const baseHint = active ? '将通过 turn/steer 加入当前 Turn' : '将通过 turn/start 开始新 Turn'
-  $('#composer-hint').textContent = `${baseHint}${details.length ? ` · ${details.join(' · ')}` : ''}`
-  $('#send-message').disabled = !state.ready || !state.selectedId
+  const baseHint = shellMode
+    ? active
+      ? 'Shell 命令需等待当前 Turn 完成'
+      : '本地 Shell · 不经过模型且不受 Turn sandbox 限制'
+    : active
+      ? '将通过 turn/steer 加入当前 Turn'
+      : '将通过 turn/start 开始新 Turn'
+  $('#composer-hint').textContent = `${baseHint}${!shellMode && details.length ? ` · ${details.join(' · ')}` : ''}`
+  $('#send-message').disabled = !state.ready || !state.selectedId || (shellMode && (active || !shellCommand))
   $('#thread-status').textContent = statusLabel(state.model.status)
   $('#thread-status').className = `status-badge ${state.model.status}`
 }
@@ -1117,6 +1203,25 @@ async function sendComposer(event) {
   event.preventDefault()
   const input = $('#composer-input')
   const text = input.value.trim()
+  const shellCommand = shellCommandFromComposer(input.value)
+  if (shellCommand !== null) {
+    if (!shellCommand || !state.selectedId) return
+    if (state.model.activeTurnId) {
+      showError(new Error('请等待当前 Turn 完成或先停止，再运行本地 Shell 命令。'))
+      return
+    }
+    const button = $('#send-message')
+    button.disabled = true
+    try {
+      await rpc('thread/shellCommand', { threadId: state.selectedId, command: shellCommand }, 120_000)
+      input.value = ''
+      hideComposerMenu()
+      renderComposerState()
+      toast('Shell 命令已交给 Codex 执行')
+    } catch (error) { showError(error) }
+    finally { button.disabled = false }
+    return
+  }
   const slashName = text.match(/^\/([\w-]+)$/)?.[1]
   const slash = slashName && matchingSlashCommands(slashName).find((command) => command.name === slashName)
   if (slash) {
@@ -1531,6 +1636,8 @@ function applyAppearance() {
 function openBackendDialog() {
   const info = state.backendInfo || {}
   $('#backend-dialog-content').innerHTML = `
+    <div class="detail-row"><span>应用</span><strong>${escapeHtml(info.appName || 'Codex Thread Studio')}</strong></div>
+    <div class="detail-row"><span>版本</span><strong>v${escapeHtml(info.appVersion || 'unknown')}</strong></div>
     <div class="detail-row"><span>状态</span><strong>${state.ready ? '已连接' : '未连接'}</strong></div>
     <div class="detail-row"><span>Codex</span><strong>${escapeHtml(info.binary || 'codex')}</strong></div>
     <div class="detail-row"><span>协议</span><strong>${escapeHtml(info.protocol || 'Codex App Server v2')}</strong></div>

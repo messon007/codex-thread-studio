@@ -76,6 +76,8 @@ struct StudioPreferences {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexInfo {
+    app_name: &'static str,
+    app_version: &'static str,
     binary: String,
     protocol: &'static str,
     transport: &'static str,
@@ -212,6 +214,8 @@ async fn github_markdown_css() -> impl IntoResponse {
 
 async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
     axum::Json(CodexInfo {
+        app_name: "Codex Thread Studio",
+        app_version: env!("CARGO_PKG_VERSION"),
         binary: state.codex.binary().to_string(),
         protocol: "Codex App Server v2",
         transport: "stdio JSONL via Studio WebSocket",
@@ -524,6 +528,35 @@ mod tests {
                     "missing route for {path}"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn exposes_the_compile_time_application_version() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let state = GatewayState {
+                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
+                preferences_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-version-test.json"),
+                ),
+                preferences_lock: Arc::new(Mutex::new(())),
+            };
+            let response = gateway_router(state)
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/codex")
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("version response");
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .expect("version body");
+            let value: serde_json::Value = serde_json::from_slice(&body).expect("version JSON");
+            assert_eq!(value["appName"], "Codex Thread Studio");
+            assert_eq!(value["appVersion"], env!("CARGO_PKG_VERSION"));
         });
     }
 

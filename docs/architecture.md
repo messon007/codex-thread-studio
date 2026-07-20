@@ -62,12 +62,14 @@ When the selected Thread changes, Studio first calls `thread/unsubscribe` for th
 The composer is a structured App Server client rather than a terminal command parser:
 
 - `@query` invokes `fuzzyFileSearch` with the active Thread working directory and inserts the chosen relative path.
+- `$query` filters skills returned by `skills/list`; choosing one inserts `$skill-name` and queues a structured `skill` UserInput containing its App Server path.
+- A composer value beginning with `!` calls `thread/shellCommand`. App Server evaluates the remainder with the Thread shell and publishes the resulting structured Items. Per the protocol, this user-invoked command runs with local user access and does not inherit the model Turn sandbox.
 - `/model`, `/skills`, and `/mcp` populate controls through `model/list`, `skills/list`, and `mcpServerStatus/list`.
 - `/compact` and `/review` invoke `thread/compact/start` and `review/start`.
 - `/permissions` stores a valid approval/sandbox override for the next `turn/start`.
 - Local Thread operations such as rename, fork, archive, and delete reuse the same structured RPCs as their toolbar actions.
 
-Slash commands are client-side affordances over App Server capabilities; they are never forwarded as ordinary model text. Selected skills are sent as structured `skill` input Items in addition to the visible `$skill-name` reference.
+Slash commands are client-side affordances over App Server capabilities; they are never forwarded as ordinary model text. Skills selected from either `$` completion or `/skills` are sent as structured `skill` input Items in addition to the visible `$skill-name` reference.
 
 ## Comment model
 

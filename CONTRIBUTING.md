@@ -17,8 +17,11 @@ Thanks for helping improve Codex Thread Studio.
 cargo fmt --all -- --check
 cargo test --workspace --locked
 npm test
+npm run version:check
 ```
 
 For protocol changes, manually check App Server initialization, thread list/resume, one streamed Turn, approval accept/decline, interruption, and comment persistence. State which Codex CLI version was tested.
 
 Never commit credentials, private Thread content, generated build output, or `$CODEX_HOME` state.
+
+Do not edit `Cargo.lock` or `tauri.conf.json` to change the app version. Add release notes under `CHANGELOG.md` **Unreleased**, then use `npm run version:bump -- <semver>`; see `docs/development.md` for the tag and release workflow.

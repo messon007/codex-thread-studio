@@ -164,6 +164,9 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .selection-popover { position: fixed; z-index: 30; padding: 7px 10px; border: 1px solid var(--brand); border-radius: 8px; background: var(--brand); color: white; box-shadow: var(--shadow-md); cursor: pointer; font-size: 10px; }
 .composer { width: calc(100% - var(--workspace-gutter) - var(--workspace-gutter)); max-width: var(--content-max-width); margin: 0 auto 18px; padding: 10px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 28px rgb(20 35 43 / 8%); }
 .composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), 0 8px 28px rgb(20 35 43 / 8%); }
+.composer.shell-mode { border-color: color-mix(in srgb, var(--amber) 65%, var(--border-strong)); background: color-mix(in srgb, var(--amber-soft) 42%, var(--panel)); }
+.composer.shell-mode:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft), 0 8px 28px rgb(20 35 43 / 8%); }
+.composer.shell-mode #composer-hint { color: var(--amber); }
 .composer textarea { width: 100%; max-height: 180px; resize: vertical; padding: 4px 6px; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.55; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }.composer-footer > span { color: var(--muted); font-size: 11px; }.composer-footer > div { display: flex; gap: 7px; }
 

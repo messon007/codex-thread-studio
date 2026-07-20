@@ -12,7 +12,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Renders user and agent messages, reasoning summaries, plans, commands, command output, file changes, tool calls, turn status, errors, and usage. Agent prose uses locally vendored, sanitized GitHub-flavored Markdown with readable code blocks and tables.
 - Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals.
-- Provides `@` project-file search and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
+- Provides `@` project-file search, direct `$skill-name` discovery with structured App Server skill inputs, `!command` local shell mode, and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
 - Provides persistent light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and a configurable annotation prompt template.
@@ -65,9 +65,16 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-
 cargo fmt --all -- --check
 cargo test --workspace --locked
 npm test
+npm run version:check
 ```
 
 The desktop runtime has no Node.js or network dependency. Markdown browser assets and their license texts are committed under `ui/vendor`; maintainers can refresh the lockfile-pinned copies with `npm ci && npm run vendor:markdown`.
+
+## Versions and releases
+
+`src-tauri/Cargo.toml` is the single manually maintained application-version source; Tauri inherits it automatically. The About panel shows the same compile-time value.
+
+Release notes live in [CHANGELOG.md](CHANGELOG.md). Maintainers add notes under **Unreleased**, run `npm run version:bump -- <semver>`, verify with `npm run version:check`, commit, and push a matching `v<semver>` tag. The tag workflow validates all version metadata and creates a draft GitHub Release with Linux and macOS bundles.
 
 See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
 

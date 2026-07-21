@@ -23,10 +23,13 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 - [x] Structured messages, plans, reasoning, commands, files, tools, approvals, usage, and final status.
 - [x] Batched incremental rendering for agent, plan, reasoning, and command-output deltas.
 - [x] `@` workspace file search through `fuzzyFileSearch`.
+- [x] `$` skill discovery through `skills/list` with structured skill UserInput.
+- [x] `!` local shell-command composer prefix through `thread/shellCommand`.
 - [x] `/` command palette with keyboard and pointer navigation.
 - [x] App Server backed model, permissions, status, compact, review, diff, skills, and MCP actions.
 - [x] Local copy/new plus existing rename/fork/archive/delete actions in the same command palette.
 - [x] Select-and-comment review workflow with persisted drafts.
+- [x] Compact in-session Turn navigator with reading-position tracking, prompt previews, and direct jump.
 
 ### Rich composer and tool interaction
 
@@ -34,7 +37,7 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 - [ ] `tool/requestUserInput` questions and MCP elicitation forms.
 - [ ] App and plugin discovery/invocation, including structured mention inputs.
 - [ ] Subagent/thread tree navigation and active-agent switching.
-- [ ] Shell-command composer prefix and background-terminal management.
+- [ ] Background-terminal list, interaction, and termination management.
 - [ ] Prompt history search, queued follow-ups, and edit-previous-message fork.
 
 ### Review and large-session ergonomics

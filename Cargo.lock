@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "codex-thread-studio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -407,6 +407,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "tower",
 ]
 
 [[package]]

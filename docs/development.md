@@ -15,6 +15,7 @@
 cargo fmt --all -- --check
 cargo test --workspace --locked
 npm test
+npm run version:check
 cargo run -p codex-thread-studio
 ```
 
@@ -28,6 +29,21 @@ git diff -- package-lock.json ui/vendor THIRD_PARTY_NOTICES.md
 ```
 
 Never replace the vendored modules with runtime CDN imports. Keep their license files in `ui/vendor/licenses/` and review sanitizer advisories before an upgrade.
+
+## Versioning and releases
+
+The project follows SemVer. `src-tauri/Cargo.toml` is the only manually maintained version source. `tauri.conf.json` intentionally omits `version`, so Tauri reads Cargo's package version; `Cargo.lock` is generated metadata and is kept in sync by the version script.
+
+Prepare a release as follows:
+
+1. Add user-visible changes beneath `CHANGELOG.md` → **Unreleased**.
+2. Run `npm run version:bump -- 0.3.0` with the intended SemVer value.
+3. Run `npm run version:check` and the normal verification suite.
+4. Commit the release preparation.
+5. Create and push an annotated matching tag, for example `git tag -a v0.3.0 -m "Codex Thread Studio v0.3.0"` and `git push origin v0.3.0`.
+6. Review and publish the draft GitHub Release produced by `.github/workflows/release.yml`.
+
+`version:check` rejects mismatches between Cargo and `Cargo.lock`, a duplicated Tauri config version, a missing changelog section, or a release tag that differs from `v<Cargo version>`. Linux and macOS desktop bundles are built automatically; Windows 11 remains governed by the project's WSL policy.
 
 ## Protocol development
 

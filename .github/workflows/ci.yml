@@ -54,6 +54,9 @@ jobs:
           node --check ui/app.js
           npm test
 
+      - name: Check version metadata
+        run: npm run version:check
+
       - name: Audit UI dependencies
         if: runner.os == 'Linux'
         run: npm audit --audit-level=moderate

@@ -164,6 +164,9 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .selection-popover { position: fixed; z-index: 30; padding: 7px 10px; border: 1px solid var(--brand); border-radius: 8px; background: var(--brand); color: white; box-shadow: var(--shadow-md); cursor: pointer; font-size: 10px; }
 .composer { width: calc(100% - var(--workspace-gutter) - var(--workspace-gutter)); max-width: var(--content-max-width); margin: 0 auto 18px; padding: 10px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 28px rgb(20 35 43 / 8%); }
 .composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), 0 8px 28px rgb(20 35 43 / 8%); }
+.composer.shell-mode { border-color: color-mix(in srgb, var(--amber) 65%, var(--border-strong)); background: color-mix(in srgb, var(--amber-soft) 42%, var(--panel)); }
+.composer.shell-mode:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft), 0 8px 28px rgb(20 35 43 / 8%); }
+.composer.shell-mode #composer-hint { color: var(--amber); }
 .composer textarea { width: 100%; max-height: 180px; resize: vertical; padding: 4px 6px; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.55; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }.composer-footer > span { color: var(--muted); font-size: 11px; }.composer-footer > div { display: flex; gap: 7px; }
 
@@ -251,7 +254,24 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .command-empty { padding: 24px; color: var(--muted); text-align: center; }
 .command-pre { max-height: 50vh; margin: 0; padding: 13px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; background: var(--code-bg); color: var(--text); white-space: pre-wrap; }
 
+.turn-navigator { z-index: 12; width: 34px; height: min(300px, calc(100% - 190px)); position: absolute; top: 50%; right: 16px; transform: translateY(-50%); user-select: none; }
+.turn-nav-panel { width: 34px; max-height: 100%; position: absolute; top: 50%; right: 0; overflow: hidden; border: 1px solid transparent; border-radius: 16px; background: color-mix(in srgb, var(--panel) 82%, transparent); backdrop-filter: blur(5px); transform: translateY(-50%); transition: width .2s, background .2s, border-color .2s, box-shadow .2s; }
+.turn-navigator:hover .turn-nav-panel, .turn-navigator:focus-within .turn-nav-panel { width: min(240px, calc(100vw - 72px)); border-color: var(--border-strong); background: var(--panel); box-shadow: var(--shadow-md); }
+.turn-nav-list { max-height: min(250px, calc(100vh - 260px)); padding: 15px 0 15px 24px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.turn-nav-list::-webkit-scrollbar { display: none; }
+.turn-nav-item { width: calc(100% - 6px); height: 30px; margin-right: 8px; padding: 0; display: flex; align-items: center; justify-content: flex-end; border: 0; outline: 0; background: transparent; color: var(--faint); cursor: pointer; line-height: 20px; }
+.turn-nav-title { min-width: 0; flex: 1; margin-right: 12px; overflow: hidden; opacity: 0; color: var(--muted); font-size: 13px; font-weight: 500; text-align: right; text-overflow: ellipsis; white-space: nowrap; transition: opacity .1s, color .2s; }
+.turn-navigator:hover .turn-nav-title, .turn-navigator:focus-within .turn-nav-title { opacity: 1; }
+.turn-nav-indicator { width: 16px; height: 20px; flex-shrink: 0; display: grid; place-items: center; }
+.turn-nav-indicator i { width: 8px; height: 2px; display: block; border-radius: 4px; background: var(--border-strong); transition: background .2s, transform .2s; }
+.turn-nav-item:hover .turn-nav-title, .turn-nav-item:focus-visible .turn-nav-title { color: var(--text); }
+.turn-nav-item:hover .turn-nav-indicator i, .turn-nav-item:focus-visible .turn-nav-indicator i { background: var(--text); }
+.turn-nav-item:focus-visible { border-radius: 7px; box-shadow: inset 0 0 0 2px var(--brand-soft); }
+.turn-nav-item.active .turn-nav-title { color: var(--brand); font-weight: 700; }
+.turn-nav-item.active .turn-nav-indicator i { background: var(--brand); transform: scaleX(1.5); }
+
 @media (max-width: 720px) {
   .composer-option, .command-card { grid-template-columns: 1fr; gap: 4px; }
   .composer-option small { white-space: normal; }
 }
+@media (max-width: 1100px) { .turn-navigator { display: none; } }

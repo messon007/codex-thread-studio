@@ -76,9 +76,14 @@ button { color: inherit; }
 .brand-copy { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 2px; }
 .brand-copy strong { font-size: 14px; font-weight: 700; }
 .brand-copy span { color: var(--muted); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; }
+.backend-switcher { margin: 10px 14px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-soft); }
+.backend-switcher button { min-width: 0; height: 29px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 700; }
+.backend-switcher button:hover { color: var(--text); }
+.backend-switcher button[aria-selected="true"] { background: var(--panel); color: var(--brand); box-shadow: var(--shadow-sm); }
 .icon-button { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 17px; }
 .icon-button:hover { background: var(--panel-strong); color: var(--text); }
-.new-thread-button { height: 39px; margin: 14px 14px 10px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--brand); border-radius: 9px; background: var(--brand); color: white; cursor: pointer; box-shadow: var(--shadow-sm); }
+.new-thread-button { height: 39px; margin: 10px 14px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--brand); border-radius: 9px; background: var(--brand); color: white; cursor: pointer; box-shadow: var(--shadow-sm); }
+.new-thread-button b { font-size: inherit; font-weight: 650; }
 .new-thread-button:hover, .primary-button:hover { background: var(--brand-hover); }
 .new-thread-button kbd { margin-left: auto; border-color: rgb(255 255 255 / 34%); background: rgb(255 255 255 / 14%); color: #fff; }
 kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-soft); color: var(--faint); font: 9px/1.5 var(--code-font-family); }

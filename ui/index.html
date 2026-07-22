@@ -15,12 +15,17 @@
           <div class="brand-mark" aria-hidden="true">C</div>
           <div class="brand-copy">
             <strong>Codex Thread Studio</strong>
-            <span>App Server Client</span>
+            <span>Structured Agent Client</span>
           </div>
           <button id="settings-button" class="icon-button" type="button" title="设置" aria-label="打开设置">⚙</button>
         </header>
 
-        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> 新建 Codex 会话 <kbd>Ctrl N</kbd></button>
+        <div class="backend-switcher" role="tablist" aria-label="AI 后端">
+          <button type="button" role="tab" data-backend="codex" aria-selected="true">Codex</button>
+          <button type="button" role="tab" data-backend="opencode" aria-selected="false">OpenCode</button>
+        </div>
+
+        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">新建 Codex 会话</b> <kbd>Ctrl N</kbd></button>
         <label class="search-box"><span>⌕</span><input id="thread-search" type="search" placeholder="搜索会话或目录" /><kbd>/</kbd></label>
         <div class="list-summary"><span>会话</span><strong id="thread-count">0</strong></div>
         <div id="thread-list" class="thread-list" aria-live="polite"></div>
@@ -37,7 +42,7 @@
       <main class="workspace">
         <header class="thread-toolbar">
           <div id="thread-heading" class="thread-heading hidden">
-            <div class="tool-avatar">CX</div>
+            <div id="tool-avatar" class="tool-avatar">CX</div>
             <div><div class="title-line"><h1 id="thread-title">Codex 会话</h1><span id="thread-status" class="status-badge idle">空闲</span></div><p id="thread-path"></p><div id="thread-meta" class="thread-meta"></div></div>
           </div>
           <div id="thread-actions" class="thread-actions hidden">
@@ -51,15 +56,15 @@
         </header>
 
         <section id="empty-workspace" class="empty-workspace">
-          <div class="empty-mark">C</div>
-          <h2>结构化 Codex 工作台</h2>
-          <p>消息、命令、文件修改、计划、审批和停止原因都直接来自 Codex App Server，不再解析终端字符。</p>
+          <div id="empty-mark" class="empty-mark">C</div>
+          <h2 id="empty-title">结构化 Codex 工作台</h2>
+          <p id="empty-description">消息、命令、文件修改、计划、审批和停止原因都直接来自 Codex App Server，不再解析终端字符。</p>
           <button id="empty-new-thread" class="primary-button" type="button">创建第一个会话</button>
         </section>
 
         <section id="native-workspace" class="native-workspace hidden">
           <div class="native-chrome">
-            <div><span class="live-dot"></span><strong>CODEX NATIVE</strong><small id="native-connection">正在连接…</small></div>
+            <div><span class="live-dot"></span><strong id="native-label">CODEX NATIVE</strong><small id="native-connection">正在连接…</small></div>
             <div class="native-tools">
               <span id="token-usage"></span>
               <button id="comment-selection" class="text-button" type="button">批注选中内容</button>
@@ -67,7 +72,7 @@
             </div>
           </div>
 
-          <div id="native-error" class="native-error hidden"><strong>Codex App Server 无法使用</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">重试</button></div>
+          <div id="native-error" class="native-error hidden"><strong id="native-error-title">Codex App Server 无法使用</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">重试</button></div>
           <div id="transcript" class="transcript" aria-live="polite"></div>
           <nav id="turn-navigator" class="turn-navigator hidden" aria-label="当前会话的 Turn 导航"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
           <button id="selection-popover" class="selection-popover hidden" type="button">＋ 添加批注</button>
@@ -116,7 +121,7 @@
 
     <dialog id="new-thread-dialog" class="dialog">
       <form id="new-thread-form">
-        <header class="dialog-header"><div><span class="eyebrow">NEW CODEX THREAD</span><h2>创建 Codex 会话</h2><p>由 App Server 直接创建并持久化。</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span id="new-thread-eyebrow" class="eyebrow">NEW CODEX THREAD</span><h2 id="new-thread-title">创建 Codex 会话</h2><p id="new-thread-description">由 App Server 直接创建并持久化。</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
           <label class="field full"><span>会话名称（可选）</span><input id="new-thread-name" placeholder="例如：实现 Codex 原生界面" /></label>
           <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small>必须是本机绝对路径。</small></label>
@@ -131,7 +136,7 @@
 
     <dialog id="rename-thread-dialog" class="dialog small-dialog">
       <form id="rename-thread-form">
-        <header class="dialog-header"><div><span class="eyebrow">RENAME THREAD</span><h2>重命名会话</h2><p>名称由 Codex 持久化，并显示在所有原生客户端中。</p></div><button id="close-rename-thread" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">RENAME THREAD</span><h2>重命名会话</h2><p id="rename-thread-description">名称由 Codex 持久化，并显示在所有原生客户端中。</p></div><button id="close-rename-thread" class="icon-button" type="button">×</button></header>
         <div class="dialog-body"><label class="field full"><span>会话名称</span><input id="rename-thread-name" required maxlength="200" /></label><div id="rename-thread-error" class="form-error hidden"></div></div>
         <footer class="dialog-footer"><button id="cancel-rename-thread" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存名称</button></footer>
       </form>

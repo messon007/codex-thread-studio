@@ -2,16 +2,15 @@
 
 ## Goal
 
-Provide a clear desktop UI for Codex that uses App Server's structured Thread/Turn/Item protocol instead of terminal scraping. The UI must make progress, tool activity, approvals, final status, and failure reasons independently visible and selectable.
+Provide a clear desktop UI for Codex and OpenCode using their structured protocols instead of terminal scraping. The UI must make progress, tool activity, approvals, final status, and failure reasons independently visible and selectable.
 
 The long-term target is a mature Codex desktop client: daily CLI workflows should be available through native structured controls while Studio retains richer review, selection, and commenting interactions. See the [maturity roadmap](maturity-roadmap.md).
 
 ## Scope
 
-- Codex only; no Claude Code or OpenCode adapter in this release.
-- Direct `codex app-server` integration; no terminal, tmux, or xterm fallback.
+- Codex App Server and OpenCode Server; no terminal, tmux, or xterm fallback.
 - Local desktop operation on Linux first, with Tauri-compatible macOS support.
-- Existing Codex authentication and configuration; no API-key storage in Studio.
+- Existing CLI authentication and configuration; no API-key storage in Studio.
 
 ## Functional requirements
 
@@ -22,6 +21,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 5. Appearance: light/dark theme, configurable UI/code font family and weight, code size, high-contrast secondary text, and persisted Comfortable/Wide/Full transcript width.
 6. Diagnostics: show App Server state, resolved Codex binary, protocol/transport, reconnect state, and actionable spawn/protocol errors.
 7. Performance: high-frequency text, reasoning, plan, and command-output deltas update only their active Item at animation-frame cadence. Completed history is not reparsed for every delta.
+8. Backend switching: selecting Codex or OpenCode replaces the session list and transport without mixing IDs, drafts, selections, or transient event state.
 
 ## Acceptance criteria
 
@@ -50,6 +50,9 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 23. When the transcript is following live output, streaming deltas, Item completion, Markdown reflow, and structural rerenders keep it pinned to the latest content. A deliberate upward scroll pauses following, and returning to the bottom or sending a new interaction resumes it.
 24. Switching Threads calls `thread/unsubscribe` for the previous Thread before resuming the next one.
 25. With two or more Turns, the navigator creates one marker per Turn, highlights the Turn at the reading position, exposes a normalized user-prompt preview on hover/focus, and scrolls to the selected Turn. It stays hidden for a single Turn and narrow windows.
+26. OpenCode mode starts a password-protected loopback server, lists sessions across project directories, restores message history, consumes SSE deltas, supports create/rename/fork/delete/abort, and never exposes the child password to JavaScript.
+27. OpenCode project-scoped requests include the session directory; missing status entries are displayed as idle, and an SSE reconnect re-reads the selected session.
+28. Comment drafts and last-selected IDs are namespaced per backend. Switching back restores the previous backend selection without showing the other backend's sessions.
 
 ## Deferred
 

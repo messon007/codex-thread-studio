@@ -1,6 +1,6 @@
 # Codex Thread Studio
 
-这是一个独立、非官方、使用 Tauri 开发的 Codex 结构化桌面客户端，直接连接 [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)。
+这是一个独立、非官方、使用 Tauri 开发的 Codex/OpenCode 结构化桌面客户端，直接连接 [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) 或本机 [`opencode serve`](https://opencode.ai/docs/server/)，不解析终端字符。
 
 它不是 Agent Deck 前端，不嵌入终端，也不依赖 tmux；Thread、Turn、Item 和审批都直接来自 Codex App Server v2。
 
@@ -16,26 +16,26 @@
 - 提供紧凑的会话内 Turn 导航：高亮当前交互，悬停显示用户提示摘要，点击短线直接滚动到对应 Turn。
 - 可以选择结构化输出、输入意见并反复积累批注；每条批注保留来源 Turn/Item 锚点，最终提示词只插入输入框，不自动发送。
 - 持久化浅色/深色主题、字体、对比度、舒适/宽屏/全宽内容宽度、当前 Thread、批注草稿和可配置批注模板。
-- 复用本机 Codex CLI 和已有登录状态，不保存模型凭据。
+- 可在 Codex 与 OpenCode 间切换；两种后端的会话选择和批注草稿彼此隔离。
+- 复用本机 CLI 和已有登录状态，不保存模型凭据。Rust 会用仅存在于内存中的随机密码保护 OpenCode 子进程。
 
 ## 架构
 
 ```text
 Tauri WebView
-  └─ 同源 WebSocket
-      └─ Rust 本地 Broker
-          └─ stdin/stdout JSONL
-              └─ codex app-server
-                  └─ Thread / Turn / Item / Approval
+  └─ Rust 本地网关
+      ├─ WebSocket ↔ stdin/stdout JSONL ↔ codex app-server
+      └─ 同源 HTTP/SSE 代理 ↔ opencode serve
 ```
 
-Rust Broker 负责唯一一次 `initialize`/`initialized` 握手；之后 WebView 通过 WebSocket 转发 App Server JSON-RPC 请求、响应和事件。
+Rust Broker 负责 Codex 的 `initialize`/`initialized` 握手，以及 OpenCode 进程、随机端口和认证；WebView 只访问 Studio 的同源网关。
 
 ## 启动
 
 ```bash
 ./scripts/install-linux-dev-deps.sh
 codex --version
+opencode --version
 cargo run -p codex-thread-studio
 ```
 
@@ -44,6 +44,8 @@ cargo run -p codex-thread-studio
 ```bash
 CODEX_THREAD_STUDIO_CODEX_BIN=/Codex/绝对路径 cargo run -p codex-thread-studio
 ```
+
+OpenCode 不在图形桌面 `PATH` 中时，可设置 `CODEX_THREAD_STUDIO_OPENCODE_BIN=/OpenCode/绝对路径`。
 
 ## 验证
 
@@ -66,6 +68,6 @@ npm run version:check
 
 ## 当前生命周期边界
 
-第一版由 Studio 进程启动一个 App Server 子进程。Codex 会持久化 Thread 历史，但关闭 Studio 可能中断正在执行的 Turn。后续里程碑是改用 App Server daemon/control socket，让执行生命周期彻底独立于窗口。
+当前由 Studio 管理本次运行中使用的后端子进程。Codex/OpenCode 会持久化会话历史，但关闭 Studio 仍可能中断正在执行的任务。
 
 本项目采用 MIT License，是非官方 Codex 客户端。第三方 UI 依赖见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

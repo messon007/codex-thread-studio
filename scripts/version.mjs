@@ -13,7 +13,8 @@ const changelogPath = path.join(root, 'CHANGELOG.md')
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
 
 function fail(message) {
-  console.error(`version: ${message}`)
+  // Synchronous output is not dropped when this CLI exits under Node's test runner.
+  fs.writeSync(2, `version: ${message}\n`)
   process.exit(1)
 }
 

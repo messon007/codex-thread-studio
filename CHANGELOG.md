@@ -4,6 +4,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+- Add switchable Codex App Server and OpenCode Server backends with structured session history, streaming events, native CRUD, file/skill discovery, permissions, and isolated UI state.
+
 ### Fixed
 
 - Keep an active transcript pinned to the latest streaming output across Item completion and Markdown layout changes, while still respecting deliberate upward scrolling.

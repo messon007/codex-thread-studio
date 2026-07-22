@@ -8,24 +8,27 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::State;
-use axum::http::{header, Response, StatusCode};
+use axum::extract::{Path as AxumPath, State};
+use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{any, get};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod codex_app_server;
+mod opencode_server;
 
 use codex_app_server::{find_codex_binary, CodexAppServer};
+use opencode_server::{find_opencode_binary, OpenCodeServer};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
 
 #[derive(Clone)]
 struct GatewayState {
     codex: CodexAppServer,
+    opencode: OpenCodeServer,
     preferences_path: Arc<PathBuf>,
     preferences_lock: Arc<Mutex<()>>,
 }
@@ -65,6 +68,10 @@ struct StudioPreferences {
     typography: Option<TypographyPreferences>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_thread: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    selected_threads: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     annotation_drafts: BTreeMap<String, Vec<AnnotationDraft>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -75,7 +82,7 @@ struct StudioPreferences {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CodexInfo {
+struct BackendInfo {
     app_name: &'static str,
     app_version: &'static str,
     binary: String,
@@ -86,12 +93,14 @@ struct CodexInfo {
 fn main() {
     let cli_path = augmented_cli_path();
     let codex_binary = find_codex_binary(&cli_path);
+    let opencode_binary = find_opencode_binary(&cli_path);
     let preferences_path = studio_preferences_path();
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
     let state = GatewayState {
         codex: CodexAppServer::new(codex_binary, cli_path),
+        opencode: OpenCodeServer::new(opencode_binary, augmented_cli_path()),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
     };
@@ -136,6 +145,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/codex-native.mjs", get(codex_native_js))
+        .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
@@ -144,11 +154,13 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route("/studio/codex", get(codex_info))
+        .route("/studio/opencode", get(opencode_info))
         .route(
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
         )
         .route("/ws/codex", get(codex_app_server_ws))
+        .route("/opencode/{*path}", any(proxy_opencode))
         .with_state(state)
 }
 
@@ -165,6 +177,10 @@ async fn app_js() -> impl IntoResponse {
 
 async fn codex_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/codex-native.mjs"))
+}
+
+async fn opencode_native_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/opencode-native.mjs"))
 }
 
 async fn composer_tools_js() -> impl IntoResponse {
@@ -218,13 +234,34 @@ async fn github_markdown_css() -> impl IntoResponse {
 }
 
 async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
-    axum::Json(CodexInfo {
+    axum::Json(BackendInfo {
         app_name: "Codex Thread Studio",
         app_version: env!("CARGO_PKG_VERSION"),
         binary: state.codex.binary().to_string(),
         protocol: "Codex App Server v2",
         transport: "stdio JSONL via Studio WebSocket",
     })
+}
+
+async fn opencode_info(State(state): State<GatewayState>) -> impl IntoResponse {
+    let info = state.opencode.info().await;
+    let status = if info.reachable {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_GATEWAY
+    };
+    (status, axum::Json(info))
+}
+
+async fn proxy_opencode(
+    State(state): State<GatewayState>,
+    AxumPath(path): AxumPath<String>,
+    method: Method,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> Response<Body> {
+    state.opencode.proxy(path, method, headers, uri, body).await
 }
 
 async fn codex_app_server_ws(
@@ -356,6 +393,23 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         .is_some_and(|value| value.len() > 256)
     {
         return Err("selected thread id is too long".to_string());
+    }
+    if preferences
+        .selected_backend
+        .as_deref()
+        .is_some_and(|backend| !matches!(backend, "codex" | "opencode"))
+    {
+        return Err("selected backend must be codex or opencode".to_string());
+    }
+    if preferences.selected_threads.len() > 2
+        || preferences
+            .selected_threads
+            .iter()
+            .any(|(backend, thread_id)| {
+                !matches!(backend.as_str(), "codex" | "opencode") || thread_id.len() > 256
+            })
+    {
+        return Err("selected backend threads are invalid".to_string());
     }
     if let Some(typography) = &preferences.typography {
         if typography.ui_font_family.trim().is_empty()
@@ -503,6 +557,7 @@ mod tests {
         runtime.block_on(async {
             let state = GatewayState {
                 codex: CodexAppServer::new("codex".to_string(), OsString::new()),
+                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-test.json"),
                 ),
@@ -513,6 +568,7 @@ mod tests {
                 "/",
                 "/app.js",
                 "/codex-native.mjs",
+                "/opencode-native.mjs",
                 "/composer-tools.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
@@ -543,6 +599,7 @@ mod tests {
         runtime.block_on(async {
             let state = GatewayState {
                 codex: CodexAppServer::new("codex".to_string(), OsString::new()),
+                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-test.json"),
                 ),

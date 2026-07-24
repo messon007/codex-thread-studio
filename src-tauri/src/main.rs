@@ -181,7 +181,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
-        .route("/thread-attention.mjs", get(thread_attention_js))
+        .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/favorites.mjs", get(favorites_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
@@ -238,8 +238,8 @@ async fn thread_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-catalog.mjs"))
 }
 
-async fn thread_attention_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/thread-attention.mjs"))
+async fn thread_workset_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-workset.mjs"))
 }
 
 async fn composer_tools_js() -> impl IntoResponse {
@@ -793,7 +793,7 @@ mod tests {
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
                 "/thread-catalog.mjs",
-                "/thread-attention.mjs",
+                "/thread-workset.mjs",
                 "/composer-tools.mjs",
                 "/favorites.mjs",
                 "/turn-navigator.mjs",

@@ -13,6 +13,7 @@ const english = {
   '待处理': 'Attention',
   '会话筛选': 'Session filters',
   '没有正在运行的会话': 'No active sessions',
+  '没有已加载的会话': 'No loaded sessions',
   '还没有会话': 'No sessions yet',
   'Codex 会话': 'Codex session',
   '标题': 'Title',

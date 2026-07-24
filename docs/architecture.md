@@ -57,7 +57,7 @@ Agent prose and reasoning summaries pass through locally vendored Marked (GFM pa
 
 App Server delta notifications update only the affected Item in the browser model. Studio batches high-frequency updates with `requestAnimationFrame` and patches the active message, plan, reasoning, or command-output node directly. Markdown parsing and sanitization run after Item completion, not once for every token delta. Structural notifications still trigger a full transcript render.
 
-Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore the cached model for the last selected session when it remains valid.
+Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. The loaded set and render-model cache are deliberately process-local: after restart, Studio loads the most recently updated session for the selected backend and restores other histories only on first selection. The flat Attention view exposes this loaded workset and orders it by backend session update time. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore a cached model only when it was loaded in the current process and remains valid.
 
 ## Composer orchestration
 

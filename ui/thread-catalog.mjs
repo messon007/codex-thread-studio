@@ -40,7 +40,6 @@ export function groupCatalogEntries(entries = []) {
 export function filterCatalogEntries(catalogs, {
   filter = 'all',
   search = '',
-  activity = {},
   attention = new Set(),
 } = {}) {
   const query = search.trim().toLowerCase()
@@ -59,26 +58,25 @@ export function filterCatalogEntries(catalogs, {
     ].filter(Boolean).join(' ').toLowerCase().includes(query)
   })
 
+  if (filter !== 'attention') return entries
+
   return entries.sort((left, right) => {
-    const leftActivity = Number(activity[threadCatalogKey(left.backend, left.thread.id)] || 0)
-    const rightActivity = Number(activity[threadCatalogKey(right.backend, right.thread.id)] || 0)
     const leftUpdated = catalogTimestamp(left.thread.updatedAt || left.thread.updated_at || left.thread.createdAt)
     const rightUpdated = catalogTimestamp(right.thread.updatedAt || right.thread.updated_at || right.thread.createdAt)
-    if (filter === 'attention' && rightActivity !== leftActivity) return rightActivity - leftActivity
-    if (isActiveCatalogThread(left.thread) !== isActiveCatalogThread(right.thread)) {
-      return isActiveCatalogThread(left.thread) ? -1 : 1
-    }
     if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
-    if (rightActivity !== leftActivity) return rightActivity - leftActivity
     return String(left.thread.name || left.thread.title || left.thread.id)
       .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
   })
 }
 
 export function catalogTimestamp(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'number' && Number.isFinite(value)) return normalizeEpoch(value)
   const numeric = Number(value)
-  if (Number.isFinite(numeric)) return numeric
+  if (Number.isFinite(numeric)) return normalizeEpoch(numeric)
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeEpoch(value) {
+  return value > 0 && value < 100_000_000_000 ? value * 1000 : value
 }

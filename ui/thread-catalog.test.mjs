@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   catalogCountsWithAttention,
+  catalogTimestamp,
   filterCatalogEntries,
   groupCatalogEntries,
   threadCatalogKey,
@@ -28,6 +29,11 @@ test('keeps equal IDs from different backends as separate sessions', () => {
   )
 })
 
+test('normalizes second and millisecond epoch timestamps for cross-backend ordering', () => {
+  assert.equal(catalogTimestamp(1_784_881_800), 1_784_881_800_000)
+  assert.equal(catalogTimestamp(1_784_881_800_123), 1_784_881_800_123)
+})
+
 test('reports deck-style all, active, and attention counts', () => {
   const attention = new Set([threadCatalogKey('opencode', 'same-id')])
   assert.deepEqual(catalogCountsWithAttention(catalogs, attention), { all: 3, active: 1, attention: 1 })
@@ -35,16 +41,26 @@ test('reports deck-style all, active, and attention counts', () => {
   assert.deepEqual(filterCatalogEntries(catalogs, { filter: 'attention', attention }).map(({ thread }) => thread.name), ['OpenCode task'])
 })
 
-test('attention mode prioritizes the latest local interaction', () => {
-  const activity = {
-    [threadCatalogKey('codex', 'same-id')]: 100,
-    [threadCatalogKey('opencode', 'same-id')]: 300,
-    [threadCatalogKey('codex', 'running-cx')]: 200,
-  }
-  const attention = new Set(Object.keys(activity))
+test('attention mode orders loaded sessions by catalog update time', () => {
+  const attention = new Set([
+    threadCatalogKey('codex', 'same-id'),
+    threadCatalogKey('opencode', 'same-id'),
+    threadCatalogKey('codex', 'running-cx'),
+  ])
   assert.deepEqual(
-    filterCatalogEntries(catalogs, { filter: 'attention', activity, attention }).map(({ backend, thread }) => `${backend}:${thread.id}`),
-    ['opencode:same-id', 'codex:running-cx', 'codex:same-id'],
+    filterCatalogEntries(catalogs, { filter: 'attention', attention }).map(({ backend, thread }) => `${backend}:${thread.id}`),
+    ['codex:running-cx', 'opencode:same-id', 'codex:same-id'],
+  )
+})
+
+test('all and active modes keep catalog order', () => {
+  assert.deepEqual(
+    filterCatalogEntries(catalogs, { filter: 'all' }).map(({ backend, thread }) => `${backend}:${thread.id}`),
+    ['codex:same-id', 'codex:running-cx', 'opencode:same-id'],
+  )
+  assert.deepEqual(
+    filterCatalogEntries(catalogs, { filter: 'active' }).map(({ backend, thread }) => `${backend}:${thread.id}`),
+    ['codex:running-cx'],
   )
 })
 
@@ -56,9 +72,9 @@ test('search includes the backend tag and project directory', () => {
 test('groups regular views by full directory and uses the last path level as the label', () => {
   const groups = groupCatalogEntries(filterCatalogEntries(catalogs))
   assert.deepEqual(groups.map(({ cwd, name }) => [cwd, name]), [
+    ['/work/codex', 'codex'],
     ['/work/shared', 'shared'],
     ['/work/opencode', 'opencode'],
-    ['/work/codex', 'codex'],
   ])
 })
 
@@ -83,7 +99,7 @@ test('the sidebar contract has one create button, directory groups, and no backe
 test('session selection renders a valid cache before performing a first history load', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const start = source.indexOf('async function selectThread(')
-  const end = source.indexOf('\nfunction touchThreadActivity', start)
+  const end = source.indexOf('\nfunction markThreadLoaded', start)
   const selectThread = source.slice(start, end)
   assert.ok(selectThread.indexOf('freshThreadModel(') < selectThread.indexOf('renderTranscript()'))
   assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id)'))

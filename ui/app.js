@@ -54,11 +54,9 @@ import {
   threadCatalogKey,
 } from './thread-catalog.mjs'
 import {
-  catalogAttentionState,
-  codexAttentionState,
-  openCodeAttentionState,
-  setThreadAttention,
-} from './thread-attention.mjs'
+  addLoadedThread,
+  updateLoadedCatalogTimestamp,
+} from './thread-workset.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
 marked.setOptions({
@@ -114,7 +112,6 @@ const state = {
   selectedId: null,
   search: '',
   filter: 'all',
-  threadActivity: {},
   attentionThreads: new Set(),
   collapsedThreadGroups: new Set(),
   model: createCodexViewModel(),
@@ -539,6 +536,8 @@ function handleAppServerMessage(message) {
     return
   }
 
+  updateCodexReplyTime(message)
+
   if (message.id != null && message.method) {
     const targetModel = codexNotificationModel(message)
     if (!targetModel) return
@@ -548,7 +547,6 @@ function handleAppServerMessage(message) {
       return
     }
     markCachedModelValidated('codex', targetModel)
-    updateCodexAttention(message, targetModel)
     if (targetModel !== state.model) return
     renderTranscript()
     return
@@ -558,7 +556,6 @@ function handleAppServerMessage(message) {
   if (!targetModel) return
   if (applyCodexNotification(targetModel, message)) {
     markCachedModelValidated('codex', targetModel)
-    updateCodexAttention(message, targetModel)
     if (targetModel !== state.model) {
       updateThreadStatusFromNotification(message)
       return
@@ -594,6 +591,7 @@ function handleOpenCodeServerEvent(event) {
     return
   }
   const eventThreadId = openCodeEventThreadId(payload)
+  updateOpenCodeReplyTime(payload, eventThreadId)
   const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
   const targetModel = eventThreadId === state.selectedId
     ? state.model
@@ -602,7 +600,6 @@ function handleOpenCodeServerEvent(event) {
   const update = applyOpenCodeEvent(targetModel, event, eventThreadId)
   if (!update.handled) return
   markCachedModelValidated('opencode', targetModel)
-  updateOpenCodeAttention(payload, eventThreadId)
   if (targetModel !== state.model) return
   if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
   else if (update.kind === 'metadata') {
@@ -850,36 +847,21 @@ async function loadThreads() {
   renderThreadList()
   refreshInactiveCatalog()
   const preferred = state.selectedId
-  const nextId = state.threads.some((thread) => thread.id === preferred) ? preferred : state.threads[0]?.id
+  const recent = [...state.threads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
+  const nextId = state.threads.some((thread) => thread.id === preferred) ? preferred : recent?.id
   if (nextId) await selectThread(nextId, { force: true })
   else renderWorkspace()
 }
 
 function setActiveThreads(threads) {
-  const previous = new Map((state.threadsByBackend[state.backend] || []).map((thread) => [thread.id, thread]))
-  let attentionChanged = false
-  for (const thread of threads) {
-    const prior = previous.get(thread.id)
-    const key = threadCatalogKey(state.backend, thread.id)
-    const attention = catalogAttentionState(prior, thread)
-    if (attention === true) {
-      state.attentionThreads.add(key)
-      state.threadActivity[key] = Date.now()
-      attentionChanged = true
-    } else if (attention === false && state.attentionThreads.delete(key)) {
-      attentionChanged = true
-    }
-  }
   state.threads = threads
   state.threadsByBackend[state.backend] = threads
-  if (attentionChanged) persistPreferences()
 }
 
 function visibleThreadEntries() {
   return filterCatalogEntries(state.threadsByBackend, {
     filter: state.filter,
     search: state.search,
-    activity: state.threadActivity,
     attention: state.attentionThreads,
   })
 }
@@ -901,6 +883,8 @@ function renderThreadList() {
       ? '没有匹配的会话'
       : state.filter === 'active'
         ? '没有正在运行的会话'
+        : state.filter === 'attention'
+          ? '没有已加载的会话'
         : '还没有会话'
     list.innerHTML = `<div class="list-empty">${t(message)}</div>`
     return
@@ -941,9 +925,7 @@ function renderThreadList() {
 }
 
 async function selectThread(id, { force = false, backend = state.backend } = {}) {
-  markThreadAttention(backend, id, false)
   if (backend !== state.backend) {
-    touchThreadActivity(backend, id)
     await switchBackend(backend, { selectedId: id })
     await waitFor(() => state.backend === backend && state.ready, 15_000)
     await waitFor(() => state.threads.some((thread) => thread.id === id), 15_000)
@@ -957,7 +939,6 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   transcriptScrollFollower.reset()
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
-  touchThreadActivity(state.backend, id)
   const cached = freshThreadModel(state.backend, id)
   state.model = cached?.model || createCodexViewModel()
   state.model.threadId = id
@@ -972,46 +953,38 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   await resumeThread(id)
 }
 
-function touchThreadActivity(backend = state.backend, id = state.selectedId) {
-  if (!id) return
-  state.threadActivity[threadCatalogKey(backend, id)] = Date.now()
-  persistPreferences()
+function markThreadLoaded(backend, id) {
+  if (addLoadedThread(state.attentionThreads, backend, id)) renderThreadList()
 }
 
-function markThreadAttention(backend, id, attention) {
-  if (!id) return
-  const changed = setThreadAttention(state.attentionThreads, backend, id, attention)
-  if (changed) {
-    renderThreadList()
-    persistPreferences()
-  }
-}
-
-function updateCodexAttention(message, model) {
-  const method = message.method || ''
+function updateCodexReplyTime(message, model = null) {
+  if (message.method !== 'turn/completed') return
   const threadId = message.params?.threadId
     || message.params?.thread?.id
     || message.params?.turn?.threadId
     || threadIdForCachedModel('codex', model)
+    || (state.backend === 'codex' ? state.selectedId : null)
   if (!threadId) return
-  const attention = codexAttentionState(method)
-  if (attention === false) markThreadAttention('codex', threadId, false)
-  if (attention === true) {
-    state.threadActivity[threadCatalogKey('codex', threadId)] = Date.now()
-    markThreadAttention('codex', threadId, true)
-    persistPreferences()
-  }
+  updateLoadedThreadTimestamp('codex', threadId)
 }
 
-function updateOpenCodeAttention(payload, threadId) {
-  if (!threadId) return
-  const attention = openCodeAttentionState(payload)
-  if (attention === false) markThreadAttention('opencode', threadId, false)
-  if (attention === true) {
-    state.threadActivity[threadCatalogKey('opencode', threadId)] = Date.now()
-    markThreadAttention('opencode', threadId, true)
-    persistPreferences()
-  }
+function updateOpenCodeReplyTime(payload, threadId) {
+  if (!threadId || payload.type !== 'session.idle') return
+  updateLoadedThreadTimestamp('opencode', threadId)
+}
+
+function updateLoadedThreadTimestamp(backend, id) {
+  if (updateLoadedCatalogTimestamp(
+    state.threadsByBackend,
+    state.attentionThreads,
+    backend,
+    id,
+    Date.now(),
+  ) && state.filter === 'attention') renderThreadList()
+}
+
+function threadUpdatedAt(thread) {
+  return catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt)
 }
 
 async function resumeThread(id) {
@@ -1079,6 +1052,7 @@ function cacheThreadModel(backend = state.backend, id = state.selectedId, model 
     model,
     validatedAt: Date.now(),
   })
+  markThreadLoaded(backend, id)
 }
 
 function invalidateThreadModel(backend, id) {
@@ -2713,11 +2687,10 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
   state.selectedByBackend = {
-    codex: typeof saved.selectedThreads?.codex === 'string' ? saved.selectedThreads.codex : typeof saved.selectedThread === 'string' ? saved.selectedThread : null,
-    opencode: typeof saved.selectedThreads?.opencode === 'string' ? saved.selectedThreads.opencode : null,
+    codex: null,
+    opencode: null,
   }
-  state.threadActivity = normalizeThreadActivity(saved.threadActivity)
-  state.attentionThreads = new Set(normalizeAttentionThreads(saved.attentionThreads))
+  state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
   state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
@@ -2749,29 +2722,12 @@ function preferencesSnapshot() {
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
     selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
-    threadActivity: state.threadActivity,
-    attentionThreads: [...state.attentionThreads],
     annotationDrafts: state.annotationDrafts,
     annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
     openingMessages: state.openingMessages,
   }
-}
-
-function normalizeThreadActivity(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key, timestamp]) => /^(codex|opencode):.{1,256}$/u.test(key) && Number.isFinite(Number(timestamp)))
-    .slice(0, 2048)
-    .map(([key, timestamp]) => [key, Number(timestamp)]))
-}
-
-function normalizeAttentionThreads(value) {
-  if (!Array.isArray(value)) return []
-  return [...new Set(value.filter((key) =>
-    typeof key === 'string' && /^(codex|opencode):.{1,256}$/u.test(key),
-  ))].slice(0, 2048)
 }
 
 function persistPreferences() {

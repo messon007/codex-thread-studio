@@ -18,10 +18,11 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 2. Structured transcript: messages, reasoning summaries, plan, commands/output, file changes/diffs, supported tool calls, token usage, and explicit Turn completion status/error. Agent prose supports sanitized GitHub-flavored Markdown, including headings, lists, links, quotes, tables, task lists, inline code, and fenced code with copy controls.
 3. Interaction: start a Turn, steer an active Turn, interrupt it from the composer or Thread toolbar, and handle command/file/permission approvals. Typing `@` searches the active project through App Server and inserts a selected path; typing `$` discovers App Server skills and queues the selected structured skill input; starting the composer with `!` runs the remainder through the Thread's local shell. Typing `/` opens a keyboard-navigable command palette. A compact right-side navigator maps each user/Codex interaction to its structured Turn and supports direct navigation within long sessions.
 4. Comments: select rendered text, enter a comment in a dialog, repeat across items, persist by Thread, edit through delete/clear/additional guidance, and insert the assembled prompt without automatic send.
-5. Appearance: light/dark theme, configurable UI/code font family and weight, code size, high-contrast secondary text, and persisted Comfortable/Wide/Full transcript width.
-6. Diagnostics: show App Server state, resolved Codex binary, protocol/transport, reconnect state, and actionable spawn/protocol errors.
-7. Performance: high-frequency text, reasoning, plan, and command-output deltas update only their active Item at animation-frame cadence. Completed history is not reparsed for every delta.
-8. Backend switching: selecting Codex or OpenCode replaces the session list and transport without mixing IDs, drafts, selections, or transient event state.
+5. Favorites: save a complete AI Item with one click, automatically resolve the user question from the same Turn, optionally include it, add a title/tags/note, search globally across backends and Threads, and navigate back to the original Item.
+6. Appearance: light/dark theme, configurable UI/code font family and weight, code size, high-contrast secondary text, and persisted Comfortable/Wide/Full transcript width.
+7. Diagnostics: show App Server state, resolved Codex binary, protocol/transport, reconnect state, and actionable spawn/protocol errors.
+8. Performance: high-frequency text, reasoning, plan, and command-output deltas update only their active Item at animation-frame cadence. Completed history is not reparsed for every delta.
+9. Backend switching: selecting Codex or OpenCode replaces the session list and transport without mixing IDs, drafts, selections, or transient event state.
 
 ## Acceptance criteria
 
@@ -53,6 +54,8 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 26. OpenCode mode starts a password-protected loopback server, lists sessions across project directories, restores message history, consumes SSE deltas, supports create/rename/fork/delete/abort, and never exposes the child password to JavaScript.
 27. OpenCode project-scoped requests include the session directory; missing status entries are displayed as idle, and an SSE reconnect re-reads the selected session.
 28. Comment drafts and last-selected IDs are namespaced per backend. Switching back restores the previous backend selection without showing the other backend's sessions.
+29. Saving an agent message stores its exact backend/Thread/Turn/Item anchor and original Markdown; the same Turn's user question is included only when selected.
+30. Favorites survive restart, search across title/content/question/note/tags/source metadata, render sanitized Markdown, and can reopen and highlight an available source Item without losing the saved copy when the source is unavailable.
 
 ## Deferred
 

@@ -15,6 +15,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Provides `@` project-file search, direct `$skill-name` discovery with structured App Server skill inputs, `!command` local shell mode, and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
+- Saves any complete AI message directly from its structured Item, optionally includes the user question from the same Turn, and provides a searchable cross-backend, cross-thread favorites library with source navigation.
 - Provides persistent light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and a configurable annotation prompt template.
 - Switches between isolated Codex and OpenCode session lists, remembers the selected session for each backend, and namespaces comment drafts per backend.
 - Uses installed CLIs and their existing authentication; Studio stores no model credential. The Rust layer starts OpenCode with an ephemeral password that never enters browser storage.

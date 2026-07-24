@@ -65,7 +65,9 @@ Protocol responsibilities are split as follows:
 - `src-tauri/src/opencode_server.rs`: OpenCode resolution, password-protected process lifecycle, health checks, and streaming HTTP/SSE proxy.
 - `ui/codex-native.mjs`: provider event normalization and unit-testable render state.
 - `ui/opencode-native.mjs`: OpenCode session/history/event normalization into the shared render state.
-- `ui/app.js`: RPC correlation, Thread flows, structured rendering, approval UI, comments, settings.
+- `ui/app.js`: RPC correlation, Thread flows, structured rendering, approval UI, comments, native favorites, settings.
+- `ui/favorites.mjs`: pure helpers for Turn question association, source identities, titles, tags, and copy output.
+- `src-tauri/src/favorites.rs`: validated global favorites persistence and search summaries.
 - `ui/vendor`: lockfile-pinned Marked, DOMPurify, GitHub Markdown CSS, and license texts for offline rendering.
 
 ## Compatibility checks

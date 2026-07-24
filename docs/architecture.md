@@ -83,13 +83,25 @@ A comment draft is keyed by backend and session:
 
 The quote remains human-readable even when old history changes. Turn/Item IDs preserve the structured source anchor. The configurable template assembles all comments and optional overall guidance into ordinary text for `turn/start` or `turn/steer`; insertion never sends automatically.
 
+## Native favorites
+
+Favorites attach to complete structured AI messages rather than terminal text or clipboard snapshots. The UI resolves the user question from the same Turn and offers it as an explicit inclusion choice. Each saved record keeps `{ backend, threadId, turnId, itemId }`, source metadata, the original Markdown answer, the optional question, tags, and a note. The source anchor enables a favorite to reopen its backend and Thread and highlight the original Item; the copied content remains useful even when the source Thread has later been archived or deleted.
+
 ## Persistence
 
-Codex and OpenCode own history and credentials in their normal state directories. Studio stores only UI settings, per-backend selection, and explicit comment drafts in:
+Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI settings, per-backend selection, and explicit comment drafts in:
 
 ```text
 ~/.config/codex-thread-studio/settings.json
 ```
+
+The global favorites library is intentionally separate because it can contain substantially larger user-selected message content:
+
+```text
+~/.config/codex-thread-studio/favorites.json
+```
+
+Favorites use validated, bounded records and atomic temporary-file replacement. Search returns summaries; full Markdown content is loaded only when a favorite is opened.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

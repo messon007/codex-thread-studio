@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
@@ -18,9 +18,11 @@ use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod codex_app_server;
+mod favorites;
 mod opencode_server;
 
 use codex_app_server::{find_codex_binary, CodexAppServer};
+use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
 use opencode_server::{find_opencode_binary, OpenCodeServer};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
@@ -31,6 +33,8 @@ struct GatewayState {
     opencode: OpenCodeServer,
     preferences_path: Arc<PathBuf>,
     preferences_lock: Arc<Mutex<()>>,
+    favorites_path: Arc<PathBuf>,
+    favorites_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -90,11 +94,19 @@ struct BackendInfo {
     transport: &'static str,
 }
 
+#[derive(Default, Deserialize)]
+struct FavoriteQuery {
+    #[serde(default)]
+    q: String,
+    limit: Option<usize>,
+}
+
 fn main() {
     let cli_path = augmented_cli_path();
     let codex_binary = find_codex_binary(&cli_path);
     let opencode_binary = find_opencode_binary(&cli_path);
     let preferences_path = studio_preferences_path();
+    let favorites_path = preferences_path.with_file_name("favorites.json");
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
@@ -103,6 +115,8 @@ fn main() {
         opencode: OpenCodeServer::new(opencode_binary, augmented_cli_path()),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
+        favorites_path: Arc::new(favorites_path),
+        favorites_lock: Arc::new(Mutex::new(())),
     };
 
     let gateway_listener = TcpListener::bind("127.0.0.1:0")
@@ -147,6 +161,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
+        .route("/favorites.mjs", get(favorites_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
         .route("/vendor/marked.esm.js", get(marked_js))
@@ -158,6 +173,16 @@ fn gateway_router(state: GatewayState) -> Router {
         .route(
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
+        )
+        .route(
+            "/studio/favorites",
+            get(list_favorites).post(create_favorite),
+        )
+        .route(
+            "/studio/favorites/{id}",
+            get(get_favorite)
+                .put(update_favorite)
+                .delete(delete_favorite),
         )
         .route("/ws/codex", get(codex_app_server_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
@@ -185,6 +210,10 @@ async fn opencode_native_js() -> impl IntoResponse {
 
 async fn composer_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-tools.mjs"))
+}
+
+async fn favorites_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/favorites.mjs"))
 }
 
 async fn turn_navigator_js() -> impl IntoResponse {
@@ -309,6 +338,117 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
         Ok(()) => json_response(StatusCode::OK, &preferences),
         Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
     }
+}
+
+async fn list_favorites(
+    State(state): State<GatewayState>,
+    Query(query): Query<FavoriteQuery>,
+) -> Response<Body> {
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites lock is unavailable"),
+    };
+    match favorites::load(&state.favorites_path) {
+        Ok(items) => json_response(
+            StatusCode::OK,
+            &favorites::list(&items, &query.q, query.limit.unwrap_or(100)),
+        ),
+        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+    }
+}
+
+async fn get_favorite(
+    State(state): State<GatewayState>,
+    AxumPath(id): AxumPath<String>,
+) -> Response<Body> {
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites lock is unavailable"),
+    };
+    match favorites::load(&state.favorites_path) {
+        Ok(items) => match favorites::find(&items, &id) {
+            Some(favorite) => json_response(StatusCode::OK, &favorite),
+            None => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+        },
+        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+    }
+}
+
+async fn create_favorite(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let favorite = match parse_favorite_body(&body) {
+        Ok(favorite) => favorite,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites lock is unavailable"),
+    };
+    let items = match favorites::load(&state.favorites_path) {
+        Ok(items) => items,
+        Err(error) => return gateway_error(&format!("failed to read favorites: {error}")),
+    };
+    match favorites::insert(&state.favorites_path, items, favorite) {
+        Ok(favorite) => json_response(StatusCode::CREATED, &favorite),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn update_favorite(
+    State(state): State<GatewayState>,
+    AxumPath(id): AxumPath<String>,
+    body: String,
+) -> Response<Body> {
+    let favorite = match parse_favorite_body(&body) {
+        Ok(favorite) => favorite,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites lock is unavailable"),
+    };
+    let items = match favorites::load(&state.favorites_path) {
+        Ok(items) => items,
+        Err(error) => return gateway_error(&format!("failed to read favorites: {error}")),
+    };
+    match favorites::update(&state.favorites_path, items, &id, favorite) {
+        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn delete_favorite(
+    State(state): State<GatewayState>,
+    AxumPath(id): AxumPath<String>,
+) -> Response<Body> {
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites lock is unavailable"),
+    };
+    let items = match favorites::load(&state.favorites_path) {
+        Ok(items) => items,
+        Err(error) => return gateway_error(&format!("failed to read favorites: {error}")),
+    };
+    match favorites::remove(&state.favorites_path, items, &id) {
+        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+        Err(error) => gateway_error(&format!("failed to save favorites: {error}")),
+    }
+}
+
+fn parse_favorite_body(body: &str) -> Result<Favorite, (StatusCode, String)> {
+    if body.len() > MAX_FAVORITE_BODY_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "favorite payload is too large".to_string(),
+        ));
+    }
+    serde_json::from_str(body).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid favorite payload: {error}"),
+        )
+    })
 }
 
 fn studio_preferences_path() -> PathBuf {
@@ -562,6 +702,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                favorites_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-route-favorites-test.json"),
+                ),
+                favorites_lock: Arc::new(Mutex::new(())),
             };
             let router = gateway_router(state);
             for path in [
@@ -570,6 +714,7 @@ mod tests {
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
                 "/composer-tools.mjs",
+                "/favorites.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
                 "/styles.css",
@@ -604,6 +749,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                favorites_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-version-favorites-test.json"),
+                ),
+                favorites_lock: Arc::new(Mutex::new(())),
             };
             let response = gateway_router(state)
                 .oneshot(
@@ -620,6 +769,93 @@ mod tests {
             let value: serde_json::Value = serde_json::from_slice(&body).expect("version JSON");
             assert_eq!(value["appName"], "Codex Thread Studio");
             assert_eq!(value["appVersion"], env!("CARGO_PKG_VERSION"));
+        });
+    }
+
+    #[test]
+    fn favorite_api_preserves_native_message_anchors() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let unique = format!(
+                "codex-thread-studio-favorites-api-{}-{}.json",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system time after epoch")
+                    .as_nanos()
+            );
+            let favorites_path = env::temp_dir().join(unique);
+            let state = GatewayState {
+                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
+                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                preferences_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-favorites-api-settings.json"),
+                ),
+                preferences_lock: Arc::new(Mutex::new(())),
+                favorites_path: Arc::new(favorites_path.clone()),
+                favorites_lock: Arc::new(Mutex::new(())),
+            };
+            let router = gateway_router(state);
+            let favorite = json!({
+                "id": "favorite-1",
+                "backend": "codex",
+                "threadId": "thread-1",
+                "threadTitle": "Native UI",
+                "projectPath": "/tmp/native-ui",
+                "turnId": "turn-1",
+                "itemId": "item-1",
+                "title": "Structured favorite",
+                "question": "How should this work?",
+                "content": "Use the App Server item directly.",
+                "note": "Keep the source anchor.",
+                "tags": ["design"],
+                "createdAt": "2026-07-24T00:00:00.000Z"
+            });
+            let create = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/studio/favorites")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(favorite.to_string()))
+                        .expect("create request"),
+                )
+                .await
+                .expect("create response");
+            assert_eq!(create.status(), StatusCode::CREATED);
+
+            let list = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/favorites?q=anchor")
+                        .body(Body::empty())
+                        .expect("list request"),
+                )
+                .await
+                .expect("list response");
+            assert_eq!(list.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(list.into_body(), MAX_FAVORITE_BODY_BYTES)
+                .await
+                .expect("list body");
+            let value: serde_json::Value =
+                serde_json::from_slice(&body).expect("favorite list JSON");
+            assert_eq!(value["items"][0]["turnId"], "turn-1");
+            assert_eq!(value["items"][0]["itemId"], "item-1");
+
+            let delete = router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri("/studio/favorites/favorite-1")
+                        .body(Body::empty())
+                        .expect("delete request"),
+                )
+                .await
+                .expect("delete response");
+            assert_eq!(delete.status(), StatusCode::OK);
+            fs::remove_file(favorites_path).ok();
         });
     }
 

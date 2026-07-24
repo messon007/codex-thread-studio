@@ -23,6 +23,13 @@ import {
   shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
+import {
+  autoFavoriteTitle,
+  favoriteCopyText,
+  favoriteSourceKey,
+  normalizeFavoriteTags,
+  questionForTurn,
+} from './favorites.mjs'
 import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
@@ -83,6 +90,13 @@ const state = {
   turnOptions: {},
   pendingSkills: {},
   pendingFiles: {},
+  favorites: [],
+  favoriteIndex: [],
+  favoriteTotal: 0,
+  favoriteQuery: '',
+  pendingFavorite: null,
+  selectedFavorite: null,
+  favoriteEditMode: false,
 }
 
 let preferencesReady = false
@@ -93,6 +107,7 @@ const dirtyStreamItems = new Map()
 let composerSearchTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
+let favoritesSearchTimer = null
 const transcriptScrollFollower = createTranscriptScrollFollower()
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
@@ -102,6 +117,7 @@ async function init() {
   await loadPreferences()
   applyAppearance()
   applyBackendCopy()
+  await loadFavorites().catch(showError)
   await loadBackendInfo()
   connectBackend()
 }
@@ -150,6 +166,19 @@ function bindUI() {
   $('#clear-annotations').addEventListener('click', clearAnnotations)
   $('#insert-annotations').addEventListener('click', insertAnnotations)
   $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
+  $('#open-favorites').addEventListener('click', openFavoritesRail)
+  $('#close-favorites').addEventListener('click', closeFavoritesRail)
+  $('#favorites-search').addEventListener('input', handleFavoritesSearch)
+  $('#favorites-list').addEventListener('click', handleFavoriteListClick)
+  $('#favorite-form').addEventListener('submit', saveFavorite)
+  $('#close-favorite-dialog').addEventListener('click', closeFavoriteDialog)
+  $('#cancel-favorite').addEventListener('click', closeFavoriteDialog)
+  $('#favorite-include-question').addEventListener('change', renderFavoriteQuestionOption)
+  $('#close-favorite-detail').addEventListener('click', closeFavoriteDetail)
+  $('#copy-favorite').addEventListener('click', () => copySelectedFavorite().catch(showError))
+  $('#edit-favorite').addEventListener('click', editSelectedFavorite)
+  $('#delete-favorite').addEventListener('click', () => deleteSelectedFavorite().catch(showError))
+  $('#open-favorite-source').addEventListener('click', () => openSelectedFavoriteSource().catch(showError))
   $('#settings-button').addEventListener('click', openSettings)
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close())
   $('#settings-form').addEventListener('submit', saveSettings)
@@ -172,6 +201,7 @@ function bindUI() {
     } else if (event.key === 'Escape') {
       hideSelectionPopover()
       closeAnnotationRail()
+      closeFavoritesRail()
     }
   })
 }
@@ -999,7 +1029,12 @@ function renderItem(item, turnId) {
     return `<div class="message user" ${attrs}><span class="item-label">You</span>${escapeHtml(textFromUserContent(item.content) || '(非文字输入)')}</div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
-    return `<div class="message agent" ${attrs}><span class="item-label">${currentBackend().name}</span><div class="markdown-body">${renderMarkdown(item.text || '')}</div></div>`
+    const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
+    const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
+      <div class="message-heading"><span class="item-label">${currentBackend().name}</span><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
+      <div class="markdown-body">${renderMarkdown(item.text || '')}</div>
+    </div>`
   }
   if (type === 'reasoning') {
     const summary = arrayText(item.summary) || arrayText(item.content) || `${currentBackend().name} 正在推理…`
@@ -1074,6 +1109,20 @@ function renderMarkdown(value) {
 }
 
 async function handleTranscriptClick(event) {
+  const favoriteButton = event.target.closest('[data-favorite-message]')
+  if (favoriteButton) {
+    const element = favoriteButton.closest('[data-turn-id][data-item-id]')
+    if (!element) return
+    const existing = favoriteForSource(
+      state.backend,
+      state.selectedId,
+      element.dataset.turnId,
+      element.dataset.itemId,
+    )
+    if (existing) await openFavoriteDetail(existing.id)
+    else openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
+    return
+  }
   const button = event.target.closest('.copy-code-button')
   if (!button) return
   const code = button.closest('.markdown-code-block')?.querySelector('code')
@@ -1813,7 +1862,11 @@ function addAnnotation(event) {
   toast('批注已加入回覆草稿')
 }
 
-function openAnnotationRail() { $('#annotation-rail').classList.remove('hidden'); renderAnnotationRail() }
+function openAnnotationRail() {
+  closeFavoritesRail()
+  $('#annotation-rail').classList.remove('hidden')
+  renderAnnotationRail()
+}
 function closeAnnotationRail() { $('#annotation-rail').classList.add('hidden') }
 
 function renderAnnotationRail() {
@@ -1881,6 +1934,291 @@ function insertAnnotations() {
   closeAnnotationRail()
   composer.focus()
   toast('批注草稿已插入输入框')
+}
+
+async function favoriteRequest(path, options = {}) {
+  const response = await fetch(path, {
+    cache: 'no-store',
+    ...options,
+    headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : options.headers,
+  })
+  const text = await response.text()
+  let value = null
+  try { value = text ? JSON.parse(text) : null } catch { value = text }
+  if (!response.ok) throw new Error(value?.error?.message || value?.message || `HTTP ${response.status}`)
+  return value
+}
+
+async function loadFavorites() {
+  const query = encodeURIComponent(state.favoriteQuery)
+  const displayLimit = state.favoriteQuery ? 300 : 2000
+  const [result, indexResult] = await Promise.all([
+    favoriteRequest(`/studio/favorites?q=${query}&limit=${displayLimit}`),
+    state.favoriteQuery
+      ? favoriteRequest('/studio/favorites?limit=2000')
+      : Promise.resolve(null),
+  ])
+  state.favorites = Array.isArray(result?.items) ? result.items : []
+  state.favoriteIndex = Array.isArray(indexResult?.items) ? indexResult.items : state.favorites
+  state.favoriteTotal = Number(result?.allTotal || 0)
+  renderFavoritesRail()
+  syncFavoriteButtons()
+}
+
+function favoriteForSource(backend, threadId, turnId, itemId) {
+  const key = favoriteSourceKey({ backend, threadId, turnId, itemId })
+  return state.favoriteIndex.find((favorite) => favoriteSourceKey(favorite) === key) || null
+}
+
+function openFavoritesRail() {
+  closeAnnotationRail()
+  $('#favorites-rail').classList.remove('hidden')
+  loadFavorites().catch(showError)
+  setTimeout(() => $('#favorites-search').focus(), 30)
+}
+
+function closeFavoritesRail() {
+  $('#favorites-rail').classList.add('hidden')
+}
+
+function handleFavoritesSearch(event) {
+  state.favoriteQuery = event.target.value.trim()
+  clearTimeout(favoritesSearchTimer)
+  favoritesSearchTimer = setTimeout(() => loadFavorites().catch(showError), 180)
+}
+
+function renderFavoritesRail() {
+  const count = state.favoriteTotal
+  $('#favorites-count').textContent = count
+  $('#favorites-badge').textContent = count > 99 ? '99+' : count
+  $('#favorites-badge').classList.toggle('hidden', count === 0)
+  $('#favorites-search-summary').textContent = state.favoriteQuery
+    ? `找到 ${state.favorites.length} 条匹配收藏`
+    : `${count} 条跨会话结构化收藏`
+  const empty = state.favorites.length === 0
+  $('#favorites-empty').classList.toggle('hidden', !empty)
+  $('#favorites-list').classList.toggle('hidden', empty)
+  $('#favorites-empty strong').textContent = state.favoriteQuery ? '没有匹配结果' : '还没有收藏'
+  $('#favorites-empty p').textContent = state.favoriteQuery
+    ? '试试回复中的关键词、会话名称或标签。'
+    : '将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。'
+  $('#favorites-list').innerHTML = state.favorites.map((favorite) => {
+    const tags = favorite.tags?.length
+      ? `<div class="favorite-card-tags">${favorite.tags.slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
+      : ''
+    const question = favorite.questionSnippet
+      ? `<p class="favorite-card-question"><span>Q</span>${escapeHtml(favorite.questionSnippet)}</p>`
+      : ''
+    return `<button class="favorite-card" type="button" data-favorite-id="${escapeHtml(favorite.id)}">
+      <div class="favorite-card-top"><span class="favorite-backend-pill ${escapeHtml(favorite.backend)}">${escapeHtml(favorite.backend)}</span><time>${escapeHtml(formatFavoriteDate(favorite.createdAt))}</time></div>
+      <strong>${escapeHtml(favorite.title)}</strong>
+      ${question}
+      <p class="favorite-card-answer">${escapeHtml(favorite.snippet)}</p>
+      ${tags}
+      <footer><span>${escapeHtml(favorite.threadTitle || '未命名会话')}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
+    </button>`
+  }).join('')
+}
+
+function handleFavoriteListClick(event) {
+  const card = event.target.closest('[data-favorite-id]')
+  if (card) openFavoriteDetail(card.dataset.favoriteId).catch(showError)
+}
+
+function openFavoriteForMessage(turnId, itemId) {
+  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(turnId))
+  const item = turn?.items?.find((candidate) => String(candidate.id) === String(itemId))
+  const thread = selectedThread()
+  if (!turn || !item || !thread || !item.text?.trim()) {
+    toast('这条回复尚未完成，暂时不能收藏', 'error')
+    return
+  }
+  state.favoriteEditMode = false
+  state.pendingFavorite = {
+    id: randomId(),
+    backend: state.backend,
+    threadId: state.selectedId,
+    threadTitle: threadTitle(thread),
+    projectPath: thread.cwd || '',
+    turnId: String(turn.id || ''),
+    itemId: String(item.id || ''),
+    title: autoFavoriteTitle(item.text),
+    question: questionForTurn(turn),
+    content: item.text.trim(),
+    note: '',
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+  populateFavoriteDialog(state.pendingFavorite)
+}
+
+function populateFavoriteDialog(favorite) {
+  const editing = state.favoriteEditMode
+  $('#favorite-dialog-title').textContent = editing ? '编辑收藏' : '收藏这条回复'
+  $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || '未命名会话'}`
+  $('#favorite-answer-length').textContent = `${[...favorite.content].length.toLocaleString()} 字`
+  $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
+  $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)
+  $('#favorite-tags').value = (favorite.tags || []).join(', ')
+  $('#favorite-note').value = favorite.note || ''
+  $('#favorite-include-question').checked = Boolean(favorite.question)
+  $('#favorite-question-option').classList.toggle('hidden', editing && !favorite.question)
+  $('#save-favorite').textContent = editing ? '保存修改' : '保存到收藏'
+  $('#favorite-error').classList.add('hidden')
+  renderFavoriteQuestionOption()
+  $('#favorite-dialog').showModal()
+  setTimeout(() => $('#favorite-title').focus(), 30)
+}
+
+function renderFavoriteQuestionOption() {
+  const favorite = state.pendingFavorite
+  if (!favorite) return
+  const included = $('#favorite-include-question').checked && Boolean(favorite.question)
+  $('#favorite-question-preview').classList.toggle('hidden', !included)
+  $('#favorite-question-preview').textContent = included ? favorite.question : ''
+}
+
+function closeFavoriteDialog() {
+  $('#favorite-dialog').close()
+  state.pendingFavorite = null
+  state.favoriteEditMode = false
+}
+
+async function saveFavorite(event) {
+  event.preventDefault()
+  if (!state.pendingFavorite) return
+  const favorite = {
+    ...state.pendingFavorite,
+    title: $('#favorite-title').value.trim(),
+    question: $('#favorite-include-question').checked ? state.pendingFavorite.question : '',
+    tags: normalizeFavoriteTags($('#favorite-tags').value),
+    note: $('#favorite-note').value.trim(),
+  }
+  const error = $('#favorite-error')
+  if (!favorite.title) {
+    error.textContent = '请填写收藏标题。'
+    error.classList.remove('hidden')
+    return
+  }
+  try {
+    const updating = state.favoriteEditMode
+    const saved = await favoriteRequest(
+      updating ? `/studio/favorites/${encodeURIComponent(favorite.id)}` : '/studio/favorites',
+      { method: updating ? 'PUT' : 'POST', body: JSON.stringify(favorite) },
+    )
+    closeFavoriteDialog()
+    state.selectedFavorite = saved
+    await loadFavorites()
+    toast(updating ? '收藏已更新' : '已保存到全局收藏')
+    if (updating) await openFavoriteDetail(saved.id)
+  } catch (requestError) {
+    error.textContent = requestError.message
+    error.classList.remove('hidden')
+  }
+}
+
+async function openFavoriteDetail(id) {
+  const favorite = await favoriteRequest(`/studio/favorites/${encodeURIComponent(id)}`)
+  state.selectedFavorite = favorite
+  $('#favorite-detail-backend').textContent = favorite.backend
+  $('#favorite-detail-backend').className = `favorite-backend-pill ${favorite.backend}`
+  $('#favorite-detail-title').textContent = favorite.title
+  $('#favorite-detail-source').textContent = `${favorite.threadTitle || '未命名会话'} · ${favorite.projectPath || '未记录项目目录'} · ${formatFavoriteDate(favorite.createdAt)}`
+  $('#favorite-detail-question-section').classList.toggle('hidden', !favorite.question)
+  $('#favorite-detail-question').textContent = favorite.question || ''
+  $('#favorite-detail-answer').innerHTML = renderMarkdown(favorite.content)
+  $('#favorite-detail-note-section').classList.toggle('hidden', !favorite.note)
+  $('#favorite-detail-note').textContent = favorite.note || ''
+  $('#favorite-detail-tags').innerHTML = (favorite.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')
+  $('#favorite-detail-dialog').showModal()
+}
+
+function closeFavoriteDetail() {
+  $('#favorite-detail-dialog').close()
+  state.selectedFavorite = null
+}
+
+async function copySelectedFavorite() {
+  if (!state.selectedFavorite) return
+  await navigator.clipboard.writeText(favoriteCopyText(state.selectedFavorite))
+  toast('收藏内容已复制')
+}
+
+function editSelectedFavorite() {
+  if (!state.selectedFavorite) return
+  const favorite = { ...state.selectedFavorite, tags: [...(state.selectedFavorite.tags || [])] }
+  $('#favorite-detail-dialog').close()
+  state.favoriteEditMode = true
+  state.pendingFavorite = favorite
+  populateFavoriteDialog(favorite)
+}
+
+async function deleteSelectedFavorite() {
+  const favorite = state.selectedFavorite
+  if (!favorite || !confirm(`删除收藏“${favorite.title}”？`)) return
+  await favoriteRequest(`/studio/favorites/${encodeURIComponent(favorite.id)}`, { method: 'DELETE' })
+  closeFavoriteDetail()
+  await loadFavorites()
+  toast('收藏已删除')
+}
+
+async function openSelectedFavoriteSource() {
+  const favorite = state.selectedFavorite
+  if (!favorite) return
+  closeFavoriteDetail()
+  closeFavoritesRail()
+  if (state.backend !== favorite.backend) {
+    await switchBackend(favorite.backend)
+    await waitFor(() => state.ready, 12_000)
+  }
+  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
+    if (state.ready) await loadThreads()
+  }
+  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
+    throw new Error('原会话当前不在会话列表中，可能已归档或删除。收藏内容仍然完整保留。')
+  }
+  await selectThread(favorite.threadId, { force: true })
+  const element = renderedItem(favorite.turnId, favorite.itemId)
+  if (!element) {
+    toast('已返回原会话，但历史中没有找到原消息锚点', 'error')
+    return
+  }
+  transcriptScrollFollower.pause()
+  element.classList.add('favorite-source-highlight')
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  setTimeout(() => element.classList.remove('favorite-source-highlight'), 2400)
+}
+
+function syncFavoriteButtons() {
+  $('#transcript')?.querySelectorAll('[data-favorite-message]').forEach((button) => {
+    const item = button.closest('[data-turn-id][data-item-id]')
+    const favorite = item && favoriteForSource(state.backend, state.selectedId, item.dataset.turnId, item.dataset.itemId)
+    button.classList.toggle('active', Boolean(favorite))
+    button.setAttribute('aria-pressed', String(Boolean(favorite)))
+    button.title = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    button.setAttribute('aria-label', button.title)
+    button.querySelector('span').textContent = favorite ? '★' : '☆'
+    button.querySelector('b').textContent = favorite ? '已收藏' : '收藏'
+    item?.classList.toggle('favorited', Boolean(favorite))
+  })
+}
+
+function formatFavoriteDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
+}
+
+function waitFor(predicate, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const check = () => {
+      if (predicate()) resolve()
+      else if (Date.now() - startedAt >= timeoutMs) reject(new Error('等待后端切换超时'))
+      else setTimeout(check, 80)
+    }
+    check()
+  })
 }
 
 async function loadPreferences() {

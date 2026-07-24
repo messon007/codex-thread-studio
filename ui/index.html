@@ -17,7 +17,15 @@
             <strong>Codex Thread Studio</strong>
             <span>Structured Agent Client</span>
           </div>
-          <button id="settings-button" class="icon-button" type="button" title="设置" aria-label="打开设置">⚙</button>
+          <div class="brand-actions">
+            <button id="open-favorites" class="icon-button favorite-library-button" type="button" title="全局收藏" aria-label="打开全局收藏">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z"/></svg>
+              <span id="favorites-badge" class="favorite-badge hidden">0</span>
+            </button>
+            <button id="settings-button" class="icon-button settings-button" type="button" title="设置" aria-label="打开设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
         </header>
 
         <div class="backend-switcher" role="tablist" aria-label="AI 后端">
@@ -109,6 +117,26 @@
           <small>只插入输入框，不会自动发送。</small>
         </footer>
       </aside>
+
+      <aside id="favorites-rail" class="favorites-rail hidden" aria-label="全局收藏">
+        <header>
+          <div><span class="eyebrow">KNOWLEDGE LIBRARY</span><h2>全局收藏 <span id="favorites-count" class="annotation-count">0</span></h2></div>
+          <button id="close-favorites" class="icon-button" type="button" aria-label="关闭收藏">×</button>
+        </header>
+        <div class="favorites-search-wrap">
+          <label class="favorites-search"><span>⌕</span><input id="favorites-search" type="search" placeholder="搜索标题、正文、问题、标签…" /></label>
+          <p id="favorites-search-summary">跨会话保存的结构化 AI 回复</p>
+        </div>
+        <div id="favorites-content" class="favorites-content">
+          <div id="favorites-empty" class="favorites-empty">
+            <span class="favorites-empty-mark">☆</span>
+            <strong>还没有收藏</strong>
+            <p>将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。</p>
+          </div>
+          <div id="favorites-list" class="favorites-list hidden"></div>
+        </div>
+        <footer class="favorites-footer">收藏保存在本机 Studio 配置目录，与 Codex 会话历史相互独立。</footer>
+      </aside>
     </div>
 
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
@@ -117,6 +145,59 @@
         <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>你的意见</span><textarea id="annotation-comment" required rows="5" placeholder="说明问题和期望调整。"></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
         <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">加入草稿</button></footer>
       </form>
+    </dialog>
+
+    <dialog id="favorite-dialog" class="dialog favorite-dialog">
+      <form id="favorite-form">
+        <header class="dialog-header">
+          <div><span class="eyebrow">SAVE TO LIBRARY</span><h2 id="favorite-dialog-title">收藏这条回复</h2><p id="favorite-source-label">保留结构化消息来源，可随时返回原会话。</p></div>
+          <button id="close-favorite-dialog" class="icon-button" type="button" aria-label="关闭">×</button>
+        </header>
+        <div class="favorite-dialog-body">
+          <section class="favorite-preview">
+            <div class="favorite-preview-heading"><span>AI 回复</span><small id="favorite-answer-length"></small></div>
+            <div id="favorite-answer-preview" class="favorite-answer-preview markdown-body"></div>
+          </section>
+          <label id="favorite-question-option" class="favorite-question-option">
+            <input id="favorite-include-question" type="checkbox" checked />
+            <span><strong>同时保存这次提问</strong><small>已根据同一 Turn 自动关联，无需手动选择。</small></span>
+          </label>
+          <div id="favorite-question-preview" class="favorite-question-preview"></div>
+          <div class="favorite-fields">
+            <label class="field full"><span>标题</span><input id="favorite-title" required maxlength="200" placeholder="为这条内容取一个容易搜索的标题" /></label>
+            <label class="field full"><span>标签</span><input id="favorite-tags" maxlength="1000" placeholder="架构, Rust, 值得复用" /><small>使用逗号分隔，最多 20 个。</small></label>
+            <label class="field full"><span>笔记（可选）</span><textarea id="favorite-note" rows="3" maxlength="16000" placeholder="为什么值得收藏？以后准备怎么使用？"></textarea></label>
+            <div id="favorite-error" class="form-error hidden"></div>
+          </div>
+        </div>
+        <footer class="dialog-footer"><button id="cancel-favorite" class="subtle-button" type="button">取消</button><button id="save-favorite" class="primary-button" type="submit">保存到收藏</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="favorite-detail-dialog" class="dialog favorite-detail-dialog">
+      <header class="dialog-header favorite-detail-header">
+        <div><span id="favorite-detail-backend" class="favorite-backend-pill">CODEX</span><h2 id="favorite-detail-title">收藏详情</h2><p id="favorite-detail-source"></p></div>
+        <button id="close-favorite-detail" class="icon-button" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="favorite-detail-body">
+        <section id="favorite-detail-question-section" class="favorite-detail-section">
+          <header><span>你的问题</span></header>
+          <div id="favorite-detail-question" class="favorite-question-full"></div>
+        </section>
+        <section class="favorite-detail-section answer">
+          <header><span>AI 回复</span></header>
+          <div id="favorite-detail-answer" class="markdown-body"></div>
+        </section>
+        <section id="favorite-detail-note-section" class="favorite-detail-note hidden"><span>收藏笔记</span><p id="favorite-detail-note"></p></section>
+        <div id="favorite-detail-tags" class="favorite-tags"></div>
+      </div>
+      <footer class="dialog-footer favorite-detail-actions">
+        <button id="delete-favorite" class="subtle-button danger-text" type="button">删除</button>
+        <span></span>
+        <button id="copy-favorite" class="subtle-button" type="button">复制内容</button>
+        <button id="edit-favorite" class="subtle-button" type="button">编辑</button>
+        <button id="open-favorite-source" class="primary-button" type="button">返回原消息</button>
+      </footer>
     </dialog>
 
     <dialog id="new-thread-dialog" class="dialog">

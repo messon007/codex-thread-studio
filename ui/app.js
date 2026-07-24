@@ -84,6 +84,7 @@ const state = {
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplate: annotationPromptDefault,
+  openingMessages: {},
   pendingSelection: null,
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
@@ -94,6 +95,7 @@ const state = {
   favoriteIndex: [],
   favoriteTotal: 0,
   favoriteQuery: '',
+  favoriteScope: 'global',
   pendingFavorite: null,
   selectedFavorite: null,
   favoriteEditMode: false,
@@ -133,8 +135,15 @@ function bindUI() {
     state.search = event.target.value.trim().toLowerCase()
     renderThreadList()
   })
-  $('#refresh-thread').addEventListener('click', refreshSelectedThread)
-  $('#stop-thread').addEventListener('click', interruptTurn)
+  $('#thread-more-button').addEventListener('click', () => toggleActionMenu('thread-more-menu', 'thread-more-button'))
+  $('#refresh-thread').addEventListener('click', () => {
+    closeActionMenus()
+    refreshSelectedThread()
+  })
+  $('#thread-info').addEventListener('click', () => {
+    closeActionMenus()
+    openThreadInfo()
+  })
   $('#rename-thread').addEventListener('click', openRenameThreadDialog)
   $('#rename-thread-form').addEventListener('submit', renameSelectedThread)
   $('#close-rename-thread').addEventListener('click', closeRenameThreadDialog)
@@ -153,12 +162,29 @@ function bindUI() {
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#transcript').addEventListener('click', handleTranscriptClick)
+  $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
+  $('#favorite-menu-button').addEventListener('click', () => toggleActionMenu('favorite-menu', 'favorite-menu-button'))
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
   window.addEventListener('resize', scheduleTurnNavigatorSync)
-  $('#comment-selection').addEventListener('click', openAnnotationFromSelection)
+  $('#comment-selection').addEventListener('click', () => {
+    closeActionMenus()
+    openAnnotationFromSelection()
+  })
   $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
-  $('#selection-popover').addEventListener('click', openAnnotationFromSelection)
-  $('#open-annotation-rail').addEventListener('click', openAnnotationRail)
+  $('#selection-comment').addEventListener('click', openAnnotationFromSelection)
+  $('#selection-favorite').addEventListener('click', openFavoriteFromSelection)
+  $('#favorite-selection').addEventListener('click', () => {
+    closeActionMenus()
+    openFavoriteFromSelection()
+  })
+  $('#open-annotation-rail').addEventListener('click', () => {
+    closeActionMenus()
+    openAnnotationRail()
+  })
+  $('#open-session-favorites').addEventListener('click', () => {
+    closeActionMenus()
+    openFavoritesRail('session')
+  })
   $('#close-annotation-rail').addEventListener('click', closeAnnotationRail)
   $('#annotation-form').addEventListener('submit', addAnnotation)
   $('#close-annotation-dialog').addEventListener('click', closeAnnotationDialog)
@@ -166,7 +192,7 @@ function bindUI() {
   $('#clear-annotations').addEventListener('click', clearAnnotations)
   $('#insert-annotations').addEventListener('click', insertAnnotations)
   $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
-  $('#open-favorites').addEventListener('click', openFavoritesRail)
+  $('#open-favorites').addEventListener('click', () => openFavoritesRail('global'))
   $('#close-favorites').addEventListener('click', closeFavoritesRail)
   $('#favorites-search').addEventListener('input', handleFavoritesSearch)
   $('#favorites-list').addEventListener('click', handleFavoriteListClick)
@@ -186,9 +212,13 @@ function bindUI() {
   $('#backend-details').addEventListener('click', openBackendDialog)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
   $('#close-command').addEventListener('click', () => $('#command-dialog').close())
+  $('#close-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
+  $('#done-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
+  $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
 
   document.addEventListener('mousedown', (event) => {
-    if (!event.target.closest('#selection-popover, #comment-selection')) hideSelectionPopover()
+    if (!event.target.closest('#selection-popover, .content-menu-anchor')) hideSelectionPopover()
+    if (!event.target.closest('.menu-anchor')) closeActionMenus()
   })
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
@@ -200,10 +230,24 @@ function bindUI() {
       $('#thread-search').focus()
     } else if (event.key === 'Escape') {
       hideSelectionPopover()
+      closeActionMenus()
       closeAnnotationRail()
       closeFavoritesRail()
     }
   })
+}
+
+function toggleActionMenu(menuId, buttonId) {
+  const menu = $(`#${menuId}`)
+  const opening = menu.classList.contains('hidden')
+  closeActionMenus()
+  menu.classList.toggle('hidden', !opening)
+  $(`#${buttonId}`).setAttribute('aria-expanded', String(opening))
+}
+
+function closeActionMenus() {
+  $$('.action-menu').forEach((menu) => menu.classList.add('hidden'))
+  $$('.menu-anchor [aria-expanded]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
 }
 
 async function loadBackendInfo() {
@@ -428,6 +472,7 @@ function handleAppServerMessage(message) {
     if (message.method === 'thread/deleted') {
       delete state.annotationDrafts[`codex:${threadId}`]
       delete state.annotationAdditional[`codex:${threadId}`]
+      delete state.openingMessages[`codex:${threadId}`]
     }
     if (state.selectedId === threadId) {
       state.selectedId = null
@@ -722,6 +767,7 @@ function projectGroups(threads) {
 
 async function selectThread(id, { force = false } = {}) {
   if (!force && state.selectedId === id) return
+  closeActionMenus()
   const previousId = state.selectedId
   if (previousId && previousId !== id && state.ready) {
     try {
@@ -808,6 +854,49 @@ function selectedStateKey(id = state.selectedId, backend = state.backend) {
   return id ? `${backend}:${id}` : ''
 }
 
+function captureOpeningMessage() {
+  const key = selectedStateKey()
+  if (!key || state.openingMessages[key]) return
+  const text = state.model.turns.map((turn) => questionForTurn(turn).trim()).find(Boolean)
+  if (!text) return
+  const normalized = truncateUtf8(text, 16 * 1024)
+  state.openingMessages[key] = {
+    text: normalized,
+    source: 'history',
+    capturedAt: new Date().toISOString(),
+    truncated: normalized !== text,
+  }
+  persistPreferences()
+}
+
+function openThreadInfo() {
+  const thread = selectedThread()
+  if (!thread) return
+  captureOpeningMessage()
+  const opening = state.openingMessages[selectedStateKey()]
+  const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
+  $('#thread-info-content').innerHTML = `
+    <section class="opening-message-card">
+      <header><strong>起始问题</strong><span>${opening ? `${opening.source === 'history' ? '从历史提取' : escapeHtml(opening.source)}${opening.truncated ? ' · 已截断' : ''}` : '尚未识别'}</span></header>
+      <p>${escapeHtml(opening?.text || '当前结构化历史中没有找到用户首条消息。')}</p>
+    </section>
+    <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
+    <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
+    <div class="detail-row"><span>会话 ID</span><strong>${escapeHtml(thread.id)}</strong></div>
+    <div class="detail-row"><span>项目目录</span><strong>${escapeHtml(thread.cwd || '未记录')}</strong></div>
+    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
+    ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
+  $('#copy-opening-message').disabled = !opening?.text
+  $('#thread-info-dialog').showModal()
+}
+
+async function copyOpeningMessage() {
+  const text = state.openingMessages[selectedStateKey()]?.text
+  if (!text) return
+  await navigator.clipboard.writeText(text)
+  toast('起始问题已复制')
+}
+
 function renderWorkspace() {
   const thread = selectedThread()
   const hasThread = Boolean(thread)
@@ -830,9 +919,12 @@ function renderWorkspace() {
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   $('#thread-status').textContent = statusLabel(status)
   $('#thread-status').className = `status-badge ${status}`
-  $('#archive-thread').classList.toggle('hidden', state.backend === 'opencode')
+  $('#archive-thread').disabled = state.backend === 'opencode'
+  $('#archive-thread').title = state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : ''
   renderComposerState()
   renderAnnotationRail()
+  captureOpeningMessage()
+  renderSessionFavoriteCount()
 }
 
 function resetStreamingPatches() {
@@ -851,6 +943,7 @@ function renderTranscript() {
   renderTurnNavigator()
   followTranscriptOutput()
   renderUsage()
+  captureOpeningMessage()
 }
 
 function handleTranscriptScroll() {
@@ -1569,8 +1662,7 @@ function renderComposerState() {
   const shellMode = shellCommand !== null
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   $('#interrupt-turn').classList.toggle('hidden', !active)
-  $('#stop-thread').classList.toggle('hidden', !active)
-  $('#archive-thread').disabled = active
+  $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? '运行' : active && state.backend === 'codex' ? '追加意见' : '发送'
   const details = [
@@ -1771,6 +1863,7 @@ async function deleteSelectedThread() {
     await rpc('thread/delete', { threadId })
     delete state.annotationDrafts[`${state.backend}:${threadId}`]
     delete state.annotationAdditional[`${state.backend}:${threadId}`]
+    delete state.openingMessages[`${state.backend}:${threadId}`]
     state.selectedId = null
     state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
@@ -1815,6 +1908,37 @@ function openAnnotationFromSelection() {
   hideSelectionPopover(false)
   $('#annotation-dialog').showModal()
   setTimeout(() => $('#annotation-comment').focus(), 30)
+}
+
+function openFavoriteFromSelection() {
+  if (!state.pendingSelection?.quote) {
+    captureTranscriptSelection()
+    if (!state.pendingSelection?.quote) return toast('请先在 AI 输出中选择文字', 'error')
+  }
+  const thread = selectedThread()
+  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
+  if (!thread || !state.pendingSelection.turnId || !state.pendingSelection.itemId) {
+    return toast('无法确定所选文字的消息位置，请在一条回复内选择', 'error')
+  }
+  state.favoriteEditMode = false
+  state.pendingFavorite = {
+    id: randomId(),
+    scope: 'selection',
+    backend: state.backend,
+    threadId: state.selectedId,
+    threadTitle: threadTitle(thread),
+    projectPath: thread.cwd || '',
+    turnId: String(state.pendingSelection.turnId),
+    itemId: String(state.pendingSelection.itemId),
+    title: autoFavoriteTitle(state.pendingSelection.quote),
+    question: turn ? questionForTurn(turn) : '',
+    content: state.pendingSelection.quote,
+    note: '',
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+  hideSelectionPopover(false)
+  populateFavoriteDialog(state.pendingFavorite)
 }
 
 function hideSelectionPopover(clear = true) {
@@ -1967,10 +2091,11 @@ async function loadFavorites() {
 
 function favoriteForSource(backend, threadId, turnId, itemId) {
   const key = favoriteSourceKey({ backend, threadId, turnId, itemId })
-  return state.favoriteIndex.find((favorite) => favoriteSourceKey(favorite) === key) || null
+  return state.favoriteIndex.find((favorite) => favorite.scope !== 'selection' && favoriteSourceKey(favorite) === key) || null
 }
 
-function openFavoritesRail() {
+function openFavoritesRail(scope = 'global') {
+  state.favoriteScope = scope
   closeAnnotationRail()
   $('#favorites-rail').classList.remove('hidden')
   loadFavorites().catch(showError)
@@ -1988,21 +2113,25 @@ function handleFavoritesSearch(event) {
 }
 
 function renderFavoritesRail() {
-  const count = state.favoriteTotal
+  const visibleFavorites = state.favoriteScope === 'session' && state.selectedId
+    ? state.favorites.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId)
+    : state.favorites
+  const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
+  $('#favorites-title').textContent = state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏'
   $('#favorites-count').textContent = count
   $('#favorites-badge').textContent = count > 99 ? '99+' : count
   $('#favorites-badge').classList.toggle('hidden', count === 0)
   $('#favorites-search-summary').textContent = state.favoriteQuery
-    ? `找到 ${state.favorites.length} 条匹配收藏`
-    : `${count} 条跨会话结构化收藏`
-  const empty = state.favorites.length === 0
+    ? `找到 ${visibleFavorites.length} 条匹配收藏`
+    : state.favoriteScope === 'session' ? `${count} 条当前会话收藏` : `${count} 条跨会话结构化收藏`
+  const empty = visibleFavorites.length === 0
   $('#favorites-empty').classList.toggle('hidden', !empty)
   $('#favorites-list').classList.toggle('hidden', empty)
   $('#favorites-empty strong').textContent = state.favoriteQuery ? '没有匹配结果' : '还没有收藏'
   $('#favorites-empty p').textContent = state.favoriteQuery
     ? '试试回复中的关键词、会话名称或标签。'
     : '将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。'
-  $('#favorites-list').innerHTML = state.favorites.map((favorite) => {
+  $('#favorites-list').innerHTML = visibleFavorites.map((favorite) => {
     const tags = favorite.tags?.length
       ? `<div class="favorite-card-tags">${favorite.tags.slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
       : ''
@@ -2018,6 +2147,15 @@ function renderFavoritesRail() {
       <footer><span>${escapeHtml(favorite.threadTitle || '未命名会话')}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
     </button>`
   }).join('')
+  renderSessionFavoriteCount()
+}
+
+function renderSessionFavoriteCount() {
+  const count = state.selectedId
+    ? state.favoriteIndex.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId).length
+    : 0
+  const element = $('#session-favorite-count')
+  if (element) element.textContent = count > 99 ? '99+' : count
 }
 
 function handleFavoriteListClick(event) {
@@ -2036,6 +2174,7 @@ function openFavoriteForMessage(turnId, itemId) {
   state.favoriteEditMode = false
   state.pendingFavorite = {
     id: randomId(),
+    scope: 'message',
     backend: state.backend,
     threadId: state.selectedId,
     threadTitle: threadTitle(thread),
@@ -2054,7 +2193,7 @@ function openFavoriteForMessage(turnId, itemId) {
 
 function populateFavoriteDialog(favorite) {
   const editing = state.favoriteEditMode
-  $('#favorite-dialog-title').textContent = editing ? '编辑收藏' : '收藏这条回复'
+  $('#favorite-dialog-title').textContent = editing ? '编辑收藏' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复'
   $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || '未命名会话'}`
   $('#favorite-answer-length').textContent = `${[...favorite.content].length.toLocaleString()} 字`
   $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
@@ -2082,6 +2221,8 @@ function closeFavoriteDialog() {
   $('#favorite-dialog').close()
   state.pendingFavorite = null
   state.favoriteEditMode = false
+  state.pendingSelection = null
+  window.getSelection()?.removeAllRanges()
 }
 
 async function saveFavorite(event) {
@@ -2239,6 +2380,7 @@ async function loadPreferences() {
   state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
   state.annotationPromptTemplate = normalizeTemplate(saved.annotationPromptTemplate)
+  state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
   preferencesReady = true
 }
 
@@ -2253,6 +2395,7 @@ function preferencesSnapshot() {
     annotationDrafts: state.annotationDrafts,
     annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
+    openingMessages: state.openingMessages,
   }
 }
 
@@ -2384,6 +2527,12 @@ function arrayText(value) {
 }
 function valueText(value) { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
 function randomId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}` }
+function truncateUtf8(value, limit) {
+  const text = String(value || '')
+  const encoded = new TextEncoder().encode(text)
+  if (encoded.length <= limit) return text
+  return new TextDecoder().decode(encoded.slice(0, limit)).replace(/\uFFFD$/u, '')
+}
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
 
@@ -2423,6 +2572,19 @@ function normalizeAnnotationDrafts(value) {
 function normalizeAdditional(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return Object.fromEntries(Object.entries(value).flatMap(([id, text]) => id && typeof text === 'string' ? [[id.includes(':') ? id : `codex:${id}`, text.slice(0, 32000)]] : []))
+}
+function normalizeOpeningMessages(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).slice(0, 2048).flatMap(([key, message]) => {
+    if (!key || !message || typeof message !== 'object') return []
+    const text = truncateUtf8(String(message.text || '').trim(), 16 * 1024)
+    return text ? [[key.includes(':') ? key : `codex:${key}`, {
+      text,
+      source: String(message.source || 'history').slice(0, 64),
+      capturedAt: String(message.capturedAt || new Date().toISOString()).slice(0, 128),
+      truncated: Boolean(message.truncated),
+    }]] : []
+  }))
 }
 function normalizeTemplate(value) { return typeof value === 'string' && value.includes('{{annotations}}') ? value.slice(0, 32000) : annotationPromptDefault }
 

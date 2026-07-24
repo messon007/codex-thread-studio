@@ -54,12 +54,18 @@
             <div><div class="title-line"><h1 id="thread-title">Codex 会话</h1><span id="thread-status" class="status-badge idle">空闲</span></div><p id="thread-path"></p><div id="thread-meta" class="thread-meta"></div></div>
           </div>
           <div id="thread-actions" class="thread-actions hidden">
-            <button id="stop-thread" class="toolbar-button stop-button hidden" type="button">停止</button>
             <button id="rename-thread" class="toolbar-button" type="button">重命名</button>
-            <button id="refresh-thread" class="toolbar-button" type="button">重新载入</button>
             <button id="fork-thread" class="toolbar-button" type="button">Fork</button>
             <button id="archive-thread" class="toolbar-button" type="button">归档</button>
             <button id="delete-thread" class="toolbar-button danger-text" type="button">删除</button>
+            <div class="menu-anchor">
+              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="更多会话操作" aria-expanded="false">•••</button>
+              <div id="thread-more-menu" class="action-menu hidden" role="menu">
+                <button id="refresh-thread" type="button" role="menuitem">重载</button>
+                <span class="menu-separator"></span>
+                <button id="thread-info" type="button" role="menuitem">会话信息</button>
+              </div>
+            </div>
           </div>
         </header>
 
@@ -75,15 +81,30 @@
             <div><span class="live-dot"></span><strong id="native-label">CODEX NATIVE</strong><small id="native-connection">正在连接…</small></div>
             <div class="native-tools">
               <span id="token-usage"></span>
-              <button id="comment-selection" class="text-button" type="button">批注选中内容</button>
-              <button id="open-annotation-rail" class="text-button">草稿 <span id="draft-count">0</span></button>
+              <div class="menu-anchor content-menu-anchor">
+                <button id="annotation-menu-button" class="text-button content-menu-button" type="button" aria-expanded="false">批注 <span id="draft-count">0</span>⌄</button>
+                <div id="annotation-menu" class="action-menu content-action-menu hidden" role="menu">
+                  <button id="comment-selection" type="button" role="menuitem">添加</button>
+                  <button id="open-annotation-rail" type="button" role="menuitem">查看</button>
+                </div>
+              </div>
+              <div class="menu-anchor content-menu-anchor">
+                <button id="favorite-menu-button" class="text-button content-menu-button favorite-menu-button" type="button" aria-expanded="false">收藏 <span id="session-favorite-count">0</span>⌄</button>
+                <div id="favorite-menu" class="action-menu content-action-menu hidden" role="menu">
+                  <button id="favorite-selection" type="button" role="menuitem">添加</button>
+                  <button id="open-session-favorites" type="button" role="menuitem">查看</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div id="native-error" class="native-error hidden"><strong id="native-error-title">Codex App Server 无法使用</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">重试</button></div>
           <div id="transcript" class="transcript" aria-live="polite"></div>
           <nav id="turn-navigator" class="turn-navigator hidden" aria-label="当前会话的 Turn 导航"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
-          <button id="selection-popover" class="selection-popover hidden" type="button">＋ 添加批注</button>
+          <div id="selection-popover" class="selection-popover hidden">
+            <button id="selection-comment" type="button">批注</button>
+            <button id="selection-favorite" type="button">收藏</button>
+          </div>
 
           <form id="composer-form" class="composer">
             <div id="composer-menu" class="composer-menu hidden" role="listbox" aria-label="Codex 输入建议"></div>
@@ -120,7 +141,7 @@
 
       <aside id="favorites-rail" class="favorites-rail hidden" aria-label="全局收藏">
         <header>
-          <div><span class="eyebrow">KNOWLEDGE LIBRARY</span><h2>全局收藏 <span id="favorites-count" class="annotation-count">0</span></h2></div>
+          <div><span class="eyebrow">KNOWLEDGE LIBRARY</span><h2><span id="favorites-title">全局收藏</span> <span id="favorites-count" class="annotation-count">0</span></h2></div>
           <button id="close-favorites" class="icon-button" type="button" aria-label="关闭收藏">×</button>
         </header>
         <div class="favorites-search-wrap">
@@ -145,6 +166,12 @@
         <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>你的意见</span><textarea id="annotation-comment" required rows="5" placeholder="说明问题和期望调整。"></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
         <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">加入草稿</button></footer>
       </form>
+    </dialog>
+
+    <dialog id="thread-info-dialog" class="dialog thread-info-dialog">
+      <header class="dialog-header"><div><span class="eyebrow">SESSION</span><h2>会话信息</h2><p>起始问题独立保存，重命名不会覆盖。</p></div><button id="close-thread-info" class="icon-button" type="button">×</button></header>
+      <div id="thread-info-content" class="dialog-body"></div>
+      <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button" type="button">复制起始问题</button><button id="done-thread-info" class="primary-button" type="button">完成</button></footer>
     </dialog>
 
     <dialog id="favorite-dialog" class="dialog favorite-dialog">

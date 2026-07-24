@@ -63,6 +63,15 @@ struct AnnotationDraft {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct OpeningMessage {
+    text: String,
+    source: String,
+    captured_at: String,
+    truncated: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
@@ -82,6 +91,8 @@ struct StudioPreferences {
     annotation_additional: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     annotation_prompt_template: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    opening_messages: BTreeMap<String, OpeningMessage>,
 }
 
 #[derive(Serialize)]
@@ -604,6 +615,17 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         .is_some_and(|template| template.len() > 32 * 1024 || !template.contains("{{annotations}}"))
     {
         return Err("annotation template must contain {{annotations}}".to_string());
+    }
+    if preferences.opening_messages.len() > 2048
+        || preferences.opening_messages.iter().any(|(id, message)| {
+            id.is_empty()
+                || id.len() > 320
+                || message.text.len() > 16 * 1024
+                || message.source.len() > 64
+                || message.captured_at.len() > 128
+        })
+    {
+        return Err("opening message preferences are invalid".to_string());
     }
     Ok(())
 }

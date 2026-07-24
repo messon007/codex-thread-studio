@@ -14,6 +14,8 @@ const MAX_STORE_BYTES: u64 = 400 * 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct Favorite {
     pub id: String,
+    #[serde(default = "default_scope")]
+    pub scope: String,
     pub backend: String,
     pub thread_id: String,
     pub thread_title: String,
@@ -32,6 +34,7 @@ pub struct Favorite {
 #[serde(rename_all = "camelCase")]
 pub struct FavoriteSummary {
     pub id: String,
+    pub scope: String,
     pub backend: String,
     pub thread_id: String,
     pub thread_title: String,
@@ -64,6 +67,10 @@ struct FavoriteStore {
 
 fn store_version() -> u8 {
     1
+}
+
+fn default_scope() -> String {
+    "message".to_string()
 }
 
 pub fn load(path: &Path) -> Result<Vec<Favorite>, String> {
@@ -139,12 +146,15 @@ pub fn insert(
     if items.iter().any(|item| item.id == favorite.id) {
         return Err("favorite id already exists".to_string());
     }
-    if items.iter().any(|item| {
-        item.backend == favorite.backend
-            && item.thread_id == favorite.thread_id
-            && item.turn_id == favorite.turn_id
-            && item.item_id == favorite.item_id
-    }) {
+    if favorite.scope == "message"
+        && items.iter().any(|item| {
+            item.scope == "message"
+                && item.backend == favorite.backend
+                && item.thread_id == favorite.thread_id
+                && item.turn_id == favorite.turn_id
+                && item.item_id == favorite.item_id
+        })
+    {
         return Err("this message is already a favorite".to_string());
     }
     items.push(favorite.clone());
@@ -189,6 +199,9 @@ pub fn validate(favorite: &Favorite) -> Result<(), String> {
     }
     if !matches!(favorite.backend.as_str(), "codex" | "opencode") {
         return Err("favorite backend must be codex or opencode".to_string());
+    }
+    if !matches!(favorite.scope.as_str(), "message" | "selection") {
+        return Err("favorite scope must be message or selection".to_string());
     }
     if favorite.thread_id.trim().is_empty()
         || favorite.thread_id.len() > 256
@@ -238,6 +251,7 @@ pub fn validate(favorite: &Favorite) -> Result<(), String> {
 fn summary(favorite: &Favorite) -> FavoriteSummary {
     FavoriteSummary {
         id: favorite.id.clone(),
+        scope: favorite.scope.clone(),
         backend: favorite.backend.clone(),
         thread_id: favorite.thread_id.clone(),
         thread_title: favorite.thread_title.clone(),
@@ -285,6 +299,7 @@ mod tests {
     fn favorite(id: &str, title: &str, content: &str) -> Favorite {
         Favorite {
             id: id.to_string(),
+            scope: "message".to_string(),
             backend: "codex".to_string(),
             thread_id: "thread-1".to_string(),
             thread_title: "Books".to_string(),
@@ -322,5 +337,21 @@ mod tests {
         invalid = favorite("a", "Useful", "content");
         invalid.item_id.clear();
         assert!(validate(&invalid).is_err());
+    }
+
+    #[test]
+    fn allows_multiple_selected_excerpts_from_one_message() {
+        let path = std::env::temp_dir().join(format!(
+            "codex-thread-studio-selection-favorites-{}.json",
+            std::process::id()
+        ));
+        let mut first = favorite("selection-a", "First excerpt", "first");
+        first.scope = "selection".to_string();
+        let mut second = favorite("selection-b", "Second excerpt", "second");
+        second.scope = "selection".to_string();
+        second.item_id = first.item_id.clone();
+        let saved = insert(&path, vec![first], second).expect("second excerpt should be accepted");
+        assert_eq!(saved.scope, "selection");
+        fs::remove_file(path).ok();
     }
 }

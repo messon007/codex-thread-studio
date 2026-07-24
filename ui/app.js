@@ -36,6 +36,15 @@ import {
   turnNavigationLabel,
   turnPromptPreview,
 } from './turn-navigator.mjs'
+import {
+  formatDate as formatLocalizedDate,
+  getLocale,
+  migrateLocalizedTemplates,
+  resolveLanguage,
+  setLanguage,
+  startTranslationObserver,
+  t,
+} from './i18n.mjs'
 import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
@@ -57,11 +66,22 @@ const typographyDefaults = Object.freeze({
   highContrast: true,
 })
 
-const annotationPromptDefault = `请根据下面引用的 AI 输出和我的批注进行回应。请逐项处理，不要遗漏；若需要修改代码，请先说明你对每条意见的理解，再继续执行。
+const annotationPromptDefaults = Object.freeze({
+  'zh-CN': `请根据下面引用的 AI 输出和我的批注进行回应。请逐项处理，不要遗漏；若需要修改代码，请先说明你对每条意见的理解，再继续执行。
 
 {{annotations}}
 
-{{additional}}`
+{{additional}}`,
+  'en-US': `Please respond to the quoted AI output and my comments below. Address every item. If code changes are needed, first explain your understanding of each comment, then continue.
+
+{{annotations}}
+
+{{additional}}`,
+})
+
+function defaultAnnotationPrompt(locale = getLocale()) {
+  return annotationPromptDefaults[locale] || annotationPromptDefaults['en-US']
+}
 
 const state = {
   backend: 'codex',
@@ -78,12 +98,14 @@ const state = {
   selectedId: null,
   search: '',
   model: createCodexViewModel(),
+  language: 'system',
   theme: 'light',
   contentWidth: 'comfortable',
   typography: { ...typographyDefaults },
   annotationDrafts: {},
   annotationAdditional: {},
-  annotationPromptTemplate: annotationPromptDefault,
+  annotationPromptTemplates: {},
+  annotationPromptTemplate: annotationPromptDefaults['zh-CN'],
   openingMessages: {},
   pendingSelection: null,
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
@@ -117,6 +139,8 @@ document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 async function init() {
   bindUI()
   await loadPreferences()
+  setLanguage(state.language)
+  startTranslationObserver()
   applyAppearance()
   applyBackendCopy()
   await loadFavorites().catch(showError)
@@ -297,18 +321,18 @@ function applyBackendCopy() {
   $('.brand-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
-  $('#new-thread-label').textContent = `新建 ${descriptor.name} 会话`
+  $('#new-thread-label').textContent = t('新建 {backend} 会话', { backend: descriptor.name })
   $('#native-label').textContent = descriptor.nativeLabel
-  $('#native-error-title').textContent = `${descriptor.name} Server 无法使用`
-  $('#empty-title').textContent = `结构化 ${descriptor.name} 工作台`
+  $('#native-error-title').textContent = t('{backend} Server 无法使用', { backend: descriptor.name })
+  $('#empty-title').textContent = t('结构化 {backend} 工作台', { backend: descriptor.name })
   $('#empty-description').textContent = descriptor.id === 'codex'
     ? '消息、命令、文件修改、计划、审批和停止原因直接来自 Codex App Server。'
     : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
-  $('#composer-input').placeholder = `向 ${descriptor.name} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell`
+  $('#composer-input').placeholder = t('向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell', { backend: descriptor.name })
   $('#new-thread-eyebrow').textContent = `NEW ${descriptor.name.toUpperCase()} THREAD`
-  $('#new-thread-title').textContent = `创建 ${descriptor.name} 会话`
-  $('#new-thread-description').textContent = `由 ${descriptor.name} 原生服务直接创建并持久化。`
-  $('#rename-thread-description').textContent = `名称由 ${descriptor.name} 持久化。`
+  $('#new-thread-title').textContent = t('创建 {backend} 会话', { backend: descriptor.name })
+  $('#new-thread-description').textContent = t('由 {backend} 原生服务直接创建并持久化。', { backend: descriptor.name })
+  $('#rename-thread-description').textContent = t('名称由 {backend} 持久化。', { backend: descriptor.name })
   $('#new-thread-model').placeholder = descriptor.id === 'opencode' ? '可选：provider/model' : '使用 Codex 默认模型'
   $('#new-thread-approval').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
   $('#new-thread-sandbox').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
@@ -427,10 +451,10 @@ function handleAppServerMessage(message) {
   if (message.method === 'studio/appServer/lagged') {
     const skipped = Number(message.params?.skipped || 0)
     if (!state.selectedId) {
-      toast(`界面错过了 ${skipped} 条 App Server 事件`, 'error')
+      toast(t('界面错过了 {count} 条 App Server 事件', { count: skipped }), 'error')
       return
     }
-    setNativeError(`界面错过了 ${skipped} 条 App Server 事件，正在从 Codex 重新同步当前会话…`)
+    setNativeError(t('界面错过了 {count} 条 App Server 事件，正在从 Codex 重新同步当前会话…', { count: skipped }))
     refreshSelectedThread({ quiet: true }).then((refreshed) => {
       if (!refreshed) return
       setNativeError(null)
@@ -496,7 +520,7 @@ function handleAppServerMessage(message) {
   if (message.id != null && message.method) {
     if (!applyCodexNotification(state.model, message)) {
       sendRaw({ id: message.id, error: { code: -32601, message: `Studio does not support ${message.method}` } })
-      toast(`Codex 请求了尚未支持的交互：${message.method}`, 'error')
+      toast(t('Codex 请求了尚未支持的交互：{method}', { method: message.method }), 'error')
       return
     }
     renderTranscript()
@@ -565,7 +589,7 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       state.pending.delete(String(id))
-      reject(new Error(`${method} 请求超时`))
+      reject(new Error(t('{method} 请求超时', { method })))
     }, timeoutMs)
     state.pending.set(String(id), { resolve, reject, timer, method })
     sendRaw({ id, method, params })
@@ -591,7 +615,7 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000 } 
     if (!response.ok) throw new Error(value?.error?.message || value?.message || `${method} ${path} failed: HTTP ${response.status}`)
     return value
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error(`${method} ${path} 请求超时`)
+    if (error.name === 'AbortError') throw new Error(t('{method} {path} 请求超时', { method, path }))
     throw error
   } finally { clearTimeout(timer) }
 }
@@ -683,7 +707,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
     const command = method === 'review/start' ? 'review' : 'compact'
     return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), { method: 'POST', body: { command, arguments: '', agent: 'build' }, timeoutMs })
   }
-  throw new Error(`OpenCode 后端尚未支持 ${method}`)
+  throw new Error(t('OpenCode 后端尚未支持 {method}', { method }))
 }
 
 function openCodeFilePart(file) {
@@ -733,24 +757,24 @@ function renderThreadList() {
   const list = $('#thread-list')
   const threads = filteredThreads()
   if (!threads.length) {
-    list.innerHTML = `<div class="list-empty">${state.search ? '没有匹配的会话' : `还没有 ${currentBackend().name} 会话`}</div>`
+    list.innerHTML = `<div class="list-empty">${t(state.search ? '没有匹配的会话' : '还没有 {backend} 会话', { backend: currentBackend().name })}</div>`
     return
   }
   list.innerHTML = projectGroups(threads).map(({ cwd, threads: projectThreads }) => {
-    const label = basename(cwd) || '其他会话'
+    const label = basename(cwd) || t('其他会话')
     const rows = projectThreads.map((thread) => {
       const status = threadStatus(thread)
       const relationship = thread.parentThreadId
-        ? `子代理 · ${shortId(thread.parentThreadId)}`
+        ? t('子代理 · {id}', { id: shortId(thread.parentThreadId) })
         : thread.forkedFromId
-          ? `Fork · ${shortId(thread.forkedFromId)}`
-          : `会话树 · ${shortId(thread.sessionId || thread.id)}`
+          ? t('Fork · {id}', { id: shortId(thread.forkedFromId) })
+          : t('会话树 · {id}', { id: shortId(thread.sessionId || thread.id) })
       return `<button class="thread-row${thread.id === state.selectedId ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}">
         <span class="status-dot ${escapeHtml(status)}"></span>
         <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small>${escapeHtml(relationship)}</small></span>
       </button>`
     }).join('')
-    return `<section class="thread-group"><header title="${escapeHtml(cwd || '未记录项目目录')}"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(cwd || '未记录项目目录')}</small></span><b>${projectThreads.length}</b></header>${rows}</section>`
+    return `<section class="thread-group"><header data-no-i18n title="${escapeHtml(cwd || t('未记录项目目录'))}"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(cwd || t('未记录项目目录'))}</small></span><b>${projectThreads.length}</b></header>${rows}</section>`
   }).join('')
   list.querySelectorAll('.thread-row').forEach((row) => row.addEventListener('click', () => selectThread(row.dataset.threadId)))
 }
@@ -806,7 +830,7 @@ async function resumeThread(id) {
     if (state.selectedId !== id) return
     state.model.error = error.message
     state.model.status = 'failed'
-    setNativeError(`无法恢复此 ${currentBackend().name} 会话：${error.message}`)
+    setNativeError(t('无法恢复此 {backend} 会话：{message}', { backend: currentBackend().name, message: error.message }))
     renderWorkspace()
   }
 }
@@ -825,7 +849,7 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     if (!quiet) toast('会话已刷新')
     return true
   } catch (error) {
-    if (quiet) setNativeError(`无法重新同步当前 ${currentBackend().name} 会话：${error.message}`)
+    if (quiet) setNativeError(t('无法重新同步当前 {backend} 会话：{message}', { backend: currentBackend().name, message: error.message }))
     else showError(error)
     return false
   }
@@ -877,15 +901,15 @@ function openThreadInfo() {
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   $('#thread-info-content').innerHTML = `
     <section class="opening-message-card">
-      <header><strong>起始问题</strong><span>${opening ? `${opening.source === 'history' ? '从历史提取' : escapeHtml(opening.source)}${opening.truncated ? ' · 已截断' : ''}` : '尚未识别'}</span></header>
-      <p>${escapeHtml(opening?.text || '当前结构化历史中没有找到用户首条消息。')}</p>
+      <header><strong>${t('起始问题')}</strong><span>${opening ? `${opening.source === 'history' ? t('从历史提取') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('已截断')}` : ''}` : t('尚未识别')}</span></header>
+      <p data-no-i18n>${escapeHtml(opening?.text || t('当前结构化历史中没有找到用户首条消息。'))}</p>
     </section>
     <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
     <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
-    <div class="detail-row"><span>会话 ID</span><strong>${escapeHtml(thread.id)}</strong></div>
-    <div class="detail-row"><span>项目目录</span><strong>${escapeHtml(thread.cwd || '未记录')}</strong></div>
-    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
-    ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
+    <div class="detail-row"><span>会话 ID</span><strong data-no-i18n>${escapeHtml(thread.id)}</strong></div>
+    <div class="detail-row"><span>项目目录</span><strong data-no-i18n>${escapeHtml(thread.cwd || t('未记录'))}</strong></div>
+    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong data-no-i18n>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
+    ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong data-no-i18n>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
   $('#copy-opening-message').disabled = !opening?.text
   $('#thread-info-dialog').showModal()
 }
@@ -915,7 +939,7 @@ function renderWorkspace() {
     source && { label: '来源', value: source, title: source },
     thread.cliVersion && { label: 'CLI', value: thread.cliVersion, title: thread.cliVersion },
   ].filter(Boolean)
-  $('#thread-meta').innerHTML = metadata.map((item) => `<span title="${escapeHtml(item.title)}">${escapeHtml(item.label)} <strong>${escapeHtml(item.value)}</strong></span>`).join('')
+  $('#thread-meta').innerHTML = metadata.map((item) => `<span data-no-i18n title="${escapeHtml(item.title)}">${escapeHtml(t(item.label))} <strong>${escapeHtml(item.value)}</strong></span>`).join('')
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   $('#thread-status').textContent = statusLabel(status)
   $('#thread-status').className = `status-badge ${status}`
@@ -1111,7 +1135,7 @@ function renderTurn(turn, index) {
     ? `<div class="turn-result ${turn.status === 'failed' ? 'failed' : ''}">${escapeHtml(statusLabel(turn.status))}${error ? ` · ${escapeHtml(error)}` : ''}</div>`
     : ''
   return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}">
-    <div class="turn-separator">Turn ${index + 1}</div>${content || `<div class="reasoning">${currentBackend().name} 正在准备此 Turn…</div>`}${result}
+    <div class="turn-separator">Turn ${index + 1}</div>${content || `<div class="reasoning">${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`}${result}
   </section>`
 }
 
@@ -1119,7 +1143,7 @@ function renderItem(item, turnId) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
-    return `<div class="message user" ${attrs}><span class="item-label">You</span>${escapeHtml(textFromUserContent(item.content) || '(非文字输入)')}</div>`
+    return `<div class="message user" ${attrs}><span class="item-label">You</span>${escapeHtml(textFromUserContent(item.content) || t('(非文字输入)'))}</div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
     const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
@@ -1130,23 +1154,23 @@ function renderItem(item, turnId) {
     </div>`
   }
   if (type === 'reasoning') {
-    const summary = arrayText(item.summary) || arrayText(item.content) || `${currentBackend().name} 正在推理…`
+    const summary = arrayText(item.summary) || arrayText(item.content) || t('{backend} 正在推理…', { backend: currentBackend().name })
     return `<details class="reasoning" ${attrs} open><summary>推理摘要</summary><div class="markdown-body compact-markdown">${renderMarkdown(summary)}</div></details>`
   }
   if (type === 'commandExecution') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
-    return `<article class="item-card" ${attrs}><header><span>命令 · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('命令')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
   }
   if (type === 'fileChange') {
     const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')
-    return `<article class="item-card" ${attrs}><header><span>文件修改 · ${(item.changes || []).length} 个文件</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(changes || '等待差异内容…')}</pre></article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('文件修改 · {count} 个文件', { count: (item.changes || []).length })}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(changes || t('等待差异内容…'))}</pre></article>`
   }
   if (type === 'planUpdate') {
     const rows = (item.plan || []).map((step) => `<li class="${escapeHtml(step.status || '')}">${escapeHtml(step.step || '')}</li>`).join('')
-    return `<article class="item-card" ${attrs}><header><span>执行计划</span><span>${escapeHtml(item.explanation || '')}</span></header><ol class="plan-list">${rows}</ol></article>`
+    return `<article class="item-card" ${attrs}><header><span>执行计划</span><span data-no-i18n>${escapeHtml(item.explanation || '')}</span></header><ol class="plan-list" data-no-i18n>${rows}</ol></article>`
   }
   if (type === 'mcpToolCall' || type === 'collabToolCall' || type === 'webSearch') {
-    const label = type === 'webSearch' ? `网页搜索 · ${item.query || ''}` : `${item.server || 'Tool'} · ${item.tool || type}`
+    const label = type === 'webSearch' ? `${t('网页搜索')} · ${item.query || ''}` : `${item.server || 'Tool'} · ${item.tool || type}`
     const detail = item.result || item.error || item.arguments || item.results || ''
     return `<article class="item-card" ${attrs}><header><span>${escapeHtml(label)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${detail ? `<pre>${escapeHtml(valueText(detail))}</pre>` : ''}</article>`
   }
@@ -1236,7 +1260,7 @@ function renderApprovals() {
     const command = Array.isArray(params.command) ? params.command.join(' ') : params.command || params.reason || [params.permission, ...(params.patterns || [])].filter(Boolean).join(' · ') || approval.method
     const permission = approval.method === 'item/permissions/requestApproval' || approval.method === 'opencode/permission'
     return `<section class="turn"><article class="approval-card" data-approval-id="${escapeHtml(String(approval.id))}">
-      <strong>${permission ? `${currentBackend().name} 请求额外权限` : `${currentBackend().name} 正在等待审批`}</strong>
+      <strong>${permission ? t('{backend} 请求额外权限', { backend: currentBackend().name }) : t('{backend} 正在等待审批', { backend: currentBackend().name })}</strong>
       <pre>${escapeHtml(command)}${params.cwd ? `\n${escapeHtml(params.cwd)}` : ''}</pre>
       <div class="approval-actions">
         <button class="subtle-button approval-decline" type="button">拒绝</button>
@@ -1362,7 +1386,7 @@ function renderComposerMenu(message = '') {
       : state.composerMenu.type === 'skill'
         ? '没有匹配技能'
         : '没有匹配命令'
-    menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(message || empty)}</div>`
+    menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(t(message || empty))}</div>`
     return
   }
   menu.innerHTML = options.map((option, index) => {
@@ -1406,7 +1430,7 @@ async function performComposerFileSearch(trigger, generation, cwd) {
     renderComposerMenu()
   } catch (error) {
     if (generation !== state.composerMenu.generation) return
-    renderComposerMenu(`文件搜索失败：${error.message}`)
+    renderComposerMenu(t('文件搜索失败：{message}', { message: error.message }))
   }
 }
 
@@ -1422,7 +1446,7 @@ function searchComposerSkills(trigger) {
     renderComposerMenu()
   }).catch((error) => {
     if (generation !== state.composerMenu.generation) return
-    renderComposerMenu(`技能读取失败：${error.message}`)
+    renderComposerMenu(t('技能读取失败：{message}', { message: error.message }))
   })
 }
 
@@ -1505,7 +1529,7 @@ async function openModelCommand() {
   $('#command-content').innerHTML = `<div class="command-list">${models.map((model) => {
     const efforts = model.supportedReasoningEfforts || []
     const effortOptions = efforts.map((entry) => `<option value="${escapeHtml(entry.reasoningEffort)}"${entry.reasoningEffort === model.defaultReasoningEffort ? ' selected' : ''}>${escapeHtml(entry.reasoningEffort)}</option>`).join('')
-    return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? ' · 默认' : ''}</small>${effortOptions ? `<select aria-label="推理强度">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">使用</button></div>`
+    return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? t(' · 默认') : ''}</small>${effortOptions ? `<select aria-label="${t('推理强度')}">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">${t('使用')}</button></div>`
   }).join('')}</div>`
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-model]')
@@ -1517,7 +1541,7 @@ async function openModelCommand() {
     else delete options.effort
     $('#command-dialog').close()
     renderComposerState()
-    toast(`已选择模型 ${options.model}${effort ? ` · ${effort}` : ''}`)
+    toast(t('已选择模型 {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
 }
 
@@ -1536,7 +1560,7 @@ function openPermissionsCommand() {
     const button = event.target.closest('[data-permission]')
     if (!button) return
     const type = button.dataset.permission
-    if (type === 'dangerFullAccess' && !confirm('确认对后续 Turn 使用完全访问权限？')) return
+    if (type === 'dangerFullAccess' && !confirm(t('确认对后续 Turn 使用完全访问权限？'))) return
     const options = currentTurnOptions()
     options.approvalPolicy = type === 'dangerFullAccess' ? 'never' : 'on-request'
     options.sandboxPolicy = type === 'workspaceWrite'
@@ -1555,8 +1579,8 @@ function openStatusCommand() {
     ['Thread', thread?.name || thread?.id || '—'],
     ['状态', statusLabel(state.model.status)],
     ['目录', thread?.cwd || '—'],
-    ['模型', options.model || thread?.model || `${currentBackend().name} 默认`],
-    ['推理强度', options.effort || `${currentBackend().name} 默认`],
+    ['模型', options.model || thread?.model || t('{backend} 默认', { backend: currentBackend().name })],
+    ['推理强度', options.effort || t('{backend} 默认', { backend: currentBackend().name })],
     ['审批策略', options.approvalPolicy || '继承会话'],
     ['沙箱', options.sandboxPolicy?.type || '继承会话'],
     ['Token', state.model.usage ? valueText(state.model.usage) : '暂无数据'],
@@ -1592,7 +1616,7 @@ async function openMcpCommand() {
   const result = await rpc('mcpServerStatus/list', { limit: 100 })
   const servers = Array.isArray(result?.data) ? result.data : []
   $('#command-content').innerHTML = servers.length
-    ? `<div class="command-list">${servers.map((server) => `<div class="command-card"><strong>${escapeHtml(server.name)}</strong><small>${Object.keys(server.tools || {}).length} 个工具 · ${server.resources?.length || 0} 个资源</small><span>${escapeHtml(valueText(server.authStatus || 'unknown'))}</span></div>`).join('')}</div>`
+    ? `<div class="command-list">${servers.map((server) => `<div class="command-card"><strong>${escapeHtml(server.name)}</strong><small>${t('{tools} 个工具 · {resources} 个资源', { tools: Object.keys(server.tools || {}).length, resources: server.resources?.length || 0 })}</small><span>${escapeHtml(valueText(server.authStatus || 'unknown'))}</span></div>`).join('')}</div>`
     : '<div class="command-empty">没有配置 MCP Server。</div>'
 }
 
@@ -1627,9 +1651,9 @@ function addPendingSkill(skill) {
 async function copyLatestAgentResponse() {
   const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
   const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
-  if (!message) throw new Error(`当前会话还没有可复制的 ${currentBackend().name} 回复。`)
+  if (!message) throw new Error(t('当前会话还没有可复制的 {backend} 回复。', { backend: currentBackend().name }))
   await navigator.clipboard.writeText(message.text)
-  toast(`已复制最近一条 ${currentBackend().name} 回复`)
+  toast(t('已复制最近一条 {backend} 回复', { backend: currentBackend().name }))
 }
 
 async function executeSlashCommand(action) {
@@ -1651,7 +1675,7 @@ async function executeSlashCommand(action) {
     delete: deleteSelectedThread,
   }
   const handler = actions[action]
-  if (!handler) throw new Error(`尚未支持命令：/${action}`)
+  if (!handler) throw new Error(t('尚未支持命令：/{action}', { action }))
   await handler()
 }
 
@@ -1668,8 +1692,8 @@ function renderComposerState() {
   const details = [
     options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
     options.sandboxPolicy?.type,
-    state.pendingSkills[selectedStateKey()]?.length && `${state.pendingSkills[selectedStateKey()].length} 个技能`,
-    state.pendingFiles[selectedStateKey()]?.length && `${state.pendingFiles[selectedStateKey()].length} 个文件`,
+    state.pendingSkills[selectedStateKey()]?.length && t('{count} 个技能', { count: state.pendingSkills[selectedStateKey()].length }),
+    state.pendingFiles[selectedStateKey()]?.length && t('{count} 个文件', { count: state.pendingFiles[selectedStateKey()].length }),
   ].filter(Boolean)
   const baseHint = shellMode
     ? active
@@ -1703,7 +1727,7 @@ async function sendComposer(event) {
       input.value = ''
       hideComposerMenu()
       renderComposerState()
-      toast(`Shell 命令已交给 ${currentBackend().name} 执行`)
+      toast(t('Shell 命令已交给 {backend} 执行', { backend: currentBackend().name }))
     } catch (error) { showError(error) }
     finally { button.disabled = false }
     return
@@ -1825,7 +1849,7 @@ async function createThread(event) {
     $('#new-thread-form').reset()
     await loadThreads()
     await selectThread(result.thread.id, { force: true })
-    toast(`${currentBackend().name} 会话已创建`)
+    toast(t('{backend} 会话已创建', { backend: currentBackend().name }))
   } catch (error) {
     errorBox.textContent = error.message
     errorBox.classList.remove('hidden')
@@ -1838,12 +1862,12 @@ async function forkSelectedThread() {
     const result = await rpc('thread/fork', { threadId: state.selectedId })
     await loadThreads()
     await selectThread(result.thread.id, { force: true })
-    toast(`已创建 ${currentBackend().name} 会话分支`)
+    toast(t('已创建 {backend} 会话分支', { backend: currentBackend().name }))
   } catch (error) { showError(error) }
 }
 
 async function archiveSelectedThread() {
-  if (!state.selectedId || !confirm('归档当前 Codex 会话？')) return
+  if (!state.selectedId || !confirm(t('归档当前 Codex 会话？'))) return
   const threadId = state.selectedId
   try {
     await rpc('thread/archive', { threadId })
@@ -1857,7 +1881,7 @@ async function archiveSelectedThread() {
 }
 
 async function deleteSelectedThread() {
-  if (!state.selectedId || !confirm('永久删除当前 Codex 会话及其持久化历史？此操作无法撤销。')) return
+  if (!state.selectedId || !confirm(t('永久删除当前 Codex 会话及其持久化历史？此操作无法撤销。'))) return
   const threadId = state.selectedId
   try {
     await rpc('thread/delete', { threadId })
@@ -2003,7 +2027,7 @@ function renderAnnotationRail() {
   $('#insert-annotations').disabled = !drafts.length
   $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
-    <header><span>批注 ${index + 1}${draft.turnId ? ` · ${escapeHtml(draft.turnId.slice(0, 8))}` : ''}</span><button class="annotation-delete" type="button">×</button></header>
+    <header><span>${t('批注 {index}', { index: index + 1 })}${draft.turnId ? ` · ${escapeHtml(draft.turnId.slice(0, 8))}` : ''}</span><button class="annotation-delete" type="button" aria-label="${t('删除批注 {index}', { index: index + 1 })}">×</button></header>
     <blockquote>${escapeHtml(draft.quote)}</blockquote><p>${escapeHtml(draft.comment)}</p>
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
@@ -2019,7 +2043,7 @@ function deleteAnnotation(id) {
 }
 
 function clearAnnotations() {
-  if (!state.selectedId || !confirm('清空当前会话的全部批注草稿？')) return
+  if (!state.selectedId || !confirm(t('清空当前会话的全部批注草稿？'))) return
   delete state.annotationDrafts[selectedStateKey()]
   delete state.annotationAdditional[selectedStateKey()]
   persistPreferences()
@@ -2039,9 +2063,16 @@ function buildAnnotationPrompt(drafts, additional = '') {
   const annotations = drafts.map((draft, index) => {
     const anchor = [draft.turnId && `Turn ${draft.turnId}`, draft.itemId && `Item ${draft.itemId}`].filter(Boolean).join(' / ')
     const quote = draft.quote.split('\n').map((line) => `> ${line}`).join('\n')
-    return `批注 ${index + 1}${anchor ? `（${anchor}）` : ''}\n引用：\n${quote}\n\n我的意见：\n${draft.comment}`
+    return t(anchor
+      ? '批注 {index}（{anchor}）\n引用：\n{quote}\n\n我的意见：\n{comment}'
+      : '批注 {index}\n引用：\n{quote}\n\n我的意见：\n{comment}', {
+      index: index + 1,
+      anchor,
+      quote,
+      comment: draft.comment,
+    })
   }).join('\n\n---\n\n')
-  const additionalBlock = additional.trim() ? `整体补充：\n${additional.trim()}` : ''
+  const additionalBlock = additional.trim() ? t('整体补充：\n{text}', { text: additional.trim() }) : ''
   return state.annotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
@@ -2117,13 +2148,15 @@ function renderFavoritesRail() {
     ? state.favorites.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId)
     : state.favorites
   const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
-  $('#favorites-title').textContent = state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏'
+  $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏')
   $('#favorites-count').textContent = count
   $('#favorites-badge').textContent = count > 99 ? '99+' : count
   $('#favorites-badge').classList.toggle('hidden', count === 0)
   $('#favorites-search-summary').textContent = state.favoriteQuery
-    ? `找到 ${visibleFavorites.length} 条匹配收藏`
-    : state.favoriteScope === 'session' ? `${count} 条当前会话收藏` : `${count} 条跨会话结构化收藏`
+    ? t('找到 {count} 条匹配收藏', { count: visibleFavorites.length })
+    : state.favoriteScope === 'session'
+      ? t('{count} 条当前会话收藏', { count })
+      : t('{count} 条跨会话结构化收藏', { count })
   const empty = visibleFavorites.length === 0
   $('#favorites-empty').classList.toggle('hidden', !empty)
   $('#favorites-list').classList.toggle('hidden', empty)
@@ -2144,7 +2177,7 @@ function renderFavoritesRail() {
       ${question}
       <p class="favorite-card-answer">${escapeHtml(favorite.snippet)}</p>
       ${tags}
-      <footer><span>${escapeHtml(favorite.threadTitle || '未命名会话')}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
+      <footer><span>${escapeHtml(favorite.threadTitle || t('未命名会话'))}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
     </button>`
   }).join('')
   renderSessionFavoriteCount()
@@ -2156,6 +2189,7 @@ function renderSessionFavoriteCount() {
     : 0
   const element = $('#session-favorite-count')
   if (element) element.textContent = count > 99 ? '99+' : count
+  $('#favorite-menu-button')?.classList.toggle('has-items', count > 0)
 }
 
 function handleFavoriteListClick(event) {
@@ -2193,16 +2227,16 @@ function openFavoriteForMessage(turnId, itemId) {
 
 function populateFavoriteDialog(favorite) {
   const editing = state.favoriteEditMode
-  $('#favorite-dialog-title').textContent = editing ? '编辑收藏' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复'
-  $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || '未命名会话'}`
-  $('#favorite-answer-length').textContent = `${[...favorite.content].length.toLocaleString()} 字`
+  $('#favorite-dialog-title').textContent = t(editing ? '编辑收藏' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复')
+  $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || t('未命名会话')}`
+  $('#favorite-answer-length').textContent = t('{count} 字', { count: [...favorite.content].length.toLocaleString(getLocale()) })
   $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
   $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)
   $('#favorite-tags').value = (favorite.tags || []).join(', ')
   $('#favorite-note').value = favorite.note || ''
   $('#favorite-include-question').checked = Boolean(favorite.question)
   $('#favorite-question-option').classList.toggle('hidden', editing && !favorite.question)
-  $('#save-favorite').textContent = editing ? '保存修改' : '保存到收藏'
+  $('#save-favorite').textContent = t(editing ? '保存修改' : '保存到收藏')
   $('#favorite-error').classList.add('hidden')
   renderFavoriteQuestionOption()
   $('#favorite-dialog').showModal()
@@ -2264,7 +2298,7 @@ async function openFavoriteDetail(id) {
   $('#favorite-detail-backend').textContent = favorite.backend
   $('#favorite-detail-backend').className = `favorite-backend-pill ${favorite.backend}`
   $('#favorite-detail-title').textContent = favorite.title
-  $('#favorite-detail-source').textContent = `${favorite.threadTitle || '未命名会话'} · ${favorite.projectPath || '未记录项目目录'} · ${formatFavoriteDate(favorite.createdAt)}`
+  $('#favorite-detail-source').textContent = `${favorite.threadTitle || t('未命名会话')} · ${favorite.projectPath || t('未记录项目目录')} · ${formatFavoriteDate(favorite.createdAt)}`
   $('#favorite-detail-question-section').classList.toggle('hidden', !favorite.question)
   $('#favorite-detail-question').textContent = favorite.question || ''
   $('#favorite-detail-answer').innerHTML = renderMarkdown(favorite.content)
@@ -2296,7 +2330,7 @@ function editSelectedFavorite() {
 
 async function deleteSelectedFavorite() {
   const favorite = state.selectedFavorite
-  if (!favorite || !confirm(`删除收藏“${favorite.title}”？`)) return
+  if (!favorite || !confirm(t('删除收藏“{title}”？', { title: favorite.title }))) return
   await favoriteRequest(`/studio/favorites/${encodeURIComponent(favorite.id)}`, { method: 'DELETE' })
   closeFavoriteDetail()
   await loadFavorites()
@@ -2347,7 +2381,7 @@ function syncFavoriteButtons() {
 function formatFavoriteDate(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
+  return formatLocalizedDate(date, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function waitFor(predicate, timeoutMs) {
@@ -2368,6 +2402,7 @@ async function loadPreferences() {
     const response = await fetch('/studio/preferences', { cache: 'no-store' })
     if (response.ok) saved = await response.json()
   } catch (error) { console.warn('Unable to load preferences', error) }
+  state.language = normalizeLanguage(saved.language)
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
@@ -2379,13 +2414,28 @@ async function loadPreferences() {
   state.selectedId = state.selectedByBackend[state.backend]
   state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
-  state.annotationPromptTemplate = normalizeTemplate(saved.annotationPromptTemplate)
+  let initialLocale = resolveLanguage(state.language)
+  const templateMigration = migrateLocalizedTemplates(
+    saved.annotationPromptTemplates,
+    saved.annotationPromptTemplate,
+    initialLocale,
+  )
+  state.annotationPromptTemplates = templateMigration.templates
+  if (templateMigration.migratedLegacy && state.language === 'system') {
+    state.language = templateMigration.legacyLocale
+    initialLocale = resolveLanguage(state.language)
+  }
+  if (!state.annotationPromptTemplates[initialLocale]) {
+    state.annotationPromptTemplates[initialLocale] = defaultAnnotationPrompt(initialLocale)
+  }
+  state.annotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
   state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
   preferencesReady = true
 }
 
 function preferencesSnapshot() {
   return {
+    language: state.language,
     theme: state.theme,
     contentWidth: state.contentWidth,
     typography: state.typography,
@@ -2395,6 +2445,7 @@ function preferencesSnapshot() {
     annotationDrafts: state.annotationDrafts,
     annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
+    annotationPromptTemplates: state.annotationPromptTemplates,
     openingMessages: state.openingMessages,
   }
 }
@@ -2414,6 +2465,7 @@ function openSettings() {
 }
 
 function populateSettingsForm() {
+  $('#language-select').value = state.language
   $('#theme-select').value = state.theme
   $('#content-width').value = state.contentWidth
   $('#ui-font-family').value = state.typography.uiFontFamily
@@ -2434,6 +2486,10 @@ function saveSettings(event) {
     $('#settings-error').classList.remove('hidden')
     return
   }
+  const previousLocale = getLocale()
+  state.annotationPromptTemplates[previousLocale] = template.slice(0, 32000)
+  state.language = normalizeLanguage($('#language-select').value)
+  setLanguage(state.language)
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
   state.typography = normalizeTypography({
@@ -2444,19 +2500,35 @@ function saveSettings(event) {
     codeFontWeight: Number($('#code-font-weight').value),
     highContrast: $('#high-contrast').checked,
   })
-  state.annotationPromptTemplate = template.slice(0, 32000)
+  const nextLocale = getLocale()
+  state.annotationPromptTemplate = nextLocale === previousLocale
+    ? template.slice(0, 32000)
+    : state.annotationPromptTemplates[nextLocale] || defaultAnnotationPrompt(nextLocale)
+  state.annotationPromptTemplates[nextLocale] = state.annotationPromptTemplate
   applyAppearance()
   persistPreferences()
   $('#settings-dialog').close()
+  renderLocalizedUI()
 }
 
 function resetSettings() {
+  state.language = 'system'
+  setLanguage(state.language)
   state.theme = 'light'
   state.contentWidth = 'comfortable'
   state.typography = { ...typographyDefaults }
-  state.annotationPromptTemplate = annotationPromptDefault
+  state.annotationPromptTemplates = { ...annotationPromptDefaults }
+  state.annotationPromptTemplate = defaultAnnotationPrompt()
   populateSettingsForm()
   applyAppearance()
+}
+
+function renderLocalizedUI() {
+  applyBackendCopy()
+  renderThreadList()
+  renderWorkspace()
+  renderTranscript()
+  renderFavoritesRail()
 }
 
 function applyAppearance() {
@@ -2486,13 +2558,13 @@ function openBackendDialog() {
 
 function setBackendState(kind, label, caption) {
   $('#backend-dot').className = `backend-dot ${kind}`
-  $('#backend-label').textContent = label
-  $('#backend-caption').textContent = caption
+  $('#backend-label').textContent = t(label)
+  $('#backend-caption').textContent = t(caption)
 }
 
 function setNativeError(message) {
   $('#native-error').classList.toggle('hidden', !message)
-  $('#native-error-message').textContent = message || ''
+  $('#native-error-message').textContent = t(message || '')
 }
 
 function updateSelectedThreadStatus(message) {
@@ -2509,7 +2581,7 @@ function renderUsage() {
   $('#token-usage').textContent = Number.isFinite(total) ? `${Number(total).toLocaleString()} tokens` : ''
 }
 
-function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || 'Codex 会话' }
+function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex 会话') }
 function basename(path) { return String(path || '').split(/[\\/]/).filter(Boolean).at(-1) || '' }
 function shortId(value) { const text = String(value || ''); return text.length > 12 ? `${text.slice(0, 8)}…` : text }
 function threadSourceLabel(source) {
@@ -2519,7 +2591,7 @@ function threadSourceLabel(source) {
 }
 function threadStatus(thread) { return thread?.status?.type || thread?.status || 'notLoaded' }
 function statusLabel(status) {
-  return ({ active: '运行中', running: '运行中', inProgress: '执行中', idle: '空闲', notLoaded: '未加载', completed: '完成', interrupted: '已停止', failed: '失败', systemError: '异常', declined: '已拒绝' })[status] || status || '未知'
+  return t(({ active: '运行中', running: '运行中', inProgress: '执行中', idle: '空闲', notLoaded: '未加载', completed: '完成', interrupted: '已停止', failed: '失败', systemError: '异常', declined: '已拒绝' })[status] || status || '未知')
 }
 function arrayText(value) {
   if (!Array.isArray(value)) return typeof value === 'string' ? value : ''
@@ -2550,6 +2622,10 @@ function normalizeTypography(value) {
 
 function normalizeContentWidth(value) {
   return ['comfortable', 'wide', 'full'].includes(value) ? value : 'comfortable'
+}
+
+function normalizeLanguage(value) {
+  return ['system', 'zh-CN', 'en-US'].includes(value) ? value : 'system'
 }
 
 function normalizeAnnotationDrafts(value) {
@@ -2586,12 +2662,10 @@ function normalizeOpeningMessages(value) {
     }]] : []
   }))
 }
-function normalizeTemplate(value) { return typeof value === 'string' && value.includes('{{annotations}}') ? value.slice(0, 32000) : annotationPromptDefault }
-
 function toast(message, kind = 'info') {
   const element = document.createElement('div')
   element.className = `toast ${kind}`
-  element.textContent = message
+  element.textContent = t(message)
   $('#toast-region').appendChild(element)
   setTimeout(() => element.remove(), 3200)
 }

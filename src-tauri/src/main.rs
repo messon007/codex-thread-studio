@@ -74,6 +74,8 @@ struct OpeningMessage {
 #[serde(rename_all = "camelCase")]
 struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content_width: Option<String>,
@@ -91,6 +93,8 @@ struct StudioPreferences {
     annotation_additional: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     annotation_prompt_template: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    annotation_prompt_templates: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     opening_messages: BTreeMap<String, OpeningMessage>,
 }
@@ -169,6 +173,7 @@ fn gateway_router(state: GatewayState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
+        .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
@@ -209,6 +214,10 @@ async fn index() -> impl IntoResponse {
 
 async fn app_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/app.js"))
+}
+
+async fn i18n_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/i18n.mjs"))
 }
 
 async fn codex_native_js() -> impl IntoResponse {
@@ -525,6 +534,13 @@ fn save_preferences(path: &std::path::Path, preferences: &StudioPreferences) -> 
 
 fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     if preferences
+        .language
+        .as_deref()
+        .is_some_and(|language| !matches!(language, "system" | "zh-CN" | "en-US"))
+    {
+        return Err("language must be system, zh-CN, or en-US".to_string());
+    }
+    if preferences
         .theme
         .as_deref()
         .is_some_and(|theme| !matches!(theme, "light" | "dark"))
@@ -615,6 +631,18 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         .is_some_and(|template| template.len() > 32 * 1024 || !template.contains("{{annotations}}"))
     {
         return Err("annotation template must contain {{annotations}}".to_string());
+    }
+    if preferences.annotation_prompt_templates.len() > 2
+        || preferences
+            .annotation_prompt_templates
+            .iter()
+            .any(|(language, template)| {
+                !matches!(language.as_str(), "zh-CN" | "en-US")
+                    || template.len() > 32 * 1024
+                    || !template.contains("{{annotations}}")
+            })
+    {
+        return Err("localized annotation templates are invalid".to_string());
     }
     if preferences.opening_messages.len() > 2048
         || preferences.opening_messages.iter().any(|(id, message)| {
@@ -733,6 +761,7 @@ mod tests {
             for path in [
                 "/",
                 "/app.js",
+                "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
                 "/composer-tools.mjs",
@@ -920,6 +949,33 @@ mod tests {
             content_width: Some("unbounded".to_string()),
             ..StudioPreferences::default()
         };
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_interface_language_preferences() {
+        for language in ["system", "zh-CN", "en-US"] {
+            let preferences = StudioPreferences {
+                language: Some(language.to_string()),
+                ..StudioPreferences::default()
+            };
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+        let preferences = StudioPreferences {
+            language: Some("ja-JP".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_err());
+
+        let mut preferences = StudioPreferences::default();
+        preferences
+            .annotation_prompt_templates
+            .insert("zh-CN".to_string(), "请处理：\n{{annotations}}".to_string());
+        assert!(validate_preferences(&preferences).is_ok());
+        preferences.annotation_prompt_templates.insert(
+            "ja-JP".to_string(),
+            "コメント：\n{{annotations}}".to_string(),
+        );
         assert!(validate_preferences(&preferences).is_err());
     }
 

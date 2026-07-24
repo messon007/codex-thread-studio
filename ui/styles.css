@@ -166,9 +166,16 @@ kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; bac
 .live-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--brand); }
 .native-tools { display: flex; gap: 8px; align-items: center; }.native-tools > span { font-size: 11px; }
 .content-menu-anchor { display: flex; align-items: center; }
-.content-menu-button { padding: 4px 7px; border: 1px solid var(--border); color: var(--muted); }
-.content-menu-button span { min-width: 12px; font-weight: 750; }
-.favorite-menu-button { color: var(--favorite); }
+.content-menu-button {
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 7px;
+  background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.4;
+}
+.content-menu-button:hover { border-color: var(--border-strong); background: var(--panel-strong); color: var(--text); }
+.content-menu-button span { min-width: 12px; color: currentColor; font-weight: 750; }
+.favorite-menu-button.has-items {
+  border-color: color-mix(in srgb, var(--favorite) 34%, var(--border));
+  background: var(--favorite-soft); color: var(--favorite);
+}
 .content-action-menu { top: calc(100% + 6px); width: 124px; }
 .text-button { padding: 5px 8px; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; }.text-button:hover { background: var(--panel-strong); color: var(--text); }
 .transcript { flex: 1; min-height: 0; overflow: auto; padding: 24px var(--workspace-gutter) 36px; scroll-behavior: smooth; }

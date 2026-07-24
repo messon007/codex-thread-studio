@@ -89,7 +89,7 @@ Favorites attach to complete structured AI messages rather than terminal text or
 
 ## Persistence
 
-Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI settings, per-backend selection, and explicit comment drafts in:
+Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI language, appearance settings, per-backend selection, language-specific comment templates, and explicit comment drafts in:
 
 ```text
 ~/.config/codex-thread-studio/settings.json
@@ -104,6 +104,8 @@ The global favorites library is intentionally separate because it can contain su
 Favorites use validated, bounded records and atomic temporary-file replacement. Search returns summaries; full Markdown content is loaded only when a favorite is opened.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
+
+The WebView uses a local Chinese-to-English interface catalog for both initial markup and controls rendered after App Server events. Thread titles, project paths, prompts, AI responses, favorites, comments, code, and tool output are protected from translation. Legacy single-template settings are detected and moved to the matching language slot.
 
 ## Security boundaries
 

@@ -402,12 +402,14 @@ version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tokio",
  "tower",
+ "uuid",
 ]
 
 [[package]]

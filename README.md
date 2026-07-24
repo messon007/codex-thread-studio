@@ -1,6 +1,6 @@
 # Codex Thread Studio
 
-An independent, unofficial Tauri desktop client for the structured [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) protocol.
+An independent, unofficial Tauri desktop client for structured Codex and OpenCode sessions. It connects to [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) or a local [`opencode serve`](https://opencode.ai/docs/server/) process without scraping a terminal.
 
 It lists Codex Threads directly, renders structured Turns and Items, handles approvals, and sends messages through the App Server v2 API. It is not an Agent Deck frontend and does not embed a terminal or depend on tmux.
 
@@ -15,27 +15,28 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Provides `@` project-file search, direct `$skill-name` discovery with structured App Server skill inputs, `!command` local shell mode, and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
+- Saves any complete AI message directly from its structured Item, optionally includes the user question from the same Turn, and provides a searchable cross-backend, cross-thread favorites library with source navigation.
 - Provides persistent light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and a configurable annotation prompt template.
-- Uses the installed Codex CLI and existing Codex authentication; Studio stores no model credential.
+- Switches between isolated Codex and OpenCode session lists, remembers the selected session for each backend, and namespaces comment drafts per backend.
+- Uses installed CLIs and their existing authentication; Studio stores no model credential. The Rust layer starts OpenCode with an ephemeral password that never enters browser storage.
 
 ## Architecture
 
 ```text
 Tauri WebView
-  └─ same-origin WebSocket
-      └─ Rust broker
-          └─ JSONL over stdin/stdout
-              └─ codex app-server
-                  └─ Codex threads, turns, tools, and project files
+  └─ Rust loopback gateway
+      ├─ WebSocket ↔ JSONL stdio ↔ codex app-server
+      └─ same-origin HTTP/SSE proxy ↔ opencode serve
 ```
 
-The Rust broker owns the one-time `initialize`/`initialized` handshake. Browser requests and server events then pass through as JSON-RPC messages with their native payloads preserved.
+The Rust broker owns the Codex handshake and the OpenCode process/authentication boundary. The WebView receives a common Thread/Turn/Item render model while backend-native data stays available to the adapters.
 
 ## Requirements
 
 - Rust stable toolchain
 - Tauri 2 system dependencies
 - A current Codex CLI with `codex app-server`
+- OpenCode CLI for OpenCode mode (`opencode serve`)
 - A supported system WebView (WebKitGTK on Linux or WKWebView on macOS)
 
 ## Run
@@ -43,6 +44,7 @@ The Rust broker owns the one-time `initialize`/`initialized` handshake. Browser 
 ```bash
 ./scripts/install-linux-dev-deps.sh
 codex --version
+opencode --version
 cargo run -p codex-thread-studio
 ```
 
@@ -58,6 +60,8 @@ If a GUI launcher cannot find Codex:
 ```bash
 CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-studio
 ```
+
+Use `CODEX_THREAD_STUDIO_OPENCODE_BIN=/absolute/path/to/opencode` when OpenCode is outside the GUI launcher's `PATH`.
 
 ## Verification
 
@@ -80,7 +84,7 @@ See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architectu
 
 ## Current lifecycle boundary
 
-The first implementation runs one App Server child per Studio process. Codex Thread history is persisted by Codex, but closing Studio can interrupt an active Turn. Moving process ownership to the App Server daemon/control socket is the next lifecycle milestone.
+The first implementation owns one child process for each backend used during the Studio run. Session history is persisted by Codex/OpenCode, but closing Studio can interrupt active work.
 
 ## License
 

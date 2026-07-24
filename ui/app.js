@@ -6,6 +6,13 @@ import {
   textFromUserContent,
 } from './codex-native.mjs'
 import {
+  applyOpenCodeEvent,
+  normalizeOpenCodeSessions,
+  openCodeModelList,
+  openCodeThreadFromHistory,
+  splitOpenCodeModel,
+} from './opencode-native.mjs'
+import {
   composerTrigger,
   fuzzyFileLabel,
   matchingSkills,
@@ -16,6 +23,13 @@ import {
   shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
+import {
+  autoFavoriteTitle,
+  favoriteCopyText,
+  favoriteSourceKey,
+  normalizeFavoriteTags,
+  questionForTurn,
+} from './favorites.mjs'
 import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
@@ -43,14 +57,17 @@ const typographyDefaults = Object.freeze({
   highContrast: true,
 })
 
-const annotationPromptDefault = `请根据下面引用的 Codex 输出和我的批注进行回应。请逐项处理，不要遗漏；若需要修改代码，请先说明你对每条意见的理解，再继续执行。
+const annotationPromptDefault = `请根据下面引用的 AI 输出和我的批注进行回应。请逐项处理，不要遗漏；若需要修改代码，请先说明你对每条意见的理解，再继续执行。
 
 {{annotations}}
 
 {{additional}}`
 
 const state = {
+  backend: 'codex',
+  selectedByBackend: { codex: null, opencode: null },
   socket: null,
+  eventSource: null,
   socketGeneration: 0,
   reconnectTimer: null,
   ready: false,
@@ -67,11 +84,21 @@ const state = {
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplate: annotationPromptDefault,
+  openingMessages: {},
   pendingSelection: null,
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
   pendingSkills: {},
+  pendingFiles: {},
+  favorites: [],
+  favoriteIndex: [],
+  favoriteTotal: 0,
+  favoriteQuery: '',
+  favoriteScope: 'global',
+  pendingFavorite: null,
+  selectedFavorite: null,
+  favoriteEditMode: false,
 }
 
 let preferencesReady = false
@@ -81,6 +108,8 @@ let transcriptFrame = null
 const dirtyStreamItems = new Map()
 let composerSearchTimer = null
 let turnNavigatorFrame = null
+let openCodeListRefreshTimer = null
+let favoritesSearchTimer = null
 const transcriptScrollFollower = createTranscriptScrollFollower()
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
@@ -89,11 +118,14 @@ async function init() {
   bindUI()
   await loadPreferences()
   applyAppearance()
+  applyBackendCopy()
+  await loadFavorites().catch(showError)
   await loadBackendInfo()
-  connectAppServer()
+  connectBackend()
 }
 
 function bindUI() {
+  $$('.backend-switcher [data-backend]').forEach((button) => button.addEventListener('click', () => switchBackend(button.dataset.backend)))
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
@@ -103,8 +135,15 @@ function bindUI() {
     state.search = event.target.value.trim().toLowerCase()
     renderThreadList()
   })
-  $('#refresh-thread').addEventListener('click', refreshSelectedThread)
-  $('#stop-thread').addEventListener('click', interruptTurn)
+  $('#thread-more-button').addEventListener('click', () => toggleActionMenu('thread-more-menu', 'thread-more-button'))
+  $('#refresh-thread').addEventListener('click', () => {
+    closeActionMenus()
+    refreshSelectedThread()
+  })
+  $('#thread-info').addEventListener('click', () => {
+    closeActionMenus()
+    openThreadInfo()
+  })
   $('#rename-thread').addEventListener('click', openRenameThreadDialog)
   $('#rename-thread-form').addEventListener('submit', renameSelectedThread)
   $('#close-rename-thread').addEventListener('click', closeRenameThreadDialog)
@@ -112,7 +151,7 @@ function bindUI() {
   $('#fork-thread').addEventListener('click', forkSelectedThread)
   $('#archive-thread').addEventListener('click', archiveSelectedThread)
   $('#delete-thread').addEventListener('click', deleteSelectedThread)
-  $('#retry-native').addEventListener('click', connectAppServer)
+  $('#retry-native').addEventListener('click', connectBackend)
   $('#composer-form').addEventListener('submit', sendComposer)
   $('#composer-input').addEventListener('input', handleComposerInput)
   $('#composer-input').addEventListener('keydown', handleComposerKeydown)
@@ -123,12 +162,29 @@ function bindUI() {
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#transcript').addEventListener('click', handleTranscriptClick)
+  $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
+  $('#favorite-menu-button').addEventListener('click', () => toggleActionMenu('favorite-menu', 'favorite-menu-button'))
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
   window.addEventListener('resize', scheduleTurnNavigatorSync)
-  $('#comment-selection').addEventListener('click', openAnnotationFromSelection)
+  $('#comment-selection').addEventListener('click', () => {
+    closeActionMenus()
+    openAnnotationFromSelection()
+  })
   $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
-  $('#selection-popover').addEventListener('click', openAnnotationFromSelection)
-  $('#open-annotation-rail').addEventListener('click', openAnnotationRail)
+  $('#selection-comment').addEventListener('click', openAnnotationFromSelection)
+  $('#selection-favorite').addEventListener('click', openFavoriteFromSelection)
+  $('#favorite-selection').addEventListener('click', () => {
+    closeActionMenus()
+    openFavoriteFromSelection()
+  })
+  $('#open-annotation-rail').addEventListener('click', () => {
+    closeActionMenus()
+    openAnnotationRail()
+  })
+  $('#open-session-favorites').addEventListener('click', () => {
+    closeActionMenus()
+    openFavoritesRail('session')
+  })
   $('#close-annotation-rail').addEventListener('click', closeAnnotationRail)
   $('#annotation-form').addEventListener('submit', addAnnotation)
   $('#close-annotation-dialog').addEventListener('click', closeAnnotationDialog)
@@ -136,6 +192,19 @@ function bindUI() {
   $('#clear-annotations').addEventListener('click', clearAnnotations)
   $('#insert-annotations').addEventListener('click', insertAnnotations)
   $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
+  $('#open-favorites').addEventListener('click', () => openFavoritesRail('global'))
+  $('#close-favorites').addEventListener('click', closeFavoritesRail)
+  $('#favorites-search').addEventListener('input', handleFavoritesSearch)
+  $('#favorites-list').addEventListener('click', handleFavoriteListClick)
+  $('#favorite-form').addEventListener('submit', saveFavorite)
+  $('#close-favorite-dialog').addEventListener('click', closeFavoriteDialog)
+  $('#cancel-favorite').addEventListener('click', closeFavoriteDialog)
+  $('#favorite-include-question').addEventListener('change', renderFavoriteQuestionOption)
+  $('#close-favorite-detail').addEventListener('click', closeFavoriteDetail)
+  $('#copy-favorite').addEventListener('click', () => copySelectedFavorite().catch(showError))
+  $('#edit-favorite').addEventListener('click', editSelectedFavorite)
+  $('#delete-favorite').addEventListener('click', () => deleteSelectedFavorite().catch(showError))
+  $('#open-favorite-source').addEventListener('click', () => openSelectedFavoriteSource().catch(showError))
   $('#settings-button').addEventListener('click', openSettings)
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close())
   $('#settings-form').addEventListener('submit', saveSettings)
@@ -143,9 +212,13 @@ function bindUI() {
   $('#backend-details').addEventListener('click', openBackendDialog)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
   $('#close-command').addEventListener('click', () => $('#command-dialog').close())
+  $('#close-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
+  $('#done-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
+  $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
 
   document.addEventListener('mousedown', (event) => {
-    if (!event.target.closest('#selection-popover, #comment-selection')) hideSelectionPopover()
+    if (!event.target.closest('#selection-popover, .content-menu-anchor')) hideSelectionPopover()
+    if (!event.target.closest('.menu-anchor')) closeActionMenus()
   })
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
@@ -157,18 +230,88 @@ function bindUI() {
       $('#thread-search').focus()
     } else if (event.key === 'Escape') {
       hideSelectionPopover()
+      closeActionMenus()
       closeAnnotationRail()
+      closeFavoritesRail()
     }
   })
 }
 
+function toggleActionMenu(menuId, buttonId) {
+  const menu = $(`#${menuId}`)
+  const opening = menu.classList.contains('hidden')
+  closeActionMenus()
+  menu.classList.toggle('hidden', !opening)
+  $(`#${buttonId}`).setAttribute('aria-expanded', String(opening))
+}
+
+function closeActionMenus() {
+  $$('.action-menu').forEach((menu) => menu.classList.add('hidden'))
+  $$('.menu-anchor [aria-expanded]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
+}
+
 async function loadBackendInfo() {
+  const descriptor = currentBackend()
   try {
-    const response = await fetch('/studio/codex', { cache: 'no-store' })
+    const response = await fetch(descriptor.infoPath, { cache: 'no-store' })
     state.backendInfo = await response.json()
+    if (!response.ok) throw new Error(state.backendInfo?.error || `HTTP ${response.status}`)
   } catch (error) {
-    state.backendInfo = { binary: 'codex', protocol: 'Codex App Server v2', transport: 'stdio JSONL' }
+    state.backendInfo = { binary: descriptor.binary, protocol: descriptor.protocol, transport: descriptor.transport, error: error.message }
   }
+}
+
+function currentBackend() {
+  return state.backend === 'opencode'
+    ? { id: 'opencode', name: 'OpenCode', nativeLabel: 'OPENCODE NATIVE', binary: 'opencode', infoPath: '/studio/opencode', protocol: 'OpenCode Server API', transport: 'HTTP + SSE' }
+    : { id: 'codex', name: 'Codex', nativeLabel: 'CODEX NATIVE', binary: 'codex', infoPath: '/studio/codex', protocol: 'Codex App Server v2', transport: 'stdio JSONL' }
+}
+
+function connectBackend() {
+  if (state.backend === 'opencode') connectOpenCode().catch(showError)
+  else connectAppServer()
+}
+
+async function switchBackend(backend) {
+  if (!['codex', 'opencode'].includes(backend) || backend === state.backend) return
+  state.selectedByBackend[state.backend] = state.selectedId
+  cleanupConnections()
+  rejectPending(new Error('后端已切换'))
+  state.backend = backend
+  state.selectedId = state.selectedByBackend[backend] || null
+  state.threads = []
+  state.model = createCodexViewModel()
+  state.backendInfo = null
+  state.ready = false
+  applyBackendCopy()
+  renderThreadList()
+  renderWorkspace()
+  persistPreferences()
+  await loadBackendInfo()
+  connectBackend()
+}
+
+function applyBackendCopy() {
+  const descriptor = currentBackend()
+  $$('.backend-switcher [data-backend]').forEach((button) => button.setAttribute('aria-selected', String(button.dataset.backend === state.backend)))
+  $('.brand-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
+  $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
+  $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
+  $('#new-thread-label').textContent = `新建 ${descriptor.name} 会话`
+  $('#native-label').textContent = descriptor.nativeLabel
+  $('#native-error-title').textContent = `${descriptor.name} Server 无法使用`
+  $('#empty-title').textContent = `结构化 ${descriptor.name} 工作台`
+  $('#empty-description').textContent = descriptor.id === 'codex'
+    ? '消息、命令、文件修改、计划、审批和停止原因直接来自 Codex App Server。'
+    : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
+  $('#composer-input').placeholder = `向 ${descriptor.name} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell`
+  $('#new-thread-eyebrow').textContent = `NEW ${descriptor.name.toUpperCase()} THREAD`
+  $('#new-thread-title').textContent = `创建 ${descriptor.name} 会话`
+  $('#new-thread-description').textContent = `由 ${descriptor.name} 原生服务直接创建并持久化。`
+  $('#rename-thread-description').textContent = `名称由 ${descriptor.name} 持久化。`
+  $('#new-thread-model').placeholder = descriptor.id === 'opencode' ? '可选：provider/model' : '使用 Codex 默认模型'
+  $('#new-thread-approval').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
+  $('#new-thread-sandbox').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
 }
 
 function connectAppServer() {
@@ -202,11 +345,60 @@ function connectAppServer() {
   }
 }
 
+async function connectOpenCode() {
+  clearTimeout(state.reconnectTimer)
+  cleanupConnections()
+  state.ready = false
+  state.socketGeneration += 1
+  const generation = state.socketGeneration
+  setBackendState('checking', '正在启动 OpenCode', 'Server · HTTP/SSE')
+  setNativeError(null)
+  await loadBackendInfo()
+  if (generation !== state.socketGeneration) return
+  if (state.backendInfo?.reachable === false || state.backendInfo?.error) {
+    const reason = state.backendInfo.error || 'OpenCode Server 未就绪'
+    setBackendState('error', 'OpenCode 不可用', reason)
+    setNativeError(reason)
+    return
+  }
+  state.ready = true
+  setBackendState('online', 'OpenCode Server', '原生结构化连接')
+  $('#native-connection').textContent = '已连接'
+  const events = new EventSource('/opencode/global/event')
+  state.eventSource = events
+  events.onopen = () => {
+    if (generation !== state.socketGeneration) return
+    setBackendState('online', 'OpenCode Server', '原生结构化连接')
+    $('#native-connection').textContent = '已连接'
+  }
+  events.onmessage = (event) => {
+    if (generation !== state.socketGeneration) return
+    try { handleOpenCodeServerEvent(JSON.parse(event.data)) }
+    catch (error) { console.error('Invalid OpenCode SSE event', error, event.data) }
+  }
+  events.onerror = () => {
+    if (generation !== state.socketGeneration) return
+    setBackendState('checking', 'OpenCode 正在重连', 'SSE 事件流')
+    $('#native-connection').textContent = '正在重连事件流…'
+  }
+  await loadThreads()
+}
+
 function cleanupSocket() {
   if (!state.socket) return
   state.socket.onclose = null
   state.socket.close()
   state.socket = null
+}
+
+function cleanupConnections() {
+  clearTimeout(state.reconnectTimer)
+  cleanupSocket()
+  if (state.eventSource) {
+    state.eventSource.close()
+    state.eventSource = null
+  }
+  state.socketGeneration += 1
 }
 
 function handleAppServerMessage(message) {
@@ -278,11 +470,13 @@ function handleAppServerMessage(message) {
     const threadId = message.params?.threadId
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
     if (message.method === 'thread/deleted') {
-      delete state.annotationDrafts[threadId]
-      delete state.annotationAdditional[threadId]
+      delete state.annotationDrafts[`codex:${threadId}`]
+      delete state.annotationAdditional[`codex:${threadId}`]
+      delete state.openingMessages[`codex:${threadId}`]
     }
     if (state.selectedId === threadId) {
       state.selectedId = null
+      state.selectedByBackend.codex = null
       state.model = createCodexViewModel()
       persistPreferences()
     }
@@ -320,7 +514,52 @@ function handleAppServerMessage(message) {
   }
 }
 
+function handleOpenCodeServerEvent(event) {
+  const payload = event?.payload || event
+  if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
+  if (payload.type === 'server.connected') {
+    if (state.selectedId && selectedThread()) refreshSelectedThread({ quiet: true }).catch(console.error)
+    scheduleOpenCodeListRefresh()
+    return
+  }
+  if (payload.type.startsWith('session.')) scheduleOpenCodeListRefresh()
+  if (payload.type === 'session.deleted') {
+    const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
+    if (deletedId && state.selectedId === deletedId) {
+      state.selectedId = null
+      state.selectedByBackend.opencode = null
+      state.model = createCodexViewModel()
+      persistPreferences()
+      renderWorkspace()
+    }
+    return
+  }
+  const update = applyOpenCodeEvent(state.model, event, state.selectedId)
+  if (!update.handled) return
+  if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
+  else if (update.kind === 'metadata') {
+    renderUsage()
+    renderComposerState()
+  } else renderTranscript()
+  renderComposerState()
+}
+
+function scheduleOpenCodeListRefresh() {
+  clearTimeout(openCodeListRefreshTimer)
+  openCodeListRefreshTimer = setTimeout(() => refreshOpenCodeThreadList().catch(console.error), 180)
+}
+
+async function refreshOpenCodeThreadList() {
+  if (state.backend !== 'opencode' || !state.ready) return
+  const result = await rpc('thread/list', { limit: 100 })
+  state.threads = Array.isArray(result?.data) ? result.data : []
+  $('#thread-count').textContent = state.threads.length
+  renderThreadList()
+  renderWorkspace()
+}
+
 function rpc(method, params = {}, timeoutMs = 30_000) {
+  if (state.backend === 'opencode') return openCodeRpc(method, params, timeoutMs)
   if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Codex App Server 尚未就绪'))
   const id = ++state.requestId
   return new Promise((resolve, reject) => {
@@ -331,6 +570,134 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
     state.pending.set(String(id), { resolve, reject, timer, method })
     sendRaw({ id, method, params })
   })
+}
+
+async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000 } = {}) {
+  if (!state.ready) throw new Error('OpenCode Server 尚未就绪')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`/opencode${path}`, {
+      method,
+      headers: body == null ? {} : { 'Content-Type': 'application/json' },
+      body: body == null ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+      cache: 'no-store',
+    })
+    if (response.status === 204) return null
+    const text = await response.text()
+    let value = null
+    try { value = text ? JSON.parse(text) : null } catch { value = text }
+    if (!response.ok) throw new Error(value?.error?.message || value?.message || `${method} ${path} failed: HTTP ${response.status}`)
+    return value
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`${method} ${path} 请求超时`)
+    throw error
+  } finally { clearTimeout(timer) }
+}
+
+function directoryQuery(directory = selectedThread()?.cwd) {
+  return directory ? `directory=${encodeURIComponent(directory)}` : ''
+}
+
+function withDirectory(path, directory, extra = '') {
+  return `${path}?${[directoryQuery(directory), extra].filter(Boolean).join('&')}`
+}
+
+async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
+  const thread = state.threads.find((candidate) => candidate.id === (params.threadId || state.selectedId))
+  const directory = params.cwd || thread?.cwd || ''
+  if (method === 'thread/list') {
+    const sessions = await openCodeFetch(`/experimental/session?limit=${Number(params.limit || 100)}&archived=false`, { timeoutMs })
+    const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
+    const statusMaps = await Promise.all(directories.map((cwd) => openCodeFetch(withDirectory('/session/status', cwd), { timeoutMs }).catch(() => ({}))))
+    const statuses = Object.assign({}, ...statusMaps)
+    return { data: normalizeOpenCodeSessions(sessions, statuses) }
+  }
+  if (method === 'thread/unsubscribe') return {}
+  if (method === 'thread/resume' || method === 'thread/read') {
+    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { timeoutMs })
+    const messages = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/message`, session.directory, 'limit=500'), { timeoutMs })
+    const statuses = await openCodeFetch(withDirectory('/session/status', session.directory), { timeoutMs }).catch(() => ({}))
+    return { thread: openCodeThreadFromHistory(session, messages, statuses?.[session.id] || 'idle') }
+  }
+  if (method === 'thread/start') {
+    const model = splitOpenCodeModel(params.model)
+    const session = await openCodeFetch(withDirectory('/session', params.cwd), { method: 'POST', body: { ...(params.name ? { title: params.name } : {}), ...(model ? { model: { id: model.modelID, providerID: model.providerID } } : {}) }, timeoutMs })
+    return { thread: normalizeOpenCodeSessions([session], {})[0] }
+  }
+  if (method === 'thread/name/set') {
+    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'PATCH', body: { title: params.name }, timeoutMs })
+  }
+  if (method === 'thread/fork') {
+    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/fork`, directory), { method: 'POST', body: {}, timeoutMs })
+    return { thread: normalizeOpenCodeSessions([session], {})[0] }
+  }
+  if (method === 'thread/delete') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'DELETE', timeoutMs })
+  if (method === 'thread/archive') throw new Error('OpenCode 当前没有独立归档操作；可重命名、Fork 或删除会话。')
+  if (method === 'turn/start') {
+    const text = textFromUserContent(params.input)
+    const model = splitOpenCodeModel(params.model)
+    const skill = params.input?.find((item) => item?.type === 'skill')
+    if (skill?.name) {
+      return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), {
+        method: 'POST',
+        body: { command: skill.name, arguments: text, agent: 'build' },
+        timeoutMs: Math.max(timeoutMs, 300_000),
+      })
+    }
+    const parts = [{ type: 'text', text }, ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart)]
+    await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/prompt_async`, directory), {
+      method: 'POST',
+      body: { parts, ...(model ? { model } : {}) },
+      timeoutMs,
+    })
+    return null
+  }
+  if (method === 'turn/steer') throw new Error('OpenCode 正在运行时不能追加消息；请等待完成或先停止。')
+  if (method === 'turn/interrupt') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/abort`, directory), { method: 'POST', timeoutMs })
+  if (method === 'thread/shellCommand') {
+    const options = currentTurnOptions()
+    const model = splitOpenCodeModel(options.model || thread?.model)
+    if (!model) throw new Error('运行 OpenCode Shell 前请先通过 /model 选择模型。')
+    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/shell`, directory), { method: 'POST', body: { agent: 'build', model, command: params.command }, timeoutMs })
+  }
+  if (method === 'fuzzyFileSearch') {
+    const query = encodeURIComponent(params.query || '')
+    const files = await openCodeFetch(withDirectory('/find/file', params.roots?.[0] || directory, `query=${query}&type=file&dirs=false&limit=200`), { timeoutMs })
+    return { files: (files || []).map((path) => ({ path, root: params.roots?.[0] || directory })) }
+  }
+  if (method === 'model/list') {
+    const providers = await openCodeFetch(withDirectory('/config/providers', directory), { timeoutMs })
+    return { data: openCodeModelList(providers) }
+  }
+  if (method === 'skills/list') {
+    const commands = await openCodeFetch(withDirectory('/command', params.cwds?.[0] || directory), { timeoutMs })
+    return { data: [{ skills: (commands || []).filter((command) => command.source === 'skill').map((command) => ({ name: command.name, path: command.name, description: command.description || '', enabled: true })) }] }
+  }
+  if (method === 'mcpServerStatus/list') {
+    const servers = await openCodeFetch(withDirectory('/mcp', directory), { timeoutMs })
+    return { data: Object.entries(servers || {}).map(([name, status]) => ({ name, status })) }
+  }
+  if (method === 'thread/compact/start' || method === 'review/start') {
+    const command = method === 'review/start' ? 'review' : 'compact'
+    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), { method: 'POST', body: { command, arguments: '', agent: 'build' }, timeoutMs })
+  }
+  throw new Error(`OpenCode 后端尚未支持 ${method}`)
+}
+
+function openCodeFilePart(file) {
+  const root = String(file.root || selectedThread()?.cwd || '').replace(/\/$/u, '')
+  const path = String(file.path || '').replace(/^\.\//u, '')
+  const absolute = path.startsWith('/') ? path : `${root}/${path}`
+  const label = `@${path}`
+  return {
+    type: 'file',
+    mime: 'text/plain',
+    filename: path,
+    url: `file://${encodeURI(absolute)}`,
+    source: { type: 'file', path, text: { value: label, start: 0, end: label.length } },
+  }
 }
 
 function sendRaw(message) {
@@ -351,7 +718,7 @@ async function loadThreads() {
   state.threads = Array.isArray(result?.data) ? result.data : []
   $('#thread-count').textContent = state.threads.length
   renderThreadList()
-  const preferred = state.selectedId || state.threads.find((thread) => thread.id === state.selectedId)?.id
+  const preferred = state.selectedId
   const nextId = state.threads.some((thread) => thread.id === preferred) ? preferred : state.threads[0]?.id
   if (nextId) await selectThread(nextId, { force: true })
   else renderWorkspace()
@@ -366,7 +733,7 @@ function renderThreadList() {
   const list = $('#thread-list')
   const threads = filteredThreads()
   if (!threads.length) {
-    list.innerHTML = `<div class="list-empty">${state.search ? '没有匹配的会话' : '还没有 Codex 会话'}</div>`
+    list.innerHTML = `<div class="list-empty">${state.search ? '没有匹配的会话' : `还没有 ${currentBackend().name} 会话`}</div>`
     return
   }
   list.innerHTML = projectGroups(threads).map(({ cwd, threads: projectThreads }) => {
@@ -400,6 +767,7 @@ function projectGroups(threads) {
 
 async function selectThread(id, { force = false } = {}) {
   if (!force && state.selectedId === id) return
+  closeActionMenus()
   const previousId = state.selectedId
   if (previousId && previousId !== id && state.ready) {
     try {
@@ -412,6 +780,7 @@ async function selectThread(id, { force = false } = {}) {
   resetStreamingPatches()
   transcriptScrollFollower.reset()
   state.selectedId = id
+  state.selectedByBackend[state.backend] = id
   state.model = createCodexViewModel()
   state.model.threadId = id
   persistPreferences()
@@ -428,6 +797,7 @@ async function resumeThread(id) {
     const result = await rpc('thread/resume', { threadId: id })
     if (state.selectedId !== id) return
     hydrateCodexThread(state.model, result.thread)
+    if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
     mergeThreadMetadata(result.thread)
     $('#native-connection').textContent = '已连接'
     renderWorkspace()
@@ -436,7 +806,7 @@ async function resumeThread(id) {
     if (state.selectedId !== id) return
     state.model.error = error.message
     state.model.status = 'failed'
-    setNativeError(`无法恢复此 Codex 会话：${error.message}`)
+    setNativeError(`无法恢复此 ${currentBackend().name} 会话：${error.message}`)
     renderWorkspace()
   }
 }
@@ -448,16 +818,24 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     const result = await rpc('thread/read', { threadId, includeTurns: true })
     if (state.selectedId !== threadId) return false
     hydrateCodexThread(state.model, result.thread)
+    if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
     mergeThreadMetadata(result.thread)
     renderWorkspace()
     renderTranscript()
     if (!quiet) toast('会话已刷新')
     return true
   } catch (error) {
-    if (quiet) setNativeError(`无法重新同步当前 Codex 会话：${error.message}`)
+    if (quiet) setNativeError(`无法重新同步当前 ${currentBackend().name} 会话：${error.message}`)
     else showError(error)
     return false
   }
+}
+
+function hydrateOpenCodeModelMetadata(thread) {
+  state.model.messageTurns = { ...(thread?.messageTurns || {}) }
+  state.model.messageRoles = { ...(thread?.messageRoles || {}) }
+  state.model.status = thread?.status || state.model.status
+  state.model.activeTurnId = state.model.status === 'running' ? state.model.turns.at(-1)?.id || null : null
 }
 
 function mergeThreadMetadata(incoming) {
@@ -470,6 +848,53 @@ function mergeThreadMetadata(incoming) {
 
 function selectedThread() {
   return state.threads.find((thread) => thread.id === state.selectedId) || null
+}
+
+function selectedStateKey(id = state.selectedId, backend = state.backend) {
+  return id ? `${backend}:${id}` : ''
+}
+
+function captureOpeningMessage() {
+  const key = selectedStateKey()
+  if (!key || state.openingMessages[key]) return
+  const text = state.model.turns.map((turn) => questionForTurn(turn).trim()).find(Boolean)
+  if (!text) return
+  const normalized = truncateUtf8(text, 16 * 1024)
+  state.openingMessages[key] = {
+    text: normalized,
+    source: 'history',
+    capturedAt: new Date().toISOString(),
+    truncated: normalized !== text,
+  }
+  persistPreferences()
+}
+
+function openThreadInfo() {
+  const thread = selectedThread()
+  if (!thread) return
+  captureOpeningMessage()
+  const opening = state.openingMessages[selectedStateKey()]
+  const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
+  $('#thread-info-content').innerHTML = `
+    <section class="opening-message-card">
+      <header><strong>起始问题</strong><span>${opening ? `${opening.source === 'history' ? '从历史提取' : escapeHtml(opening.source)}${opening.truncated ? ' · 已截断' : ''}` : '尚未识别'}</span></header>
+      <p>${escapeHtml(opening?.text || '当前结构化历史中没有找到用户首条消息。')}</p>
+    </section>
+    <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
+    <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
+    <div class="detail-row"><span>会话 ID</span><strong>${escapeHtml(thread.id)}</strong></div>
+    <div class="detail-row"><span>项目目录</span><strong>${escapeHtml(thread.cwd || '未记录')}</strong></div>
+    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
+    ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
+  $('#copy-opening-message').disabled = !opening?.text
+  $('#thread-info-dialog').showModal()
+}
+
+async function copyOpeningMessage() {
+  const text = state.openingMessages[selectedStateKey()]?.text
+  if (!text) return
+  await navigator.clipboard.writeText(text)
+  toast('起始问题已复制')
 }
 
 function renderWorkspace() {
@@ -494,8 +919,12 @@ function renderWorkspace() {
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   $('#thread-status').textContent = statusLabel(status)
   $('#thread-status').className = `status-badge ${status}`
+  $('#archive-thread').disabled = state.backend === 'opencode'
+  $('#archive-thread').title = state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : ''
   renderComposerState()
   renderAnnotationRail()
+  captureOpeningMessage()
+  renderSessionFavoriteCount()
 }
 
 function resetStreamingPatches() {
@@ -514,6 +943,7 @@ function renderTranscript() {
   renderTurnNavigator()
   followTranscriptOutput()
   renderUsage()
+  captureOpeningMessage()
 }
 
 function handleTranscriptScroll() {
@@ -681,7 +1111,7 @@ function renderTurn(turn, index) {
     ? `<div class="turn-result ${turn.status === 'failed' ? 'failed' : ''}">${escapeHtml(statusLabel(turn.status))}${error ? ` · ${escapeHtml(error)}` : ''}</div>`
     : ''
   return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}">
-    <div class="turn-separator">Turn ${index + 1}</div>${content || '<div class="reasoning">Codex 正在准备此 Turn…</div>'}${result}
+    <div class="turn-separator">Turn ${index + 1}</div>${content || `<div class="reasoning">${currentBackend().name} 正在准备此 Turn…</div>`}${result}
   </section>`
 }
 
@@ -692,10 +1122,15 @@ function renderItem(item, turnId) {
     return `<div class="message user" ${attrs}><span class="item-label">You</span>${escapeHtml(textFromUserContent(item.content) || '(非文字输入)')}</div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
-    return `<div class="message agent" ${attrs}><span class="item-label">Codex</span><div class="markdown-body">${renderMarkdown(item.text || '')}</div></div>`
+    const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
+    const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
+      <div class="message-heading"><span class="item-label">${currentBackend().name}</span><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
+      <div class="markdown-body">${renderMarkdown(item.text || '')}</div>
+    </div>`
   }
   if (type === 'reasoning') {
-    const summary = arrayText(item.summary) || arrayText(item.content) || 'Codex 正在推理…'
+    const summary = arrayText(item.summary) || arrayText(item.content) || `${currentBackend().name} 正在推理…`
     return `<details class="reasoning" ${attrs} open><summary>推理摘要</summary><div class="markdown-body compact-markdown">${renderMarkdown(summary)}</div></details>`
   }
   if (type === 'commandExecution') {
@@ -767,6 +1202,20 @@ function renderMarkdown(value) {
 }
 
 async function handleTranscriptClick(event) {
+  const favoriteButton = event.target.closest('[data-favorite-message]')
+  if (favoriteButton) {
+    const element = favoriteButton.closest('[data-turn-id][data-item-id]')
+    if (!element) return
+    const existing = favoriteForSource(
+      state.backend,
+      state.selectedId,
+      element.dataset.turnId,
+      element.dataset.itemId,
+    )
+    if (existing) await openFavoriteDetail(existing.id)
+    else openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
+    return
+  }
   const button = event.target.closest('.copy-code-button')
   if (!button) return
   const code = button.closest('.markdown-code-block')?.querySelector('code')
@@ -784,10 +1233,10 @@ async function handleTranscriptClick(event) {
 function renderApprovals() {
   return state.model.approvals.map((approval) => {
     const params = approval.params || {}
-    const command = Array.isArray(params.command) ? params.command.join(' ') : params.command || params.reason || approval.method
-    const permission = approval.method === 'item/permissions/requestApproval'
+    const command = Array.isArray(params.command) ? params.command.join(' ') : params.command || params.reason || [params.permission, ...(params.patterns || [])].filter(Boolean).join(' · ') || approval.method
+    const permission = approval.method === 'item/permissions/requestApproval' || approval.method === 'opencode/permission'
     return `<section class="turn"><article class="approval-card" data-approval-id="${escapeHtml(String(approval.id))}">
-      <strong>${permission ? 'Codex 请求额外权限' : 'Codex 正在等待审批'}</strong>
+      <strong>${permission ? `${currentBackend().name} 请求额外权限` : `${currentBackend().name} 正在等待审批`}</strong>
       <pre>${escapeHtml(command)}${params.cwd ? `\n${escapeHtml(params.cwd)}` : ''}</pre>
       <div class="approval-actions">
         <button class="subtle-button approval-decline" type="button">拒绝</button>
@@ -806,9 +1255,18 @@ function bindApprovalButtons() {
   })
 }
 
-function answerApproval(id, decision) {
+async function answerApproval(id, decision) {
   const approval = state.model.approvals.find((candidate) => String(candidate.id) === String(id))
   if (!approval) return
+  if (state.backend === 'opencode') {
+    try {
+      const reply = decision === 'decline' ? 'reject' : decision === 'acceptForSession' ? 'always' : 'once'
+      await openCodeFetch(withDirectory(`/permission/${encodeURIComponent(id)}/reply`, selectedThread()?.cwd), { method: 'POST', body: { reply } })
+      resolveCodexApproval(state.model, approval.id)
+      renderTranscript()
+    } catch (error) { showError(error) }
+    return
+  }
   let result
   if (approval.method === 'item/permissions/requestApproval') {
     result = decision === 'decline'
@@ -994,6 +1452,11 @@ function selectComposerOption(index) {
     const replacement = replaceComposerTrigger(input.value, trigger, selectedFileReference(option))
     input.value = replacement.value
     input.setSelectionRange(replacement.cursor, replacement.cursor)
+    if (state.backend === 'opencode' && state.selectedId) {
+      const key = selectedStateKey()
+      const files = state.pendingFiles[key] ||= []
+      if (!files.some((file) => file.path === option.path)) files.push({ type: 'file', path: option.path, root: option.root })
+    }
     hideComposerMenu()
     input.focus()
     return
@@ -1026,8 +1489,9 @@ function showCommandDialog(title, content) {
 
 function currentTurnOptions() {
   if (!state.selectedId) return {}
-  state.turnOptions[state.selectedId] ||= {}
-  return state.turnOptions[state.selectedId]
+  const key = selectedStateKey()
+  state.turnOptions[key] ||= {}
+  return state.turnOptions[key]
 }
 
 async function openModelCommand() {
@@ -1058,6 +1522,10 @@ async function openModelCommand() {
 }
 
 function openPermissionsCommand() {
+  if (state.backend === 'opencode') {
+    showCommandDialog('权限', '<div class="command-empty">OpenCode 权限由项目配置和运行时审批管理；收到权限请求时可允许一次、始终允许或拒绝。</div>')
+    return
+  }
   const choices = [
     ['readOnly', '只读', '文件只读；需要操作时由 Codex 请求批准'],
     ['workspaceWrite', '项目可写', '允许修改当前项目，网络默认关闭'],
@@ -1087,8 +1555,8 @@ function openStatusCommand() {
     ['Thread', thread?.name || thread?.id || '—'],
     ['状态', statusLabel(state.model.status)],
     ['目录', thread?.cwd || '—'],
-    ['模型', options.model || thread?.model || 'Codex 默认'],
-    ['推理强度', options.effort || 'Codex 默认'],
+    ['模型', options.model || thread?.model || `${currentBackend().name} 默认`],
+    ['推理强度', options.effort || `${currentBackend().name} 默认`],
     ['审批策略', options.approvalPolicy || '继承会话'],
     ['沙箱', options.sandboxPolicy?.type || '继承会话'],
     ['Token', state.model.usage ? valueText(state.model.usage) : '暂无数据'],
@@ -1149,7 +1617,8 @@ async function openSkillsCommand() {
 
 function addPendingSkill(skill) {
   if (!state.selectedId || !skill?.name || !skill?.path) return
-  const skillsForThread = state.pendingSkills[state.selectedId] ||= []
+  const key = selectedStateKey()
+  const skillsForThread = state.pendingSkills[key] ||= []
   if (!skillsForThread.some((candidate) => candidate.path === skill.path)) {
     skillsForThread.push({ type: 'skill', name: skill.name, path: skill.path })
   }
@@ -1158,9 +1627,9 @@ function addPendingSkill(skill) {
 async function copyLatestAgentResponse() {
   const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
   const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
-  if (!message) throw new Error('当前会话还没有可复制的 Codex 回复。')
+  if (!message) throw new Error(`当前会话还没有可复制的 ${currentBackend().name} 回复。`)
   await navigator.clipboard.writeText(message.text)
-  toast('已复制最近一条 Codex 回复')
+  toast(`已复制最近一条 ${currentBackend().name} 回复`)
 }
 
 async function executeSlashCommand(action) {
@@ -1193,24 +1662,24 @@ function renderComposerState() {
   const shellMode = shellCommand !== null
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   $('#interrupt-turn').classList.toggle('hidden', !active)
-  $('#stop-thread').classList.toggle('hidden', !active)
-  $('#archive-thread').disabled = active
+  $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = shellMode ? '运行' : active ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? '运行' : active && state.backend === 'codex' ? '追加意见' : '发送'
   const details = [
     options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
     options.sandboxPolicy?.type,
-    state.pendingSkills[state.selectedId]?.length && `${state.pendingSkills[state.selectedId].length} 个技能`,
+    state.pendingSkills[selectedStateKey()]?.length && `${state.pendingSkills[selectedStateKey()].length} 个技能`,
+    state.pendingFiles[selectedStateKey()]?.length && `${state.pendingFiles[selectedStateKey()].length} 个文件`,
   ].filter(Boolean)
   const baseHint = shellMode
     ? active
       ? 'Shell 命令需等待当前 Turn 完成'
       : '本地 Shell · 不经过模型且不受 Turn sandbox 限制'
     : active
-      ? '将通过 turn/steer 加入当前 Turn'
+      ? state.backend === 'codex' ? '将通过 turn/steer 加入当前 Turn' : 'OpenCode 正在响应；完成或停止后可继续发送'
       : '将通过 turn/start 开始新 Turn'
   $('#composer-hint').textContent = `${baseHint}${!shellMode && details.length ? ` · ${details.join(' · ')}` : ''}`
-  $('#send-message').disabled = !state.ready || !state.selectedId || (shellMode && (active || !shellCommand))
+  $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   $('#thread-status').textContent = statusLabel(state.model.status)
   $('#thread-status').className = `status-badge ${state.model.status}`
 }
@@ -1234,7 +1703,7 @@ async function sendComposer(event) {
       input.value = ''
       hideComposerMenu()
       renderComposerState()
-      toast('Shell 命令已交给 Codex 执行')
+      toast(`Shell 命令已交给 ${currentBackend().name} 执行`)
     } catch (error) { showError(error) }
     finally { button.disabled = false }
     return
@@ -1252,8 +1721,8 @@ async function sendComposer(event) {
     return
   }
   if (!text || !state.selectedId) return
-  const skillInputs = state.pendingSkills[state.selectedId] || []
-  const turnInput = [{ type: 'text', text }, ...skillInputs]
+  const skillInputs = state.pendingSkills[selectedStateKey()] || []
+  const turnInput = [{ type: 'text', text }, ...skillInputs, ...(state.pendingFiles[selectedStateKey()] || [])]
   const button = $('#send-message')
   button.disabled = true
   transcriptScrollFollower.reset()
@@ -1279,7 +1748,8 @@ async function sendComposer(event) {
       }
     }
     input.value = ''
-    state.pendingSkills[state.selectedId] = []
+    state.pendingSkills[selectedStateKey()] = []
+    state.pendingFiles[selectedStateKey()] = []
     hideComposerMenu()
     renderComposerState()
   } catch (error) { showError(error) }
@@ -1355,7 +1825,7 @@ async function createThread(event) {
     $('#new-thread-form').reset()
     await loadThreads()
     await selectThread(result.thread.id, { force: true })
-    toast('Codex 会话已创建')
+    toast(`${currentBackend().name} 会话已创建`)
   } catch (error) {
     errorBox.textContent = error.message
     errorBox.classList.remove('hidden')
@@ -1368,7 +1838,7 @@ async function forkSelectedThread() {
     const result = await rpc('thread/fork', { threadId: state.selectedId })
     await loadThreads()
     await selectThread(result.thread.id, { force: true })
-    toast('已创建 Codex 会话分支')
+    toast(`已创建 ${currentBackend().name} 会话分支`)
   } catch (error) { showError(error) }
 }
 
@@ -1378,6 +1848,7 @@ async function archiveSelectedThread() {
   try {
     await rpc('thread/archive', { threadId })
     state.selectedId = null
+    state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
     persistPreferences()
     await loadThreads()
@@ -1390,9 +1861,11 @@ async function deleteSelectedThread() {
   const threadId = state.selectedId
   try {
     await rpc('thread/delete', { threadId })
-    delete state.annotationDrafts[threadId]
-    delete state.annotationAdditional[threadId]
+    delete state.annotationDrafts[`${state.backend}:${threadId}`]
+    delete state.annotationAdditional[`${state.backend}:${threadId}`]
+    delete state.openingMessages[`${state.backend}:${threadId}`]
     state.selectedId = null
+    state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
     persistPreferences()
     await loadThreads()
@@ -1437,6 +1910,37 @@ function openAnnotationFromSelection() {
   setTimeout(() => $('#annotation-comment').focus(), 30)
 }
 
+function openFavoriteFromSelection() {
+  if (!state.pendingSelection?.quote) {
+    captureTranscriptSelection()
+    if (!state.pendingSelection?.quote) return toast('请先在 AI 输出中选择文字', 'error')
+  }
+  const thread = selectedThread()
+  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
+  if (!thread || !state.pendingSelection.turnId || !state.pendingSelection.itemId) {
+    return toast('无法确定所选文字的消息位置，请在一条回复内选择', 'error')
+  }
+  state.favoriteEditMode = false
+  state.pendingFavorite = {
+    id: randomId(),
+    scope: 'selection',
+    backend: state.backend,
+    threadId: state.selectedId,
+    threadTitle: threadTitle(thread),
+    projectPath: thread.cwd || '',
+    turnId: String(state.pendingSelection.turnId),
+    itemId: String(state.pendingSelection.itemId),
+    title: autoFavoriteTitle(state.pendingSelection.quote),
+    question: turn ? questionForTurn(turn) : '',
+    content: state.pendingSelection.quote,
+    note: '',
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+  hideSelectionPopover(false)
+  populateFavoriteDialog(state.pendingFavorite)
+}
+
 function hideSelectionPopover(clear = true) {
   $('#selection-popover').classList.add('hidden')
   if (clear) state.pendingSelection = null
@@ -1449,7 +1953,7 @@ function closeAnnotationDialog() {
 }
 
 function currentAnnotations() {
-  return state.selectedId ? state.annotationDrafts[state.selectedId] || [] : []
+  return state.selectedId ? state.annotationDrafts[selectedStateKey()] || [] : []
 }
 
 function addAnnotation(event) {
@@ -1467,7 +1971,7 @@ function addAnnotation(event) {
     errorBox.classList.remove('hidden')
     return
   }
-  state.annotationDrafts[state.selectedId] = [...drafts, {
+  state.annotationDrafts[selectedStateKey()] = [...drafts, {
     id: randomId(),
     quote: state.pendingSelection.quote,
     comment: comment.slice(0, 16000),
@@ -1482,7 +1986,11 @@ function addAnnotation(event) {
   toast('批注已加入回覆草稿')
 }
 
-function openAnnotationRail() { $('#annotation-rail').classList.remove('hidden'); renderAnnotationRail() }
+function openAnnotationRail() {
+  closeFavoritesRail()
+  $('#annotation-rail').classList.remove('hidden')
+  renderAnnotationRail()
+}
 function closeAnnotationRail() { $('#annotation-rail').classList.add('hidden') }
 
 function renderAnnotationRail() {
@@ -1491,9 +1999,9 @@ function renderAnnotationRail() {
   $('#draft-count').textContent = drafts.length
   $('#annotation-empty').classList.toggle('hidden', drafts.length > 0)
   $('#annotation-list').classList.toggle('hidden', drafts.length === 0)
-  $('#clear-annotations').disabled = !drafts.length && !state.annotationAdditional[state.selectedId]
+  $('#clear-annotations').disabled = !drafts.length && !state.annotationAdditional[selectedStateKey()]
   $('#insert-annotations').disabled = !drafts.length
-  $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[state.selectedId] || '' : ''
+  $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
     <header><span>批注 ${index + 1}${draft.turnId ? ` · ${escapeHtml(draft.turnId.slice(0, 8))}` : ''}</span><button class="annotation-delete" type="button">×</button></header>
     <blockquote>${escapeHtml(draft.quote)}</blockquote><p>${escapeHtml(draft.comment)}</p>
@@ -1503,16 +2011,17 @@ function renderAnnotationRail() {
 
 function deleteAnnotation(id) {
   if (!state.selectedId) return
-  state.annotationDrafts[state.selectedId] = currentAnnotations().filter((draft) => draft.id !== id)
-  if (!state.annotationDrafts[state.selectedId].length) delete state.annotationDrafts[state.selectedId]
+  const key = selectedStateKey()
+  state.annotationDrafts[key] = currentAnnotations().filter((draft) => draft.id !== id)
+  if (!state.annotationDrafts[key].length) delete state.annotationDrafts[key]
   persistPreferences()
   renderAnnotationRail()
 }
 
 function clearAnnotations() {
   if (!state.selectedId || !confirm('清空当前会话的全部批注草稿？')) return
-  delete state.annotationDrafts[state.selectedId]
-  delete state.annotationAdditional[state.selectedId]
+  delete state.annotationDrafts[selectedStateKey()]
+  delete state.annotationAdditional[selectedStateKey()]
   persistPreferences()
   renderAnnotationRail()
 }
@@ -1520,8 +2029,8 @@ function clearAnnotations() {
 function saveAnnotationAdditional(event) {
   if (!state.selectedId) return
   const value = event.target.value.slice(0, 32000)
-  if (value) state.annotationAdditional[state.selectedId] = value
-  else delete state.annotationAdditional[state.selectedId]
+  if (value) state.annotationAdditional[selectedStateKey()] = value
+  else delete state.annotationAdditional[selectedStateKey()]
   clearTimeout(annotationPersistTimer)
   annotationPersistTimer = setTimeout(persistPreferences, 300)
 }
@@ -1543,12 +2052,314 @@ function buildAnnotationPrompt(drafts, additional = '') {
 function insertAnnotations() {
   const drafts = currentAnnotations()
   if (!drafts.length) return
-  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[state.selectedId] || '')
+  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[selectedStateKey()] || '')
   const composer = $('#composer-input')
   composer.value = [composer.value.trim(), prompt].filter(Boolean).join('\n\n')
   closeAnnotationRail()
   composer.focus()
   toast('批注草稿已插入输入框')
+}
+
+async function favoriteRequest(path, options = {}) {
+  const response = await fetch(path, {
+    cache: 'no-store',
+    ...options,
+    headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : options.headers,
+  })
+  const text = await response.text()
+  let value = null
+  try { value = text ? JSON.parse(text) : null } catch { value = text }
+  if (!response.ok) throw new Error(value?.error?.message || value?.message || `HTTP ${response.status}`)
+  return value
+}
+
+async function loadFavorites() {
+  const query = encodeURIComponent(state.favoriteQuery)
+  const displayLimit = state.favoriteQuery ? 300 : 2000
+  const [result, indexResult] = await Promise.all([
+    favoriteRequest(`/studio/favorites?q=${query}&limit=${displayLimit}`),
+    state.favoriteQuery
+      ? favoriteRequest('/studio/favorites?limit=2000')
+      : Promise.resolve(null),
+  ])
+  state.favorites = Array.isArray(result?.items) ? result.items : []
+  state.favoriteIndex = Array.isArray(indexResult?.items) ? indexResult.items : state.favorites
+  state.favoriteTotal = Number(result?.allTotal || 0)
+  renderFavoritesRail()
+  syncFavoriteButtons()
+}
+
+function favoriteForSource(backend, threadId, turnId, itemId) {
+  const key = favoriteSourceKey({ backend, threadId, turnId, itemId })
+  return state.favoriteIndex.find((favorite) => favorite.scope !== 'selection' && favoriteSourceKey(favorite) === key) || null
+}
+
+function openFavoritesRail(scope = 'global') {
+  state.favoriteScope = scope
+  closeAnnotationRail()
+  $('#favorites-rail').classList.remove('hidden')
+  loadFavorites().catch(showError)
+  setTimeout(() => $('#favorites-search').focus(), 30)
+}
+
+function closeFavoritesRail() {
+  $('#favorites-rail').classList.add('hidden')
+}
+
+function handleFavoritesSearch(event) {
+  state.favoriteQuery = event.target.value.trim()
+  clearTimeout(favoritesSearchTimer)
+  favoritesSearchTimer = setTimeout(() => loadFavorites().catch(showError), 180)
+}
+
+function renderFavoritesRail() {
+  const visibleFavorites = state.favoriteScope === 'session' && state.selectedId
+    ? state.favorites.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId)
+    : state.favorites
+  const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
+  $('#favorites-title').textContent = state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏'
+  $('#favorites-count').textContent = count
+  $('#favorites-badge').textContent = count > 99 ? '99+' : count
+  $('#favorites-badge').classList.toggle('hidden', count === 0)
+  $('#favorites-search-summary').textContent = state.favoriteQuery
+    ? `找到 ${visibleFavorites.length} 条匹配收藏`
+    : state.favoriteScope === 'session' ? `${count} 条当前会话收藏` : `${count} 条跨会话结构化收藏`
+  const empty = visibleFavorites.length === 0
+  $('#favorites-empty').classList.toggle('hidden', !empty)
+  $('#favorites-list').classList.toggle('hidden', empty)
+  $('#favorites-empty strong').textContent = state.favoriteQuery ? '没有匹配结果' : '还没有收藏'
+  $('#favorites-empty p').textContent = state.favoriteQuery
+    ? '试试回复中的关键词、会话名称或标签。'
+    : '将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。'
+  $('#favorites-list').innerHTML = visibleFavorites.map((favorite) => {
+    const tags = favorite.tags?.length
+      ? `<div class="favorite-card-tags">${favorite.tags.slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
+      : ''
+    const question = favorite.questionSnippet
+      ? `<p class="favorite-card-question"><span>Q</span>${escapeHtml(favorite.questionSnippet)}</p>`
+      : ''
+    return `<button class="favorite-card" type="button" data-favorite-id="${escapeHtml(favorite.id)}">
+      <div class="favorite-card-top"><span class="favorite-backend-pill ${escapeHtml(favorite.backend)}">${escapeHtml(favorite.backend)}</span><time>${escapeHtml(formatFavoriteDate(favorite.createdAt))}</time></div>
+      <strong>${escapeHtml(favorite.title)}</strong>
+      ${question}
+      <p class="favorite-card-answer">${escapeHtml(favorite.snippet)}</p>
+      ${tags}
+      <footer><span>${escapeHtml(favorite.threadTitle || '未命名会话')}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
+    </button>`
+  }).join('')
+  renderSessionFavoriteCount()
+}
+
+function renderSessionFavoriteCount() {
+  const count = state.selectedId
+    ? state.favoriteIndex.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId).length
+    : 0
+  const element = $('#session-favorite-count')
+  if (element) element.textContent = count > 99 ? '99+' : count
+}
+
+function handleFavoriteListClick(event) {
+  const card = event.target.closest('[data-favorite-id]')
+  if (card) openFavoriteDetail(card.dataset.favoriteId).catch(showError)
+}
+
+function openFavoriteForMessage(turnId, itemId) {
+  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(turnId))
+  const item = turn?.items?.find((candidate) => String(candidate.id) === String(itemId))
+  const thread = selectedThread()
+  if (!turn || !item || !thread || !item.text?.trim()) {
+    toast('这条回复尚未完成，暂时不能收藏', 'error')
+    return
+  }
+  state.favoriteEditMode = false
+  state.pendingFavorite = {
+    id: randomId(),
+    scope: 'message',
+    backend: state.backend,
+    threadId: state.selectedId,
+    threadTitle: threadTitle(thread),
+    projectPath: thread.cwd || '',
+    turnId: String(turn.id || ''),
+    itemId: String(item.id || ''),
+    title: autoFavoriteTitle(item.text),
+    question: questionForTurn(turn),
+    content: item.text.trim(),
+    note: '',
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+  populateFavoriteDialog(state.pendingFavorite)
+}
+
+function populateFavoriteDialog(favorite) {
+  const editing = state.favoriteEditMode
+  $('#favorite-dialog-title').textContent = editing ? '编辑收藏' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复'
+  $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || '未命名会话'}`
+  $('#favorite-answer-length').textContent = `${[...favorite.content].length.toLocaleString()} 字`
+  $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
+  $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)
+  $('#favorite-tags').value = (favorite.tags || []).join(', ')
+  $('#favorite-note').value = favorite.note || ''
+  $('#favorite-include-question').checked = Boolean(favorite.question)
+  $('#favorite-question-option').classList.toggle('hidden', editing && !favorite.question)
+  $('#save-favorite').textContent = editing ? '保存修改' : '保存到收藏'
+  $('#favorite-error').classList.add('hidden')
+  renderFavoriteQuestionOption()
+  $('#favorite-dialog').showModal()
+  setTimeout(() => $('#favorite-title').focus(), 30)
+}
+
+function renderFavoriteQuestionOption() {
+  const favorite = state.pendingFavorite
+  if (!favorite) return
+  const included = $('#favorite-include-question').checked && Boolean(favorite.question)
+  $('#favorite-question-preview').classList.toggle('hidden', !included)
+  $('#favorite-question-preview').textContent = included ? favorite.question : ''
+}
+
+function closeFavoriteDialog() {
+  $('#favorite-dialog').close()
+  state.pendingFavorite = null
+  state.favoriteEditMode = false
+  state.pendingSelection = null
+  window.getSelection()?.removeAllRanges()
+}
+
+async function saveFavorite(event) {
+  event.preventDefault()
+  if (!state.pendingFavorite) return
+  const favorite = {
+    ...state.pendingFavorite,
+    title: $('#favorite-title').value.trim(),
+    question: $('#favorite-include-question').checked ? state.pendingFavorite.question : '',
+    tags: normalizeFavoriteTags($('#favorite-tags').value),
+    note: $('#favorite-note').value.trim(),
+  }
+  const error = $('#favorite-error')
+  if (!favorite.title) {
+    error.textContent = '请填写收藏标题。'
+    error.classList.remove('hidden')
+    return
+  }
+  try {
+    const updating = state.favoriteEditMode
+    const saved = await favoriteRequest(
+      updating ? `/studio/favorites/${encodeURIComponent(favorite.id)}` : '/studio/favorites',
+      { method: updating ? 'PUT' : 'POST', body: JSON.stringify(favorite) },
+    )
+    closeFavoriteDialog()
+    state.selectedFavorite = saved
+    await loadFavorites()
+    toast(updating ? '收藏已更新' : '已保存到全局收藏')
+    if (updating) await openFavoriteDetail(saved.id)
+  } catch (requestError) {
+    error.textContent = requestError.message
+    error.classList.remove('hidden')
+  }
+}
+
+async function openFavoriteDetail(id) {
+  const favorite = await favoriteRequest(`/studio/favorites/${encodeURIComponent(id)}`)
+  state.selectedFavorite = favorite
+  $('#favorite-detail-backend').textContent = favorite.backend
+  $('#favorite-detail-backend').className = `favorite-backend-pill ${favorite.backend}`
+  $('#favorite-detail-title').textContent = favorite.title
+  $('#favorite-detail-source').textContent = `${favorite.threadTitle || '未命名会话'} · ${favorite.projectPath || '未记录项目目录'} · ${formatFavoriteDate(favorite.createdAt)}`
+  $('#favorite-detail-question-section').classList.toggle('hidden', !favorite.question)
+  $('#favorite-detail-question').textContent = favorite.question || ''
+  $('#favorite-detail-answer').innerHTML = renderMarkdown(favorite.content)
+  $('#favorite-detail-note-section').classList.toggle('hidden', !favorite.note)
+  $('#favorite-detail-note').textContent = favorite.note || ''
+  $('#favorite-detail-tags').innerHTML = (favorite.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')
+  $('#favorite-detail-dialog').showModal()
+}
+
+function closeFavoriteDetail() {
+  $('#favorite-detail-dialog').close()
+  state.selectedFavorite = null
+}
+
+async function copySelectedFavorite() {
+  if (!state.selectedFavorite) return
+  await navigator.clipboard.writeText(favoriteCopyText(state.selectedFavorite))
+  toast('收藏内容已复制')
+}
+
+function editSelectedFavorite() {
+  if (!state.selectedFavorite) return
+  const favorite = { ...state.selectedFavorite, tags: [...(state.selectedFavorite.tags || [])] }
+  $('#favorite-detail-dialog').close()
+  state.favoriteEditMode = true
+  state.pendingFavorite = favorite
+  populateFavoriteDialog(favorite)
+}
+
+async function deleteSelectedFavorite() {
+  const favorite = state.selectedFavorite
+  if (!favorite || !confirm(`删除收藏“${favorite.title}”？`)) return
+  await favoriteRequest(`/studio/favorites/${encodeURIComponent(favorite.id)}`, { method: 'DELETE' })
+  closeFavoriteDetail()
+  await loadFavorites()
+  toast('收藏已删除')
+}
+
+async function openSelectedFavoriteSource() {
+  const favorite = state.selectedFavorite
+  if (!favorite) return
+  closeFavoriteDetail()
+  closeFavoritesRail()
+  if (state.backend !== favorite.backend) {
+    await switchBackend(favorite.backend)
+    await waitFor(() => state.ready, 12_000)
+  }
+  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
+    if (state.ready) await loadThreads()
+  }
+  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
+    throw new Error('原会话当前不在会话列表中，可能已归档或删除。收藏内容仍然完整保留。')
+  }
+  await selectThread(favorite.threadId, { force: true })
+  const element = renderedItem(favorite.turnId, favorite.itemId)
+  if (!element) {
+    toast('已返回原会话，但历史中没有找到原消息锚点', 'error')
+    return
+  }
+  transcriptScrollFollower.pause()
+  element.classList.add('favorite-source-highlight')
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  setTimeout(() => element.classList.remove('favorite-source-highlight'), 2400)
+}
+
+function syncFavoriteButtons() {
+  $('#transcript')?.querySelectorAll('[data-favorite-message]').forEach((button) => {
+    const item = button.closest('[data-turn-id][data-item-id]')
+    const favorite = item && favoriteForSource(state.backend, state.selectedId, item.dataset.turnId, item.dataset.itemId)
+    button.classList.toggle('active', Boolean(favorite))
+    button.setAttribute('aria-pressed', String(Boolean(favorite)))
+    button.title = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    button.setAttribute('aria-label', button.title)
+    button.querySelector('span').textContent = favorite ? '★' : '☆'
+    button.querySelector('b').textContent = favorite ? '已收藏' : '收藏'
+    item?.classList.toggle('favorited', Boolean(favorite))
+  })
+}
+
+function formatFavoriteDate(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
+}
+
+function waitFor(predicate, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const check = () => {
+      if (predicate()) resolve()
+      else if (Date.now() - startedAt >= timeoutMs) reject(new Error('等待后端切换超时'))
+      else setTimeout(check, 80)
+    }
+    check()
+  })
 }
 
 async function loadPreferences() {
@@ -1560,10 +2371,16 @@ async function loadPreferences() {
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
-  state.selectedId = typeof saved.selectedThread === 'string' ? saved.selectedThread : null
+  state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
+  state.selectedByBackend = {
+    codex: typeof saved.selectedThreads?.codex === 'string' ? saved.selectedThreads.codex : typeof saved.selectedThread === 'string' ? saved.selectedThread : null,
+    opencode: typeof saved.selectedThreads?.opencode === 'string' ? saved.selectedThreads.opencode : null,
+  }
+  state.selectedId = state.selectedByBackend[state.backend]
   state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
   state.annotationPromptTemplate = normalizeTemplate(saved.annotationPromptTemplate)
+  state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
   preferencesReady = true
 }
 
@@ -1572,10 +2389,13 @@ function preferencesSnapshot() {
     theme: state.theme,
     contentWidth: state.contentWidth,
     typography: state.typography,
-    selectedThread: state.selectedId,
+    selectedThread: state.selectedByBackend.codex,
+    selectedBackend: state.backend,
+    selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
     annotationDrafts: state.annotationDrafts,
     annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
+    openingMessages: state.openingMessages,
   }
 }
 
@@ -1657,9 +2477,10 @@ function openBackendDialog() {
     <div class="detail-row"><span>应用</span><strong>${escapeHtml(info.appName || 'Codex Thread Studio')}</strong></div>
     <div class="detail-row"><span>版本</span><strong>v${escapeHtml(info.appVersion || 'unknown')}</strong></div>
     <div class="detail-row"><span>状态</span><strong>${state.ready ? '已连接' : '未连接'}</strong></div>
-    <div class="detail-row"><span>Codex</span><strong>${escapeHtml(info.binary || 'codex')}</strong></div>
-    <div class="detail-row"><span>协议</span><strong>${escapeHtml(info.protocol || 'Codex App Server v2')}</strong></div>
-    <div class="detail-row"><span>传输</span><strong>${escapeHtml(info.transport || 'stdio JSONL')}</strong></div>`
+    <div class="detail-row"><span>${escapeHtml(currentBackend().name)}</span><strong>${escapeHtml(info.binary || currentBackend().binary)}</strong></div>
+    <div class="detail-row"><span>后端版本</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
+    <div class="detail-row"><span>协议</span><strong>${escapeHtml(info.protocol || currentBackend().protocol)}</strong></div>
+    <div class="detail-row"><span>传输</span><strong>${escapeHtml(info.transport || currentBackend().transport)}</strong></div>`
   $('#backend-dialog').showModal()
 }
 
@@ -1706,6 +2527,12 @@ function arrayText(value) {
 }
 function valueText(value) { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
 function randomId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}` }
+function truncateUtf8(value, limit) {
+  const text = String(value || '')
+  const encoded = new TextEncoder().encode(text)
+  if (encoded.length <= limit) return text
+  return new TextDecoder().decode(encoded.slice(0, limit)).replace(/\uFFFD$/u, '')
+}
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
 
@@ -1737,13 +2564,27 @@ function normalizeAnnotationDrafts(value) {
       itemId: draft.itemId ? String(draft.itemId).slice(0, 256) : null,
       turnId: draft.turnId ? String(draft.turnId).slice(0, 256) : null,
     }] : [])
-    return normalized.length ? [[threadId, normalized]] : []
+    const key = threadId.includes(':') ? threadId : `codex:${threadId}`
+    return normalized.length ? [[key, normalized]] : []
   }))
 }
 
 function normalizeAdditional(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).flatMap(([id, text]) => id && typeof text === 'string' ? [[id, text.slice(0, 32000)]] : []))
+  return Object.fromEntries(Object.entries(value).flatMap(([id, text]) => id && typeof text === 'string' ? [[id.includes(':') ? id : `codex:${id}`, text.slice(0, 32000)]] : []))
+}
+function normalizeOpeningMessages(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).slice(0, 2048).flatMap(([key, message]) => {
+    if (!key || !message || typeof message !== 'object') return []
+    const text = truncateUtf8(String(message.text || '').trim(), 16 * 1024)
+    return text ? [[key.includes(':') ? key : `codex:${key}`, {
+      text,
+      source: String(message.source || 'history').slice(0, 64),
+      capturedAt: String(message.capturedAt || new Date().toISOString()).slice(0, 128),
+      truncated: Boolean(message.truncated),
+    }]] : []
+  }))
 }
 function normalizeTemplate(value) { return typeof value === 'string' && value.includes('{{annotations}}') ? value.slice(0, 32000) : annotationPromptDefault }
 

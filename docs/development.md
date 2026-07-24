@@ -6,6 +6,7 @@
 - Tauri 2 native dependencies
 - Node.js for browser-state unit tests and deliberately refreshing vendored Markdown assets; the runtime UI has no bundler or package install step
 - A current Codex CLI with `codex app-server`
+- A current OpenCode CLI with `opencode serve` when testing OpenCode mode
 - WebKitGTK on Linux or WKWebView on macOS
 
 ## Commands
@@ -56,11 +57,17 @@ codex app-server generate-json-schema --out /tmp/codex-app-server-schema
 
 Stable APIs are used by default. Do not add experimental fields without setting `capabilities.experimentalApi` during initialization and documenting the compatibility cost.
 
+For OpenCode protocol work, inspect the exact installed schema at the child server's `GET /doc`. Cross-project listing uses `/experimental/session`; all project-scoped requests must include `directory`. Never expose `OPENCODE_SERVER_PASSWORD` to the WebView.
+
 Protocol responsibilities are split as follows:
 
 - `src-tauri/src/codex_app_server.rs`: executable resolution, process lifecycle, initialization, JSONL transport, WebSocket bridge, limits.
+- `src-tauri/src/opencode_server.rs`: OpenCode resolution, password-protected process lifecycle, health checks, and streaming HTTP/SSE proxy.
 - `ui/codex-native.mjs`: provider event normalization and unit-testable render state.
-- `ui/app.js`: RPC correlation, Thread flows, structured rendering, approval UI, comments, settings.
+- `ui/opencode-native.mjs`: OpenCode session/history/event normalization into the shared render state.
+- `ui/app.js`: RPC correlation, Thread flows, structured rendering, approval UI, comments, native favorites, settings.
+- `ui/favorites.mjs`: pure helpers for Turn question association, source identities, titles, tags, and copy output.
+- `src-tauri/src/favorites.rs`: validated global favorites persistence and search summaries.
 - `ui/vendor`: lockfile-pinned Marked, DOMPurify, GitHub Markdown CSS, and license texts for offline rendering.
 
 ## Compatibility checks

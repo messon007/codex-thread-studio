@@ -57,7 +57,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 27. OpenCode project-scoped requests include the session directory; missing status entries are displayed as idle, and an SSE reconnect re-reads the selected session.
 28. Comment drafts and last-selected IDs are namespaced per backend. Switching back restores the previous backend selection without showing the other backend's sessions.
 29. Saving an agent message stores its exact backend/Thread/Turn/Item anchor and original Markdown; the same Turn's user question is included only when selected.
-30. Favorites survive restart, search across title/content/question/note/tags/source metadata, render sanitized Markdown, and can reopen and highlight an available source Item without losing the saved copy when the source is unavailable.
+30. Favorites survive restart in SQLite, search across title/content/question/note/tags/source metadata, render sanitized Markdown, can export the complete global library as Markdown, and can reopen and highlight an available source Item without losing the saved copy when the source is unavailable.
 
 ## Deferred
 

@@ -98,10 +98,10 @@ Codex and OpenCode own history and credentials in their normal state directories
 The global favorites library is intentionally separate because it can contain substantially larger user-selected message content:
 
 ```text
-~/.config/codex-thread-studio/favorites.json
+~/.config/codex-thread-studio/favorites.sqlite3
 ```
 
-Favorites use validated, bounded records and atomic temporary-file replacement. Search returns summaries; full Markdown content is loaded only when a favorite is opened.
+Favorites use validated, bounded SQLite records. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. Search returns summaries; full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

@@ -238,6 +238,7 @@ function bindUI() {
   $('#insert-annotations').addEventListener('click', insertAnnotations)
   $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
   $('#open-favorites').addEventListener('click', () => openFavoritesRail('global'))
+  $('#export-favorites').addEventListener('click', () => exportFavorites().catch(showError))
   $('#close-favorites').addEventListener('click', closeFavoritesRail)
   $('#favorites-search').addEventListener('input', handleFavoritesSearch)
   $('#favorites-list').addEventListener('click', handleFavoriteListClick)
@@ -2416,6 +2417,20 @@ function closeFavoritesRail() {
   $('#favorites-rail').classList.add('hidden')
 }
 
+async function exportFavorites() {
+  const response = await fetch('/studio/favorites/export', { cache: 'no-store' })
+  if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`)
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'codex-thread-studio-favorites.md'
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  toast('收藏已导出')
+}
+
 function handleFavoritesSearch(event) {
   state.favoriteQuery = event.target.value.trim()
   clearTimeout(favoritesSearchTimer)
@@ -2428,6 +2443,7 @@ function renderFavoritesRail() {
     : state.favorites
   const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
   $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏')
+  $('#export-favorites').classList.toggle('hidden', state.favoriteScope !== 'global')
   $('#favorites-count').textContent = count
   $('#favorites-badge').textContent = count > 99 ? '99+' : count
   $('#favorites-badge').classList.toggle('hidden', count === 0)

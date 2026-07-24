@@ -2,6 +2,8 @@ export const supportedLanguages = ['system', 'zh-CN', 'en-US']
 
 const english = {
   '全局收藏': 'Global favorites',
+  '导出': 'Export',
+  '收藏已导出': 'Favorites exported',
   '打开全局收藏': 'Open global favorites',
   '设置': 'Settings',
   '打开设置': 'Open settings',
@@ -51,7 +53,7 @@ const english = {
   '搜索标题、正文、问题、标签…': 'Search titles, content, questions, or tags…',
   '还没有收藏': 'No favorites yet',
   '将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。': 'Hover over an AI response and use its favorite button.',
-  '收藏保存在本机 Studio 配置目录，与 Codex 会话历史相互独立。': 'Favorites are stored locally and independently from Codex history.',
+  '收藏保存在本机 SQLite 数据库，与会话历史相互独立。': 'Favorites are stored in a local SQLite database independently from session history.',
   '批注选中内容': 'Comment on selection',
   '批注会保留结构化 Turn/Item 锚点。': 'Comments retain their structured turn/item anchors.',
   '你的意见': 'Your comment',

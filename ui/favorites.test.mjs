@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -37,4 +38,13 @@ test('copy output includes only fields stored in the favorite', () => {
     favoriteCopyText({ question: 'Q', content: 'A', note: '' }),
     '问题：\nQ\n\n回答：\nA',
   )
+})
+
+test('global favorites expose Markdown export and hide it in session scope', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  assert.match(html, /id="export-favorites"[^>]*>导出<\/button>/)
+  assert.match(source, /fetch\('\/studio\/favorites\/export'/)
+  assert.match(source, /codex-thread-studio-favorites\.md/)
+  assert.match(source, /export-favorites'\)\.classList\.toggle\('hidden', state\.favoriteScope !== 'global'\)/)
 })

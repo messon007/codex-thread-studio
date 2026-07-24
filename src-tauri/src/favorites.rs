@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
+use rusqlite::types::Type;
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_FAVORITE_BODY_BYTES: usize = 384 * 1024;
@@ -8,7 +11,7 @@ const MAX_FAVORITES: usize = 2_000;
 const MAX_CONTENT_BYTES: usize = 192 * 1024;
 const MAX_NOTE_BYTES: usize = 16 * 1024;
 const MAX_RESULTS: usize = 2_000;
-const MAX_STORE_BYTES: u64 = 400 * 1024 * 1024;
+const MAX_LEGACY_STORE_BYTES: u64 = 400 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,50 +61,24 @@ pub struct FavoriteList {
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FavoriteStore {
-    #[serde(default = "store_version")]
-    version: u8,
+struct LegacyFavoriteStore {
     #[serde(default)]
     items: Vec<Favorite>,
-}
-
-fn store_version() -> u8 {
-    1
 }
 
 fn default_scope() -> String {
     "message".to_string()
 }
 
-pub fn load(path: &Path) -> Result<Vec<Favorite>, String> {
-    if path
-        .metadata()
-        .is_ok_and(|metadata| metadata.len() > MAX_STORE_BYTES)
-    {
-        return Err("favorites file is too large".to_string());
-    }
-    match fs::read(path) {
-        Ok(data) => {
-            let store = serde_json::from_slice::<FavoriteStore>(&data)
-                .map_err(|error| format!("invalid favorites file: {error}"))?;
-            if store.items.len() > MAX_FAVORITES {
-                return Err("favorites file contains too many items".to_string());
-            }
-            for favorite in &store.items {
-                validate(favorite)
-                    .map_err(|error| format!("invalid favorite {}: {error}", favorite.id))?;
-            }
-            Ok(store.items)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
-    }
+pub fn initialize(path: &Path) -> Result<(), String> {
+    connection(path).map(|_| ())
 }
 
-pub fn list(items: &[Favorite], query: &str, limit: usize) -> FavoriteList {
+pub fn list(path: &Path, query: &str, limit: usize) -> Result<FavoriteList, String> {
+    let items = load_all(&connection(path)?)?;
     let all_total = items.len();
     let query = query.trim().to_lowercase();
-    let mut matches = items
+    let matches = items
         .iter()
         .filter(|favorite| {
             let tags = favorite.tags.join(" ");
@@ -120,77 +97,129 @@ pub fn list(items: &[Favorite], query: &str, limit: usize) -> FavoriteList {
                 .any(|value| value.to_lowercase().contains(&query))
         })
         .collect::<Vec<_>>();
-    matches.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     let total = matches.len();
     let items = matches
         .into_iter()
         .take(limit.clamp(1, MAX_RESULTS))
         .map(summary)
         .collect();
-    FavoriteList {
+    Ok(FavoriteList {
         items,
         total,
         all_total,
-    }
+    })
 }
 
-pub fn insert(
-    path: &Path,
-    mut items: Vec<Favorite>,
-    favorite: Favorite,
-) -> Result<Favorite, String> {
+pub fn insert(path: &Path, favorite: Favorite) -> Result<Favorite, String> {
     validate(&favorite)?;
-    if items.len() >= MAX_FAVORITES {
+    let connection = connection(path)?;
+    let count: usize = connection
+        .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))
+        .map_err(sql_error)?;
+    if count >= MAX_FAVORITES {
         return Err(format!("at most {MAX_FAVORITES} favorites can be stored"));
     }
-    if items.iter().any(|item| item.id == favorite.id) {
+    if find_with_connection(&connection, &favorite.id)?.is_some() {
         return Err("favorite id already exists".to_string());
     }
-    if favorite.scope == "message"
-        && items.iter().any(|item| {
-            item.scope == "message"
-                && item.backend == favorite.backend
-                && item.thread_id == favorite.thread_id
-                && item.turn_id == favorite.turn_id
-                && item.item_id == favorite.item_id
-        })
-    {
+    if favorite.scope == "message" && message_source_exists(&connection, &favorite)? {
         return Err("this message is already a favorite".to_string());
     }
-    items.push(favorite.clone());
-    save(path, &items)?;
+    insert_row(&connection, &favorite).map_err(sql_error)?;
     Ok(favorite)
 }
 
-pub fn update(
-    path: &Path,
-    mut items: Vec<Favorite>,
-    id: &str,
-    favorite: Favorite,
-) -> Result<Option<Favorite>, String> {
+pub fn update(path: &Path, id: &str, favorite: Favorite) -> Result<Option<Favorite>, String> {
     validate(&favorite)?;
     if favorite.id != id {
         return Err("favorite id cannot be changed".to_string());
     }
-    let Some(index) = items.iter().position(|candidate| candidate.id == id) else {
+    let connection = connection(path)?;
+    if find_with_connection(&connection, id)?.is_none() {
         return Ok(None);
-    };
-    items[index] = favorite.clone();
-    save(path, &items)?;
-    Ok(Some(favorite))
+    }
+    let changed = connection
+        .execute(
+            "UPDATE favorites SET
+               scope = ?2, backend = ?3, thread_id = ?4, thread_title = ?5,
+               project_path = ?6, turn_id = ?7, item_id = ?8, title = ?9,
+               question = ?10, content = ?11, note = ?12, tags_json = ?13,
+               created_at = ?14
+             WHERE id = ?1",
+            params![
+                favorite.id,
+                favorite.scope,
+                favorite.backend,
+                favorite.thread_id,
+                favorite.thread_title,
+                favorite.project_path,
+                favorite.turn_id,
+                favorite.item_id,
+                favorite.title,
+                favorite.question,
+                favorite.content,
+                favorite.note,
+                tags_json(&favorite.tags),
+                favorite.created_at,
+            ],
+        )
+        .map_err(|error| {
+            if is_unique_constraint(&error) {
+                "this message is already a favorite".to_string()
+            } else {
+                sql_error(error)
+            }
+        })?;
+    Ok((changed > 0).then_some(favorite))
 }
 
-pub fn remove(path: &Path, mut items: Vec<Favorite>, id: &str) -> Result<Option<Favorite>, String> {
-    let Some(index) = items.iter().position(|favorite| favorite.id == id) else {
-        return Ok(None);
-    };
-    let removed = items.remove(index);
-    save(path, &items)?;
-    Ok(Some(removed))
+pub fn remove(path: &Path, id: &str) -> Result<Option<Favorite>, String> {
+    let mut connection = connection(path)?;
+    let transaction = connection.transaction().map_err(sql_error)?;
+    let favorite = find_with_connection(&transaction, id)?;
+    if favorite.is_some() {
+        transaction
+            .execute("DELETE FROM favorites WHERE id = ?1", [id])
+            .map_err(sql_error)?;
+    }
+    transaction.commit().map_err(sql_error)?;
+    Ok(favorite)
 }
 
-pub fn find(items: &[Favorite], id: &str) -> Option<Favorite> {
-    items.iter().find(|favorite| favorite.id == id).cloned()
+pub fn find(path: &Path, id: &str) -> Result<Option<Favorite>, String> {
+    find_with_connection(&connection(path)?, id)
+}
+
+pub fn export_markdown(path: &Path) -> Result<String, String> {
+    let items = load_all(&connection(path)?)?;
+    let mut output = format!(
+        "# Codex Thread Studio Favorites\n\nExported favorites: {}\n",
+        items.len()
+    );
+    for (index, favorite) in items.iter().enumerate() {
+        output.push_str(&format!(
+            "\n---\n\n## {}. {}\n\n- Created: {}\n- Backend: {}\n- Thread: {}\n- Project: {}\n- Source: `{}` / `{}`\n",
+            index + 1,
+            metadata(&favorite.title),
+            metadata(&favorite.created_at),
+            metadata(&favorite.backend),
+            metadata(&favorite.thread_title),
+            metadata(&favorite.project_path),
+            metadata(&favorite.turn_id),
+            metadata(&favorite.item_id),
+        ));
+        if !favorite.tags.is_empty() {
+            output.push_str(&format!("- Tags: {}\n", favorite.tags.join(", ")));
+        }
+        if !favorite.question.trim().is_empty() {
+            output.push_str(&format!("\n### Question\n\n{}\n", favorite.question.trim()));
+        }
+        output.push_str(&format!("\n### Favorite\n\n{}\n", favorite.content.trim()));
+        if !favorite.note.trim().is_empty() {
+            output.push_str(&format!("\n### Note\n\n{}\n", favorite.note.trim()));
+        }
+    }
+    Ok(output)
 }
 
 pub fn validate(favorite: &Favorite) -> Result<(), String> {
@@ -248,6 +277,194 @@ pub fn validate(favorite: &Favorite) -> Result<(), String> {
     Ok(())
 }
 
+fn connection(path: &Path) -> Result<Connection, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "favorites database path has no parent directory".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut connection = Connection::open(path).map_err(sql_error)?;
+    connection
+        .busy_timeout(Duration::from_secs(3))
+        .map_err(sql_error)?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode = WAL;
+             CREATE TABLE IF NOT EXISTS favorite_meta (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS favorites (
+               id TEXT PRIMARY KEY,
+               scope TEXT NOT NULL,
+               backend TEXT NOT NULL,
+               thread_id TEXT NOT NULL,
+               thread_title TEXT NOT NULL,
+               project_path TEXT NOT NULL,
+               turn_id TEXT NOT NULL,
+               item_id TEXT NOT NULL,
+               title TEXT NOT NULL,
+               question TEXT NOT NULL,
+               content TEXT NOT NULL,
+               note TEXT NOT NULL,
+               tags_json TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS favorites_created_at
+               ON favorites(created_at DESC);
+             CREATE UNIQUE INDEX IF NOT EXISTS favorite_message_source
+               ON favorites(backend, thread_id, turn_id, item_id)
+               WHERE scope = 'message';",
+        )
+        .map_err(sql_error)?;
+    migrate_legacy_json(&mut connection, &path.with_extension("json"))?;
+    Ok(connection)
+}
+
+fn migrate_legacy_json(connection: &mut Connection, legacy_path: &Path) -> Result<(), String> {
+    let migrated = connection
+        .query_row(
+            "SELECT value FROM favorite_meta WHERE key = 'legacy_json_imported'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error)?
+        .is_some();
+    if migrated {
+        return Ok(());
+    }
+    let items = read_legacy_json(legacy_path)?;
+    let transaction = connection.transaction().map_err(sql_error)?;
+    for favorite in &items {
+        validate(favorite)
+            .map_err(|error| format!("invalid legacy favorite {}: {error}", favorite.id))?;
+        insert_row(&transaction, favorite).map_err(sql_error)?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO favorite_meta(key, value) VALUES('legacy_json_imported', '1')",
+            [],
+        )
+        .map_err(sql_error)?;
+    transaction.commit().map_err(sql_error)
+}
+
+fn read_legacy_json(path: &Path) -> Result<Vec<Favorite>, String> {
+    if path
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > MAX_LEGACY_STORE_BYTES)
+    {
+        return Err("legacy favorites file is too large".to_string());
+    }
+    match fs::read(path) {
+        Ok(data) => {
+            let store = serde_json::from_slice::<LegacyFavoriteStore>(&data)
+                .map_err(|error| format!("invalid legacy favorites file: {error}"))?;
+            if store.items.len() > MAX_FAVORITES {
+                return Err("legacy favorites file contains too many items".to_string());
+            }
+            Ok(store.items)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn insert_row(connection: &Connection, favorite: &Favorite) -> rusqlite::Result<usize> {
+    connection.execute(
+        "INSERT INTO favorites (
+           id, scope, backend, thread_id, thread_title, project_path, turn_id,
+           item_id, title, question, content, note, tags_json, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            favorite.id,
+            favorite.scope,
+            favorite.backend,
+            favorite.thread_id,
+            favorite.thread_title,
+            favorite.project_path,
+            favorite.turn_id,
+            favorite.item_id,
+            favorite.title,
+            favorite.question,
+            favorite.content,
+            favorite.note,
+            tags_json(&favorite.tags),
+            favorite.created_at,
+        ],
+    )
+}
+
+fn load_all(connection: &Connection) -> Result<Vec<Favorite>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, scope, backend, thread_id, thread_title, project_path,
+                    turn_id, item_id, title, question, content, note, tags_json, created_at
+             FROM favorites ORDER BY created_at DESC, id ASC",
+        )
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([], favorite_from_row)
+        .map_err(sql_error)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql_error)
+}
+
+fn find_with_connection(connection: &Connection, id: &str) -> Result<Option<Favorite>, String> {
+    connection
+        .query_row(
+            "SELECT id, scope, backend, thread_id, thread_title, project_path,
+                    turn_id, item_id, title, question, content, note, tags_json, created_at
+             FROM favorites WHERE id = ?1",
+            [id],
+            favorite_from_row,
+        )
+        .optional()
+        .map_err(sql_error)
+}
+
+fn message_source_exists(connection: &Connection, favorite: &Favorite) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM favorites
+               WHERE scope = 'message' AND backend = ?1 AND thread_id = ?2
+                 AND turn_id = ?3 AND item_id = ?4
+             )",
+            params![
+                favorite.backend,
+                favorite.thread_id,
+                favorite.turn_id,
+                favorite.item_id
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)
+}
+
+fn favorite_from_row(row: &Row<'_>) -> rusqlite::Result<Favorite> {
+    let tags_json: String = row.get(12)?;
+    let tags = serde_json::from_str(&tags_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(error))
+    })?;
+    Ok(Favorite {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        backend: row.get(2)?,
+        thread_id: row.get(3)?,
+        thread_title: row.get(4)?,
+        project_path: row.get(5)?,
+        turn_id: row.get(6)?,
+        item_id: row.get(7)?,
+        title: row.get(8)?,
+        question: row.get(9)?,
+        content: row.get(10)?,
+        note: row.get(11)?,
+        tags,
+        created_at: row.get(13)?,
+    })
+}
+
 fn summary(favorite: &Favorite) -> FavoriteSummary {
     FavoriteSummary {
         id: favorite.id.clone(),
@@ -277,24 +494,30 @@ fn snippet(content: &str, limit: usize) -> String {
     }
 }
 
-fn save(path: &Path, items: &[Favorite]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "favorites path has no parent directory".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let data = serde_json::to_vec_pretty(&FavoriteStore {
-        version: store_version(),
-        items: items.to_vec(),
-    })
-    .map_err(|error| error.to_string())?;
-    let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    fs::write(&temporary, data).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| error.to_string())
+fn tags_json(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn metadata(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_unique_constraint(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if code.code == rusqlite::ErrorCode::ConstraintViolation
+    )
+}
+
+fn sql_error(error: rusqlite::Error) -> String {
+    error.to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn favorite(id: &str, title: &str, content: &str) -> Favorite {
         Favorite {
@@ -304,7 +527,7 @@ mod tests {
             thread_id: "thread-1".to_string(),
             thread_title: "Books".to_string(),
             project_path: "/tmp/books".to_string(),
-            turn_id: "turn-1".to_string(),
+            turn_id: format!("turn-{id}"),
             item_id: format!("item-{id}"),
             title: title.to_string(),
             question: "What should we build?".to_string(),
@@ -315,16 +538,72 @@ mod tests {
         }
     }
 
+    fn database(name: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codex-thread-studio-{name}-{nonce}.sqlite3"))
+    }
+
+    fn cleanup(path: &Path) {
+        for candidate in [
+            path.to_path_buf(),
+            path.with_extension("json"),
+            path.with_extension("sqlite3-wal"),
+            path.with_extension("sqlite3-shm"),
+        ] {
+            fs::remove_file(candidate).ok();
+        }
+    }
+
     #[test]
-    fn searches_content_metadata_notes_and_tags() {
-        let items = vec![
-            favorite("a", "Architecture", "A durable event log"),
-            favorite("b", "Testing", "A regression suite"),
-        ];
-        assert_eq!(list(&items, "event", 20).items[0].id, "a");
-        assert_eq!(list(&items, "remember", 20).total, 2);
-        assert_eq!(list(&items, "design", 20).total, 2);
-        assert_eq!(list(&items, "books", 20).total, 2);
+    fn stores_searches_updates_and_exports_sqlite_favorites() {
+        let path = database("crud");
+        insert(&path, favorite("a", "Architecture", "A durable event log")).unwrap();
+        insert(&path, favorite("b", "Testing", "A regression suite")).unwrap();
+        assert_eq!(list(&path, "event", 20).unwrap().items[0].id, "a");
+        let mut changed = find(&path, "a").unwrap().unwrap();
+        changed.note = "Updated note".to_string();
+        update(&path, "a", changed).unwrap();
+        assert_eq!(find(&path, "a").unwrap().unwrap().note, "Updated note");
+        let markdown = export_markdown(&path).unwrap();
+        assert!(markdown.contains("# Codex Thread Studio Favorites"));
+        assert!(markdown.contains("A durable event log"));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn migrates_legacy_json_once() {
+        let path = database("migration");
+        let legacy = LegacyFavoriteStore {
+            items: vec![favorite("legacy", "Legacy", "Imported content")],
+        };
+        fs::write(
+            path.with_extension("json"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+        initialize(&path).unwrap();
+        assert_eq!(list(&path, "", 20).unwrap().all_total, 1);
+        remove(&path, "legacy").unwrap();
+        initialize(&path).unwrap();
+        assert_eq!(list(&path, "", 20).unwrap().all_total, 0);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn allows_multiple_selected_excerpts_from_one_message() {
+        let path = database("selection");
+        let mut first = favorite("selection-a", "First excerpt", "first");
+        first.scope = "selection".to_string();
+        let mut second = first.clone();
+        second.id = "selection-b".to_string();
+        second.title = "Second excerpt".to_string();
+        second.content = "second".to_string();
+        insert(&path, first).unwrap();
+        assert_eq!(insert(&path, second).unwrap().scope, "selection");
+        cleanup(&path);
     }
 
     #[test]
@@ -337,21 +616,5 @@ mod tests {
         invalid = favorite("a", "Useful", "content");
         invalid.item_id.clear();
         assert!(validate(&invalid).is_err());
-    }
-
-    #[test]
-    fn allows_multiple_selected_excerpts_from_one_message() {
-        let path = std::env::temp_dir().join(format!(
-            "codex-thread-studio-selection-favorites-{}.json",
-            std::process::id()
-        ));
-        let mut first = favorite("selection-a", "First excerpt", "first");
-        first.scope = "selection".to_string();
-        let mut second = favorite("selection-b", "Second excerpt", "second");
-        second.scope = "selection".to_string();
-        second.item_id = first.item_id.clone();
-        let saved = insert(&path, vec![first], second).expect("second excerpt should be accepted");
-        assert_eq!(saved.scope, "selection");
-        fs::remove_file(path).ok();
     }
 }

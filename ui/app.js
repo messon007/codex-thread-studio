@@ -46,6 +46,19 @@ import {
   t,
 } from './i18n.mjs'
 import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
+import {
+  catalogCountsWithAttention,
+  catalogTimestamp,
+  filterCatalogEntries,
+  groupCatalogEntries,
+  threadCatalogKey,
+} from './thread-catalog.mjs'
+import {
+  catalogAttentionState,
+  codexAttentionState,
+  openCodeAttentionState,
+  setThreadAttention,
+} from './thread-attention.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
 marked.setOptions({
@@ -95,8 +108,15 @@ const state = {
   requestId: 0,
   pending: new Map(),
   threads: [],
+  threadsByBackend: { codex: [], opencode: [] },
+  threadModels: new Map(),
+  threadLoads: new Map(),
   selectedId: null,
   search: '',
+  filter: 'all',
+  threadActivity: {},
+  attentionThreads: new Set(),
+  collapsedThreadGroups: new Set(),
   model: createCodexViewModel(),
   language: 'system',
   theme: 'light',
@@ -149,16 +169,20 @@ async function init() {
 }
 
 function bindUI() {
-  $$('.backend-switcher [data-backend]').forEach((button) => button.addEventListener('click', () => switchBackend(button.dataset.backend)))
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#cancel-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#new-thread-form').addEventListener('submit', createThread)
+  $('#new-thread-backend').addEventListener('change', updateNewThreadCapabilities)
   $('#thread-search').addEventListener('input', (event) => {
     state.search = event.target.value.trim().toLowerCase()
     renderThreadList()
   })
+  $$('.thread-filter').forEach((button) => button.addEventListener('click', () => {
+    state.filter = button.dataset.filter
+    renderThreadList()
+  }))
   $('#thread-more-button').addEventListener('click', () => toggleActionMenu('thread-more-menu', 'thread-more-button'))
   $('#refresh-thread').addEventListener('click', () => {
     closeActionMenus()
@@ -296,20 +320,23 @@ function connectBackend() {
   else connectAppServer()
 }
 
-async function switchBackend(backend) {
+async function switchBackend(backend, { selectedId } = {}) {
   if (!['codex', 'opencode'].includes(backend) || backend === state.backend) return
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
   rejectPending(new Error('后端已切换'))
   state.backend = backend
+  if (selectedId) state.selectedByBackend[backend] = selectedId
   state.selectedId = state.selectedByBackend[backend] || null
-  state.threads = []
-  state.model = createCodexViewModel()
+  state.threads = state.threadsByBackend[backend]
+  state.model = freshThreadModel(backend, state.selectedId)?.model || createCodexViewModel()
+  if (state.selectedId) state.model.threadId = state.selectedId
   state.backendInfo = null
   state.ready = false
   applyBackendCopy()
   renderThreadList()
   renderWorkspace()
+  renderTranscript()
   persistPreferences()
   await loadBackendInfo()
   connectBackend()
@@ -317,11 +344,10 @@ async function switchBackend(backend) {
 
 function applyBackendCopy() {
   const descriptor = currentBackend()
-  $$('.backend-switcher [data-backend]').forEach((button) => button.setAttribute('aria-selected', String(button.dataset.backend === state.backend)))
   $('.brand-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
-  $('#new-thread-label').textContent = t('新建 {backend} 会话', { backend: descriptor.name })
+  $('#new-thread-label').textContent = t('新建会话')
   $('#native-label').textContent = descriptor.nativeLabel
   $('#native-error-title').textContent = t('{backend} Server 无法使用', { backend: descriptor.name })
   $('#empty-title').textContent = t('结构化 {backend} 工作台', { backend: descriptor.name })
@@ -329,13 +355,7 @@ function applyBackendCopy() {
     ? '消息、命令、文件修改、计划、审批和停止原因直接来自 Codex App Server。'
     : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
   $('#composer-input').placeholder = t('向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell', { backend: descriptor.name })
-  $('#new-thread-eyebrow').textContent = `NEW ${descriptor.name.toUpperCase()} THREAD`
-  $('#new-thread-title').textContent = t('创建 {backend} 会话', { backend: descriptor.name })
-  $('#new-thread-description').textContent = t('由 {backend} 原生服务直接创建并持久化。', { backend: descriptor.name })
   $('#rename-thread-description').textContent = t('名称由 {backend} 持久化。', { backend: descriptor.name })
-  $('#new-thread-model').placeholder = descriptor.id === 'opencode' ? '可选：provider/model' : '使用 Codex 默认模型'
-  $('#new-thread-approval').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
-  $('#new-thread-sandbox').closest('.field').classList.toggle('hidden', descriptor.id === 'opencode')
 }
 
 function connectAppServer() {
@@ -493,11 +513,13 @@ function handleAppServerMessage(message) {
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
     const threadId = message.params?.threadId
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
+    state.threadsByBackend.codex = state.threads
     if (message.method === 'thread/deleted') {
       delete state.annotationDrafts[`codex:${threadId}`]
       delete state.annotationAdditional[`codex:${threadId}`]
       delete state.openingMessages[`codex:${threadId}`]
     }
+    invalidateThreadModel('codex', threadId)
     if (state.selectedId === threadId) {
       state.selectedId = null
       state.selectedByBackend.codex = null
@@ -518,16 +540,29 @@ function handleAppServerMessage(message) {
   }
 
   if (message.id != null && message.method) {
-    if (!applyCodexNotification(state.model, message)) {
+    const targetModel = codexNotificationModel(message)
+    if (!targetModel) return
+    if (!applyCodexNotification(targetModel, message)) {
       sendRaw({ id: message.id, error: { code: -32601, message: `Studio does not support ${message.method}` } })
       toast(t('Codex 请求了尚未支持的交互：{method}', { method: message.method }), 'error')
       return
     }
+    markCachedModelValidated('codex', targetModel)
+    updateCodexAttention(message, targetModel)
+    if (targetModel !== state.model) return
     renderTranscript()
     return
   }
 
-  if (applyCodexNotification(state.model, message)) {
+  const targetModel = codexNotificationModel(message)
+  if (!targetModel) return
+  if (applyCodexNotification(targetModel, message)) {
+    markCachedModelValidated('codex', targetModel)
+    updateCodexAttention(message, targetModel)
+    if (targetModel !== state.model) {
+      updateThreadStatusFromNotification(message)
+      return
+    }
     const updateKind = transcriptUpdateKind(message.method)
     if (updateKind === 'stream') queueStreamingItemPatch(message.params)
     else if (updateKind === 'item') replaceCompletedItem(message.params)
@@ -542,7 +577,6 @@ function handleOpenCodeServerEvent(event) {
   const payload = event?.payload || event
   if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
   if (payload.type === 'server.connected') {
-    if (state.selectedId && selectedThread()) refreshSelectedThread({ quiet: true }).catch(console.error)
     scheduleOpenCodeListRefresh()
     return
   }
@@ -556,10 +590,20 @@ function handleOpenCodeServerEvent(event) {
       persistPreferences()
       renderWorkspace()
     }
+    invalidateThreadModel('opencode', deletedId)
     return
   }
-  const update = applyOpenCodeEvent(state.model, event, state.selectedId)
+  const eventThreadId = openCodeEventThreadId(payload)
+  const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
+  const targetModel = eventThreadId === state.selectedId
+    ? state.model
+    : cached?.model
+  if (!targetModel) return
+  const update = applyOpenCodeEvent(targetModel, event, eventThreadId)
   if (!update.handled) return
+  markCachedModelValidated('opencode', targetModel)
+  updateOpenCodeAttention(payload, eventThreadId)
+  if (targetModel !== state.model) return
   if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
   else if (update.kind === 'metadata') {
     renderUsage()
@@ -576,10 +620,12 @@ function scheduleOpenCodeListRefresh() {
 async function refreshOpenCodeThreadList() {
   if (state.backend !== 'opencode' || !state.ready) return
   const result = await rpc('thread/list', { limit: 100 })
-  state.threads = Array.isArray(result?.data) ? result.data : []
-  $('#thread-count').textContent = state.threads.length
+  setActiveThreads(Array.isArray(result?.data) ? result.data : [])
   renderThreadList()
   renderWorkspace()
+  if (state.selectedId && !freshThreadModel('opencode', state.selectedId)) {
+    await refreshSelectedThread({ quiet: true })
+  }
 }
 
 function rpc(method, params = {}, timeoutMs = 30_000) {
@@ -596,8 +642,8 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
   })
 }
 
-async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000 } = {}) {
-  if (!state.ready) throw new Error('OpenCode Server 尚未就绪')
+async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false } = {}) {
+  if (!allowInactive && (state.backend !== 'opencode' || !state.ready)) throw new Error('OpenCode Server 尚未就绪')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -620,6 +666,71 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000 } 
   } finally { clearTimeout(timer) }
 }
 
+async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {}) {
+  if (allowInactive) {
+    const response = await fetch('/studio/opencode', { cache: 'no-store' })
+    if (!response.ok) {
+      const info = await response.json().catch(() => ({}))
+      throw new Error(info.error || `OpenCode Server HTTP ${response.status}`)
+    }
+  }
+  const options = { timeoutMs: 30_000, allowInactive }
+  const sessions = await openCodeFetch(`/experimental/session?limit=${limit}&archived=false`, options)
+  const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
+  const statusMaps = await Promise.all(directories.map((cwd) =>
+    openCodeFetch(withDirectory('/session/status', cwd), options).catch(() => ({})),
+  ))
+  return normalizeOpenCodeSessions(sessions, Object.assign({}, ...statusMaps))
+}
+
+function fetchCodexCatalog(limit = 100) {
+  return new Promise((resolve, reject) => {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(`${protocol}//${location.host}/ws/codex`)
+    const id = -(Date.now() + Math.floor(Math.random() * 100_000))
+    const timer = setTimeout(() => finish(new Error('Codex 会话目录请求超时')), 15_000)
+    let requested = false
+    const finish = (error, value) => {
+      clearTimeout(timer)
+      socket.onclose = null
+      socket.close()
+      if (error) reject(error)
+      else resolve(Array.isArray(value?.data) ? value.data : [])
+    }
+    socket.onmessage = (event) => {
+      let message
+      try { message = JSON.parse(event.data) } catch { return }
+      if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
+        finish(new Error(message.params?.message || 'Codex App Server 不可用'))
+        return
+      }
+      if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
+        requested = true
+        socket.send(JSON.stringify({ id, method: 'thread/list', params: { limit } }))
+        return
+      }
+      if (message.id === id) {
+        if (message.error) finish(new Error(message.error.message || 'Codex 会话目录请求失败'))
+        else finish(null, message.result)
+      }
+    }
+    socket.onerror = () => finish(new Error('无法读取 Codex 会话目录'))
+  })
+}
+
+async function refreshInactiveCatalog() {
+  const backend = state.backend === 'codex' ? 'opencode' : 'codex'
+  try {
+    const threads = backend === 'opencode'
+      ? await fetchOpenCodeCatalog(100, { allowInactive: true })
+      : await fetchCodexCatalog(100)
+    state.threadsByBackend[backend] = threads
+    renderThreadList()
+  } catch (error) {
+    console.warn(`Unable to refresh ${backend} catalog`, error)
+  }
+}
+
 function directoryQuery(directory = selectedThread()?.cwd) {
   return directory ? `directory=${encodeURIComponent(directory)}` : ''
 }
@@ -632,11 +743,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
   const thread = state.threads.find((candidate) => candidate.id === (params.threadId || state.selectedId))
   const directory = params.cwd || thread?.cwd || ''
   if (method === 'thread/list') {
-    const sessions = await openCodeFetch(`/experimental/session?limit=${Number(params.limit || 100)}&archived=false`, { timeoutMs })
-    const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
-    const statusMaps = await Promise.all(directories.map((cwd) => openCodeFetch(withDirectory('/session/status', cwd), { timeoutMs }).catch(() => ({}))))
-    const statuses = Object.assign({}, ...statusMaps)
-    return { data: normalizeOpenCodeSessions(sessions, statuses) }
+    return { data: await fetchOpenCodeCatalog(Number(params.limit || 100)) }
   }
   if (method === 'thread/unsubscribe') return {}
   if (method === 'thread/resume' || method === 'thread/read') {
@@ -739,82 +846,183 @@ function rejectPending(error) {
 
 async function loadThreads() {
   const result = await rpc('thread/list', { limit: 100 })
-  state.threads = Array.isArray(result?.data) ? result.data : []
-  $('#thread-count').textContent = state.threads.length
+  setActiveThreads(Array.isArray(result?.data) ? result.data : [])
   renderThreadList()
+  refreshInactiveCatalog()
   const preferred = state.selectedId
   const nextId = state.threads.some((thread) => thread.id === preferred) ? preferred : state.threads[0]?.id
   if (nextId) await selectThread(nextId, { force: true })
   else renderWorkspace()
 }
 
-function filteredThreads() {
-  if (!state.search) return state.threads
-  return state.threads.filter((thread) => [threadTitle(thread), thread.cwd, thread.id, thread.preview].join(' ').toLowerCase().includes(state.search))
+function setActiveThreads(threads) {
+  const previous = new Map((state.threadsByBackend[state.backend] || []).map((thread) => [thread.id, thread]))
+  let attentionChanged = false
+  for (const thread of threads) {
+    const prior = previous.get(thread.id)
+    const key = threadCatalogKey(state.backend, thread.id)
+    const attention = catalogAttentionState(prior, thread)
+    if (attention === true) {
+      state.attentionThreads.add(key)
+      state.threadActivity[key] = Date.now()
+      attentionChanged = true
+    } else if (attention === false && state.attentionThreads.delete(key)) {
+      attentionChanged = true
+    }
+  }
+  state.threads = threads
+  state.threadsByBackend[state.backend] = threads
+  if (attentionChanged) persistPreferences()
+}
+
+function visibleThreadEntries() {
+  return filterCatalogEntries(state.threadsByBackend, {
+    filter: state.filter,
+    search: state.search,
+    activity: state.threadActivity,
+    attention: state.attentionThreads,
+  })
 }
 
 function renderThreadList() {
   const list = $('#thread-list')
-  const threads = filteredThreads()
-  if (!threads.length) {
-    list.innerHTML = `<div class="list-empty">${t(state.search ? '没有匹配的会话' : '还没有 {backend} 会话', { backend: currentBackend().name })}</div>`
+  const counts = catalogCountsWithAttention(state.threadsByBackend, state.attentionThreads)
+  $('#count-all').textContent = counts.all
+  $('#count-active').textContent = counts.active
+  $('#count-attention').textContent = counts.attention
+  $$('.thread-filter').forEach((button) => {
+    const active = button.dataset.filter === state.filter
+    button.classList.toggle('active', active)
+    button.setAttribute('aria-selected', String(active))
+  })
+  const entries = visibleThreadEntries()
+  if (!entries.length) {
+    const message = state.search
+      ? '没有匹配的会话'
+      : state.filter === 'active'
+        ? '没有正在运行的会话'
+        : '还没有会话'
+    list.innerHTML = `<div class="list-empty">${t(message)}</div>`
     return
   }
-  list.innerHTML = projectGroups(threads).map(({ cwd, threads: projectThreads }) => {
-    const label = basename(cwd) || t('其他会话')
-    const rows = projectThreads.map((thread) => {
-      const status = threadStatus(thread)
-      const relationship = thread.parentThreadId
-        ? t('子代理 · {id}', { id: shortId(thread.parentThreadId) })
-        : thread.forkedFromId
-          ? t('Fork · {id}', { id: shortId(thread.forkedFromId) })
-          : t('会话树 · {id}', { id: shortId(thread.sessionId || thread.id) })
-      return `<button class="thread-row${thread.id === state.selectedId ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}">
-        <span class="status-dot ${escapeHtml(status)}"></span>
-        <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small>${escapeHtml(relationship)}</small></span>
-      </button>`
-    }).join('')
-    return `<section class="thread-group"><header data-no-i18n title="${escapeHtml(cwd || t('未记录项目目录'))}"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(cwd || t('未记录项目目录'))}</small></span><b>${projectThreads.length}</b></header>${rows}</section>`
-  }).join('')
-  list.querySelectorAll('.thread-row').forEach((row) => row.addEventListener('click', () => selectThread(row.dataset.threadId)))
-}
-
-function projectGroups(threads) {
-  const groups = new Map()
-  for (const thread of threads) {
-    const cwd = thread.cwd || ''
-    if (!groups.has(cwd)) groups.set(cwd, [])
-    groups.get(cwd).push(thread)
+  const renderRow = ({ backend, thread }) => {
+    const status = threadStatus(thread)
+    const active = backend === state.backend && thread.id === state.selectedId
+    const tag = backend === 'codex' ? 'CX' : 'OC'
+    return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
+      <span class="status-dot ${escapeHtml(status)}"></span>
+      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('未记录项目目录'))}">${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></span>
+      <span class="backend-tag ${backend}" title="${backend === 'codex' ? 'Codex' : 'OpenCode'}">${tag}</span>
+    </button>`
   }
-  return [...groups].map(([cwd, groupedThreads]) => ({ cwd, threads: groupedThreads }))
+  if (state.filter === 'attention') {
+    list.innerHTML = entries.map(renderRow).join('')
+  } else {
+    list.innerHTML = groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => {
+      const label = name || t('其他会话')
+      const collapsed = state.collapsedThreadGroups.has(cwd)
+      return `<section class="thread-group${collapsed ? ' collapsed' : ''}" data-group-path="${escapeHtml(cwd)}">
+        <button class="thread-group-heading" type="button" data-no-i18n title="${escapeHtml(cwd || t('未记录项目目录'))}">
+          <span class="twisty">▼</span><strong>${escapeHtml(label)}</strong><span>${groupEntries.length}</span>
+        </button>
+        <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
+      </section>`
+    }).join('')
+  }
+  list.querySelectorAll('.thread-group-heading').forEach((button) => button.addEventListener('click', () => {
+    const path = button.closest('.thread-group').dataset.groupPath
+    if (state.collapsedThreadGroups.has(path)) state.collapsedThreadGroups.delete(path)
+    else state.collapsedThreadGroups.add(path)
+    renderThreadList()
+  }))
+  list.querySelectorAll('.thread-row').forEach((row) => row.addEventListener('click', () =>
+    selectThread(row.dataset.threadId, { backend: row.dataset.backend }),
+  ))
 }
 
-async function selectThread(id, { force = false } = {}) {
+async function selectThread(id, { force = false, backend = state.backend } = {}) {
+  markThreadAttention(backend, id, false)
+  if (backend !== state.backend) {
+    touchThreadActivity(backend, id)
+    await switchBackend(backend, { selectedId: id })
+    await waitFor(() => state.backend === backend && state.ready, 15_000)
+    await waitFor(() => state.threads.some((thread) => thread.id === id), 15_000)
+    if (state.selectedId === id && freshThreadModel(backend, id)) return
+    return selectThread(id, { force: true, backend })
+  }
   if (!force && state.selectedId === id) return
   closeActionMenus()
-  const previousId = state.selectedId
-  if (previousId && previousId !== id && state.ready) {
-    try {
-      await rpc('thread/unsubscribe', { threadId: previousId })
-    } catch (error) {
-      console.warn(`Could not unsubscribe from ${previousId}`, error)
-    }
-  }
   hideComposerMenu()
   resetStreamingPatches()
   transcriptScrollFollower.reset()
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
-  state.model = createCodexViewModel()
+  touchThreadActivity(state.backend, id)
+  const cached = freshThreadModel(state.backend, id)
+  state.model = cached?.model || createCodexViewModel()
   state.model.threadId = id
   persistPreferences()
   renderThreadList()
   renderWorkspace()
   renderTranscript()
+  if (cached) {
+    $('#native-connection').textContent = t('已从缓存恢复')
+    return
+  }
   await resumeThread(id)
 }
 
+function touchThreadActivity(backend = state.backend, id = state.selectedId) {
+  if (!id) return
+  state.threadActivity[threadCatalogKey(backend, id)] = Date.now()
+  persistPreferences()
+}
+
+function markThreadAttention(backend, id, attention) {
+  if (!id) return
+  const changed = setThreadAttention(state.attentionThreads, backend, id, attention)
+  if (changed) {
+    renderThreadList()
+    persistPreferences()
+  }
+}
+
+function updateCodexAttention(message, model) {
+  const method = message.method || ''
+  const threadId = message.params?.threadId
+    || message.params?.thread?.id
+    || message.params?.turn?.threadId
+    || threadIdForCachedModel('codex', model)
+  if (!threadId) return
+  const attention = codexAttentionState(method)
+  if (attention === false) markThreadAttention('codex', threadId, false)
+  if (attention === true) {
+    state.threadActivity[threadCatalogKey('codex', threadId)] = Date.now()
+    markThreadAttention('codex', threadId, true)
+    persistPreferences()
+  }
+}
+
+function updateOpenCodeAttention(payload, threadId) {
+  if (!threadId) return
+  const attention = openCodeAttentionState(payload)
+  if (attention === false) markThreadAttention('opencode', threadId, false)
+  if (attention === true) {
+    state.threadActivity[threadCatalogKey('opencode', threadId)] = Date.now()
+    markThreadAttention('opencode', threadId, true)
+    persistPreferences()
+  }
+}
+
 async function resumeThread(id) {
+  const key = threadCatalogKey(state.backend, id)
+  if (state.threadLoads.has(key)) return state.threadLoads.get(key)
+  const load = resumeThreadUncached(id).finally(() => state.threadLoads.delete(key))
+  state.threadLoads.set(key, load)
+  return load
+}
+
+async function resumeThreadUncached(id) {
   setNativeError(null)
   $('#native-connection').textContent = '正在恢复会话…'
   try {
@@ -823,6 +1031,7 @@ async function resumeThread(id) {
     hydrateCodexThread(state.model, result.thread)
     if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
     mergeThreadMetadata(result.thread)
+    cacheThreadModel(state.backend, id)
     $('#native-connection').textContent = '已连接'
     renderWorkspace()
     renderTranscript()
@@ -844,6 +1053,7 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     hydrateCodexThread(state.model, result.thread)
     if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
     mergeThreadMetadata(result.thread)
+    cacheThreadModel(state.backend, threadId)
     renderWorkspace()
     renderTranscript()
     if (!quiet) toast('会话已刷新')
@@ -853,6 +1063,81 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     else showError(error)
     return false
   }
+}
+
+function freshThreadModel(backend, id) {
+  const cached = state.threadModels.get(threadCatalogKey(backend, id))
+  if (!cached) return null
+  const thread = state.threadsByBackend[backend].find((candidate) => candidate.id === id)
+  const updatedAt = catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt)
+  return !updatedAt || updatedAt <= cached.validatedAt ? cached : null
+}
+
+function cacheThreadModel(backend = state.backend, id = state.selectedId, model = state.model) {
+  if (!id || !model || model.threadId !== id) return
+  state.threadModels.set(threadCatalogKey(backend, id), {
+    model,
+    validatedAt: Date.now(),
+  })
+}
+
+function invalidateThreadModel(backend, id) {
+  if (!id) return
+  const key = threadCatalogKey(backend, id)
+  state.threadModels.delete(key)
+  if (state.attentionThreads.delete(key)) persistPreferences()
+}
+
+function markCachedModelValidated(backend, model) {
+  for (const [key, cached] of state.threadModels) {
+    if (key.startsWith(`${backend}:`) && cached.model === model) {
+      cached.validatedAt = Date.now()
+      return
+    }
+  }
+}
+
+function threadIdForCachedModel(backend, model) {
+  if (state.backend === backend && state.model === model) return state.selectedId
+  for (const [key, cached] of state.threadModels) {
+    if (key.startsWith(`${backend}:`) && cached.model === model) return key.slice(backend.length + 1)
+  }
+  return null
+}
+
+function codexNotificationModel(message) {
+  const params = message.params || {}
+  const explicitId = params.threadId || params.thread?.id || params.turn?.threadId
+  if (explicitId) {
+    if (state.backend === 'codex' && state.selectedId === explicitId) return state.model
+    return state.threadModels.get(threadCatalogKey('codex', explicitId))?.model || null
+  }
+  const turnId = params.turnId || params.turn?.id
+  if (turnId) {
+    for (const [key, cached] of state.threadModels) {
+      if (!key.startsWith('codex:')) continue
+      if (cached.model.activeTurnId === turnId || cached.model.turns.some((turn) => turn.id === turnId)) return cached.model
+    }
+  }
+  return state.model
+}
+
+function openCodeEventThreadId(payload) {
+  const properties = payload?.properties || {}
+  return properties.sessionID
+    || properties.sessionId
+    || properties.info?.sessionID
+    || properties.info?.id
+    || properties.part?.sessionID
+    || null
+}
+
+function updateThreadStatusFromNotification(message) {
+  if (message.method !== 'thread/status/changed') return
+  const threadId = message.params?.threadId
+  const thread = state.threadsByBackend.codex.find((candidate) => candidate.id === threadId)
+  if (thread) thread.status = message.params.status
+  renderThreadList()
 }
 
 function hydrateOpenCodeModelMetadata(thread) {
@@ -867,6 +1152,7 @@ function mergeThreadMetadata(incoming) {
   const index = state.threads.findIndex((thread) => thread.id === incoming.id)
   if (index >= 0) state.threads[index] = { ...state.threads[index], ...incoming, turns: undefined }
   else state.threads.unshift({ ...incoming, turns: undefined })
+  state.threadsByBackend[state.backend] = state.threads
   renderThreadList()
 }
 
@@ -899,6 +1185,7 @@ function openThreadInfo() {
   captureOpeningMessage()
   const opening = state.openingMessages[selectedStateKey()]
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
+  const source = threadSourceLabel(thread.source)
   $('#thread-info-content').innerHTML = `
     <section class="opening-message-card">
       <header><strong>${t('起始问题')}</strong><span>${opening ? `${opening.source === 'history' ? t('从历史提取') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('已截断')}` : ''}` : t('尚未识别')}</span></header>
@@ -907,7 +1194,10 @@ function openThreadInfo() {
     <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
     <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
     <div class="detail-row"><span>会话 ID</span><strong data-no-i18n>${escapeHtml(thread.id)}</strong></div>
+    ${thread.sessionId && thread.sessionId !== thread.id ? `<div class="detail-row"><span>会话树</span><strong data-no-i18n>${escapeHtml(thread.sessionId)}</strong></div>` : ''}
     <div class="detail-row"><span>项目目录</span><strong data-no-i18n>${escapeHtml(thread.cwd || t('未记录'))}</strong></div>
+    ${source ? `<div class="detail-row"><span>来源</span><strong data-no-i18n>${escapeHtml(source)}</strong></div>` : ''}
+    ${thread.cliVersion ? `<div class="detail-row"><span>CLI 版本</span><strong data-no-i18n>${escapeHtml(thread.cliVersion)}</strong></div>` : ''}
     ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong data-no-i18n>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
     ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong data-no-i18n>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
   $('#copy-opening-message').disabled = !opening?.text
@@ -931,15 +1221,6 @@ function renderWorkspace() {
   if (!thread) return
   $('#thread-title').textContent = threadTitle(thread)
   $('#thread-path').textContent = thread.cwd || thread.id
-  const source = threadSourceLabel(thread.source)
-  const metadata = [
-    { label: '会话树', value: shortId(thread.sessionId || thread.id), title: thread.sessionId || thread.id },
-    thread.forkedFromId && { label: 'Fork 自', value: shortId(thread.forkedFromId), title: thread.forkedFromId },
-    thread.parentThreadId && { label: '父会话', value: shortId(thread.parentThreadId), title: thread.parentThreadId },
-    source && { label: '来源', value: source, title: source },
-    thread.cliVersion && { label: 'CLI', value: thread.cliVersion, title: thread.cliVersion },
-  ].filter(Boolean)
-  $('#thread-meta').innerHTML = metadata.map((item) => `<span data-no-i18n title="${escapeHtml(item.title)}">${escapeHtml(t(item.label))} <strong>${escapeHtml(item.value)}</strong></span>`).join('')
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   $('#thread-status').textContent = statusLabel(status)
   $('#thread-status').className = `status-badge ${status}`
@@ -1688,7 +1969,7 @@ function renderComposerState() {
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = shellMode ? '运行' : active && state.backend === 'codex' ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? t('运行命令') : active && state.backend === 'codex' ? '追加意见' : '发送'
   const details = [
     options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
     options.sandboxPolicy?.type,
@@ -1790,11 +2071,26 @@ async function interruptTurn() {
 
 function openNewThreadDialog() {
   $('#new-thread-error').classList.add('hidden')
+  $('#new-thread-backend').value = state.backend
+  updateNewThreadCapabilities()
   $('#new-thread-dialog').showModal()
   setTimeout(() => ($('#new-thread-name').value ? $('#new-thread-name') : $('#new-thread-cwd')).focus(), 30)
 }
 
 function closeNewThreadDialog() { $('#new-thread-dialog').close() }
+
+function updateNewThreadCapabilities() {
+  const backend = $('#new-thread-backend').value
+  const unsupported = backend === 'opencode'
+  $('#new-thread-model').placeholder = unsupported ? t('可选：provider/model') : t('使用 Codex 默认模型')
+  for (const id of ['new-thread-approval', 'new-thread-sandbox']) {
+    const select = $(`#${id}`)
+    const field = select.closest('.field')
+    select.disabled = unsupported
+    field.classList.toggle('capability-disabled', unsupported)
+    field.querySelector('.backend-capability-note')?.classList.toggle('hidden', !unsupported)
+  }
+}
 
 function openRenameThreadDialog() {
   const thread = selectedThread()
@@ -1834,21 +2130,28 @@ async function createThread(event) {
   const errorBox = $('#new-thread-error')
   button.disabled = true
   errorBox.classList.add('hidden')
+  const backend = $('#new-thread-backend').value
   const name = $('#new-thread-name').value.trim()
   const params = {
     cwd: $('#new-thread-cwd').value.trim(),
-    approvalPolicy: $('#new-thread-approval').value,
-    sandbox: $('#new-thread-sandbox').value,
+    ...(backend === 'codex' ? {
+      approvalPolicy: $('#new-thread-approval').value,
+      sandbox: $('#new-thread-sandbox').value,
+    } : {}),
   }
   const model = $('#new-thread-model').value.trim()
   if (model) params.model = model
   try {
+    if (backend !== state.backend) {
+      await switchBackend(backend)
+      await waitFor(() => state.backend === backend && state.ready, 15_000)
+    }
     const result = await rpc('thread/start', params)
     if (name) await rpc('thread/name/set', { threadId: result.thread.id, name })
     closeNewThreadDialog()
     $('#new-thread-form').reset()
     await loadThreads()
-    await selectThread(result.thread.id, { force: true })
+    await selectThread(result.thread.id, { force: true, backend })
     toast(t('{backend} 会话已创建', { backend: currentBackend().name }))
   } catch (error) {
     errorBox.textContent = error.message
@@ -1871,6 +2174,7 @@ async function archiveSelectedThread() {
   const threadId = state.selectedId
   try {
     await rpc('thread/archive', { threadId })
+    invalidateThreadModel(state.backend, threadId)
     state.selectedId = null
     state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
@@ -1885,6 +2189,7 @@ async function deleteSelectedThread() {
   const threadId = state.selectedId
   try {
     await rpc('thread/delete', { threadId })
+    invalidateThreadModel(state.backend, threadId)
     delete state.annotationDrafts[`${state.backend}:${threadId}`]
     delete state.annotationAdditional[`${state.backend}:${threadId}`]
     delete state.openingMessages[`${state.backend}:${threadId}`]
@@ -2411,6 +2716,8 @@ async function loadPreferences() {
     codex: typeof saved.selectedThreads?.codex === 'string' ? saved.selectedThreads.codex : typeof saved.selectedThread === 'string' ? saved.selectedThread : null,
     opencode: typeof saved.selectedThreads?.opencode === 'string' ? saved.selectedThreads.opencode : null,
   }
+  state.threadActivity = normalizeThreadActivity(saved.threadActivity)
+  state.attentionThreads = new Set(normalizeAttentionThreads(saved.attentionThreads))
   state.selectedId = state.selectedByBackend[state.backend]
   state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
@@ -2442,12 +2749,29 @@ function preferencesSnapshot() {
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
     selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
+    threadActivity: state.threadActivity,
+    attentionThreads: [...state.attentionThreads],
     annotationDrafts: state.annotationDrafts,
     annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
     openingMessages: state.openingMessages,
   }
+}
+
+function normalizeThreadActivity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, timestamp]) => /^(codex|opencode):.{1,256}$/u.test(key) && Number.isFinite(Number(timestamp)))
+    .slice(0, 2048)
+    .map(([key, timestamp]) => [key, Number(timestamp)]))
+}
+
+function normalizeAttentionThreads(value) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((key) =>
+    typeof key === 'string' && /^(codex|opencode):.{1,256}$/u.test(key),
+  ))].slice(0, 2048)
 }
 
 function persistPreferences() {
@@ -2525,6 +2849,7 @@ function resetSettings() {
 
 function renderLocalizedUI() {
   applyBackendCopy()
+  updateNewThreadCapabilities()
   renderThreadList()
   renderWorkspace()
   renderTranscript()

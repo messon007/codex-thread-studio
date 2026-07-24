@@ -23,6 +23,8 @@ test('translates interface text and interpolates values', () => {
   setLanguage('en-US')
   assert.equal(getLocale(), 'en-US')
   assert.equal(t('设置'), 'Settings')
+  assert.equal(t('运行'), 'Active')
+  assert.equal(t('运行命令'), 'Run')
   assert.equal(t('找到 {count} 条匹配收藏', { count: 3 }), 'Found 3 matching favorites')
   assert.equal(t('untranslated user text'), 'untranslated user text')
   setLanguage('zh-CN')

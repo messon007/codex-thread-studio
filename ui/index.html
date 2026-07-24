@@ -15,10 +15,10 @@
           <div class="brand-mark" aria-hidden="true">C</div>
           <div class="brand-copy">
             <strong>Codex Thread Studio</strong>
-            <span>Structured Agent Client</span>
+            <span>Codex Desktop</span>
           </div>
           <div class="brand-actions">
-            <button id="open-favorites" class="icon-button favorite-library-button" type="button" title="全局收藏" aria-label="打开全局收藏">
+            <button id="open-favorites" class="icon-button favorite-library-button favorites-button" type="button" title="全局收藏" aria-label="打开全局收藏">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z"/></svg>
               <span id="favorites-badge" class="favorite-badge hidden">0</span>
             </button>
@@ -28,14 +28,13 @@
           </div>
         </header>
 
-        <div class="backend-switcher" role="tablist" aria-label="AI 后端">
-          <button type="button" role="tab" data-backend="codex" aria-selected="true">Codex</button>
-          <button type="button" role="tab" data-backend="opencode" aria-selected="false">OpenCode</button>
-        </div>
-
-        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">新建 Codex 会话</b> <kbd>Ctrl N</kbd></button>
+        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">新建会话</b> <kbd>Ctrl N</kbd></button>
         <label class="search-box"><span>⌕</span><input id="thread-search" type="search" placeholder="搜索会话或目录" /><kbd>/</kbd></label>
-        <div class="list-summary"><span>会话</span><strong id="thread-count">0</strong></div>
+        <div class="filters thread-filters" role="tablist" aria-label="会话筛选">
+          <button class="filter thread-filter active" type="button" role="tab" data-filter="all" aria-selected="true">全部 <span id="count-all">0</span></button>
+          <button class="filter thread-filter" type="button" role="tab" data-filter="active" aria-selected="false">运行 <span id="count-active">0</span></button>
+          <button class="filter thread-filter" type="button" role="tab" data-filter="attention" aria-selected="false">待处理 <span id="count-attention">0</span></button>
+        </div>
         <div id="thread-list" class="thread-list" aria-live="polite"></div>
 
         <footer class="backend-footer">
@@ -51,7 +50,7 @@
         <header class="thread-toolbar">
           <div id="thread-heading" class="thread-heading hidden">
             <div id="tool-avatar" class="tool-avatar">CX</div>
-            <div><div class="title-line"><h1 id="thread-title">Codex 会话</h1><span id="thread-status" class="status-badge idle">空闲</span></div><p id="thread-path"></p><div id="thread-meta" class="thread-meta"></div></div>
+            <div><div class="title-line"><h1 id="thread-title">Codex 会话</h1><span id="thread-status" class="status-badge idle">空闲</span></div><p id="thread-path"></p></div>
           </div>
           <div id="thread-actions" class="thread-actions hidden">
             <button id="rename-thread" class="toolbar-button" type="button">重命名</button>
@@ -229,13 +228,14 @@
 
     <dialog id="new-thread-dialog" class="dialog">
       <form id="new-thread-form">
-        <header class="dialog-header"><div><span id="new-thread-eyebrow" class="eyebrow">NEW CODEX THREAD</span><h2 id="new-thread-title">创建 Codex 会话</h2><p id="new-thread-description">由 App Server 直接创建并持久化。</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span id="new-thread-eyebrow" class="eyebrow">NEW AGENT THREAD</span><h2 id="new-thread-title">创建会话</h2><p id="new-thread-description">选择后端，并由其原生服务创建和持久化会话。</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
+          <label class="field full"><span>AI 后端</span><select id="new-thread-backend"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select></label>
           <label class="field full"><span>会话名称（可选）</span><input id="new-thread-name" placeholder="例如：实现 Codex 原生界面" /></label>
           <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small>必须是本机绝对路径。</small></label>
           <label class="field"><span>模型（可选）</span><input id="new-thread-model" placeholder="使用 Codex 默认模型" /></label>
-          <label class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select></label>
-          <label class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspaceWrite">项目目录可写</option><option value="readOnly">只读</option><option value="dangerFullAccess">完全访问</option></select></label>
+          <label id="new-thread-approval-field" class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
+          <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspaceWrite">项目目录可写</option><option value="readOnly">只读</option><option value="dangerFullAccess">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
           <div id="new-thread-error" class="form-error hidden"></div>
         </div>
         <footer class="dialog-footer"><button id="cancel-new-thread" class="subtle-button" type="button">取消</button><button id="create-thread" class="primary-button" type="submit">创建并打开</button></footer>

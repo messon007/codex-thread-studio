@@ -88,6 +88,10 @@ struct StudioPreferences {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     selected_threads: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    thread_activity: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attention_threads: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     annotation_drafts: BTreeMap<String, Vec<AnnotationDraft>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     annotation_additional: BTreeMap<String, String>,
@@ -176,6 +180,8 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/thread-catalog.mjs", get(thread_catalog_js))
+        .route("/thread-attention.mjs", get(thread_attention_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/favorites.mjs", get(favorites_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
@@ -226,6 +232,14 @@ async fn codex_native_js() -> impl IntoResponse {
 
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn thread_catalog_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-catalog.mjs"))
+}
+
+async fn thread_attention_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-attention.mjs"))
 }
 
 async fn composer_tools_js() -> impl IntoResponse {
@@ -578,6 +592,20 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     {
         return Err("selected backend threads are invalid".to_string());
     }
+    if preferences.thread_activity.len() > 2048
+        || preferences.thread_activity.keys().any(|key| {
+            key.len() > 272 || !(key.starts_with("codex:") || key.starts_with("opencode:"))
+        })
+    {
+        return Err("thread activity preferences are invalid".to_string());
+    }
+    if preferences.attention_threads.len() > 2048
+        || preferences.attention_threads.iter().any(|key| {
+            key.len() > 272 || !(key.starts_with("codex:") || key.starts_with("opencode:"))
+        })
+    {
+        return Err("attention thread preferences are invalid".to_string());
+    }
     if let Some(typography) = &preferences.typography {
         if typography.ui_font_family.trim().is_empty()
             || typography.ui_font_family.len() > 512
@@ -764,6 +792,8 @@ mod tests {
                 "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
+                "/thread-catalog.mjs",
+                "/thread-attention.mjs",
                 "/composer-tools.mjs",
                 "/favorites.mjs",
                 "/turn-navigator.mjs",
@@ -976,6 +1006,32 @@ mod tests {
             "ja-JP".to_string(),
             "コメント：\n{{annotations}}".to_string(),
         );
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_namespaced_thread_activity_preferences() {
+        let mut preferences = StudioPreferences::default();
+        preferences
+            .thread_activity
+            .insert("codex:thread-1".to_string(), 1_784_879_063_243);
+        preferences
+            .thread_activity
+            .insert("opencode:session-1".to_string(), 1_784_879_063_244);
+        preferences
+            .attention_threads
+            .push("codex:thread-1".to_string());
+        assert!(validate_preferences(&preferences).is_ok());
+
+        preferences
+            .thread_activity
+            .insert("unknown:thread-1".to_string(), 1);
+        assert!(validate_preferences(&preferences).is_err());
+
+        preferences.thread_activity.remove("unknown:thread-1");
+        preferences
+            .attention_threads
+            .push("unknown:thread-1".to_string());
         assert!(validate_preferences(&preferences).is_err());
     }
 

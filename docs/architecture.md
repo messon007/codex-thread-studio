@@ -49,7 +49,7 @@ Thread
    └─ completion {completed | interrupted | failed, error}
 ```
 
-The browser keeps only a render model reconstructed from Codex `thread/resume` or OpenCode session/message history plus live notifications. Every selectable rendered block carries `data-turn-id` and `data-item-id`.
+The browser lazily builds one in-memory render model per `backend:thread-id` from Codex `thread/resume` or OpenCode session/message history, then keeps that model current with live notifications. Returning to an unchanged Thread renders this cache immediately instead of reading its complete history again. Catalog timestamps invalidate stale models, and Reload explicitly re-reads the selected Thread. Every selectable rendered block carries `data-turn-id` and `data-item-id`.
 
 Agent prose and reasoning summaries pass through locally vendored Marked (GFM parsing), then DOMPurify (HTML sanitization), then GitHub Markdown CSS plus Studio theme overrides. Code-copy and table wrappers are added only after sanitization. The outer structured Item element remains the selection/comment anchor.
 
@@ -57,7 +57,7 @@ Agent prose and reasoning summaries pass through locally vendored Marked (GFM pa
 
 App Server delta notifications update only the affected Item in the browser model. Studio batches high-frequency updates with `requestAnimationFrame` and patches the active message, plan, reasoning, or command-output node directly. Markdown parsing and sanitization run after Item completion, not once for every token delta. Structural notifications still trigger a full transcript render.
 
-When a Codex Thread changes, Studio first calls `thread/unsubscribe`; OpenCode uses the global SSE stream and filters events by selected session. Backend changes close the old transport, reject its pending UI requests, reset transient render state, and restore the last selected session for the new backend.
+Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore the cached model for the last selected session when it remains valid.
 
 ## Composer orchestration
 

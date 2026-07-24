@@ -27,7 +27,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 ## Acceptance criteria
 
 1. With a logged-in Codex CLI that supports `app-server`, Studio completes initialization and `thread/list` without a terminal process.
-2. Selecting a persisted Thread calls `thread/resume` and renders its available Turns and Items.
+2. Selecting a persisted Thread lazily calls `thread/resume` the first time and caches its available Turns and Items by backend and Thread ID.
 3. A new Thread can be created for an absolute project directory with chosen approval and sandbox policy.
 4. A Thread can be renamed through `thread/name/set`; name-update notifications refresh both the sidebar and header.
 5. Sending a message produces a user item, streaming agent/tool items, and a final completed/interrupted/failed state.
@@ -49,7 +49,8 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 21. Typing `$query` filters enabled skills returned by `skills/list`; choosing a skill inserts `$skill-name`, supplies its `name` and `path` as a structured `skill` UserInput, and never relies only on visible text.
 22. Submitting `!command` while the Thread is idle calls `thread/shellCommand` with the exact selected Thread ID, visibly distinguishes local shell mode, and explains that this user-invoked command does not inherit the model Turn sandbox. Empty commands and commands submitted during an active Turn are not run.
 23. When the transcript is following live output, streaming deltas, Item completion, Markdown reflow, and structural rerenders keep it pinned to the latest content. A deliberate upward scroll pauses following, and returning to the bottom or sending a new interaction resumes it.
-24. Switching Threads calls `thread/unsubscribe` for the previous Thread before resuming the next one.
+24. Switching back to an unchanged, previously loaded Thread renders its in-memory model immediately; a newer catalog timestamp or explicit Reload re-reads it from the backend.
+25. The sidebar groups All and Active sessions by the last component of their project directory. Attention is a flat, latest-activity list of sessions that completed work or requested input; opening one acknowledges it.
 25. With two or more Turns, the navigator creates one marker per Turn, highlights the Turn at the reading position, exposes a normalized user-prompt preview on hover/focus, and scrolls to the selected Turn. It stays hidden for a single Turn and narrow windows.
 26. OpenCode mode starts a password-protected loopback server, lists sessions across project directories, restores message history, consumes SSE deltas, supports create/rename/fork/delete/abort, and never exposes the child password to JavaScript.
 27. OpenCode project-scoped requests include the session directory; missing status entries are displayed as idle, and an SSE reconnect re-reads the selected session.

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session Map · Focused Demo</title>
+    <link rel="stylesheet" href="../../../ui/vendor/github-markdown.css" />
+    <link rel="stylesheet" href="../../../ui/styles.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <header class="brand-row">
+          <div class="brand-mark" aria-hidden="true">C</div>
+          <div class="brand-copy"><strong>Codex Thread Studio</strong><span>Codex Desktop</span></div>
+          <div class="brand-actions">
+            <button class="icon-button favorite-library-button" type="button" title="全局收藏" aria-label="打开全局收藏">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z"/></svg>
+              <span class="favorite-badge">2</span>
+            </button>
+            <button class="icon-button settings-button" type="button" title="设置" aria-label="打开设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <button class="new-thread-button" type="button"><span>＋</span><b>新建会话</b><kbd>Ctrl N</kbd></button>
+        <label class="search-box"><span>⌕</span><input type="search" placeholder="搜索会话或目录" /><kbd>/</kbd></label>
+        <div class="filters thread-filters" role="tablist" aria-label="会话筛选">
+          <button class="filter active" type="button">全部 <span>5</span></button>
+          <button class="filter" type="button">运行 <span>1</span></button>
+          <button class="filter" type="button">待处理 <span>2</span></button>
+        </div>
+
+        <div class="thread-list">
+          <section class="thread-group">
+            <button class="thread-group-heading" type="button"><span class="twisty">▾</span><strong>LEARN</strong><span>3</span></button>
+            <div class="thread-group-sessions">
+              <button class="thread-row active" type="button"><span class="status-dot idle"></span><span class="thread-copy"><strong>系统升级项</strong><small>/home/rui/downloads</small></span><span class="backend-tag">CX</span></button>
+              <button class="thread-row" type="button"><span class="status-dot"></span><span class="thread-copy"><strong>分布式系统</strong><small>/home/rui/downloads/books</small></span><span class="backend-tag">CX</span></button>
+              <button class="thread-row" type="button"><span class="status-dot"></span><span class="thread-copy"><strong>汽车技术</strong><small>/home/rui/learn/cars</small></span><span class="backend-tag">OC</span></button>
+            </div>
+          </section>
+          <section class="thread-group">
+            <button class="thread-group-heading" type="button"><span class="twisty">▾</span><strong>OPENRESOURCE</strong><span>2</span></button>
+            <div class="thread-group-sessions">
+              <button class="thread-row" type="button"><span class="status-dot"></span><span class="thread-copy"><strong>RSS Reader</strong><small>/home/rui/downloads/openresource/rss</small></span><span class="backend-tag">CX</span></button>
+              <button class="thread-row" type="button"><span class="status-dot"></span><span class="thread-copy"><strong>Thread Studio</strong><small>/home/rui/downloads/openresource/thread</small></span><span class="backend-tag">CX</span></button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="backend-footer">
+          <button class="backend-status" type="button"><span class="backend-dot online"></span><span><strong>Codex 已连接</strong><small>App Server · stdio</small></span><span class="chevron">›</span></button>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <header class="thread-toolbar">
+          <div class="thread-heading"><div class="tool-avatar">CX</div><div><div class="title-line"><h1>系统升级项</h1><span class="status-badge idle">空闲</span></div><p>/home/rui/downloads</p></div></div>
+          <div class="thread-actions"><button class="toolbar-button" type="button">重命名</button><button class="toolbar-button" type="button">Fork</button><button class="toolbar-button" type="button">归档</button><button class="toolbar-button danger-text" type="button">删除</button><button class="toolbar-button icon-only" type="button">•••</button></div>
+        </header>
+
+        <section class="native-workspace">
+          <div class="native-chrome">
+            <div><span class="live-dot"></span><strong>CODEX NATIVE</strong><small>已连接</small></div>
+            <div class="native-tools"><span>12.4k tokens</span><button class="text-button content-menu-button" type="button">批注 <span>0</span>⌄</button><button class="text-button content-menu-button" type="button">收藏 <span>2</span>⌄</button></div>
+          </div>
+
+          <div id="transcript" class="transcript demo-transcript">
+            <article class="demo-message user-message"><header><span class="demo-avatar">R</span><strong>你</strong></header><p>我想了解系统里所有待升级的软件包分别是做什么的，按重要性逐个解释，并记录学习进度。</p></article>
+            <article class="demo-message agent-message"><header><span class="demo-avatar codex">C</span><strong>Codex</strong></header><p>我先把升级项整理为包管理、桌面组件和开发工具三部分。我们从 <code>dpkg</code> 与 <code>apt</code> 的关系开始。</p><ul><li><strong>dpkg</strong> 负责本机 <code>.deb</code> 包的安装与状态数据库。</li><li><strong>apt</strong> 在其上处理软件源、下载和依赖求解。</li></ul></article>
+            <article class="demo-message user-message compact"><header><span class="demo-avatar">R</span><strong>你</strong></header><p>依赖求解器具体怎么决定升级哪些间接依赖？</p></article>
+            <article class="demo-message agent-message latest"><header><span class="demo-avatar codex">C</span><strong>Codex</strong><small>刚刚</small></header><p>APT 会建立候选版本与依赖约束，再求出满足版本区间和冲突规则的方案。当前话题已经从“包的职责”深入到 <strong>APT 依赖求解器</strong>。</p><pre>apt
+└── dependency solver
+    ├── candidate versions
+    └── conflict resolution</pre></article>
+          </div>
+
+          <form id="composer" class="composer demo-composer">
+            <textarea id="composer-input" rows="3" autocomplete="off" spellcheck="false" placeholder="向 Codex 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell"></textarea>
+            <div class="composer-footer"><span>将开始一个新的 Turn</span><div><button class="primary-button" type="submit">发送</button></div></div>
+          </form>
+        </section>
+      </main>
+
+      <aside id="map-rail" class="map-rail">
+        <header class="map-header">
+          <h1>Map</h1>
+          <div>
+            <button id="add-item" class="map-icon-button" type="button" aria-label="添加条目" title="添加"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <div class="menu-anchor">
+              <button id="view-button" class="map-icon-button" type="button" aria-label="切换视图" title="视图" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/><circle cx="8" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="18" r="1.5"/></svg></button>
+              <div id="view-menu" class="map-popover view-menu hidden" role="menu"></div>
+            </div>
+            <div class="menu-anchor">
+              <button id="more-button" class="map-icon-button" type="button" aria-label="Map 更多操作" title="更多" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+              <div id="more-menu" class="map-popover more-menu hidden" role="menu">
+                <button id="choose-structure" type="button"><svg viewBox="0 0 24 24"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z"/></svg><span>结构</span></button>
+                <button id="run-sync" type="button"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.5 10a7 7 0 0 0-12-3M5.5 14a7 7 0 0 0 12 3"/></svg><span>同步</span></button>
+                <button id="show-history" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span>历史</span></button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="map-summary"><div><strong id="map-goal">了解系统升级项</strong><span id="map-percent">38%</span></div><span class="summary-track"><i id="map-progress-bar"></i></span></section>
+        <nav id="breadcrumb" class="map-breadcrumb" aria-label="当前位置"></nav>
+        <div id="map-content" class="map-content" role="tree" aria-label="会话结构"></div>
+        <footer class="map-footer"><button id="sync-status" class="sync-status" type="button"><span class="sync-mark">✦</span><span>演示同步</span></button></footer>
+      </aside>
+    </div>
+
+    <dialog id="structure-dialog" class="dialog structure-dialog">
+      <form id="structure-form">
+        <header class="dialog-header"><div><h2>选择结构</h2><p>以后仍可切换视图或定制结构。</p></div><button id="close-structure" class="icon-button" type="button" aria-label="关闭">×</button></header>
+        <div id="structure-grid" class="structure-grid"></div>
+        <footer class="dialog-footer"><button id="custom-structure" class="subtle-button" type="button">自定义</button><button class="primary-button" type="submit">应用</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="custom-dialog" class="dialog custom-dialog">
+      <form id="custom-form">
+        <header class="dialog-header"><div><h2>自定义结构</h2><p>简洁模式</p></div><button id="close-custom" class="icon-button" type="button" aria-label="关闭">×</button></header>
+        <div class="custom-body">
+          <label><span>名称</span><input id="custom-name" value="我的结构" required /></label>
+          <label><span>基础</span><select id="custom-base"><option value="hierarchy">层级</option><option value="path">路径</option><option value="flow">流程</option><option value="blank">空白</option></select></label>
+          <fieldset><legend>视图</legend><label><input type="checkbox" value="tree" checked />树</label><label><input type="checkbox" value="outline" checked />纲</label><label><input type="checkbox" value="board" />板</label></fieldset>
+          <label class="switch-row"><span><strong>自动同步</strong><small>仅更新安全且可撤销的内容</small></span><input id="custom-sync" type="checkbox" checked /></label>
+          <details><summary>高级</summary><p>条目类型、状态、字段、上下文和动作可在完整编辑器中配置。</p></details>
+          <div id="custom-validation" class="validation">✓ 可保存</div>
+        </div>
+        <footer class="dialog-footer"><button class="primary-button" type="submit">保存</button></footer>
+      </form>
+    </dialog>
+
+    <div id="toast" class="map-toast" role="status" aria-live="polite"></div>
+    <span class="concept-badge">MAP CONCEPT</span>
+  </body>
+</html>

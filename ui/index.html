@@ -62,6 +62,7 @@
               <div id="thread-more-menu" class="action-menu hidden" role="menu">
                 <button id="refresh-thread" type="button" role="menuitem">重载</button>
                 <span class="menu-separator"></span>
+                <button id="session-map-action" type="button" role="menuitem">创建 Map</button>
                 <button id="thread-info" type="button" role="menuitem">会话信息</button>
               </div>
             </div>
@@ -127,6 +128,51 @@
         </section>
       </main>
 
+      <aside id="session-map-rail" class="session-map-rail hidden" aria-label="会话 Map">
+        <header class="session-map-header">
+          <div>
+            <span class="eyebrow">SESSION MAP</span>
+            <h2>Map</h2>
+          </div>
+          <div class="session-map-header-actions">
+            <span id="session-map-sync-state" class="session-map-sync-state" title="Map 同步状态"><i></i></span>
+            <div class="menu-anchor">
+              <button id="session-map-more" class="icon-button" type="button" aria-label="Map 操作" aria-expanded="false">•••</button>
+              <div id="session-map-menu" class="action-menu hidden" role="menu">
+                <button id="session-map-add-root" type="button" role="menuitem">添加</button>
+                <button id="session-map-ai-generate" type="button" role="menuitem">AI 生成</button>
+                <button id="session-map-edit-goal" type="button" role="menuitem">编辑目标</button>
+                <button id="session-map-undo" type="button" role="menuitem">撤销更新</button>
+                <span class="menu-separator"></span>
+                <button id="session-map-delete" class="danger-text" type="button" role="menuitem">删除 Map</button>
+              </div>
+            </div>
+            <button id="close-session-map" class="icon-button" type="button" aria-label="关闭 Map">×</button>
+          </div>
+        </header>
+        <section class="session-map-goal">
+          <span>目标</span>
+          <h3 id="session-map-goal"></h3>
+          <p id="session-map-definition" class="hidden"></p>
+        </section>
+        <div id="session-map-trail" class="session-map-trail hidden"></div>
+        <nav id="session-map-tree" class="session-map-tree" aria-label="Map 内容"></nav>
+        <div id="session-map-item-menu" class="session-map-item-menu action-menu hidden" role="menu">
+          <button data-map-item-action="current" type="button" role="menuitem">设为当前</button>
+          <button data-map-item-action="visited" type="button" role="menuitem">已浏览</button>
+          <button data-map-item-action="done" type="button" role="menuitem">完成</button>
+          <button data-map-item-action="paused" type="button" role="menuitem">暂停</button>
+          <span class="menu-separator"></span>
+          <button data-map-item-action="add-child" type="button" role="menuitem">添加子项</button>
+          <button data-map-item-action="edit" type="button" role="menuitem">编辑</button>
+          <button data-map-item-action="archive" class="danger-text" type="button" role="menuitem">移除</button>
+        </div>
+        <footer class="session-map-footer">
+          <span id="session-map-progress">0 项</span>
+          <span id="session-map-revision">rev 0</span>
+        </footer>
+      </aside>
+
       <aside id="annotation-rail" class="annotation-rail hidden">
         <header><div><span class="eyebrow">REVIEW DRAFT</span><h2>回覆草稿 <span id="annotation-count" class="annotation-count">0</span></h2></div><button id="close-annotation-rail" class="icon-button">×</button></header>
         <div class="annotation-content"><div id="annotation-empty" class="annotation-empty"><strong>还没有批注</strong><p>在结构化输出中选择文字，再点击“添加批注”。</p></div><div id="annotation-list" class="annotation-list"></div></div>
@@ -161,6 +207,47 @@
         <footer class="favorites-footer">收藏保存在本机 SQLite 数据库，与会话历史相互独立。</footer>
       </aside>
     </div>
+
+    <dialog id="session-map-dialog" class="dialog session-map-dialog">
+      <form id="session-map-form">
+        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>创建 Map</h2><p>Map 是可选的。创建后，AI 才会根据聊天进展维护它。</p></div><button id="close-session-map-dialog" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body">
+          <label class="field full"><span>当前目标</span><textarea id="session-map-create-goal" required rows="3" maxlength="4096" placeholder="一句话说明你希望这个会话最终帮助你完成什么"></textarea></label>
+          <label class="field"><span>结构</span><select id="session-map-structure"><option value="hierarchy">层级</option><option value="path">路径</option><option value="flow">流程</option><option value="blank">空白</option></select></label>
+          <label class="field full"><span>完成定义（可选）</span><textarea id="session-map-create-done" rows="2" maxlength="8192" placeholder="什么情况下可以认为目标完成"></textarea></label>
+          <p class="session-map-cost-note">自动同步复用当前 Turn，不增加模型请求；首次生成、手动 AI 补全和目标建议会使用该 Map 的同一个临时 Worker。</p>
+          <div id="session-map-create-error" class="form-error hidden"></div>
+        </div>
+        <footer class="dialog-footer"><button id="cancel-session-map" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">创建</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="session-map-goal-dialog" class="dialog session-map-dialog">
+      <form id="session-map-goal-form">
+        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>编辑目标</h2><p>目标改变后，从下一次对话开始使用新目标。</p></div><button id="close-session-map-goal" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body">
+          <label class="field full"><span>当前目标</span><textarea id="session-map-goal-input" required rows="3" maxlength="4096"></textarea></label>
+          <label class="field full"><span>完成定义（可选）</span><textarea id="session-map-done-input" rows="2" maxlength="8192"></textarea></label>
+          <div id="session-map-goal-error" class="form-error hidden"></div>
+        </div>
+        <footer class="dialog-footer"><button id="session-map-suggest-goal" class="subtle-button push-left" type="button">AI 建议</button><button id="cancel-session-map-goal" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="session-map-item-dialog" class="dialog session-map-item-dialog">
+      <form id="session-map-item-form">
+        <header class="dialog-header"><div><span class="eyebrow">MAP ITEM</span><h2 id="session-map-item-dialog-title">添加项目</h2><p>所有模板都使用相同的通用项目结构。</p></div><button id="close-session-map-item" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body">
+          <input id="session-map-item-id" type="hidden" />
+          <label class="field full"><span>名称</span><input id="session-map-item-title" required maxlength="512" /></label>
+          <label class="field"><span>类型</span><input id="session-map-item-kind" maxlength="64" value="item" placeholder="item" /></label>
+          <label class="field"><span>父级</span><select id="session-map-item-parent"><option value="">顶层</option></select></label>
+          <label class="field full"><span>摘要（可选）</span><textarea id="session-map-item-summary" rows="3" maxlength="4096"></textarea></label>
+          <div id="session-map-item-error" class="form-error hidden"></div>
+        </div>
+        <footer class="dialog-footer"><button id="cancel-session-map-item" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+      </form>
+    </dialog>
 
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
       <form id="annotation-form">

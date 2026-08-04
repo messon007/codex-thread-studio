@@ -171,6 +171,9 @@ impl CodexAppServer {
                     "method": "initialize",
                     "id": INITIALIZE_REQUEST_ID,
                     "params": {
+                        "capabilities": {
+                            "experimentalApi": true
+                        },
                         "clientInfo": {
                             "name": "codex_thread_studio",
                             "title": "Codex Thread Studio",

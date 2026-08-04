@@ -30,6 +30,24 @@ import {
   normalizeFavoriteTags,
   questionForTurn,
 } from './favorites.mjs'
+import {
+  assistantOperationSchema,
+  bootstrapMapInput,
+  flattenSessionMap,
+  mapItemTrail,
+  mapProgress,
+  normalizeSessionMap,
+  parseSessionMapUpdate,
+  safeAssistantOperations,
+  SESSION_MAP_UPDATE_START,
+  SessionMapWorkerPool,
+  sessionMapEndpoint,
+  sessionMapKey,
+  sessionMapTurnConfiguration,
+  sessionMapVisibleText,
+  shouldBootstrapSessionMap,
+  visibleMapItems,
+} from './session-map.mjs'
 import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
@@ -138,6 +156,18 @@ const state = {
   pendingFavorite: null,
   selectedFavorite: null,
   favoriteEditMode: false,
+  sessionMaps: new Map(),
+  sessionMapLoads: new Map(),
+  sessionMapDismissed: new Set(),
+  sessionMapSelectedItem: null,
+  sessionMapMenuItem: null,
+  sessionMapSync: new Map(),
+  sessionMapWorkerRequests: new Map(),
+  sessionMapWorkers: new SessionMapWorkerPool(),
+  hiddenCodexThreads: new Set(),
+  hiddenCodexTurns: new Set(),
+  sessionMapBootstrapAttempts: new Set(),
+  sessionMapInlineProcessing: new Set(),
 }
 
 let preferencesReady = false
@@ -149,6 +179,7 @@ let composerSearchTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
 let favoritesSearchTimer = null
+let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
@@ -189,6 +220,26 @@ function bindUI() {
     closeActionMenus()
     openThreadInfo()
   })
+  $('#session-map-action').addEventListener('click', handleSessionMapAction)
+  $('#session-map-more').addEventListener('click', () => toggleActionMenu('session-map-menu', 'session-map-more'))
+  $('#close-session-map').addEventListener('click', closeSessionMapRail)
+  $('#session-map-add-root').addEventListener('click', () => openSessionMapItemDialog())
+  $('#session-map-ai-generate').addEventListener('click', () => generateSessionMapStructure().catch(showError))
+  $('#session-map-edit-goal').addEventListener('click', openSessionMapGoalDialog)
+  $('#session-map-undo').addEventListener('click', () => undoSessionMap().catch(showError))
+  $('#session-map-delete').addEventListener('click', () => deleteSessionMap().catch(showError))
+  $('#session-map-tree').addEventListener('click', handleSessionMapTreeClick)
+  $('#session-map-item-menu').addEventListener('click', handleSessionMapItemMenu)
+  $('#session-map-form').addEventListener('submit', createSessionMap)
+  $('#close-session-map-dialog').addEventListener('click', closeSessionMapDialog)
+  $('#cancel-session-map').addEventListener('click', closeSessionMapDialog)
+  $('#session-map-goal-form').addEventListener('submit', saveSessionMapGoal)
+  $('#session-map-suggest-goal').addEventListener('click', () => suggestSessionMapGoal().catch(showError))
+  $('#close-session-map-goal').addEventListener('click', () => $('#session-map-goal-dialog').close())
+  $('#cancel-session-map-goal').addEventListener('click', () => $('#session-map-goal-dialog').close())
+  $('#session-map-item-form').addEventListener('submit', saveSessionMapItem)
+  $('#close-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
+  $('#cancel-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
   $('#rename-thread').addEventListener('click', openRenameThreadDialog)
   $('#rename-thread-form').addEventListener('submit', renameSelectedThread)
   $('#close-rename-thread').addEventListener('click', closeRenameThreadDialog)
@@ -265,6 +316,7 @@ function bindUI() {
   document.addEventListener('mousedown', (event) => {
     if (!event.target.closest('#selection-popover, .content-menu-anchor')) hideSelectionPopover()
     if (!event.target.closest('.menu-anchor')) closeActionMenus()
+    if (!event.target.closest('#session-map-item-menu, .session-map-row-menu')) closeSessionMapItemMenu()
   })
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
@@ -279,6 +331,7 @@ function bindUI() {
       closeActionMenus()
       closeAnnotationRail()
       closeFavoritesRail()
+      closeSessionMapItemMenu()
     }
   })
 }
@@ -335,6 +388,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   renderThreadList()
   renderWorkspace()
   renderTranscript()
+  renderSessionMap()
   persistPreferences()
   await loadBackendInfo()
   connectBackend()
@@ -487,6 +541,7 @@ function handleAppServerMessage(message) {
   }
 
   if (message.id != null && !message.method) {
+    captureSessionMapWorkerResponse(message)
     const pending = state.pending.get(String(message.id))
     if (!pending) return
     state.pending.delete(String(message.id))
@@ -497,6 +552,7 @@ function handleAppServerMessage(message) {
   }
 
   if (message.method === 'thread/started' && message.params?.thread) {
+    if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(String(message.params.thread.id))) return
     mergeThreadMetadata(message.params.thread)
     renderWorkspace()
     return
@@ -540,6 +596,10 @@ function handleAppServerMessage(message) {
   updateCodexReplyTime(message)
 
   if (message.id != null && message.method) {
+    if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
+      handleSessionMapToolCall(message)
+      return
+    }
     const targetModel = codexNotificationModel(message)
     if (!targetModel) return
     if (!applyCodexNotification(targetModel, message)) {
@@ -568,6 +628,61 @@ function handleAppServerMessage(message) {
     if (updateKind === 'metadata') renderUsage()
     renderComposerState()
     updateSelectedThreadStatus(message)
+    if (message.method === 'turn/completed') {
+      const threadId = message.params?.threadId || message.params?.thread?.id || state.selectedId
+      processSessionMapInlineUpdate('codex', threadId, targetModel, message.params?.turn?.id).catch((error) => {
+        console.warn('Session Map inline update failed', error)
+      })
+    }
+  }
+}
+
+function captureSessionMapWorkerResponse(message) {
+  const id = String(message?.id ?? '')
+  const method = state.sessionMapWorkerRequests.get(id)
+  if (!method) return
+  state.sessionMapWorkerRequests.delete(id)
+  if (message.error) return
+  if (method === 'thread/start' && message.result?.thread?.id) {
+    state.hiddenCodexThreads.add(String(message.result.thread.id))
+  }
+  if (method === 'turn/start' && message.result?.turn?.id) {
+    state.hiddenCodexTurns.add(String(message.result.turn.id))
+  }
+}
+
+async function handleSessionMapToolCall(message) {
+  const params = message.params || {}
+  const key = sessionMapKey('codex', params.threadId)
+  try {
+    const map = await loadSessionMap('codex', params.threadId)
+    if (!map) throw new Error('This thread does not have a Session Map')
+    const operations = safeAssistantOperations(params.arguments)
+    if (!operations.length) throw new Error('No safe Session Map operations were provided')
+    const updated = await applySessionMapOperations(operations, {
+      actor: 'assistant',
+      sourceTurnId: params.turnId || null,
+      key,
+    })
+    sendRaw({
+      id: message.id,
+      result: {
+        success: true,
+        contentItems: [{ type: 'inputText', text: `Session Map updated to revision ${updated.revision}.` }],
+      },
+    })
+    state.sessionMapSync.set(key, { state: 'synced', message: 'Map 已在当前 Turn 中更新' })
+    if (selectedStateKey() === key) renderSessionMap()
+  } catch (error) {
+    sendRaw({
+      id: message.id,
+      result: {
+        success: false,
+        contentItems: [{ type: 'inputText', text: `Session Map update rejected: ${error.message}` }],
+      },
+    })
+    state.sessionMapSync.set(key, { state: 'error', message: error.message })
+    if (selectedStateKey() === key) renderSessionMap()
   }
 }
 
@@ -940,6 +1055,13 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   transcriptScrollFollower.reset()
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
+  state.sessionMapSelectedItem = null
+  closeSessionMapItemMenu()
+  const key = sessionMapKey(state.backend, id)
+  const mapLoad = loadSessionMap(state.backend, id).catch((error) => {
+    console.warn('Unable to load Session Map', error)
+    if (state.selectedId === id) setSessionMapSyncState('error', error.message)
+  })
   const cached = freshThreadModel(state.backend, id)
   state.model = cached?.model || createCodexViewModel()
   state.model.threadId = id
@@ -949,9 +1071,13 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   renderTranscript()
   if (cached) {
     $('#native-connection').textContent = t('已从缓存恢复')
+    await mapLoad
+    maybeBootstrapSessionMap(key, state.model)
     return
   }
   await resumeThread(id)
+  await mapLoad
+  maybeBootstrapSessionMap(key, state.model)
 }
 
 function markThreadLoaded(backend, id) {
@@ -1083,11 +1209,13 @@ function threadIdForCachedModel(backend, model) {
 function codexNotificationModel(message) {
   const params = message.params || {}
   const explicitId = params.threadId || params.thread?.id || params.turn?.threadId
+  if (explicitId && state.hiddenCodexThreads.has(String(explicitId))) return null
   if (explicitId) {
     if (state.backend === 'codex' && state.selectedId === explicitId) return state.model
     return state.threadModels.get(threadCatalogKey('codex', explicitId))?.model || null
   }
   const turnId = params.turnId || params.turn?.id
+  if (turnId && state.hiddenCodexTurns.has(String(turnId))) return null
   if (turnId) {
     for (const [key, cached] of state.threadModels) {
       if (!key.startsWith('codex:')) continue
@@ -1193,7 +1321,10 @@ function renderWorkspace() {
   $('#thread-actions').classList.toggle('hidden', !hasThread)
   $('#empty-workspace').classList.toggle('hidden', hasThread)
   $('#native-workspace').classList.toggle('hidden', !hasThread)
-  if (!thread) return
+  if (!thread) {
+    renderSessionMap()
+    return
+  }
   $('#thread-title').textContent = threadTitle(thread)
   $('#thread-path').textContent = thread.cwd || thread.id
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
@@ -1205,6 +1336,666 @@ function renderWorkspace() {
   renderAnnotationRail()
   captureOpeningMessage()
   renderSessionFavoriteCount()
+  renderSessionMap()
+}
+
+function selectedSessionMap() {
+  return state.sessionMaps.get(selectedStateKey()) || null
+}
+
+async function sessionMapFetch(path, { method = 'GET', body } = {}) {
+  const response = await fetch(path, {
+    method,
+    headers: body == null ? {} : { 'Content-Type': 'application/json' },
+    body: body == null ? undefined : JSON.stringify(body),
+    cache: 'no-store',
+  })
+  const value = await response.json().catch(() => null)
+  if (!response.ok) {
+    const error = new Error(value?.error?.message || `${method} ${path}: HTTP ${response.status}`)
+    error.status = response.status
+    throw error
+  }
+  return value
+}
+
+async function loadSessionMap(backend, threadId, { force = false } = {}) {
+  const key = sessionMapKey(backend, threadId)
+  if (!key) return null
+  if (!force && state.sessionMaps.has(key)) return state.sessionMaps.get(key)
+  if (state.sessionMapLoads.has(key)) return state.sessionMapLoads.get(key)
+  const load = sessionMapFetch(sessionMapEndpoint(backend, threadId))
+    .then((value) => normalizeSessionMap(value))
+    .catch((error) => {
+      if (error.status === 404) return null
+      throw error
+    })
+    .then((map) => {
+      state.sessionMaps.set(key, map)
+      if (selectedStateKey() === key) renderSessionMap()
+      return map
+    })
+    .finally(() => state.sessionMapLoads.delete(key))
+  state.sessionMapLoads.set(key, load)
+  return load
+}
+
+function handleSessionMapAction() {
+  closeActionMenus()
+  if (!state.selectedId) return
+  if (selectedSessionMap()) openSessionMapRail()
+  else openSessionMapDialog()
+}
+
+function openSessionMapDialog() {
+  if (!state.selectedId) return
+  closeActionMenus()
+  const opening = state.openingMessages[selectedStateKey()]?.text || ''
+  $('#session-map-create-goal').value = opening.length <= 500 ? opening : ''
+  $('#session-map-create-done').value = ''
+  $('#session-map-structure').value = 'hierarchy'
+  $('#session-map-create-error').classList.add('hidden')
+  $('#session-map-dialog').showModal()
+  $('#session-map-create-goal').focus()
+}
+
+function closeSessionMapDialog() {
+  $('#session-map-dialog').close()
+}
+
+async function createSessionMap(event) {
+  event.preventDefault()
+  const key = selectedStateKey()
+  if (!key || !state.selectedId) return
+  const payload = {
+    backend: state.backend,
+    threadId: state.selectedId,
+    goal: $('#session-map-create-goal').value.trim(),
+    definitionOfDone: $('#session-map-create-done').value.trim(),
+    structure: $('#session-map-structure').value,
+    items: [],
+  }
+  const errorElement = $('#session-map-create-error')
+  errorElement.classList.add('hidden')
+  try {
+    const map = normalizeSessionMap(await sessionMapFetch('/studio/session-map', { method: 'POST', body: payload }))
+    state.sessionMaps.set(key, map)
+    state.sessionMapDismissed.delete(key)
+    closeSessionMapDialog()
+    closeAnnotationRail()
+    closeFavoritesRail()
+    renderSessionMap()
+    toast('Map 已创建')
+    generateSessionMapStructure({ key, model: state.model, automatic: true }).catch((error) => {
+      console.warn('Unable to generate initial Session Map structure', error)
+    })
+  } catch (error) {
+    errorElement.textContent = error.message
+    errorElement.classList.remove('hidden')
+  }
+}
+
+function openSessionMapRail() {
+  const key = selectedStateKey()
+  if (!key || !selectedSessionMap()) return
+  state.sessionMapDismissed.delete(key)
+  closeAnnotationRail()
+  closeFavoritesRail()
+  renderSessionMap()
+}
+
+function closeSessionMapRail() {
+  const key = selectedStateKey()
+  if (key) state.sessionMapDismissed.add(key)
+  $('#session-map-rail').classList.add('hidden')
+  closeSessionMapItemMenu()
+}
+
+function renderSessionMap() {
+  const rail = $('#session-map-rail')
+  const key = selectedStateKey()
+  const map = key ? state.sessionMaps.get(key) : null
+  const hasMap = Boolean(map)
+  $('#session-map-action').textContent = hasMap ? '打开 Map' : '创建 Map'
+  if (!hasMap || state.sessionMapDismissed.has(key)) {
+    rail.classList.add('hidden')
+    return
+  }
+  rail.classList.remove('hidden')
+  rail.dataset.structure = map.structure
+  $('#session-map-goal').textContent = map.goal
+  $('#session-map-definition').textContent = map.definitionOfDone
+  $('#session-map-definition').classList.toggle('hidden', !map.definitionOfDone)
+
+  const items = visibleMapItems(map)
+  if (!items.some((item) => item.id === state.sessionMapSelectedItem)) {
+    state.sessionMapSelectedItem = map.currentItemId || null
+  }
+  const trail = mapItemTrail(map, state.sessionMapSelectedItem || map.currentItemId)
+  const trailElement = $('#session-map-trail')
+  trailElement.innerHTML = trail.map((item, index) => `${index ? '<b>›</b>' : ''}<span>${escapeHtml(item.title)}</span>`).join('')
+  trailElement.classList.toggle('hidden', trail.length < 2)
+
+  const tree = $('#session-map-tree')
+  const emptySync = state.sessionMapSync.get(key)
+  const emptyDescription = emptySync?.state === 'syncing'
+    ? t('AI 正在生成初始结构…')
+    : map.backend === 'codex'
+      ? t('还没有项目。可以用 AI 生成，或手动添加。')
+      : t('还没有项目，请手动添加第一项。')
+  tree.innerHTML = items.length
+    ? flattenSessionMap(map).map(({ item, depth }) => renderSessionMapRow(item, depth, map)).join('')
+    : `<div class="session-map-empty"><span>⌁</span><strong>${t('Map 还是空的')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${map.backend === 'codex' ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('AI 生成')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('添加')}</button></div></div>`
+
+  const progress = mapProgress(map)
+  $('#session-map-progress').textContent = t('{explored}/{total} 已浏览 · {done} 完成', progress)
+  $('#session-map-revision').textContent = `rev ${map.revision}`
+  $('#session-map-ai-generate').textContent = items.length ? t('AI 补全') : t('AI 生成')
+  $('#session-map-ai-generate').disabled = emptySync?.state === 'syncing'
+  const sync = state.sessionMapSync.get(key) || (map.backend === 'codex'
+    ? { state: 'synced', message: '等待下一次对话' }
+    : { state: '', message: 'OpenCode Map 当前由用户维护' })
+  setSessionMapSyncState(sync.state, sync.message)
+}
+
+function renderSessionMapRow(item, depth, map) {
+  const selected = state.sessionMapSelectedItem === item.id
+  const current = map.currentItemId === item.id
+  const description = item.summary ? `<small data-no-i18n>${escapeHtml(item.summary)}</small>` : ''
+  return `<div class="session-map-row${current ? ' current' : ''}${selected ? ' selected' : ''}" style="--map-depth:${Math.min(depth, 12)}" data-map-item-id="${escapeHtml(item.id)}">
+    <span class="session-map-state ${escapeHtml(item.state)}" title="${escapeHtml(mapStateLabel(item.state))}" aria-label="${escapeHtml(mapStateLabel(item.state))}"></span>
+    <button class="session-map-row-main" type="button" data-map-item-select="${escapeHtml(item.id)}">
+      <span class="session-map-row-copy"><strong data-no-i18n>${escapeHtml(item.title)}</strong>${description}</span>
+    </button>
+    <button class="session-map-row-menu" type="button" data-map-item-menu="${escapeHtml(item.id)}" aria-label="项目操作">•••</button>
+  </div>`
+}
+
+function mapStateLabel(value) {
+  return ({ notStarted: '未开始', active: '当前', visited: '已浏览', done: '完成', paused: '暂停' })[value] || value
+}
+
+function setSessionMapSyncState(value, message = '') {
+  const element = $('#session-map-sync-state')
+  element.className = `session-map-sync-state ${value || ''}`
+  element.title = message || 'Map 同步状态'
+  const key = selectedStateKey()
+  if (key) state.sessionMapSync.set(key, { state: value, message })
+}
+
+function handleSessionMapTreeClick(event) {
+  if (event.target.closest('[data-map-empty-ai]')) {
+    generateSessionMapStructure().catch(showError)
+    return
+  }
+  if (event.target.closest('[data-map-empty-add]')) {
+    openSessionMapItemDialog()
+    return
+  }
+  const menuButton = event.target.closest('[data-map-item-menu]')
+  if (menuButton) {
+    openSessionMapItemMenu(menuButton.dataset.mapItemMenu, menuButton)
+    return
+  }
+  const selectButton = event.target.closest('[data-map-item-select]')
+  if (!selectButton) return
+  const itemId = selectButton.dataset.mapItemSelect
+  state.sessionMapSelectedItem = itemId
+  applySessionMapOperations([{ op: 'setCurrent', itemId }], { actor: 'user' }).catch(showError)
+}
+
+function openSessionMapItemMenu(itemId, anchor) {
+  const menu = $('#session-map-item-menu')
+  state.sessionMapMenuItem = itemId
+  const bounds = anchor.getBoundingClientRect()
+  menu.style.left = `${Math.max(8, Math.min(bounds.right - 145, window.innerWidth - 153))}px`
+  menu.style.top = `${Math.max(8, Math.min(bounds.bottom + 5, window.innerHeight - 305))}px`
+  menu.classList.remove('hidden')
+}
+
+function closeSessionMapItemMenu() {
+  $('#session-map-item-menu')?.classList.add('hidden')
+  state.sessionMapMenuItem = null
+}
+
+async function handleSessionMapItemMenu(event) {
+  const action = event.target.closest('[data-map-item-action]')?.dataset.mapItemAction
+  const itemId = state.sessionMapMenuItem
+  if (!action || !itemId) return
+  closeSessionMapItemMenu()
+  const map = selectedSessionMap()
+  const item = map?.items.find((candidate) => candidate.id === itemId)
+  if (!item) return
+  if (action === 'add-child') return openSessionMapItemDialog(itemId)
+  if (action === 'edit') return openSessionMapItemDialog(item.parentId, item)
+  if (action === 'archive') {
+    if (!window.confirm(t('移除“{title}”及其子项？你可以立即撤销。', { title: item.title }))) return
+    return applySessionMapOperations([{ op: 'archiveItem', itemId }], { actor: 'user' }).catch(showError)
+  }
+  if (action === 'current') {
+    state.sessionMapSelectedItem = itemId
+    return applySessionMapOperations([{ op: 'setCurrent', itemId }], { actor: 'user' }).catch(showError)
+  }
+  return applySessionMapOperations([{ op: 'setState', itemId, state: action }], { actor: 'user' }).catch(showError)
+}
+
+function openSessionMapItemDialog(parentId = null, item = null) {
+  const map = selectedSessionMap()
+  if (!map) return
+  closeActionMenus()
+  closeSessionMapItemMenu()
+  $('#session-map-item-dialog-title').textContent = item ? t('编辑项目') : t('添加项目')
+  $('#session-map-item-id').value = item?.id || ''
+  $('#session-map-item-title').value = item?.title || ''
+  $('#session-map-item-kind').value = item?.kind || 'item'
+  $('#session-map-item-summary').value = item?.summary || ''
+  const parent = $('#session-map-item-parent')
+  parent.innerHTML = `<option value="">${t('顶层')}</option>${visibleMapItems(map)
+    .filter((candidate) => candidate.id !== item?.id)
+    .map((candidate) => `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.title)}</option>`)
+    .join('')}`
+  parent.value = item?.parentId || parentId || ''
+  parent.disabled = Boolean(item)
+  $('#session-map-item-error').classList.add('hidden')
+  $('#session-map-item-dialog').showModal()
+  $('#session-map-item-title').focus()
+}
+
+async function saveSessionMapItem(event) {
+  event.preventDefault()
+  const itemId = $('#session-map-item-id').value
+  const title = $('#session-map-item-title').value.trim()
+  const kind = $('#session-map-item-kind').value.trim() || 'item'
+  const summary = $('#session-map-item-summary').value.trim()
+  const operation = itemId
+    ? { op: 'updateItem', itemId, title, kind, summary }
+    : {
+        op: 'addItem', itemId: randomId(), parentId: $('#session-map-item-parent').value || null,
+        afterItemId: null, title, kind, summary, state: 'notStarted',
+      }
+  const errorElement = $('#session-map-item-error')
+  errorElement.classList.add('hidden')
+  try {
+    await applySessionMapOperations([operation], { actor: 'user' })
+    $('#session-map-item-dialog').close()
+  } catch (error) {
+    errorElement.textContent = error.message
+    errorElement.classList.remove('hidden')
+  }
+}
+
+function openSessionMapGoalDialog() {
+  const map = selectedSessionMap()
+  if (!map) return
+  closeActionMenus()
+  $('#session-map-goal-input').value = map.goal
+  $('#session-map-done-input').value = map.definitionOfDone
+  $('#session-map-goal-error').classList.add('hidden')
+  $('#session-map-goal-dialog').showModal()
+  $('#session-map-goal-input').focus()
+}
+
+async function suggestSessionMapGoal() {
+  const map = selectedSessionMap()
+  if (!map) return
+  if (state.backend !== 'codex') throw new Error('OpenCode 会话暂不支持 AI 重新生成目标')
+  const button = $('#session-map-suggest-goal')
+  const original = button.textContent
+  button.disabled = true
+  button.textContent = t('正在生成…')
+  const recent = (state.model.turns || []).slice(-6).map((turn, index) => ({
+    turn: index + 1,
+    user: questionForTurn(turn).slice(0, 8_000),
+    assistant: answerForMapTurn(turn).slice(0, 12_000),
+  }))
+  try {
+    const result = await runCodexStructuredWorker({
+      key: selectedStateKey(),
+      developerInstructions: 'Infer a concise navigation goal for an existing conversation. Do not use tools or answer the user. Return only the JSON object required by the output schema. The result is a suggestion that the user will review; do not modify any state.',
+      input: `Current goal: ${map.goal}\nCurrent completion definition: ${map.definitionOfDone}\nRecent interactions: ${JSON.stringify(recent)}\nSuggest one concise goal and an observable completion definition that match the conversation's present direction.`,
+      outputSchema: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', minLength: 1, maxLength: 500 },
+          definitionOfDone: { type: 'string', maxLength: 1000 },
+        },
+        required: ['goal', 'definitionOfDone'],
+        additionalProperties: false,
+      },
+      timeoutMessage: 'AI 生成目标超时',
+    })
+    if (!result?.goal) throw new Error('AI 没有返回可用目标')
+    $('#session-map-goal-input').value = result.goal
+    $('#session-map-done-input').value = result.definitionOfDone || ''
+    toast('AI 建议已填入，请确认后保存')
+  } finally {
+    button.disabled = false
+    button.textContent = original
+  }
+}
+
+async function saveSessionMapGoal(event) {
+  event.preventDefault()
+  const errorElement = $('#session-map-goal-error')
+  errorElement.classList.add('hidden')
+  try {
+    await applySessionMapOperations([{
+      op: 'setGoal',
+      goal: $('#session-map-goal-input').value.trim(),
+      definitionOfDone: $('#session-map-done-input').value.trim(),
+    }], { actor: 'user' })
+    $('#session-map-goal-dialog').close()
+  } catch (error) {
+    errorElement.textContent = error.message
+    errorElement.classList.remove('hidden')
+  }
+}
+
+async function applySessionMapOperations(operations, { actor = 'user', sourceTurnId = null, key = selectedStateKey() } = {}) {
+  const [backend, ...threadParts] = key.split(':')
+  const threadId = threadParts.join(':')
+  const map = state.sessionMaps.get(key)
+  if (!map || !backend || !threadId || !operations.length) return map
+  try {
+    const value = await sessionMapFetch(sessionMapEndpoint(backend, threadId, 'operations'), {
+      method: 'POST',
+      body: { baseRevision: map.revision, actor, sourceTurnId, operations },
+    })
+    const updated = normalizeSessionMap(value)
+    state.sessionMaps.set(key, updated)
+    if (selectedStateKey() === key) renderSessionMap()
+    return updated
+  } catch (error) {
+    if (error.status === 409) await loadSessionMap(backend, threadId, { force: true })
+    throw error
+  }
+}
+
+async function undoSessionMap() {
+  closeActionMenus()
+  const key = selectedStateKey()
+  const map = selectedSessionMap()
+  if (!key || !map) return
+  const value = await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId, 'undo'), { method: 'POST' })
+  state.sessionMaps.set(key, normalizeSessionMap(value))
+  renderSessionMap()
+  toast('已撤销最近一次 Map 更新')
+}
+
+async function deleteSessionMap() {
+  closeActionMenus()
+  const key = selectedStateKey()
+  const map = selectedSessionMap()
+  if (!key || !map || !window.confirm(t('删除这个会话的 Map？聊天记录不会受影响。'))) return
+  await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' })
+  if (map.backend === 'codex' && state.backend === 'codex' && state.ready) {
+    rpc('thread/resume', {
+      threadId: map.threadId,
+      developerInstructions: null,
+      dynamicTools: [],
+    }).catch((error) => console.warn('Unable to clear Session Map thread context', error))
+  }
+  state.sessionMaps.set(key, null)
+  state.sessionMapDismissed.delete(key)
+  state.sessionMapSync.delete(key)
+  state.sessionMapSelectedItem = null
+  disposeSessionMapWorker(key)
+  renderSessionMap()
+  toast('Map 已删除')
+}
+
+function maybeBootstrapSessionMap(key, model) {
+  const map = state.sessionMaps.get(key)
+  if (!shouldBootstrapSessionMap(map) || state.sessionMapBootstrapAttempts.has(key)) return
+  generateSessionMapStructure({ key, model, automatic: true }).catch((error) => {
+    console.warn('Session Map initial generation failed', error)
+  })
+}
+
+async function generateSessionMapStructure({ key = selectedStateKey(), model = state.model, automatic = false } = {}) {
+  closeActionMenus()
+  const separator = key.indexOf(':')
+  const backend = separator > 0 ? key.slice(0, separator) : ''
+  const map = state.sessionMaps.get(key)
+  if (!map) return null
+  if (backend !== 'codex') {
+    if (automatic) return null
+    throw new Error('OpenCode 会话暂不支持 AI 生成 Map')
+  }
+  if (automatic && state.sessionMapBootstrapAttempts.has(key)) return map
+  if (automatic) state.sessionMapBootstrapAttempts.add(key)
+
+  const interactions = (model?.turns || []).map((turn) => ({
+    user: questionForTurn(turn).trim(),
+    assistant: answerForMapTurn(turn),
+  })).filter((interaction) => interaction.user || interaction.assistant)
+  const sourceTurn = [...(model?.turns || [])].reverse().find((turn) => turn?.id && (questionForTurn(turn).trim() || answerForMapTurn(turn)))
+  state.sessionMapSync.set(key, { state: 'syncing', message: 'AI 正在生成初始 Map' })
+  if (selectedStateKey() === key) renderSessionMap()
+
+  try {
+    const result = await runCodexStructuredWorker({
+      key,
+      developerInstructions: 'You create a compact navigation Map for another conversation. Do not use tools, inspect files, or answer the user. Return only the JSON object required by the supplied output schema. Follow the safe-operation restrictions exactly.',
+      input: bootstrapMapInput(map, interactions),
+      outputSchema: assistantOperationSchema(),
+      timeoutMessage: 'AI 生成 Map 超时',
+    })
+    const operations = safeAssistantOperations(result)
+    if (!operations.length) throw new Error('AI 没有生成可用的 Map 项目')
+    const updated = await applySessionMapOperations(operations, {
+      actor: 'assistant',
+      sourceTurnId: sourceTurn?.id ? String(sourceTurn.id) : null,
+      key,
+    })
+    state.sessionMapSync.set(key, { state: 'synced', message: 'Map 结构已更新' })
+    if (selectedStateKey() === key) renderSessionMap()
+    return updated
+  } catch (error) {
+    state.sessionMapSync.set(key, { state: 'error', message: error.message })
+    if (selectedStateKey() === key) renderSessionMap()
+    throw error
+  }
+}
+
+async function processSessionMapInlineUpdate(backend, threadId, model, completedTurnId = null) {
+  if (backend !== 'codex' || !threadId || !model) return
+  const key = sessionMapKey(backend, threadId)
+  const processingKey = `${key}:${completedTurnId || ''}`
+  if (state.sessionMapInlineProcessing.has(processingKey)) return
+  state.sessionMapInlineProcessing.add(processingKey)
+  try {
+    const map = await loadSessionMap(backend, threadId)
+    if (!map) return
+    const turn = completedTurnId
+      ? (model.turns || []).find((candidate) => String(candidate.id) === String(completedTurnId))
+      : [...(model.turns || [])].reverse().find((candidate) => candidate?.id)
+    if (!turn?.id || String(turn.id) === map.lastSyncedTurnId) return
+    const message = [...(turn.items || [])].reverse().find((item) =>
+      item?.type === 'agentMessage' && String(item.text || '').includes(SESSION_MAP_UPDATE_START),
+    )
+    if (!message) throw new Error(t('本轮回复未包含 Map 更新区块；可以手动执行 AI 补全'))
+    const parsed = parseSessionMapUpdate(message.text)
+    if (!parsed.found) throw new Error(t('本轮回复未包含 Map 更新区块'))
+    if (parsed.update.baseRevision !== map.revision) {
+      throw new Error(t('Map 更新版本过期：回复基于 rev {responseRevision}，当前为 rev {currentRevision}', {
+        responseRevision: parsed.update.baseRevision,
+        currentRevision: map.revision,
+      }))
+    }
+    if (parsed.update.operations.length > 40) throw new Error(t('Map 更新操作超过 40 条限制'))
+    const operations = safeAssistantOperations(parsed.update)
+    if (operations.length !== parsed.update.operations.length) throw new Error(t('Map 更新包含不安全或未知操作'))
+    if (operations.length) {
+      await applySessionMapOperations(operations, {
+        actor: 'assistant',
+        sourceTurnId: String(turn.id),
+        key,
+      })
+    } else {
+      map.lastSyncedTurnId = String(turn.id)
+    }
+    state.sessionMapSync.set(key, {
+      state: 'synced',
+      message: operations.length ? t('Map 已从本轮回复更新') : t('本轮回复不需要调整 Map'),
+    })
+    if (selectedStateKey() === key) renderSessionMap()
+  } catch (error) {
+    state.sessionMapSync.set(key, { state: 'error', message: t(error.message) })
+    if (selectedStateKey() === key) renderSessionMap()
+    throw error
+  } finally {
+    state.sessionMapInlineProcessing.delete(processingKey)
+  }
+}
+
+function answerForMapTurn(turn) {
+  return (turn?.items || [])
+    .filter((item) => item?.type === 'agentMessage' && item.text)
+    .map((item) => sessionMapVisibleText(item.text).trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function runCodexStructuredWorker({ key, developerInstructions, input, outputSchema, timeoutMessage }) {
+  return state.sessionMapWorkers.enqueue(key, (worker) =>
+    runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }),
+  )
+}
+
+function disposeSessionMapWorker(key) {
+  const worker = state.sessionMapWorkers.dispose(key)
+  if (!worker) return
+  worker.chain.finally(() => {
+    if (!worker.threadId || !state.ready || state.backend !== 'codex') return
+    rpc('thread/delete', { threadId: worker.threadId }).catch((error) => {
+      console.warn('Unable to release ephemeral Session Map worker', error)
+    })
+  })
+}
+
+function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }) {
+  return new Promise((resolve, reject) => {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(`${protocol}//${location.host}/ws/codex`)
+    const pending = new Map()
+    const buffered = []
+    const hiddenModel = createCodexViewModel()
+    let hiddenThreadId = worker.threadId
+    let hiddenTurnId = null
+    let serverGeneration = null
+    let started = false
+    let settled = false
+    const timeout = setTimeout(() => finish(new Error(timeoutMessage || 'Codex 结构化任务超时')), 150_000)
+
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      for (const [id, request] of pending) {
+        state.sessionMapWorkerRequests.delete(id)
+        request.reject(error || new Error('Map sync connection closed'))
+      }
+      pending.clear()
+      socket.onclose = null
+      socket.close()
+      if (error) reject(error)
+      else resolve(value)
+    }
+
+    const request = (method, params) => new Promise((requestResolve, requestReject) => {
+      const id = --sessionMapRequestId
+      pending.set(String(id), { resolve: requestResolve, reject: requestReject })
+      state.sessionMapWorkerRequests.set(String(id), method)
+      socket.send(JSON.stringify({ id, method, params }))
+    })
+
+    const processTurnMessage = (message) => {
+      const messageTurnId = message.params?.turnId || message.params?.turn?.id
+      if (!hiddenTurnId || String(messageTurnId || '') !== String(hiddenTurnId)) return
+      applyCodexNotification(hiddenModel, message)
+      if (message.method !== 'turn/completed') return
+      const answer = answerForMapTurn(hiddenModel.turns.find((turn) => String(turn.id) === String(hiddenTurnId)))
+      try {
+        finish(null, parseStructuredJson(answer))
+      } catch (error) {
+        finish(error)
+      }
+    }
+
+    const begin = async () => {
+      if (started || settled) return
+      started = true
+      try {
+        if (!hiddenThreadId) {
+          const thread = await request('thread/start', {
+            ephemeral: true,
+            approvalPolicy: 'never',
+            sandbox: 'read-only',
+            developerInstructions: 'You are the single reusable structured worker for one Session Map. Each turn contains authoritative task-specific instructions and state. Do not use tools, inspect files, or answer the end user. Do not rely on earlier worker turns when they conflict with the current input. Return only the JSON required by the current output schema.',
+          })
+          hiddenThreadId = thread?.thread?.id
+          if (!hiddenThreadId) throw new Error('Codex did not create the reusable Map worker')
+          worker.threadId = String(hiddenThreadId)
+          worker.generation = serverGeneration
+        }
+        state.hiddenCodexThreads.add(String(hiddenThreadId))
+        hiddenModel.threadId = hiddenThreadId
+        const result = await request('turn/start', {
+          threadId: hiddenThreadId,
+          input: [{ type: 'text', text: `Task-specific instructions:\n${developerInstructions}\n\nAuthoritative task input:\n${input}` }],
+          outputSchema,
+        })
+        hiddenTurnId = result?.turn?.id
+        if (!hiddenTurnId) throw new Error('Codex did not start the Map reconciliation turn')
+        state.hiddenCodexTurns.add(String(hiddenTurnId))
+        for (const message of buffered.splice(0)) processTurnMessage(message)
+      } catch (error) {
+        finish(error)
+      }
+    }
+
+    socket.onmessage = (event) => {
+      let message
+      try { message = JSON.parse(event.data) } catch { return }
+      if (message.method === 'studio/appServer/status') {
+        if (message.params?.state === 'ready') {
+          serverGeneration = Number(message.params?.generation || 0)
+          const staleThreadId = state.sessionMapWorkers.reconcileGeneration(worker, serverGeneration)
+          if (staleThreadId) {
+            state.hiddenCodexThreads.delete(String(staleThreadId))
+            hiddenThreadId = null
+          }
+          begin()
+        }
+        else if (message.params?.state === 'error') finish(new Error(message.params?.message || 'Codex App Server unavailable'))
+        return
+      }
+      if (message.id != null && !message.method) {
+        captureSessionMapWorkerResponse(message)
+        const requestState = pending.get(String(message.id))
+        if (!requestState) return
+        pending.delete(String(message.id))
+        if (message.error) requestState.reject(new Error(message.error.message || JSON.stringify(message.error)))
+        else requestState.resolve(message.result)
+        return
+      }
+      if (!message.method || message.method.startsWith('studio/appServer/')) return
+      if (!hiddenTurnId) buffered.push(message)
+      else processTurnMessage(message)
+    }
+    socket.onerror = () => finish(new Error('无法连接 Codex Map 同步服务'))
+    socket.onclose = () => finish(new Error('Codex Map 同步连接已关闭'))
+  })
+}
+
+function parseStructuredJson(value) {
+  const text = String(value || '').trim()
+  if (!text) throw new Error('结构化 AI 任务没有返回结果')
+  const unwrapped = text.startsWith('```')
+    ? text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')
+    : text
+  return JSON.parse(unwrapped)
 }
 
 function resetStreamingPatches() {
@@ -1345,7 +2136,7 @@ function patchStreamingItem(turnId, itemId) {
     const body = element.querySelector('.markdown-body')
     if (!body) return false
     body.classList.add('streaming-markdown')
-    body.textContent = item.text || ''
+    body.textContent = item.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || ''
     return true
   }
   if (item.type === 'reasoning') {
@@ -1406,7 +2197,7 @@ function renderItem(item, turnId) {
     const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
       <div class="message-heading"><span class="item-label">${currentBackend().name}</span><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
-      <div class="markdown-body">${renderMarkdown(item.text || '')}</div>
+      <div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
     </div>`
   }
   if (type === 'reasoning') {
@@ -1908,7 +2699,7 @@ async function copyLatestAgentResponse() {
   const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
   const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
   if (!message) throw new Error(t('当前会话还没有可复制的 {backend} 回复。', { backend: currentBackend().name }))
-  await navigator.clipboard.writeText(message.text)
+  await navigator.clipboard.writeText(message.type === 'agentMessage' ? sessionMapVisibleText(message.text) : message.text)
   toast(t('已复制最近一条 {backend} 回复', { backend: currentBackend().name }))
 }
 
@@ -2016,6 +2807,10 @@ async function sendComposer(event) {
       })
       toast('意见已加入当前 Turn')
     } else {
+      await prepareSessionMapTurn().catch((error) => {
+        console.warn('Unable to attach Session Map context', error)
+        setSessionMapSyncState('error', error.message)
+      })
       const result = await rpc('turn/start', {
         threadId: state.selectedId,
         clientUserMessageId: randomId(),
@@ -2034,6 +2829,26 @@ async function sendComposer(event) {
     renderComposerState()
   } catch (error) { showError(error) }
   finally { button.disabled = false }
+}
+
+async function prepareSessionMapTurn() {
+  if (state.backend !== 'codex' || !state.selectedId) return
+  const map = await loadSessionMap('codex', state.selectedId)
+  if (!map) return
+  const configuration = sessionMapTurnConfiguration(map)
+  try {
+    await rpc('thread/resume', {
+      threadId: state.selectedId,
+      ...configuration,
+    })
+  } catch (error) {
+    console.debug('Dynamic Session Map tools are unavailable; using developer context only', error)
+    await rpc('thread/resume', {
+      threadId: state.selectedId,
+      developerInstructions: configuration.developerInstructions,
+    })
+  }
+  setSessionMapSyncState('syncing', '当前 Map 已加入本次 Turn 上下文')
 }
 
 async function interruptTurn() {
@@ -2292,10 +3107,14 @@ function addAnnotation(event) {
 
 function openAnnotationRail() {
   closeFavoritesRail()
+  $('#session-map-rail').classList.add('hidden')
   $('#annotation-rail').classList.remove('hidden')
   renderAnnotationRail()
 }
-function closeAnnotationRail() { $('#annotation-rail').classList.add('hidden') }
+function closeAnnotationRail() {
+  $('#annotation-rail').classList.add('hidden')
+  if ($('#favorites-rail').classList.contains('hidden')) renderSessionMap()
+}
 
 function renderAnnotationRail() {
   const drafts = currentAnnotations()
@@ -2408,6 +3227,7 @@ function favoriteForSource(backend, threadId, turnId, itemId) {
 function openFavoritesRail(scope = 'global') {
   state.favoriteScope = scope
   closeAnnotationRail()
+  $('#session-map-rail').classList.add('hidden')
   $('#favorites-rail').classList.remove('hidden')
   loadFavorites().catch(showError)
   setTimeout(() => $('#favorites-search').focus(), 30)
@@ -2415,6 +3235,7 @@ function openFavoritesRail(scope = 'global') {
 
 function closeFavoritesRail() {
   $('#favorites-rail').classList.add('hidden')
+  if ($('#annotation-rail').classList.contains('hidden')) renderSessionMap()
 }
 
 async function exportFavorites() {
@@ -2496,7 +3317,8 @@ function openFavoriteForMessage(turnId, itemId) {
   const turn = state.model.turns.find((candidate) => String(candidate.id) === String(turnId))
   const item = turn?.items?.find((candidate) => String(candidate.id) === String(itemId))
   const thread = selectedThread()
-  if (!turn || !item || !thread || !item.text?.trim()) {
+  const visibleText = item?.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item?.text || ''
+  if (!turn || !item || !thread || !visibleText.trim()) {
     toast('这条回复尚未完成，暂时不能收藏', 'error')
     return
   }
@@ -2510,9 +3332,9 @@ function openFavoriteForMessage(turnId, itemId) {
     projectPath: thread.cwd || '',
     turnId: String(turn.id || ''),
     itemId: String(item.id || ''),
-    title: autoFavoriteTitle(item.text),
+    title: autoFavoriteTitle(visibleText),
     question: questionForTurn(turn),
-    content: item.text.trim(),
+    content: visibleText.trim(),
     note: '',
     tags: [],
     createdAt: new Date().toISOString(),

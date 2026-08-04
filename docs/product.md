@@ -23,6 +23,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 7. Diagnostics: show App Server state, resolved Codex binary, protocol/transport, reconnect state, and actionable spawn/protocol errors.
 8. Performance: high-frequency text, reasoning, plan, and command-output deltas update only their active Item at animation-frame cadence. Completed history is not reparsed for every delta.
 9. Backend switching: selecting Codex or OpenCode replaces the session list and transport without mixing IDs, drafts, selections, or transient event state.
+10. Session Map (experimental): after the user explicitly creates one, a compact goal row, current location, remaining scope, and progress remain visible during long conversations. Threads without a Map keep the original layout. Navigation actions never send a visible message automatically; safe Codex synchronization is revisioned and undoable. The complete target boundary is defined in the [Session Map specification](session-map/specification.md).
 
 ## Acceptance criteria
 
@@ -67,3 +68,4 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 - Full `requestUserInput`, MCP elicitation forms, authentication/login, app/plugin pickers, images, math/diagram rendering, and diff syntax highlighting.
 - Notifications for completed background work while Studio is closed.
 - Package signing and native Windows process management.
+- Cross-Thread Session Map knowledge graphs and executable third-party Map renderers. The proposed per-Thread, declarative design is documented in [Session Map templates](session-map/template-system.md).

@@ -20,10 +20,12 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 mod codex_app_server;
 mod favorites;
 mod opencode_server;
+mod session_map;
 
 use codex_app_server::{find_codex_binary, CodexAppServer};
 use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
 use opencode_server::{find_opencode_binary, OpenCodeServer};
+use session_map::{ApplyOperationsRequest, CreateMapRequest, MAX_MAP_BODY_BYTES};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
 
@@ -35,6 +37,8 @@ struct GatewayState {
     preferences_lock: Arc<Mutex<()>>,
     favorites_path: Arc<PathBuf>,
     favorites_lock: Arc<Mutex<()>>,
+    session_maps_path: Arc<PathBuf>,
+    session_maps_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -126,11 +130,15 @@ fn main() {
     let opencode_binary = find_opencode_binary(&cli_path);
     let preferences_path = studio_preferences_path();
     let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
+    let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
     if let Err(error) = favorites::initialize(&favorites_path) {
         eprintln!("Codex Thread Studio could not initialize favorites: {error}");
+    }
+    if let Err(error) = session_map::initialize(&session_maps_path) {
+        eprintln!("Codex Thread Studio could not initialize session maps: {error}");
     }
     let state = GatewayState {
         codex: CodexAppServer::new(codex_binary, cli_path),
@@ -139,6 +147,8 @@ fn main() {
         preferences_lock: Arc::new(Mutex::new(())),
         favorites_path: Arc::new(favorites_path),
         favorites_lock: Arc::new(Mutex::new(())),
+        session_maps_path: Arc::new(session_maps_path),
+        session_maps_lock: Arc::new(Mutex::new(())),
     };
 
     let gateway_listener = TcpListener::bind("127.0.0.1:0")
@@ -187,6 +197,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/favorites.mjs", get(favorites_js))
+        .route("/session-map.mjs", get(session_map_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
         .route("/vendor/marked.esm.js", get(marked_js))
@@ -209,6 +220,22 @@ fn gateway_router(state: GatewayState) -> Router {
             get(get_favorite)
                 .put(update_favorite)
                 .delete(delete_favorite),
+        )
+        .route(
+            "/studio/session-map",
+            axum::routing::post(create_session_map),
+        )
+        .route(
+            "/studio/session-map/{backend}/{thread_id}",
+            get(get_session_map).delete(delete_session_map),
+        )
+        .route(
+            "/studio/session-map/{backend}/{thread_id}/operations",
+            axum::routing::post(apply_session_map_operations),
+        )
+        .route(
+            "/studio/session-map/{backend}/{thread_id}/undo",
+            axum::routing::post(undo_session_map),
         )
         .route("/ws/codex", get(codex_app_server_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
@@ -252,6 +279,10 @@ async fn composer_tools_js() -> impl IntoResponse {
 
 async fn favorites_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/favorites.mjs"))
+}
+
+async fn session_map_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-map.mjs"))
 }
 
 async fn turn_navigator_js() -> impl IntoResponse {
@@ -474,6 +505,108 @@ async fn export_favorites(State(state): State<GatewayState>) -> Response<Body> {
             .expect("valid favorites export response"),
         Err(error) => gateway_error(&format!("failed to export favorites: {error}")),
     }
+}
+
+async fn get_session_map(
+    State(state): State<GatewayState>,
+    AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+) -> Response<Body> {
+    let _guard = match state.session_maps_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("session map lock is unavailable"),
+    };
+    match session_map::find(&state.session_maps_path, &backend, &thread_id) {
+        Ok(Some(map)) => json_response(StatusCode::OK, &map),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn create_session_map(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let request = match parse_map_body::<CreateMapRequest>(&body) {
+        Ok(request) => request,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.session_maps_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("session map lock is unavailable"),
+    };
+    match session_map::create(&state.session_maps_path, request) {
+        Ok(map) => json_response(StatusCode::CREATED, &map),
+        Err(error) if error.contains("already has a map") => {
+            json_error(StatusCode::CONFLICT, &error)
+        }
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn apply_session_map_operations(
+    State(state): State<GatewayState>,
+    AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+    body: String,
+) -> Response<Body> {
+    let request = match parse_map_body::<ApplyOperationsRequest>(&body) {
+        Ok(request) => request,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.session_maps_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("session map lock is unavailable"),
+    };
+    match session_map::apply_operations(&state.session_maps_path, &backend, &thread_id, request) {
+        Ok(Some(map)) => json_response(StatusCode::OK, &map),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+        Err(error) if error.contains("revision conflict") => {
+            json_error(StatusCode::CONFLICT, &error)
+        }
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn undo_session_map(
+    State(state): State<GatewayState>,
+    AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+) -> Response<Body> {
+    let _guard = match state.session_maps_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("session map lock is unavailable"),
+    };
+    match session_map::undo(&state.session_maps_path, &backend, &thread_id) {
+        Ok(Some(map)) => json_response(StatusCode::OK, &map),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+        Err(error) if error.contains("no map change") => json_error(StatusCode::CONFLICT, &error),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn delete_session_map(
+    State(state): State<GatewayState>,
+    AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+) -> Response<Body> {
+    let _guard = match state.session_maps_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("session map lock is unavailable"),
+    };
+    match session_map::remove(&state.session_maps_path, &backend, &thread_id) {
+        Ok(Some(map)) => json_response(StatusCode::OK, &map),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+fn parse_map_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, (StatusCode, String)> {
+    if body.len() > MAX_MAP_BODY_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "session map payload is too large".to_string(),
+        ));
+    }
+    serde_json::from_str(body).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid session map payload: {error}"),
+        )
+    })
 }
 
 fn parse_favorite_body(body: &str) -> Result<Favorite, (StatusCode, String)> {
@@ -790,6 +923,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-favorites-test.sqlite3"),
                 ),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_maps_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
+                ),
+                session_maps_lock: Arc::new(Mutex::new(())),
             };
             let router = gateway_router(state);
             for path in [
@@ -802,6 +939,7 @@ mod tests {
                 "/thread-workset.mjs",
                 "/composer-tools.mjs",
                 "/favorites.mjs",
+                "/session-map.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
                 "/styles.css",
@@ -840,6 +978,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-favorites-test.sqlite3"),
                 ),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_maps_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
+                ),
+                session_maps_lock: Arc::new(Mutex::new(())),
             };
             let response = gateway_router(state)
                 .oneshot(
@@ -856,6 +998,123 @@ mod tests {
             let value: serde_json::Value = serde_json::from_slice(&body).expect("version JSON");
             assert_eq!(value["appName"], "Codex Thread Studio");
             assert_eq!(value["appVersion"], env!("CARGO_PKG_VERSION"));
+        });
+    }
+
+    #[test]
+    fn session_map_api_keeps_missing_maps_absent_until_explicit_creation() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let unique = format!(
+                "codex-thread-studio-map-api-{}-{}.sqlite3",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system time after epoch")
+                    .as_nanos()
+            );
+            let maps_path = env::temp_dir().join(unique);
+            let state = GatewayState {
+                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
+                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                preferences_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-map-api-settings.json"),
+                ),
+                preferences_lock: Arc::new(Mutex::new(())),
+                favorites_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-map-api-favorites.sqlite3"),
+                ),
+                favorites_lock: Arc::new(Mutex::new(())),
+                session_maps_path: Arc::new(maps_path.clone()),
+                session_maps_lock: Arc::new(Mutex::new(())),
+            };
+            let router = gateway_router(state);
+            let missing = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/session-map/codex/thread-optional")
+                        .body(Body::empty())
+                        .expect("missing map request"),
+                )
+                .await
+                .expect("missing map response");
+            assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+            let create = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/studio/session-map")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "backend": "codex",
+                                "threadId": "thread-optional",
+                                "goal": "Keep the long conversation navigable",
+                                "definitionOfDone": "All durable topics are visible",
+                                "structure": "hierarchy",
+                                "items": []
+                            })
+                            .to_string(),
+                        ))
+                        .expect("create map request"),
+                )
+                .await
+                .expect("create map response");
+            assert_eq!(create.status(), StatusCode::CREATED);
+            let create_body = axum::body::to_bytes(create.into_body(), MAX_MAP_BODY_BYTES)
+                .await
+                .expect("create map body");
+            let created: serde_json::Value =
+                serde_json::from_slice(&create_body).expect("created map JSON");
+            assert_eq!(created["revision"], 1);
+
+            let update = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/studio/session-map/codex/thread-optional/operations")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "baseRevision": 1,
+                                "actor": "user",
+                                "operations": [{
+                                    "op": "addItem",
+                                    "itemId": "topic-1",
+                                    "parentId": null,
+                                    "afterItemId": null,
+                                    "title": "First topic",
+                                    "kind": "topic",
+                                    "summary": "",
+                                    "state": "notStarted"
+                                }]
+                            })
+                            .to_string(),
+                        ))
+                        .expect("update map request"),
+                )
+                .await
+                .expect("update map response");
+            assert_eq!(update.status(), StatusCode::OK);
+            let update_body = axum::body::to_bytes(update.into_body(), MAX_MAP_BODY_BYTES)
+                .await
+                .expect("update map body");
+            let updated: serde_json::Value =
+                serde_json::from_slice(&update_body).expect("updated map JSON");
+            assert_eq!(updated["revision"], 2);
+            assert_eq!(updated["items"][0]["id"], "topic-1");
+
+            for candidate in [
+                maps_path.clone(),
+                maps_path.with_extension("sqlite3-wal"),
+                maps_path.with_extension("sqlite3-shm"),
+            ] {
+                fs::remove_file(candidate).ok();
+            }
         });
     }
 
@@ -881,6 +1140,10 @@ mod tests {
                 preferences_lock: Arc::new(Mutex::new(())),
                 favorites_path: Arc::new(favorites_path.clone()),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_maps_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
+                ),
+                session_maps_lock: Arc::new(Mutex::new(())),
             };
             let router = gateway_router(state);
             let favorite = json!({

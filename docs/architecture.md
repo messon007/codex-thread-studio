@@ -14,6 +14,8 @@ Tauri process
 
 There is no terminal emulator, tmux process, direct model API integration, or separate Studio session database. Each backend remains the source of truth for its own sessions and credentials.
 
+The experimental Session Map feature adds Studio-owned structured navigation state without changing that history boundary. Its revisioned Items, Relations, and change history are local presentation/workflow data; Codex and OpenCode remain authoritative for Threads, Turns, and Items. A Map is created only after an explicit user action. Missing Maps are represented by the absence of a database row and do not produce a rail or placeholder for existing Threads. See the [Session Map specification](session-map/specification.md).
+
 ## Transport and handshake
 
 App Server uses newline-delimited JSON over stdio. The Rust broker:
@@ -102,6 +104,8 @@ The global favorites library is intentionally separate because it can contain su
 ```
 
 Favorites use validated, bounded SQLite records. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. Search returns summaries; full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
+
+Session Maps use the rollout-isolated `session-maps.sqlite3` database beside Studio settings. The Rust gateway owns schema creation, validation, optimistic revision checks, transactional operation batches, and undo snapshots. Provider history is not copied into these tables. Declarative custom template snapshots remain a later milestone.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

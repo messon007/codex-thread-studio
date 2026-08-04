@@ -42,6 +42,10 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 
 ### Review and large-session ergonomics
 
+- [x] Experimental Session Map foundation: optional per-Thread Map, compact goal row, current-location breadcrumb, generic Items/Relations, abstract Structure selection, revision conflicts, and undo.
+- [x] Experimental Codex Map automation: bounded hidden context, in-Turn dynamic-tool support where available, a filtered response-tail fallback using the same Turn, and server-side safe-operation validation.
+- [ ] OpenCode Map automation adapter; experimental OpenCode Maps are currently edited manually.
+- [ ] Declarative built-in/user templates with version pinning, validation, import/export, and migration preview. See the [feature package](session-map/README.md).
 - [ ] Virtualized/paged historical Turns using App Server history pagination where supported.
 - [ ] Syntax-highlighted diffs with per-file navigation and line comments.
 - [ ] Search inside a Thread and jump between tool/file/result Items.

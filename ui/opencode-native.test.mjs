@@ -47,8 +47,10 @@ test('applies streamed OpenCode deltas and status', () => {
 
 test('keeps streamed user parts as user messages', () => {
   const model = { turns: [], activeTurnId: null, status: 'idle', approvals: [], messageTurns: {} }
-  applyOpenCodeEvent(model, { type: 'message.updated', properties: { info: { id: 'msg-user', sessionID: 'ses-1', role: 'user' } } }, 'ses-1')
-  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'prt-user', sessionID: 'ses-1', messageID: 'msg-user', type: 'text', text: 'hello' } } }, 'ses-1')
+  const messageUpdate = applyOpenCodeEvent(model, { type: 'message.updated', properties: { info: { id: 'msg-user', sessionID: 'ses-1', role: 'user' } } }, 'ses-1')
+  const partUpdate = applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'prt-user', sessionID: 'ses-1', messageID: 'msg-user', type: 'text', text: 'hello' } } }, 'ses-1')
+  assert.equal(messageUpdate.turnId, 'msg-user')
+  assert.equal(partUpdate.turnId, 'msg-user')
   assert.equal(model.turns[0].items[0].type, 'userMessage')
   assert.equal(model.turns[0].items[0].content[0].text, 'hello')
 })

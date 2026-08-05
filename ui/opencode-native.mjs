@@ -85,10 +85,11 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
   }
   if (type === 'session.idle') {
     model.status = 'idle'
-    model.activeTurnId = null
     const active = model.turns.at(-1)
+    const turnId = model.activeTurnId || active?.id || null
+    model.activeTurnId = null
     if (active?.status === 'inProgress') active.status = 'completed'
-    return { handled: true, kind: 'full', sessionId, type }
+    return { handled: true, kind: 'full', sessionId, type, turnId }
   }
   if (type === 'session.error') {
     model.error = errorText(properties.error || properties)
@@ -98,16 +99,17 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
   }
   if (type === 'message.updated') {
     const info = properties.info || {}
+    let turn = null
     model.messageRoles ||= {}
     if (info.id) model.messageRoles[info.id] = info.role
     if (info.role === 'user') {
-      const turn = ensureTurn(model, info.id)
+      turn = ensureTurn(model, info.id)
       model.messageTurns ||= {}
       model.messageTurns[info.id] = turn.id
       model.activeTurnId = turn.id
       model.status = 'running'
     } else if (info.id) {
-      const turn = ensureTurn(model, info.parentID || model.activeTurnId)
+      turn = ensureTurn(model, info.parentID || model.activeTurnId)
       model.messageTurns ||= {}
       model.messageTurns[info.id] = turn.id
       if (info.error) {
@@ -115,13 +117,13 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
         turn.error = { message: errorText(info.error) }
       }
     }
-    return { handled: true, kind: 'full', sessionId, type }
+    return { handled: true, kind: 'full', sessionId, type, turnId: turn?.id || null }
   }
   if (type === 'message.part.updated') {
     const part = properties.part || {}
     const turn = ensureTurn(model, model.messageTurns?.[part.messageID] || model.activeTurnId)
     upsertItem(turn, openCodePartToItem(part, model.messageRoles?.[part.messageID] || 'assistant'))
-    return { handled: true, kind: 'full', sessionId, type }
+    return { handled: true, kind: 'full', sessionId, type, turnId: turn.id }
   }
   if (type === 'message.part.delta') {
     const turn = ensureTurn(model, model.messageTurns?.[properties.messageID] || model.activeTurnId)

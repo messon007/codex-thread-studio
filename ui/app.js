@@ -55,6 +55,11 @@ import {
   turnPromptPreview,
 } from './turn-navigator.mjs'
 import {
+  TranscriptPresentationCache,
+  activityOutputPreview,
+  reasoningStage,
+} from './transcript-presentation.mjs'
+import {
   formatDate as formatLocalizedDate,
   getLocale,
   migrateLocalizedTemplates,
@@ -195,6 +200,9 @@ let openCodeListRefreshTimer = null
 let favoritesSearchTimer = null
 let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
+const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
+const markdownRenderCache = new Map()
+let activityLogContext = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
@@ -343,6 +351,8 @@ function bindUI() {
   $('#backend-details').addEventListener('click', openBackendDialog)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
   $('#close-command').addEventListener('click', () => $('#command-dialog').close())
+  $('#close-activity-log').addEventListener('click', () => $('#activity-log-dialog').close())
+  $('#done-activity-log').addEventListener('click', () => $('#activity-log-dialog').close())
   $('#close-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
   $('#done-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
   $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
@@ -668,7 +678,11 @@ function handleAppServerMessage(message) {
     const updateKind = transcriptUpdateKind(message.method)
     if (updateKind === 'stream') queueStreamingItemPatch(message.params)
     else if (updateKind === 'item') replaceCompletedItem(message.params)
-    else if (updateKind === 'full') renderTranscript()
+    else if (updateKind === 'full') {
+      const turnId = message.params?.turnId || message.params?.turn?.id
+      const preserveActivity = message.method !== 'turn/completed'
+      if (!turnId || !replaceRenderedTurn(turnId, { preserveActivity })) renderTranscript()
+    }
     if (updateKind === 'metadata') renderUsage()
     renderComposerState()
     updateSelectedThreadStatus(message)
@@ -765,7 +779,7 @@ function handleOpenCodeServerEvent(event) {
   else if (update.kind === 'metadata') {
     renderUsage()
     renderComposerState()
-  } else renderTranscript()
+  } else if (!update.turnId || !replaceRenderedTurn(update.turnId, { preserveActivity: payload.type !== 'session.idle' })) renderTranscript()
   renderComposerState()
 }
 
@@ -1234,6 +1248,7 @@ function invalidateThreadModel(backend, id) {
   if (!id) return
   const key = threadCatalogKey(backend, id)
   state.threadModels.delete(key)
+  transcriptPresentationCache.invalidateThread(key)
   if (state.attentionThreads.delete(key)) persistPreferences()
 }
 
@@ -2053,15 +2068,37 @@ function resetStreamingPatches() {
   dirtyStreamItems.clear()
 }
 
-function renderTranscript() {
+function presentationThreadKey(backend = state.backend, id = state.selectedId) {
+  return threadCatalogKey(backend, id || 'none')
+}
+
+function currentPresentationEntry() {
+  return transcriptPresentationCache.get(presentationThreadKey(), state.model)
+}
+
+function renderTranscript({ preserveScroll = false, previousHeight = 0, previousTop = 0 } = {}) {
   if (!state.selectedId) return
   resetStreamingPatches()
   const container = $('#transcript')
   const turns = state.model.turns || []
-  container.innerHTML = turns.map((turn, index) => renderTurn(turn, index)).join('') + renderApprovals()
+  const entry = currentPresentationEntry()
+  const visibleIds = entry.orderedIds.slice(entry.visibleStart)
+  const turnById = new Map(turns.map((turn) => [String(turn.id || ''), turn]))
+  const older = entry.visibleStart > 0
+    ? `<button class="load-earlier-turns" type="button" data-load-earlier>${t('更早的 {count} 个 Turn', { count: entry.visibleStart })}</button>`
+    : ''
+  container.innerHTML = older + visibleIds.map((id) => {
+    const turn = turnById.get(id)
+    if (!turn) return ''
+    const index = entry.orderedIds.indexOf(id)
+    if (isRouterThread() && state.backend === 'codex') return renderRouterTurn(turn, index)
+    return renderTurn(entry.turns.get(id)?.presentation, index)
+  }).join('') + renderApprovals()
   bindApprovalButtons()
+  bindActivityDetails()
   renderTurnNavigator()
-  followTranscriptOutput()
+  if (preserveScroll) container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
+  else followTranscriptOutput()
   renderUsage()
   captureOpeningMessage()
 }
@@ -2069,6 +2106,7 @@ function renderTranscript() {
 function handleTranscriptScroll() {
   const transcript = $('#transcript')
   transcriptScrollFollower.handleScroll(transcript)
+  if (state.selectedId) transcriptPresentationCache.setScrollTop(presentationThreadKey(), transcript.scrollTop)
   scheduleTurnNavigatorSync()
 }
 
@@ -2140,8 +2178,14 @@ function handleTurnNavigatorClick(event) {
   const button = event.target.closest('[data-turn-nav-id]')
   if (!button) return
   const transcript = $('#transcript')
-  const target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
+  let target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
     .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
+  if (!target) {
+    transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, button.dataset.turnNavId)
+    renderTranscript()
+    target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
+      .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
+  }
   if (!target) return
   transcriptScrollFollower.pause()
   const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
@@ -2180,60 +2224,182 @@ function renderedItem(turnId, itemId) {
 function patchStreamingItem(turnId, itemId) {
   const item = modelItem(turnId, itemId)
   const element = renderedItem(turnId, itemId)
-  if (!item || !element) return false
-  if (item.type === 'agentMessage' || item.type === 'plan') {
+  if (!item) return false
+  transcriptPresentationCache.invalidateTurn(presentationThreadKey(), turnId)
+  if (element && (item.type === 'agentMessage' || item.type === 'plan')) {
     const body = element.querySelector('.markdown-body')
     if (!body) return false
     body.classList.add('streaming-markdown')
     body.textContent = item.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || ''
     return true
   }
-  if (item.type === 'reasoning') {
-    const body = element.querySelector('.markdown-body')
-    if (!body) return false
-    body.classList.add('streaming-markdown')
-    body.textContent = arrayText(item.summary) || arrayText(item.content) || ''
-    return true
-  }
   if (item.type === 'commandExecution') {
-    let output = element.querySelector('pre')
-    if (!output) {
-      output = document.createElement('pre')
-      element.append(output)
-    }
-    output.textContent = item.aggregatedOutput || ''
+    const activity = renderedActivity(turnId)
+    if (activity?.open) hydrateActivityDetails(activity, { force: true })
     return true
   }
-  return false
+  return replaceRenderedTurn(turnId)
 }
 
 function replaceCompletedItem(params = {}) {
   const itemId = params.item?.id || params.itemId
   dirtyStreamItems.delete(`${params.turnId || ''}:${itemId || ''}`)
-  const item = modelItem(params.turnId, itemId)
-  const element = renderedItem(params.turnId, itemId)
-  if (!item || !element) {
-    renderTranscript()
-    return
-  }
-  const template = document.createElement('template')
-  template.innerHTML = renderItem(item, params.turnId)
-  element.replaceWith(template.content)
-  if (item.type === 'userMessage') renderTurnNavigator()
-  followTranscriptOutput()
+  transcriptPresentationCache.invalidateTurn(presentationThreadKey(), params.turnId)
+  if (!replaceRenderedTurn(params.turnId)) renderTranscript()
 }
 
-function renderTurn(turn, index) {
-  if (isRouterThread() && state.backend === 'codex') return renderRouterTurn(turn, index)
-  const items = Array.isArray(turn.items) ? turn.items : []
-  const content = items.map((item) => renderItem(item, turn.id)).join('')
-  const error = turn.error?.message
-  const result = turn.status && turn.status !== 'inProgress'
-    ? `<div class="turn-result ${turn.status === 'failed' ? 'failed' : ''}">${escapeHtml(statusLabel(turn.status))}${error ? ` · ${escapeHtml(error)}` : ''}</div>`
+function renderedActivity(turnId) {
+  return [...$('#transcript').querySelectorAll('.work-activity[data-turn-id]')]
+    .find((element) => element.dataset.turnId === String(turnId || '')) || null
+}
+
+function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
+  const section = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')]
+    .find((element) => element.dataset.turnId === String(turnId || ''))
+  if (!section) return false
+  const openActivity = preserveActivity && Boolean(section.querySelector('.work-activity[open]'))
+  const entry = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
+  const presentation = entry.turns.get(String(turnId || ''))?.presentation
+  if (!presentation) return false
+  const template = document.createElement('template')
+  template.innerHTML = renderTurn(presentation, entry.orderedIds.indexOf(String(turnId || '')), { openActivity })
+  section.replaceWith(template.content)
+  bindActivityDetails()
+  if (openActivity) {
+    const activity = renderedActivity(turnId)
+    if (activity) hydrateActivityDetails(activity)
+  }
+  renderTurnNavigator()
+  followTranscriptOutput()
+  return true
+}
+
+function renderTurn(presentation, index, { openActivity = false } = {}) {
+  if (!presentation) return ''
+  const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, { openActivity })).join('')
+  const placeholder = presentation.status === 'inProgress'
+    ? `<div class="work-placeholder"><span class="activity-spinner"></span>${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`
     : ''
-  return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}">
-    <div class="turn-separator">Turn ${index + 1}</div>${content || `<div class="reasoning">${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`}${result}
-  </section>`
+  return `<section class="turn" data-turn-id="${escapeHtml(presentation.id)}" data-turn-index="${index}">${content || placeholder}</section>`
+}
+
+function renderPresentationBlock(block, turnId, options = {}) {
+  if (block.type === 'user') return renderItem(block.item, turnId)
+  if (block.type === 'assistant') return renderItem(block.item, turnId)
+  if (block.type === 'activity') return renderActivity(block, turnId, options)
+  if (block.type === 'error') return `<div class="turn-error" role="alert"><strong>${t('执行失败')}</strong><span>${escapeHtml(block.message)}</span></div>`
+  return ''
+}
+
+function conversationTrackIcon(kind) {
+  if (kind === 'working') return '<span class="track-icon activity-spinner"></span>'
+  const shapes = {
+    question: '<path d="m6.2 4.7 4.5 4.3-4.5 4.3"></path>',
+    response: '<circle cx="9" cy="9" r="4.6"></circle>',
+    completed: '<path d="m4.5 9.1 3 3.1 6-6.2"></path>',
+    failed: '<path d="M9 4.2v6.2"></path><path d="M9 13.5v.1"></path>',
+  }
+  return `<svg class="track-icon track-icon-${kind}" viewBox="0 0 18 18" focusable="false">${shapes[kind] || shapes.response}</svg>`
+}
+
+function renderActivity(block, turnId, { openActivity = false } = {}) {
+  const summary = activitySummaryParts(block.summary)
+  const stateClass = block.active ? ' active' : block.summary.failures ? ' failed' : ''
+  const title = block.active ? t('正在处理') : t('工作过程')
+  const statusIcon = conversationTrackIcon(block.active ? 'working' : block.summary.failures ? 'failed' : 'completed')
+  const stage = block.latestStage ? `<span class="activity-stage">${escapeHtml(block.latestStage)}</span>` : ''
+  const metrics = summary.length ? `<span class="activity-metrics">${summary.map(escapeHtml).join('<i>·</i>')}</span>` : ''
+  return `<details class="work-activity${stateClass}" data-turn-id="${escapeHtml(turnId)}" data-activity-id="${escapeHtml(block.id)}"${openActivity ? ' open' : ''}>
+    <summary><span class="activity-leading" aria-hidden="true">${statusIcon}</span><strong class="activity-title">${title}</strong>${stage}${metrics}<span class="activity-chevron" aria-hidden="true">›</span></summary>
+    <div class="activity-detail-body" data-activity-empty="true"></div>
+  </details>`
+}
+
+function activitySummaryParts(summary = {}) {
+  const parts = []
+  const explored = (summary.reads || 0) + (summary.searches || 0) + (summary.lists || 0)
+  if (explored) parts.push(t('探索 {count} 项', { count: explored }))
+  if (summary.commands) parts.push(t('运行 {count} 个命令', { count: summary.commands }))
+  if (summary.tools) parts.push(t('调用 {count} 个工具', { count: summary.tools }))
+  if (summary.webSearches) parts.push(t('搜索网页 {count} 次', { count: summary.webSearches }))
+  if (summary.changedFiles) parts.push(t('修改 {count} 个文件', { count: summary.changedFiles }))
+  if (summary.failures) parts.push(t('{count} 项失败', { count: summary.failures }))
+  return parts
+}
+
+function bindActivityDetails() {
+  $$('.work-activity').forEach((details) => {
+    if (details.dataset.activityBound === 'true') return
+    details.dataset.activityBound = 'true'
+    details.addEventListener('toggle', () => {
+      if (details.open) hydrateActivityDetails(details)
+    })
+    if (details.open) hydrateActivityDetails(details)
+  })
+}
+
+function activityBlockForTurn(turnId) {
+  const presentation = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
+    .turns.get(String(turnId || ''))?.presentation
+  return presentation?.blocks.find((block) => block.type === 'activity') || null
+}
+
+function hydrateActivityDetails(details, { force = false } = {}) {
+  const body = details.querySelector('.activity-detail-body')
+  if (!body || (!force && body.dataset.activityEmpty !== 'true')) return
+  const block = activityBlockForTurn(details.dataset.turnId)
+  if (!block) return
+  body.innerHTML = (block.displayEntries || block.entries).map(renderActivityEntry).join('')
+    + `<button class="activity-log-button" type="button" data-activity-log="${escapeHtml(details.dataset.turnId)}">${t('查看完整活动记录')}</button>`
+  body.dataset.activityEmpty = 'false'
+}
+
+function renderActivityEntry(entry) {
+  const item = entry.item || {}
+  const status = escapeHtml(item.status || entry.status || 'completed')
+  if (entry.kind === 'reasoning') {
+    const stage = reasoningStage(item)
+    return stage ? `<div class="activity-entry reasoning-entry"><span>◆</span><p>${escapeHtml(stage)}</p></div>` : ''
+  }
+  if (entry.kind === 'progress') {
+    return `<div class="activity-entry progress-entry"><span>•</span><p>${escapeHtml(sessionMapVisibleText(item.text || ''))}</p></div>`
+  }
+  if (entry.kind === 'command') {
+    const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
+    const preview = activityOutputPreview(item.aggregatedOutput || '')
+    return `<div class="activity-entry command-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('运行')}</strong><code>${escapeHtml(command)}</code></header>${renderOutputPreview(preview)}</div>`
+  }
+  if (entry.kind === 'change') {
+    const rows = (item.changes || []).map((change) => `<li><span>${escapeHtml(change.kind || 'update')}</span><code>${escapeHtml(change.path || '')}</code></li>`).join('')
+    return `<div class="activity-entry change-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('文件修改 · {count} 个文件', { count: (item.changes || []).length })}</strong></header><ul>${rows}</ul></div>`
+  }
+  if (entry.kind === 'plan') {
+    const rows = (item.plan || []).map((step) => `<li class="${escapeHtml(step.status || '')}">${escapeHtml(step.step || '')}</li>`).join('')
+    return `<div class="activity-entry plan-entry"><header><span>☷</span><strong>${t('执行计划')}</strong></header><ol class="plan-list">${rows}</ol></div>`
+  }
+  if (entry.kind === 'search') {
+    return `<div class="activity-entry tool-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('网页搜索')}</strong><span>${escapeHtml(item.query || '')}</span></header></div>`
+  }
+  if (entry.kind === 'tool') {
+    const label = `${item.server || 'Tool'} · ${item.tool || item.type || 'tool'}`
+    const preview = activityOutputPreview(valueText(item.result || item.error || ''))
+    return `<div class="activity-entry tool-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${escapeHtml(label)}</strong></header>${renderOutputPreview(preview)}</div>`
+  }
+  if (entry.kind === 'system') return `<div class="activity-entry system-entry"><span>•</span><p>${item.type === 'contextCompaction' ? t('Codex 已压缩较早的会话上下文。') : escapeHtml(item.reason || item.type || '')}</p></div>`
+  return `<div class="activity-entry unknown-entry"><span>•</span><p>${escapeHtml(item.type || t('未知'))}</p></div>`
+}
+
+function activityEntryIcon(status) {
+  if (status === 'failed') return '×'
+  if (status === 'inProgress') return '<i class="activity-spinner"></i>'
+  return '✓'
+}
+
+function renderOutputPreview(preview) {
+  if (!preview?.lines?.length) return ''
+  const lines = [...preview.lines]
+  if (preview.omitted && preview.splitAt != null) lines.splice(preview.splitAt, 0, t('… 省略 {count} 行', { count: preview.omitted }))
+  return `<pre>${escapeHtml(lines.join('\n'))}</pre>`
 }
 
 function renderRouterTurn(turn, index) {
@@ -2266,14 +2432,15 @@ function renderItem(item, turnId) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
-    return `<div class="message user" ${attrs}><span class="item-label">You</span>${escapeHtml(textFromUserContent(item.content) || t('(非文字输入)'))}</div>`
+    return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${escapeHtml(textFromUserContent(item.content) || t('(非文字输入)'))}</div></div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
     const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
     const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
-      <div class="message-heading"><span class="item-label">${currentBackend().name}</span><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
-      <div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
+      <span class="message-track-mark agent-track-mark" aria-hidden="true">${conversationTrackIcon('response')}</span>
+      <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div></div>
+      <div class="message-heading"><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
     </div>`
   }
   if (type === 'reasoning') {
@@ -2304,6 +2471,8 @@ function renderItem(item, turnId) {
 function renderMarkdown(value) {
   const source = String(value || '')
   if (!source) return ''
+  const cached = markdownRenderCache.get(source)
+  if (cached != null) return cached
   const dirty = marked.parse(source)
   const clean = DOMPurify.sanitize(dirty, {
     USE_PROFILES: { html: true },
@@ -2345,10 +2514,30 @@ function renderMarkdown(value) {
     table.replaceWith(wrapper)
     wrapper.append(table)
   })
-  return template.innerHTML
+  const rendered = template.innerHTML
+  if (source.length <= 64_000) {
+    markdownRenderCache.set(source, rendered)
+    if (markdownRenderCache.size > 256) markdownRenderCache.delete(markdownRenderCache.keys().next().value)
+  }
+  return rendered
 }
 
 async function handleTranscriptClick(event) {
+  const earlier = event.target.closest('[data-load-earlier]')
+  if (earlier) {
+    const transcript = $('#transcript')
+    transcriptScrollFollower.pause()
+    const previousHeight = transcript.scrollHeight
+    const previousTop = transcript.scrollTop
+    transcriptPresentationCache.showEarlier(presentationThreadKey(), state.model, 20)
+    renderTranscript({ preserveScroll: true, previousHeight, previousTop })
+    return
+  }
+  const activityLog = event.target.closest('[data-activity-log]')
+  if (activityLog) {
+    openActivityLog(activityLog.dataset.activityLog)
+    return
+  }
   const routerTarget = event.target.closest('[data-router-target]')
   if (routerTarget) {
     await selectThread(routerTarget.dataset.routerTarget, { backend: 'codex' })
@@ -2380,6 +2569,68 @@ async function handleTranscriptClick(event) {
   } catch (error) {
     toast('无法复制代码', 'error')
   }
+}
+
+function openActivityLog(turnId) {
+  const block = activityBlockForTurn(turnId)
+  if (!block) return
+  activityLogContext = { turnId: String(turnId || ''), block }
+  $('#activity-log-title').textContent = t('完整活动记录')
+  $('#activity-log-subtitle').textContent = t('原始详情按项目加载，不会影响主聊天流。')
+  $('#activity-log-content').innerHTML = block.entries.map((entry, index) => {
+    const item = entry.item || {}
+    const label = activityRawLabel(entry)
+    return `<details class="activity-raw-item" data-activity-entry-index="${index}"><summary><span>${activityEntryIcon(item.status)}</span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(statusLabel(item.status || entry.status))}</small></summary><div class="activity-raw-body" data-raw-empty="true"></div></details>`
+  }).join('') || `<div class="command-empty">${t('没有活动记录')}</div>`
+  $$('#activity-log-content .activity-raw-item').forEach((details) => details.addEventListener('toggle', () => {
+    if (!details.open) return
+    const body = details.querySelector('.activity-raw-body')
+    if (!body || body.dataset.rawEmpty !== 'true') return
+    const entry = activityLogContext?.block.entries[Number(details.dataset.activityEntryIndex)]
+    if (!entry) return
+    body.innerHTML = renderRawActivityEntry(entry)
+    body.dataset.rawEmpty = 'false'
+  }))
+  $('#activity-log-dialog').showModal()
+}
+
+function activityRawLabel(entry) {
+  const item = entry.item || {}
+  if (entry.kind === 'command') return Array.isArray(item.command) ? item.command.join(' ') : item.command || t('命令')
+  if (entry.kind === 'reasoning') return reasoningStage(item) || t('推理摘要')
+  if (entry.kind === 'progress') return truncateForDisplay(item.text || '', 100)
+  if (entry.kind === 'change') return t('文件修改 · {count} 个文件', { count: item.changes?.length || 0 })
+  if (entry.kind === 'search') return `${t('网页搜索')} · ${item.query || ''}`
+  if (entry.kind === 'tool') return `${item.server || 'Tool'} · ${item.tool || item.type || 'tool'}`
+  if (entry.kind === 'plan') return t('执行计划')
+  return item.type || t('未知')
+}
+
+function renderRawActivityEntry(entry) {
+  const item = entry.item || {}
+  if (entry.kind === 'command') {
+    const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
+    return `<pre><code>$ ${escapeHtml(command)}${item.aggregatedOutput ? `\n\n${escapeHtml(item.aggregatedOutput)}` : ''}</code></pre>`
+  }
+  if (entry.kind === 'reasoning') {
+    const content = arrayText(item.summary) || arrayText(item.content) || ''
+    return `<div class="markdown-body compact-markdown">${renderMarkdown(content)}</div>`
+  }
+  if (entry.kind === 'progress') return `<div class="markdown-body compact-markdown">${renderMarkdown(sessionMapVisibleText(item.text || ''))}</div>`
+  if (entry.kind === 'change') {
+    const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')
+    return `<pre><code>${escapeHtml(changes)}</code></pre>`
+  }
+  if (entry.kind === 'plan') {
+    const rows = (item.plan || []).map((step) => `${step.status || 'pending'}  ${step.step || ''}`).join('\n')
+    return `<pre><code>${escapeHtml([item.explanation || '', rows].filter(Boolean).join('\n\n'))}</code></pre>`
+  }
+  return `<pre><code>${escapeHtml(valueText(item))}</code></pre>`
+}
+
+function truncateForDisplay(value, max = 100) {
+  const text = String(value || '').replace(/\s+/gu, ' ').trim()
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`
 }
 
 function renderApprovals() {

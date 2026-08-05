@@ -222,6 +222,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
+        .route("/transcript-presentation.mjs", get(transcript_presentation_js))
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
@@ -286,6 +287,10 @@ async fn codex_native_js() -> impl IntoResponse {
 
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn transcript_presentation_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/transcript-presentation.mjs"))
 }
 
 async fn thread_catalog_js() -> impl IntoResponse {
@@ -1007,6 +1012,7 @@ mod tests {
                 "/session-map.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
+                "/transcript-presentation.mjs",
                 "/styles.css",
             ] {
                 let response = router

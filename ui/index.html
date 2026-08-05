@@ -17,15 +17,6 @@
             <strong>Codex Thread Studio</strong>
             <span>Codex Desktop</span>
           </div>
-          <div class="brand-actions">
-            <button id="open-favorites" class="icon-button favorite-library-button favorites-button" type="button" title="全局收藏" aria-label="打开全局收藏">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z"/></svg>
-              <span id="favorites-badge" class="favorite-badge hidden">0</span>
-            </button>
-            <button id="settings-button" class="icon-button settings-button" type="button" title="设置" aria-label="打开设置">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-          </div>
         </header>
 
         <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">新建会话</b> <kbd>Ctrl N</kbd></button>
@@ -37,12 +28,21 @@
         </div>
         <div id="thread-list" class="thread-list" aria-live="polite"></div>
 
-        <footer class="backend-footer">
-          <button id="backend-details" class="backend-status" type="button">
-            <span id="backend-dot" class="backend-dot checking"></span>
-            <span><strong id="backend-label">正在启动 Codex</strong><small id="backend-caption">App Server · stdio</small></span>
-            <span class="chevron">›</span>
-          </button>
+        <footer class="studio-footer">
+          <div class="menu-anchor studio-menu-anchor">
+            <button id="studio-menu-button" class="studio-entry" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="studio-avatar" aria-hidden="true">⌂</span>
+              <span class="studio-entry-copy"><strong>本机工作区</strong><small>Local workspace</small></span>
+              <span class="chevron">›</span>
+            </button>
+            <div id="studio-menu" class="action-menu studio-menu hidden" role="menu">
+              <button id="open-favorites" type="button" role="menuitem"><span>全局收藏</span><span id="favorites-badge" class="studio-menu-count hidden">0</span></button>
+              <span class="menu-separator"></span>
+              <button id="connections-button" type="button" role="menuitem"><span>连接与账号</span></button>
+              <button id="settings-button" type="button" role="menuitem"><span>设置</span></button>
+              <button id="about-button" type="button" role="menuitem"><span>关于</span></button>
+            </div>
+          </div>
         </footer>
       </aside>
 
@@ -410,7 +410,8 @@
       </form>
     </dialog>
 
-    <dialog id="backend-dialog" class="dialog small-dialog"><header class="dialog-header"><div><span class="eyebrow">ABOUT</span><h2>Codex Thread Studio</h2></div><button id="close-backend" class="icon-button">×</button></header><div id="backend-dialog-content" class="backend-dialog-content"></div></dialog>
+    <dialog id="connections-dialog" class="dialog connections-dialog"><header class="dialog-header"><div><span class="eyebrow">CONNECTIONS</span><h2>连接与账号</h2><p>后端按会话选择，并使用各自运行环境中的凭证。</p></div><button id="close-connections" class="icon-button" type="button">×</button></header><div id="connections-dialog-content" class="connections-dialog-content"></div></dialog>
+    <dialog id="backend-dialog" class="dialog about-dialog"><header class="dialog-header"><div><span class="eyebrow">ABOUT</span><h2>Codex Thread Studio</h2></div><button id="close-backend" class="icon-button" type="button">×</button></header><div id="backend-dialog-content" class="backend-dialog-content"></div></dialog>
     <dialog id="command-dialog" class="dialog command-dialog"><header class="dialog-header"><div><span class="eyebrow">CODEX COMMAND</span><h2 id="command-title">命令</h2></div><button id="close-command" class="icon-button" type="button">×</button></header><div id="command-content" class="command-content"></div></dialog>
     <dialog id="activity-log-dialog" class="dialog activity-log-dialog">
       <header class="dialog-header"><div><span class="eyebrow">ACTIVITY LOG</span><h2 id="activity-log-title">完整活动记录</h2><p id="activity-log-subtitle">原始详情按项目加载，不会影响主聊天流。</p></div><button id="close-activity-log" class="icon-button" type="button">×</button></header>

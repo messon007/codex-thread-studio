@@ -142,6 +142,11 @@ const state = {
   reconnectTimer: null,
   ready: false,
   backendInfo: null,
+  backendInfos: { codex: null, opencode: null },
+  backendStates: {
+    codex: { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' },
+    opencode: { kind: 'idle', label: 'OpenCode', caption: '按需连接' },
+  },
   requestId: 0,
   pending: new Map(),
   threads: [],
@@ -240,6 +245,7 @@ async function init() {
 
 function bindUI() {
   $('#new-thread').addEventListener('click', openNewThreadDialog)
+  $('#studio-menu-button').addEventListener('click', () => toggleActionMenu('studio-menu', 'studio-menu-button'))
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
@@ -360,7 +366,10 @@ function bindUI() {
   $('#clear-annotations').addEventListener('click', clearAnnotations)
   $('#insert-annotations').addEventListener('click', insertAnnotations)
   $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
-  $('#open-favorites').addEventListener('click', () => openFavoritesRail('global'))
+  $('#open-favorites').addEventListener('click', () => {
+    closeActionMenus()
+    openFavoritesRail('global')
+  })
   $('#export-favorites').addEventListener('click', () => exportFavorites().catch(showError))
   $('#close-favorites').addEventListener('click', closeFavoritesRail)
   $('#favorites-search').addEventListener('input', handleFavoritesSearch)
@@ -374,11 +383,16 @@ function bindUI() {
   $('#edit-favorite').addEventListener('click', editSelectedFavorite)
   $('#delete-favorite').addEventListener('click', () => deleteSelectedFavorite().catch(showError))
   $('#open-favorite-source').addEventListener('click', () => openSelectedFavoriteSource().catch(showError))
-  $('#settings-button').addEventListener('click', openSettings)
+  $('#connections-button').addEventListener('click', openConnectionsDialog)
+  $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
+  $('#settings-button').addEventListener('click', () => {
+    closeActionMenus()
+    openSettings()
+  })
+  $('#about-button').addEventListener('click', openBackendDialog)
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close())
   $('#settings-form').addEventListener('submit', saveSettings)
   $('#reset-settings').addEventListener('click', resetSettings)
-  $('#backend-details').addEventListener('click', openBackendDialog)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
   $('#close-command').addEventListener('click', () => $('#command-dialog').close())
   $('#close-activity-log').addEventListener('click', () => $('#activity-log-dialog').close())
@@ -513,21 +527,29 @@ function closeActionMenus() {
   $$('.menu-anchor [aria-expanded]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
 }
 
-async function loadBackendInfo() {
-  const descriptor = currentBackend()
+async function loadBackendInfo(backend = state.backend) {
+  const descriptor = backendDescriptor(backend)
   try {
     const response = await fetch(descriptor.infoPath, { cache: 'no-store' })
-    state.backendInfo = await response.json()
-    if (!response.ok) throw new Error(state.backendInfo?.error || `HTTP ${response.status}`)
+    const info = await response.json()
+    state.backendInfos[backend] = response.ok
+      ? info
+      : { ...info, error: info?.error || `HTTP ${response.status}` }
   } catch (error) {
-    state.backendInfo = { binary: descriptor.binary, protocol: descriptor.protocol, transport: descriptor.transport, error: error.message }
+    state.backendInfos[backend] = { binary: descriptor.binary, protocol: descriptor.protocol, transport: descriptor.transport, error: error.message }
   }
+  if (backend === state.backend) state.backendInfo = state.backendInfos[backend]
+  return state.backendInfos[backend]
+}
+
+function backendDescriptor(backend) {
+  return backend === 'opencode'
+    ? { id: 'opencode', name: 'OpenCode', nativeLabel: 'OPENCODE NATIVE', binary: 'opencode', infoPath: '/studio/opencode', protocol: 'OpenCode Server API', transport: 'HTTP + SSE' }
+    : { id: 'codex', name: 'Codex', nativeLabel: 'CODEX NATIVE', binary: 'codex', infoPath: '/studio/codex', protocol: 'Codex App Server v2', transport: 'stdio JSONL' }
 }
 
 function currentBackend() {
-  return state.backend === 'opencode'
-    ? { id: 'opencode', name: 'OpenCode', nativeLabel: 'OPENCODE NATIVE', binary: 'opencode', infoPath: '/studio/opencode', protocol: 'OpenCode Server API', transport: 'HTTP + SSE' }
-    : { id: 'codex', name: 'Codex', nativeLabel: 'CODEX NATIVE', binary: 'codex', infoPath: '/studio/codex', protocol: 'Codex App Server v2', transport: 'stdio JSONL' }
+  return backendDescriptor(state.backend)
 }
 
 function connectBackend() {
@@ -537,8 +559,10 @@ function connectBackend() {
 
 async function switchBackend(backend, { selectedId } = {}) {
   if (!['codex', 'opencode'].includes(backend) || backend === state.backend) return
+  const previousBackend = state.backend
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
+  state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: '按需连接' }
   rejectPending(new Error('后端已切换'))
   state.backend = backend
   if (selectedId) state.selectedByBackend[backend] = selectedId
@@ -546,7 +570,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   state.threads = state.threadsByBackend[backend]
   state.model = freshThreadModel(backend, state.selectedId)?.model || createCodexViewModel()
   if (state.selectedId) state.model.threadId = state.selectedId
-  state.backendInfo = null
+  state.backendInfo = state.backendInfos[backend]
   state.ready = false
   applyBackendCopy()
   renderThreadList()
@@ -560,7 +584,6 @@ async function switchBackend(backend, { selectedId } = {}) {
 
 function applyBackendCopy() {
   const descriptor = currentBackend()
-  $('.brand-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
   $('#new-thread-label').textContent = t('新建会话')
@@ -4578,23 +4601,76 @@ function applyAppearance() {
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
 }
 
+function backendStatusView(backend) {
+  const status = state.backendStates[backend] || { kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接' }
+  const info = state.backendInfos[backend]
+  if (backend === state.backend) return status
+  if (info?.error) return { kind: 'error', label: '不可用', caption: info.error }
+  if (info?.reachable) return { kind: 'online', label: '可用', caption: '按需连接会话事件' }
+  return { kind: 'idle', label: '按需连接', caption: '尚未选择该后端会话' }
+}
+
+function openConnectionsDialog() {
+  closeActionMenus()
+  renderConnectionsDialog()
+  $('#connections-dialog').showModal()
+  refreshBackendInformation()
+}
+
+function renderConnectionsDialog() {
+  $('#connections-dialog-content').innerHTML = ['codex', 'opencode'].map((backend) => {
+    const descriptor = backendDescriptor(backend)
+    const status = backendStatusView(backend)
+    const info = state.backendInfos[backend] || {}
+    return `<section class="connection-card ${backend}">
+      <span class="connection-monogram">${backend === 'codex' ? 'CX' : 'OC'}</span>
+      <span class="connection-copy"><strong>${descriptor.name}</strong><small>${escapeHtml(info.binary || descriptor.binary)} · ${escapeHtml(info.transport || descriptor.transport)}</small></span>
+      <span class="connection-state ${escapeHtml(status.kind)}">${escapeHtml(t(status.label))}</span>
+    </section>`
+  }).join('')
+}
+
 function openBackendDialog() {
-  const info = state.backendInfo || {}
-  $('#backend-dialog-content').innerHTML = `
-    <div class="detail-row"><span>应用</span><strong>${escapeHtml(info.appName || 'Codex Thread Studio')}</strong></div>
-    <div class="detail-row"><span>版本</span><strong>v${escapeHtml(info.appVersion || 'unknown')}</strong></div>
-    <div class="detail-row"><span>状态</span><strong>${state.ready ? '已连接' : '未连接'}</strong></div>
-    <div class="detail-row"><span>${escapeHtml(currentBackend().name)}</span><strong>${escapeHtml(info.binary || currentBackend().binary)}</strong></div>
-    <div class="detail-row"><span>后端版本</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
-    <div class="detail-row"><span>协议</span><strong>${escapeHtml(info.protocol || currentBackend().protocol)}</strong></div>
-    <div class="detail-row"><span>传输</span><strong>${escapeHtml(info.transport || currentBackend().transport)}</strong></div>`
+  closeActionMenus()
+  renderBackendDialog()
   $('#backend-dialog').showModal()
+  refreshBackendInformation()
+}
+
+function renderBackendDialog() {
+  const appInfo = Object.values(state.backendInfos).find((info) => info?.appName) || {}
+  const backendSections = ['codex', 'opencode'].map((backend) => {
+    const descriptor = backendDescriptor(backend)
+    const info = state.backendInfos[backend] || {}
+    const status = backendStatusView(backend)
+    return `<section class="about-section">
+      <header>${descriptor.name}</header>
+      <div class="detail-row"><span>${t('状态')}</span><strong>${escapeHtml(t(status.label))}</strong></div>
+      <div class="detail-row"><span>${t('可执行文件')}</span><strong>${escapeHtml(info.binary || descriptor.binary)}</strong></div>
+      <div class="detail-row"><span>${t('后端版本')}</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
+      <div class="detail-row"><span>${t('协议')}</span><strong>${escapeHtml(info.protocol || descriptor.protocol)}</strong></div>
+      <div class="detail-row"><span>${t('传输')}</span><strong>${escapeHtml(info.transport || descriptor.transport)}</strong></div>
+    </section>`
+  }).join('')
+  $('#backend-dialog-content').innerHTML = `<section class="about-section">
+    <header>${t('应用')}</header>
+    <div class="detail-row"><span>${t('应用')}</span><strong>${escapeHtml(appInfo.appName || 'Codex Thread Studio')}</strong></div>
+    <div class="detail-row"><span>${t('版本')}</span><strong>v${escapeHtml(appInfo.appVersion || 'unknown')}</strong></div>
+    <div class="detail-row"><span>${t('运行模式')}</span><strong>${t('本机工作区')}</strong></div>
+  </section>${backendSections}`
+}
+
+function refreshBackendInformation() {
+  Promise.all(['codex', 'opencode'].map((backend) => loadBackendInfo(backend))).then(() => {
+    if ($('#connections-dialog').open) renderConnectionsDialog()
+    if ($('#backend-dialog').open) renderBackendDialog()
+  }).catch((error) => console.warn('Unable to refresh backend information', error))
 }
 
 function setBackendState(kind, label, caption) {
-  $('#backend-dot').className = `backend-dot ${kind}`
-  $('#backend-label').textContent = t(label)
-  $('#backend-caption').textContent = t(caption)
+  state.backendStates[state.backend] = { kind, label, caption }
+  if ($('#connections-dialog').open) renderConnectionsDialog()
+  if ($('#backend-dialog').open) renderBackendDialog()
 }
 
 function setNativeError(message) {

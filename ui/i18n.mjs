@@ -1,6 +1,10 @@
 export const supportedLanguages = ['system', 'zh-CN', 'en-US']
 
 const english = {
+  '本机工作区': 'Local workspace',
+  '连接与账号': 'Connections & accounts',
+  '关于': 'About',
+  '后端按会话选择，并使用各自运行环境中的凭证。': 'Each session selects its backend and uses credentials from that backend environment.',
   '全局收藏': 'Global favorites',
   '导出': 'Export',
   '收藏已导出': 'Favorites exported',
@@ -239,9 +243,17 @@ const english = {
   '已收藏': 'Favorited',
   '应用': 'Application',
   '版本': 'Version',
+  '状态': 'Status',
+  '可执行文件': 'Executable',
   '后端版本': 'Backend version',
   '协议': 'Protocol',
   '传输': 'Transport',
+  '运行模式': 'Runtime mode',
+  '按需连接': 'Connect on demand',
+  '不可用': 'Unavailable',
+  '可用': 'Available',
+  '按需连接会话事件': 'Session events connect on demand',
+  '尚未选择该后端会话': 'No session from this backend has been selected yet',
   '正在启动 Codex': 'Starting Codex',
   'Codex 未连接': 'Codex disconnected',
   'WebSocket 连接失败': 'WebSocket connection failed',

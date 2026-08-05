@@ -23,6 +23,19 @@ test('brand geometry matches the Agent Deck Studio sidebar contract', () => {
   assert.match(rule('.brand-copy span'), /margin-top:\s*3px/)
 })
 
+test('application actions live in an extensible footer menu instead of the brand row', () => {
+  assert.doesNotMatch(html, /class="brand-actions"/)
+  assert.match(html, /id="studio-menu-button"/)
+  assert.match(html, /id="open-favorites"/)
+  assert.match(html, /id="connections-button"/)
+  assert.match(html, /id="settings-button"/)
+  assert.match(html, /id="about-button"/)
+  assert.match(html, /id="connections-dialog"/)
+  assert.match(html, /id="backend-dialog"[^>]*class="dialog about-dialog"/)
+  assert.match(rule('.action-menu.studio-menu'), /top:\s*auto/)
+  assert.match(rule('.action-menu.studio-menu'), /bottom:\s*calc\(100% \+ 7px\)/)
+})
+
 test('filters use the same flat label-and-number structure as Agent Deck Studio', () => {
   assert.match(html, /class="filters thread-filters"/)
   assert.match(html, />全部 <span id="count-all">0<\/span><\/button>/)

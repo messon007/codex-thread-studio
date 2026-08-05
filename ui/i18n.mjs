@@ -404,6 +404,7 @@ const english = {
   'Fork 自': 'Forked from',
   'OpenCode 后端暂不支持归档': 'The OpenCode backend does not support archiving yet',
   '无法复制代码': 'Unable to copy code',
+  '无法复制回复': 'Unable to copy response',
   ' · 默认': ' · default',
   'OpenCode 权限由项目配置和运行时审批管理；收到权限请求时可允许一次、始终允许或拒绝。': 'OpenCode permissions are managed by project configuration and runtime approvals; requests can be allowed once, always allowed, or denied.',
   '正在由 App Server 发现技能…': 'Discovering skills through App Server…',

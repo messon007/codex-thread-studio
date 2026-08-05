@@ -2439,8 +2439,8 @@ function renderItem(item, turnId) {
     const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
       <span class="message-track-mark agent-track-mark" aria-hidden="true">${conversationTrackIcon('response')}</span>
-      <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div></div>
-      <div class="message-heading"><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><span aria-hidden="true">${favorite ? '★' : '☆'}</span><b>${favorite ? '已收藏' : '收藏'}</b></button></div>
+      <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
+      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('复制内容')}" aria-label="${t('复制内容')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('复制')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? '已收藏' : '收藏'}</b></button></div></div>
     </div>`
   }
   if (type === 'reasoning') {
@@ -2555,6 +2555,22 @@ async function handleTranscriptClick(event) {
     )
     if (existing) await openFavoriteDetail(existing.id)
     else openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
+    return
+  }
+  const copyMessageButton = event.target.closest('[data-copy-message]')
+  if (copyMessageButton) {
+    const element = copyMessageButton.closest('[data-turn-id][data-item-id]')
+    const item = element && modelItem(element.dataset.turnId, element.dataset.itemId)
+    if (!item) return
+    const content = item.type === 'agentMessage' ? sessionMapVisibleText(item.text || '') : item.text || ''
+    try {
+      await navigator.clipboard.writeText(content)
+      copyMessageButton.classList.add('copied')
+      toast(t('已复制'))
+      setTimeout(() => { if (copyMessageButton.isConnected) copyMessageButton.classList.remove('copied') }, 1400)
+    } catch {
+      toast(t('无法复制回复'), 'error')
+    }
     return
   }
   const button = event.target.closest('.copy-code-button')

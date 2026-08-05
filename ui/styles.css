@@ -197,7 +197,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .turn-separator { display: none; }
 .message { margin: 0 0 13px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 11px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .message.user { width: 100%; max-width: none; margin: 0 0 15px; padding: 0 3px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.68; }
-.message.agent { padding: 0 3px 2px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; gap: 9px; border: 0; border-radius: 0; background: transparent; font-size: 15px; white-space: normal; transition: background .2s, box-shadow .2s; }
+.message.agent { padding: 0 3px 2px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; font-size: 15px; white-space: normal; transition: background .2s, box-shadow .2s; }
 .message-content { min-width: 0; }
 .message-track-mark { width: 18px; height: 25px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; user-select: none; }
 .user-track-mark { color: var(--brand); }
@@ -205,13 +205,15 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .track-icon { width: 14px; height: 14px; display: block; flex: 0 0 14px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
 .track-icon-fill { fill: currentColor; stroke: none; }
 .message.agent.favorite-source-highlight { margin-inline: -14px; padding-inline: 17px; border-radius: 12px; background: var(--favorite-soft); box-shadow: 0 0 0 1px color-mix(in srgb, var(--favorite) 42%, transparent); }
-.message-heading { width: 30px; min-height: 25px; margin: -2px 0 0; display: flex; align-items: flex-start; justify-content: center; }
-.message-heading .item-label { margin-bottom: 0; padding-top: 6px; }
-.message-favorite-button { width: 28px; min-height: 28px; padding: 4px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; transform: translateY(-2px); transition: opacity .15s, transform .15s, color .15s, background .15s, border-color .15s; }
-.message-favorite-button span { color: var(--favorite); font-size: 17px; line-height: 1; }
-.message-favorite-button b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.message.agent:hover .message-favorite-button, .message-favorite-button:focus-visible, .message-favorite-button.active { opacity: 1; transform: none; }
+.message-actions { min-height: 32px; margin-top: 4px; display: flex; align-items: center; justify-content: flex-start; gap: 3px; }
+.message-favorite-button, .message-copy-button { width: 32px; min-height: 32px; padding: 6px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; opacity: .62; transition: opacity .15s, color .15s, background .15s, border-color .15s; }
+.message-actions svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.message-favorite-button svg { color: var(--favorite); }
+.message-favorite-button.active svg { fill: currentColor; }
+.message-favorite-button b, .message-copy-button b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.message.agent:hover .message-favorite-button, .message.agent:hover .message-copy-button, .message-favorite-button:focus-visible, .message-copy-button:focus-visible, .message-favorite-button.active, .message-copy-button.copied { opacity: 1; transform: none; }
 .message-favorite-button:hover, .message-favorite-button.active { border-color: color-mix(in srgb, var(--favorite) 34%, var(--border)); background: var(--favorite-soft); color: var(--favorite); }
+.message-copy-button:hover, .message-copy-button.copied { border-color: var(--border-strong); background: var(--panel-soft); color: var(--brand); }
 .item-label { display: block; margin-bottom: 9px; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; user-select: none; }
 .item-card { margin: 0 0 11px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); user-select: text; }
 .item-card > header { min-height: 38px; padding: 9px 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 600; }

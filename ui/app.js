@@ -24,6 +24,13 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import {
+  createFileRangeTarget,
+  fileDisplayName,
+  isMarkdownFile,
+  lineNumberAt,
+  normalizeAnnotationTarget,
+} from './document-review.mjs'
+import {
   autoFavoriteTitle,
   favoriteCopyText,
   favoriteSourceKey,
@@ -110,12 +117,12 @@ const typographyDefaults = Object.freeze({
 })
 
 const annotationPromptDefaults = Object.freeze({
-  'zh-CN': `请根据下面引用的 AI 输出和我的批注进行回应。请逐项处理，不要遗漏；若需要修改代码，请先说明你对每条意见的理解，再继续执行。
+  'zh-CN': `请根据下面引用的会话输出或项目文件内容，以及我的批注进行回应。请逐项处理，不要遗漏。涉及文件时，请先读取当前版本并依据文件路径、引用和上下文定位内容；如果文件已变化，以当前内容为准谨慎修改。
 
 {{annotations}}
 
 {{additional}}`,
-  'en-US': `Please respond to the quoted AI output and my comments below. Address every item. If code changes are needed, first explain your understanding of each comment, then continue.
+  'en-US': `Please respond to the quoted conversation output or project file content and my comments below. Address every item. For file comments, read the current version first and locate the passage using its path, quote, and context; if the file changed, modify the current content carefully.
 
 {{annotations}}
 
@@ -150,6 +157,8 @@ const state = {
   language: 'system',
   theme: 'light',
   contentWidth: 'comfortable',
+  sidebarCollapsed: false,
+  artifactWidthRatio: 0.44,
   typography: { ...typographyDefaults },
   annotationDrafts: {},
   annotationAdditional: {},
@@ -157,6 +166,8 @@ const state = {
   annotationPromptTemplate: annotationPromptDefaults['zh-CN'],
   openingMessages: {},
   pendingSelection: null,
+  artifact: null,
+  artifactView: 'preview',
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
@@ -203,6 +214,7 @@ const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
 let activityLogContext = null
+let artifactResize = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
@@ -228,6 +240,7 @@ async function init() {
 
 function bindUI() {
   $('#new-thread').addEventListener('click', openNewThreadDialog)
+  $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#cancel-new-thread').addEventListener('click', closeNewThreadDialog)
@@ -295,15 +308,32 @@ function bindUI() {
   $('#composer-input').addEventListener('keydown', handleComposerKeydown)
   $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
+  $('#composer-review-open').addEventListener('click', openAnnotationRail)
+  $('#composer-review-insert').addEventListener('click', insertAnnotations)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
+  $('#artifact-content').addEventListener('mouseup', captureArtifactSelection)
+  $('#artifact-content').addEventListener('click', handleTranscriptClick)
+  $('#close-artifact').addEventListener('click', closeArtifactRail)
+  $('#refresh-artifact').addEventListener('click', () => refreshArtifact().catch(showError))
+  $('#artifact-preview').addEventListener('click', () => setArtifactView('preview'))
+  $('#artifact-source').addEventListener('click', () => setArtifactView('source'))
+  $('#artifact-resizer').addEventListener('pointerdown', beginArtifactResize)
+  $('#artifact-resizer').addEventListener('pointermove', continueArtifactResize)
+  $('#artifact-resizer').addEventListener('pointerup', finishArtifactResize)
+  $('#artifact-resizer').addEventListener('pointercancel', finishArtifactResize)
+  $('#artifact-resizer').addEventListener('dblclick', resetArtifactWidth)
+  $('#artifact-resizer').addEventListener('keydown', handleArtifactResizeKey)
   $('#transcript').addEventListener('click', handleTranscriptClick)
   $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
   $('#favorite-menu-button').addEventListener('click', () => toggleActionMenu('favorite-menu', 'favorite-menu-button'))
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
-  window.addEventListener('resize', scheduleTurnNavigatorSync)
+  window.addEventListener('resize', () => {
+    scheduleTurnNavigatorSync()
+    applyArtifactWidth()
+  })
   $('#comment-selection').addEventListener('click', () => {
     closeActionMenus()
     openAnnotationFromSelection()
@@ -367,17 +397,107 @@ function bindUI() {
     if (modifier && event.key.toLowerCase() === 'n') {
       event.preventDefault()
       openNewThreadDialog()
+    } else if (modifier && event.key.toLowerCase() === 'b') {
+      event.preventDefault()
+      toggleSidebar()
     } else if (event.key === '/' && !isTypingTarget(event.target)) {
       event.preventDefault()
       $('#thread-search').focus()
     } else if (event.key === 'Escape') {
+      const artifactWasOpen = !$('#artifact-rail').classList.contains('hidden')
       hideSelectionPopover()
       closeActionMenus()
       closeAnnotationRail()
       closeFavoritesRail()
       closeSessionMapItemMenu()
+      if (artifactWasOpen) closeArtifactRail()
     }
   })
+}
+
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed
+  applySidebarState()
+  persistPreferences()
+}
+
+function applySidebarState() {
+  $('.app-shell').classList.toggle('sidebar-collapsed', state.sidebarCollapsed)
+  const button = $('#toggle-sidebar')
+  button.setAttribute('aria-expanded', String(!state.sidebarCollapsed))
+  button.title = t(state.sidebarCollapsed ? '展开会话栏 (Ctrl+B)' : '收起会话栏 (Ctrl+B)')
+  button.setAttribute('aria-label', t(state.sidebarCollapsed ? '展开会话栏' : '收起会话栏'))
+  button.querySelector('span').textContent = state.sidebarCollapsed ? '›' : '‹'
+  setTimeout(applyArtifactWidth, 220)
+}
+
+function normalizeArtifactWidthRatio(value) {
+  return Math.min(0.65, Math.max(0.2, Number(value) || 0.44))
+}
+
+function artifactWidthBounds() {
+  const shell = $('.app-shell')
+  const sidebarWidth = state.sidebarCollapsed ? 0 : $('#sidebar').getBoundingClientRect().width
+  const available = Math.max(1, shell.clientWidth - sidebarWidth - $('#sidebar-divider').offsetWidth)
+  const nominalSidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 310
+  const min = nominalSidebarWidth
+  const max = Math.max(min, available * 0.65)
+  return { available, min, max }
+}
+
+function applyArtifactWidth(ratio = state.artifactWidthRatio, { updateState = false } = {}) {
+  const preferredRatio = normalizeArtifactWidthRatio(ratio)
+  const { available, min, max } = artifactWidthBounds()
+  const actual = Math.min(max, Math.max(min, available * preferredRatio))
+  document.documentElement.style.setProperty('--artifact-width', `${actual}px`)
+  $('#artifact-resizer').setAttribute('aria-valuemin', String(min))
+  $('#artifact-resizer').setAttribute('aria-valuemax', String(Math.round(max)))
+  $('#artifact-resizer').setAttribute('aria-valuenow', String(Math.round(actual)))
+  if (updateState) state.artifactWidthRatio = normalizeArtifactWidthRatio(actual / available)
+  return actual
+}
+
+function beginArtifactResize(event) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  artifactResize = { pointerId: event.pointerId }
+  event.currentTarget.setPointerCapture(event.pointerId)
+  document.body.classList.add('resizing-artifact')
+  continueArtifactResize(event)
+}
+
+function continueArtifactResize(event) {
+  if (!artifactResize || artifactResize.pointerId !== event.pointerId) return
+  const right = $('#artifact-rail').getBoundingClientRect().right
+  const { available } = artifactWidthBounds()
+  applyArtifactWidth((right - event.clientX) / available, { updateState: true })
+}
+
+function finishArtifactResize(event) {
+  if (!artifactResize || artifactResize.pointerId !== event.pointerId) return
+  artifactResize = null
+  document.body.classList.remove('resizing-artifact')
+  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  persistPreferences()
+}
+
+function resetArtifactWidth() {
+  state.artifactWidthRatio = 0.44
+  applyArtifactWidth()
+  persistPreferences()
+}
+
+function handleArtifactResizeKey(event) {
+  const step = event.shiftKey ? 64 : 24
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const { available, min, max } = artifactWidthBounds()
+  const current = $('#artifact-rail').getBoundingClientRect().width
+  const next = event.key === 'Home' ? min
+    : event.key === 'End' ? max
+      : current + (event.key === 'ArrowLeft' ? step : -step)
+  applyArtifactWidth(next / available, { updateState: true })
+  persistPreferences()
 }
 
 function toggleActionMenu(menuId, buttonId) {
@@ -1115,6 +1235,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   hideComposerMenu()
   resetStreamingPatches()
   transcriptScrollFollower.reset()
+  if (state.artifact?.threadKey !== sessionMapKey(state.backend, id)) closeArtifactRail({ restoreMap: false })
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
   state.sessionMapSelectedItem = null
@@ -1505,6 +1626,7 @@ function openSessionMapRail() {
   state.sessionMapDismissed.delete(key)
   closeAnnotationRail()
   closeFavoritesRail()
+  $('#artifact-rail').classList.add('hidden')
   renderSessionMap()
 }
 
@@ -1513,6 +1635,7 @@ function closeSessionMapRail() {
   if (key) state.sessionMapDismissed.add(key)
   $('#session-map-rail').classList.add('hidden')
   closeSessionMapItemMenu()
+  if (state.artifact) renderArtifact()
 }
 
 function renderSessionMap() {
@@ -1521,7 +1644,10 @@ function renderSessionMap() {
   const map = key ? state.sessionMaps.get(key) : null
   const hasMap = Boolean(map)
   $('#session-map-action').textContent = hasMap ? '打开 Map' : '创建 Map'
-  if (!hasMap || state.sessionMapDismissed.has(key)) {
+  const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
+    || !$('#annotation-rail').classList.contains('hidden')
+    || !$('#favorites-rail').classList.contains('hidden')
+  if (!hasMap || state.sessionMapDismissed.has(key) || anotherDockIsOpen) {
     rail.classList.add('hidden')
     return
   }
@@ -2758,6 +2884,13 @@ function handleComposerKeydown(event) {
 }
 
 function handleComposerMenuClick(event) {
+  const openFile = event.target.closest('[data-open-file-index]')
+  if (openFile) {
+    event.stopPropagation()
+    const option = state.composerMenu.options[Number(openFile.dataset.openFileIndex)]
+    if (option) openArtifact(option).catch(showError)
+    return
+  }
   const option = event.target.closest('[data-composer-index]')
   if (option) selectComposerOption(Number(option.dataset.composerIndex))
 }
@@ -2793,7 +2926,8 @@ function renderComposerMenu(message = '') {
       : type === 'skill'
         ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
         : option.root
-    return `<button id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" type="button" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small></button>`
+    const openAction = type === 'file' ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t('在审阅区打开')}">${t('打开')}</button>` : ''
+    return `<div id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small>${openAction}</div>`
   }).join('')
   $('#composer-input').setAttribute('aria-activedescendant', `composer-option-${state.composerMenu.selected}`)
   menu.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
@@ -3103,6 +3237,7 @@ function renderComposerState() {
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   $('#thread-status').textContent = statusLabel(state.model.status)
   $('#thread-status').className = `status-badge ${state.model.status}`
+  renderComposerReviewContext()
 }
 
 async function sendComposer(event) {
@@ -3461,6 +3596,97 @@ async function deleteSelectedThread() {
   } catch (error) { showError(error) }
 }
 
+async function openArtifact(file) {
+  const thread = selectedThread()
+  if (!thread?.cwd) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
+  const root = String(file.root || thread.cwd)
+  const path = fuzzyFileLabel(file)
+  if (!path) throw new Error(t('文件路径为空。'))
+  hideComposerMenu()
+  closeActionMenus()
+  $('#session-map-rail').classList.add('hidden')
+  $('#annotation-rail').classList.add('hidden')
+  $('#favorites-rail').classList.add('hidden')
+  $('#artifact-rail').classList.remove('hidden')
+  $('#artifact-content').classList.add('hidden')
+  $('#artifact-error').classList.add('hidden')
+  $('#artifact-loading').classList.remove('hidden')
+  state.artifact = { root, path, threadKey: selectedStateKey(), loading: true }
+  const response = await fetch('/studio/review-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root, path }),
+  })
+  const result = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = result?.error?.message || `HTTP ${response.status}`
+    state.artifact = { ...state.artifact, loading: false, error: message }
+    renderArtifact()
+    throw new Error(message)
+  }
+  if (state.artifact?.threadKey !== selectedStateKey()) return
+  state.artifact = { ...result, threadKey: selectedStateKey(), loading: false }
+  state.artifactView = isMarkdownFile(result.path) ? 'preview' : 'source'
+  renderArtifact()
+}
+
+async function refreshArtifact() {
+  if (!state.artifact) return
+  await openArtifact({ root: state.artifact.root, path: state.artifact.path })
+}
+
+function closeArtifactRail({ restoreMap = true } = {}) {
+  $('#artifact-rail').classList.add('hidden')
+  state.artifact = null
+  hideSelectionPopover()
+  if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()
+}
+
+function setArtifactView(view) {
+  if (!state.artifact || (view === 'preview' && !isMarkdownFile(state.artifact.path))) return
+  state.artifactView = view
+  renderArtifact()
+}
+
+function renderArtifact() {
+  const rail = $('#artifact-rail')
+  const file = state.artifact
+  if (!file) {
+    rail.classList.add('hidden')
+    return
+  }
+  applyArtifactWidth()
+  rail.classList.remove('hidden')
+  $('#artifact-title').textContent = fileDisplayName(file.path)
+  $('#artifact-path').textContent = file.relativePath || file.path
+  $('#artifact-loading').classList.toggle('hidden', !file.loading)
+  $('#artifact-error').classList.toggle('hidden', !file.error)
+  $('#artifact-error-message').textContent = file.error || ''
+  const ready = !file.loading && !file.error && typeof file.content === 'string'
+  const content = $('#artifact-content')
+  content.classList.toggle('hidden', !ready)
+  $('#artifact-meta').textContent = ready ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) }) : ''
+  const markdown = ready && isMarkdownFile(file.path)
+  $('#artifact-view-switch').classList.toggle('hidden', !markdown)
+  $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
+  $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
+  if (!ready) return
+  if (markdown && state.artifactView === 'preview') {
+    content.className = 'artifact-content markdown-body'
+    content.innerHTML = renderMarkdown(file.content)
+  } else {
+    content.className = 'artifact-content'
+    content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(file.content)}</pre>`
+  }
+}
+
+function formatFileSize(value) {
+  const bytes = Number(value) || 0
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function captureTranscriptSelection() {
   const selection = window.getSelection()
   const text = selection?.toString().trim()
@@ -3477,11 +3703,47 @@ function captureTranscriptSelection() {
     quote: text.slice(0, 16000),
     itemId: item?.dataset.itemId || null,
     turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
+    target: {
+      kind: 'chatRange',
+      itemId: item?.dataset.itemId || null,
+      turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
+    },
   }
+  positionSelectionPopover(range, { allowFavorite: true })
+}
+
+function captureArtifactSelection() {
+  const selection = window.getSelection()
+  const text = selection?.toString().trim()
+  if (!state.artifact || !text || selection.rangeCount === 0) return hideSelectionPopover()
+  const range = selection.getRangeAt(0)
+  const content = $('#artifact-content')
+  if (!content.contains(range.commonAncestorContainer)) return hideSelectionPopover()
+  let hintOffset = 0
+  if (state.artifactView === 'source') {
+    const source = content.querySelector('.artifact-source')
+    if (source) {
+      const prefix = document.createRange()
+      prefix.selectNodeContents(source)
+      prefix.setEnd(range.startContainer, range.startOffset)
+      hintOffset = prefix.toString().length
+    }
+  }
+  state.pendingSelection = {
+    quote: text.slice(0, 16000),
+    itemId: null,
+    turnId: null,
+    target: createFileRangeTarget(state.artifact, text, hintOffset),
+  }
+  positionSelectionPopover(range, { allowFavorite: false })
+}
+
+function positionSelectionPopover(range, { allowFavorite }) {
   const rect = range.getBoundingClientRect()
   const popover = $('#selection-popover')
   popover.style.left = `${Math.min(window.innerWidth - 150, Math.max(8, rect.left + rect.width / 2 - 55))}px`
   popover.style.top = `${Math.max(8, rect.top - 39)}px`
+  $('#selection-favorite').classList.toggle('hidden', !allowFavorite)
   popover.classList.remove('hidden')
 }
 
@@ -3491,6 +3753,10 @@ function openAnnotationFromSelection() {
     if (!state.pendingSelection?.quote) return toast('请先在 Codex 输出中选择文字', 'error')
   }
   $('#annotation-quote').textContent = state.pendingSelection.quote
+  const target = state.pendingSelection.target
+  $('#annotation-source-hint').textContent = target?.kind === 'fileRange'
+    ? t('来自 {path}，批注会保留文件位置并交给当前会话。', { path: target.filePath })
+    : t('来自当前会话回复，批注会保留消息位置。')
   $('#annotation-comment').value = ''
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
@@ -3566,23 +3832,28 @@ function addAnnotation(event) {
     createdAt: new Date().toISOString(),
     itemId: state.pendingSelection.itemId,
     turnId: state.pendingSelection.turnId,
+    target: state.pendingSelection.target || normalizeAnnotationTarget(state.pendingSelection),
   }]
   persistPreferences()
   closeAnnotationDialog()
-  openAnnotationRail()
   renderAnnotationRail()
-  toast('批注已加入回覆草稿')
+  renderComposerReviewContext()
+  toast('批注已加入回复草稿')
 }
 
 function openAnnotationRail() {
   closeFavoritesRail()
   $('#session-map-rail').classList.add('hidden')
+  $('#artifact-rail').classList.add('hidden')
   $('#annotation-rail').classList.remove('hidden')
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
   $('#annotation-rail').classList.add('hidden')
-  if ($('#favorites-rail').classList.contains('hidden')) renderSessionMap()
+  if ($('#favorites-rail').classList.contains('hidden')) {
+    if (state.artifact) renderArtifact()
+    else renderSessionMap()
+  }
 }
 
 function renderAnnotationRail() {
@@ -3595,10 +3866,57 @@ function renderAnnotationRail() {
   $('#insert-annotations').disabled = !drafts.length
   $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
-    <header><span>${t('批注 {index}', { index: index + 1 })}${draft.turnId ? ` · ${escapeHtml(draft.turnId.slice(0, 8))}` : ''}</span><button class="annotation-delete" type="button" aria-label="${t('删除批注 {index}', { index: index + 1 })}">×</button></header>
+    <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('删除批注 {index}', { index: index + 1 })}">×</button></header>
     <blockquote>${escapeHtml(draft.quote)}</blockquote><p>${escapeHtml(draft.comment)}</p>
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
+  $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
+  renderComposerReviewContext()
+}
+
+function annotationSourceLabel(draft, index) {
+  const target = normalizeAnnotationTarget(draft)
+  if (target.kind === 'fileRange') {
+    const line = state.artifact?.path === target.filePath ? lineNumberAt(state.artifact.content, target.startOffset) : null
+    return `${fileDisplayName(target.filePath)}${line ? ` · L${line}` : ''}`
+  }
+  return `${t('回复批注 {index}', { index: index + 1 })}${target.turnId ? ` · ${target.turnId.slice(0, 8)}` : ''}`
+}
+
+async function reopenAnnotationSource(id) {
+  const draft = currentAnnotations().find((candidate) => candidate.id === id)
+  const target = draft && normalizeAnnotationTarget(draft)
+  if (!draft || target.kind !== 'fileRange') return
+  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
+  setArtifactView('source')
+  const source = $('#artifact-content .artifact-source')
+  if (!source) return
+  const relocated = createFileRangeTarget(state.artifact, draft.quote)
+  const startOffset = relocated.startOffset ?? target.startOffset
+  const endOffset = relocated.endOffset ?? target.endOffset
+  if (startOffset == null || endOffset == null) return
+  const node = source.firstChild
+  if (!node) return
+  const range = document.createRange()
+  range.setStart(node, Math.min(startOffset, node.length))
+  range.setEnd(node, Math.min(endOffset, node.length))
+  const selection = window.getSelection()
+  selection.removeAllRanges()
+  selection.addRange(range)
+  const rect = range.getBoundingClientRect()
+  $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
+}
+
+function renderComposerReviewContext() {
+  const drafts = currentAnnotations()
+  const context = $('#composer-review-context')
+  context.classList.toggle('hidden', !drafts.length)
+  if (!drafts.length) return
+  const fileCount = drafts.filter((draft) => normalizeAnnotationTarget(draft).kind === 'fileRange').length
+  $('#composer-review-count').textContent = t('{count} 条批注待发送', { count: drafts.length })
+  $('#composer-review-source').textContent = fileCount
+    ? t('包含 {count} 条文档批注', { count: fileCount })
+    : t('来自当前会话回复')
 }
 
 function deleteAnnotation(id) {
@@ -3629,7 +3947,10 @@ function saveAnnotationAdditional(event) {
 
 function buildAnnotationPrompt(drafts, additional = '') {
   const annotations = drafts.map((draft, index) => {
-    const anchor = [draft.turnId && `Turn ${draft.turnId}`, draft.itemId && `Item ${draft.itemId}`].filter(Boolean).join(' / ')
+    const target = normalizeAnnotationTarget(draft)
+    const anchor = target.kind === 'fileRange'
+      ? [target.filePath, target.startOffset != null && `offset ${target.startOffset}-${target.endOffset}`, target.baseHash && `base ${target.baseHash}`].filter(Boolean).join(' / ')
+      : [target.turnId && `Turn ${target.turnId}`, target.itemId && `Item ${target.itemId}`].filter(Boolean).join(' / ')
     const quote = draft.quote.split('\n').map((line) => `> ${line}`).join('\n')
     return t(anchor
       ? '批注 {index}（{anchor}）\n引用：\n{quote}\n\n我的意见：\n{comment}'
@@ -3641,11 +3962,14 @@ function buildAnnotationPrompt(drafts, additional = '') {
     })
   }).join('\n\n---\n\n')
   const additionalBlock = additional.trim() ? t('整体补充：\n{text}', { text: additional.trim() }) : ''
-  return state.annotationPromptTemplate
+  const fileInstruction = drafts.some((draft) => normalizeAnnotationTarget(draft).kind === 'fileRange')
+    ? t('文档批注：请先读取标注路径的当前文件，再依据引用、位置和上下文完成修改。')
+    : ''
+  return [fileInstruction, state.annotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
+    .trim()].filter(Boolean).join('\n\n')
 }
 
 function insertAnnotations() {
@@ -3656,6 +3980,7 @@ function insertAnnotations() {
   composer.value = [composer.value.trim(), prompt].filter(Boolean).join('\n\n')
   closeAnnotationRail()
   composer.focus()
+  renderComposerReviewContext()
   toast('批注草稿已插入输入框')
 }
 
@@ -3697,6 +4022,7 @@ function openFavoritesRail(scope = 'global') {
   state.favoriteScope = scope
   closeAnnotationRail()
   $('#session-map-rail').classList.add('hidden')
+  $('#artifact-rail').classList.add('hidden')
   $('#favorites-rail').classList.remove('hidden')
   loadFavorites().catch(showError)
   setTimeout(() => $('#favorites-search').focus(), 30)
@@ -3704,7 +4030,10 @@ function openFavoritesRail(scope = 'global') {
 
 function closeFavoritesRail() {
   $('#favorites-rail').classList.add('hidden')
-  if ($('#annotation-rail').classList.contains('hidden')) renderSessionMap()
+  if ($('#annotation-rail').classList.contains('hidden')) {
+    if (state.artifact) renderArtifact()
+    else renderSessionMap()
+  }
 }
 
 async function exportFavorites() {
@@ -3991,6 +4320,8 @@ async function loadPreferences() {
   state.language = normalizeLanguage(saved.language)
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
+  state.sidebarCollapsed = Boolean(saved.sidebarCollapsed)
+  state.artifactWidthRatio = normalizeArtifactWidthRatio(saved.artifactWidthRatio)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
   state.selectedByBackend = {
@@ -4019,6 +4350,7 @@ async function loadPreferences() {
   state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
   state.router = normalizeThreadRouter(saved.router)
   preferencesReady = true
+  applySidebarState()
 }
 
 function preferencesSnapshot() {
@@ -4026,6 +4358,8 @@ function preferencesSnapshot() {
     language: state.language,
     theme: state.theme,
     contentWidth: state.contentWidth,
+    sidebarCollapsed: state.sidebarCollapsed,
+    artifactWidthRatio: state.artifactWidthRatio,
     typography: state.typography,
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
@@ -4222,12 +4556,14 @@ function resetSettings() {
 }
 
 function renderLocalizedUI() {
+  applySidebarState()
   applyBackendCopy()
   updateNewThreadCapabilities()
   renderThreadList()
   renderWorkspace()
   renderTranscript()
   renderFavoritesRail()
+  if (state.artifact) renderArtifact()
 }
 
 function applyAppearance() {
@@ -4338,6 +4674,7 @@ function normalizeAnnotationDrafts(value) {
       createdAt: String(draft.createdAt || new Date().toISOString()).slice(0, 128),
       itemId: draft.itemId ? String(draft.itemId).slice(0, 256) : null,
       turnId: draft.turnId ? String(draft.turnId).slice(0, 256) : null,
+      target: normalizeAnnotationTarget(draft),
     }] : [])
     const key = threadId.includes(':') ? threadId : `codex:${threadId}`
     return normalized.length ? [[key, normalized]] : []

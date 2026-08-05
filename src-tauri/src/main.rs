@@ -12,7 +12,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
-use axum::Router;
+use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -28,6 +28,7 @@ use opencode_server::{find_opencode_binary, OpenCodeServer};
 use session_map::{ApplyOperationsRequest, CreateMapRequest, MAX_MAP_BODY_BYTES};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
+const MAX_REVIEW_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone)]
 struct GatewayState {
@@ -63,6 +64,28 @@ struct AnnotationDraft {
     item_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<AnnotationTarget>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnnotationTarget {
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    end_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suffix: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -125,6 +148,10 @@ struct StudioPreferences {
     opening_messages: BTreeMap<String, OpeningMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     router: Option<ThreadRouterPreferences>,
+    #[serde(default)]
+    sidebar_collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_width_ratio: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -143,6 +170,26 @@ struct FavoriteQuery {
     #[serde(default)]
     q: String,
     limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewFileRequest {
+    root: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewFileResponse {
+    root: String,
+    path: String,
+    relative_path: String,
+    content: String,
+    hash: String,
+    size: u64,
+    line_count: usize,
+    language: String,
 }
 
 fn main() {
@@ -217,12 +264,16 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-catalog.mjs", get(thread_catalog_js))
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
+        .route("/document-review.mjs", get(document_review_js))
         .route("/favorites.mjs", get(favorites_js))
         .route("/session-map.mjs", get(session_map_js))
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
-        .route("/transcript-presentation.mjs", get(transcript_presentation_js))
+        .route(
+            "/transcript-presentation.mjs",
+            get(transcript_presentation_js),
+        )
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
@@ -234,6 +285,7 @@ fn gateway_router(state: GatewayState) -> Router {
             get(get_preferences).put(put_preferences),
         )
         .route("/studio/client-log", axum::routing::post(client_log))
+        .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
             "/studio/favorites",
             get(list_favorites).post(create_favorite),
@@ -273,6 +325,119 @@ async fn index() -> impl IntoResponse {
     )
 }
 
+async fn read_review_file(Json(request): Json<ReviewFileRequest>) -> Response<Body> {
+    match load_review_file(&request) {
+        Ok(file) => json_response(StatusCode::OK, &file),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+fn load_review_file(
+    request: &ReviewFileRequest,
+) -> Result<ReviewFileResponse, (StatusCode, String)> {
+    let root = fs::canonicalize(&request.root).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "project directory is unavailable".to_string(),
+        )
+    })?;
+    let requested = PathBuf::from(&request.path);
+    let candidate = if requested.is_absolute() {
+        requested
+    } else {
+        root.join(requested)
+    };
+    let path = fs::canonicalize(candidate)
+        .map_err(|_| (StatusCode::NOT_FOUND, "file does not exist".to_string()))?;
+    if !path.starts_with(&root) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "file is outside the project directory".to_string(),
+        ));
+    }
+    let metadata = fs::metadata(&path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unable to inspect file: {error}"),
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "path is not a regular file".to_string(),
+        ));
+    }
+    if metadata.len() > MAX_REVIEW_FILE_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file exceeds the 2 MiB review limit".to_string(),
+        ));
+    }
+    let bytes = fs::read(&path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unable to read file: {error}"),
+        )
+    })?;
+    let content = String::from_utf8(bytes).map_err(|_| {
+        (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "only UTF-8 text files can be reviewed".to_string(),
+        )
+    })?;
+    let relative_path = path
+        .strip_prefix(&root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned();
+    Ok(ReviewFileResponse {
+        root: root.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
+        relative_path,
+        hash: stable_content_hash(content.as_bytes()),
+        size: metadata.len(),
+        line_count: if content.is_empty() {
+            0
+        } else {
+            content.lines().count()
+        },
+        language: review_language(&path).to_string(),
+        content,
+    })
+}
+
+fn stable_content_hash(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
+fn review_language(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "md" | "mdown" | "markdown" | "mkd" => "markdown",
+        "rs" => "rust",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "py" => "python",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "json" => "json",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "sh" | "bash" => "shell",
+        _ => "text",
+    }
+}
+
 async fn app_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/app.js"))
 }
@@ -303,6 +468,10 @@ async fn thread_workset_js() -> impl IntoResponse {
 
 async fn composer_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-tools.mjs"))
+}
+
+async fn document_review_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/document-review.mjs"))
 }
 
 async fn favorites_js() -> impl IntoResponse {
@@ -761,6 +930,12 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         return Err("content width must be comfortable, wide, or full".to_string());
     }
     if preferences
+        .artifact_width_ratio
+        .is_some_and(|ratio| !(0.2..=0.65).contains(&ratio))
+    {
+        return Err("artifact width ratio must be between 0.2 and 0.65".to_string());
+    }
+    if preferences
         .selected_thread
         .as_ref()
         .is_some_and(|value| value.len() > 256)
@@ -832,6 +1007,16 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                                 .turn_id
                                 .as_ref()
                                 .is_some_and(|value| value.len() > 256)
+                            || draft.target.as_ref().is_some_and(|target| {
+                                !matches!(target.kind.as_str(), "chatRange" | "fileRange")
+                                    || target.file_path.as_ref().is_some_and(|value| value.len() > 4096)
+                                    || target.root.as_ref().is_some_and(|value| value.len() > 4096)
+                                    || target.base_hash.as_ref().is_some_and(|value| value.len() > 128)
+                                    || target.prefix.as_ref().is_some_and(|value| value.len() > 256)
+                                    || target.suffix.as_ref().is_some_and(|value| value.len() > 256)
+                                    || matches!((target.start_offset, target.end_offset), (Some(start), Some(end)) if start > end)
+                                    || (target.kind == "fileRange" && target.file_path.as_deref().unwrap_or_default().is_empty())
+                            })
                     })
             })
     {
@@ -1008,6 +1193,7 @@ mod tests {
                 "/thread-catalog.mjs",
                 "/thread-workset.mjs",
                 "/composer-tools.mjs",
+                "/document-review.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
                 "/turn-navigator.mjs",
@@ -1317,9 +1503,45 @@ mod tests {
                 created_at: "2026-07-15T00:00:00Z".to_string(),
                 item_id: Some("item-1".to_string()),
                 turn_id: Some("turn-1".to_string()),
+                target: None,
             }],
         );
         assert!(validate_preferences(&preferences).is_ok());
+    }
+
+    #[test]
+    fn review_file_reader_is_utf8_only_and_confined_to_project_root() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        let outside = base.join("outside.md");
+        fs::create_dir_all(root.join("docs")).expect("create review fixture");
+        fs::write(root.join("docs/guide.md"), "# Guide\n\nHello\n").expect("write review file");
+        fs::write(&outside, "private").expect("write outside file");
+
+        let file = load_review_file(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "docs/guide.md".to_string(),
+        })
+        .expect("read project file");
+        assert_eq!(file.relative_path, "docs/guide.md");
+        assert_eq!(file.language, "markdown");
+        assert_eq!(file.line_count, 3);
+        assert!(file.hash.starts_with("fnv1a64:"));
+
+        let escaped = load_review_file(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: outside.to_string_lossy().into_owned(),
+        });
+        assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
+
+        fs::remove_file(root.join("docs/guide.md")).ok();
+        fs::remove_file(&outside).ok();
+        fs::remove_dir(root.join("docs")).ok();
+        fs::remove_dir(&root).ok();
+        fs::remove_dir(&base).ok();
     }
 
     #[test]

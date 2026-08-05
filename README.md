@@ -13,6 +13,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals.
 - Provides `@` project-file search, direct `$skill-name` discovery with structured App Server skill inputs, `!command` local shell mode, and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
+- Automatically creates and reuses one system-managed Codex Router Thread: it classifies a request against locally configured session responsibilities and starts the selected target Thread without switching the current window. It does not depend on Agent Deck, tmux, or a separate conductor daemon.
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
 - Saves any complete AI message directly from its structured Item, optionally includes the user question from the same Turn, and provides a searchable cross-backend, cross-thread favorites library with source navigation.
@@ -81,7 +82,7 @@ The desktop runtime has no Node.js or network dependency. Markdown browser asset
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md). Maintainers add notes under **Unreleased**, run `npm run version:bump -- <semver>`, verify with `npm run version:check`, commit, and push a matching `v<semver>` tag. The tag workflow validates all version metadata and creates a draft GitHub Release with Linux and macOS bundles.
 
-See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
+See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Thread Router specification](docs/thread-router/specification.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
 
 ## Current lifecycle boundary
 

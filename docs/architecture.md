@@ -16,6 +16,8 @@ There is no terminal emulator, tmux process, direct model API integration, or se
 
 The experimental Session Map feature adds Studio-owned structured navigation state without changing that history boundary. Its revisioned Items, Relations, and change history are local presentation/workflow data; Codex and OpenCode remain authoritative for Threads, Turns, and Items. A Map is created only after an explicit user action. Missing Maps are represented by the absence of a database row and do not produce a rail or placeholder for existing Threads. See the [Session Map specification](session-map/specification.md).
 
+The optional Thread Router is a Codex-only orchestration layer implemented in the WebView over the same App Server transport. It is independent of Agent Deck, tmux, and external conductor services. Studio creates and continuously reuses one ordinary Codex Thread as the durable routing controller. Its structured decision starts a Turn in an existing target Thread; target output continues through the normal App Server event stream and cache. See the [Thread Router specification](thread-router/specification.md).
+
 ## Transport and handshake
 
 App Server uses newline-delimited JSON over stdio. The Rust broker:
@@ -60,6 +62,8 @@ Agent prose and reasoning summaries pass through locally vendored Marked (GFM pa
 App Server delta notifications update only the affected Item in the browser model. Studio batches high-frequency updates with `requestAnimationFrame` and patches the active message, plan, reasoning, or command-output node directly. Markdown parsing and sanitization run after Item completion, not once for every token delta. Structural notifications still trigger a full transcript render.
 
 Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. The loaded set and render-model cache are deliberately process-local: after restart, Studio loads the most recently updated session for the selected backend and restores other histories only on first selection. The flat Attention view exposes this loaded workset and orders it by backend session update time. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore a cached model only when it was loaded in the current process and remains valid.
+
+Before a Router dispatch, Studio lazily reads the selected target Thread into that same cache. It then sends `turn/start` without changing the active Thread. Notifications are associated with the target model by `threadId`/`turnId`, so the target row changes state immediately and its transcript is ready when opened.
 
 ## Composer orchestration
 
@@ -106,6 +110,8 @@ The global favorites library is intentionally separate because it can contain su
 Favorites use validated, bounded SQLite records. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. Search returns summaries; full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
 
 Session Maps use the rollout-isolated `session-maps.sqlite3` database beside Studio settings. The Rust gateway owns schema creation, validation, optimistic revision checks, transactional operation batches, and undo snapshots. Provider history is not copied into these tables. Declarative custom template snapshots remain a later milestone.
+
+Thread Router configuration is small structured metadata stored in `settings.json`: the Studio-managed Router Thread ID plus each target's responsibility and ordinary/fallback role. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

@@ -75,6 +75,15 @@ import {
   addLoadedThread,
   updateLoadedCatalogTimestamp,
 } from './thread-workset.mjs'
+import {
+  finalAgentText,
+  normalizeThreadRouter,
+  parseRouterDecision,
+  routerCandidates,
+  routerDecisionForTurn,
+  routerDecisionSchema,
+  routerDeveloperInstructions,
+} from './thread-router.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 
 marked.setOptions({
@@ -168,6 +177,11 @@ const state = {
   hiddenCodexTurns: new Set(),
   sessionMapBootstrapAttempts: new Set(),
   sessionMapInlineProcessing: new Set(),
+  router: normalizeThreadRouter(null),
+  routerPending: new Map(),
+  routerDispatches: new Map(),
+  routerTargetTurns: new Map(),
+  routerEditor: null,
 }
 
 let preferencesReady = false
@@ -183,6 +197,14 @@ let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
+window.addEventListener('error', (event) => reportClientError(event.error || event.message))
+window.addEventListener('unhandledrejection', (event) => reportClientError(event.reason))
+
+function reportClientError(error) {
+  const summary = error?.message || String(error || 'Unknown WebView error')
+  const message = error?.stack && !String(error.stack).includes(summary) ? `${summary}\n${error.stack}` : error?.stack || summary
+  fetch('/studio/client-log', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: message.slice(0, 16 * 1024) }).catch(() => {})
+}
 
 async function init() {
   bindUI()
@@ -220,6 +242,18 @@ function bindUI() {
     closeActionMenus()
     openThreadInfo()
   })
+  $('#router-settings-action').addEventListener('click', openRouterDialog)
+  $('#router-form').addEventListener('submit', saveRouterSettings)
+  $('#close-router-dialog').addEventListener('click', closeRouterDialog)
+  $('#cancel-router').addEventListener('click', closeRouterDialog)
+  $('#router-target-search').addEventListener('input', (event) => {
+    captureRouterVisibleEdits()
+    state.routerEditor.query = event.target.value.trim().toLowerCase()
+    state.routerEditor.page = 0
+    renderRouterResponsibilities({ capture: false })
+  })
+  $('#router-page-previous').addEventListener('click', () => changeRouterPage(-1))
+  $('#router-page-next').addEventListener('click', () => changeRouterPage(1))
   $('#session-map-action').addEventListener('click', handleSessionMapAction)
   $('#session-map-more').addEventListener('click', () => toggleActionMenu('session-map-menu', 'session-map-more'))
   $('#close-session-map').addEventListener('click', closeSessionMapRail)
@@ -573,7 +607,14 @@ function handleAppServerMessage(message) {
       delete state.annotationAdditional[`codex:${threadId}`]
       delete state.openingMessages[`codex:${threadId}`]
     }
+    if (state.router.threadId === threadId) state.router = normalizeThreadRouter(null)
+    else if (state.router.responsibilities[threadId]) {
+      const responsibilities = { ...state.router.responsibilities }
+      delete responsibilities[threadId]
+      state.router = normalizeThreadRouter({ ...state.router, responsibilities })
+    }
     invalidateThreadModel('codex', threadId)
+    persistPreferences()
     if (state.selectedId === threadId) {
       state.selectedId = null
       state.selectedByBackend.codex = null
@@ -617,6 +658,9 @@ function handleAppServerMessage(message) {
   if (!targetModel) return
   if (applyCodexNotification(targetModel, message)) {
     markCachedModelValidated('codex', targetModel)
+    if (message.method === 'turn/completed') {
+      completeRouterTurn(message, targetModel).catch((error) => console.error('Thread Router dispatch failed', error))
+    }
     if (targetModel !== state.model) {
       updateThreadStatusFromNotification(message)
       return
@@ -960,6 +1004,9 @@ function rejectPending(error) {
 async function loadThreads() {
   const result = await rpc('thread/list', { limit: 100 })
   setActiveThreads(Array.isArray(result?.data) ? result.data : [])
+  if (state.backend === 'codex') {
+    await ensureManagedRouterThread()
+  }
   renderThreadList()
   refreshInactiveCatalog()
   const preferred = state.selectedId
@@ -1009,10 +1056,11 @@ function renderThreadList() {
     const status = threadStatus(thread)
     const active = backend === state.backend && thread.id === state.selectedId
     const tag = backend === 'codex' ? 'CX' : 'OC'
+    const router = backend === 'codex' && thread.id === state.router.threadId
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
       <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('未记录项目目录'))}">${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></span>
-      <span class="backend-tag ${backend}" title="${backend === 'codex' ? 'Codex' : 'OpenCode'}">${tag}</span>
+      <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${backend === 'codex' ? 'Codex' : 'OpenCode'}">${tag}</span></span>
     </button>`
   }
   if (state.filter === 'attention') {
@@ -1332,6 +1380,7 @@ function renderWorkspace() {
   $('#thread-status').className = `status-badge ${status}`
   $('#archive-thread').disabled = state.backend === 'opencode'
   $('#archive-thread').title = state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : ''
+  $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
   renderComposerState()
   renderAnnotationRail()
   captureOpeningMessage()
@@ -2175,6 +2224,7 @@ function replaceCompletedItem(params = {}) {
 }
 
 function renderTurn(turn, index) {
+  if (isRouterThread() && state.backend === 'codex') return renderRouterTurn(turn, index)
   const items = Array.isArray(turn.items) ? turn.items : []
   const content = items.map((item) => renderItem(item, turn.id)).join('')
   const error = turn.error?.message
@@ -2184,6 +2234,32 @@ function renderTurn(turn, index) {
   return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}">
     <div class="turn-separator">Turn ${index + 1}</div>${content || `<div class="reasoning">${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`}${result}
   </section>`
+}
+
+function renderRouterTurn(turn, index) {
+  const items = Array.isArray(turn.items) ? turn.items : []
+  const userItems = items.filter((item) => item.type === 'userMessage').map((item) => renderItem(item, turn.id)).join('')
+  const runtime = state.routerDispatches.get(String(turn.id || ''))
+  const decision = runtime?.decision || routerDecisionForTurn(turn, currentRouterCandidates().map((candidate) => candidate.id))
+  let card = ''
+  if (decision?.action === 'clarify') {
+    card = `<article class="router-card clarify"><header><span class="router-card-mark">?</span><div><strong>${t('需要确认目标')}</strong><small>${escapeHtml(decision.reason || '')}</small></div></header><p>${escapeHtml(decision.message)}</p></article>`
+  } else if (decision?.action === 'dispatch') {
+    const target = state.threadsByBackend.codex.find((thread) => thread.id === decision.targetThreadId)
+    const status = runtime?.status || 'routed'
+    const labels = {
+      dispatching: '正在派发', running: '目标执行中', completed: '目标已完成', failed: '派发失败', routed: '已路由',
+    }
+    card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong>${escapeHtml(target ? threadTitle(target) : decision.targetThreadId)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${runtime?.error ? `<p class="router-card-error">${escapeHtml(runtime.error)}</p>` : ''}<footer><span>${t('请求已发送到目标会话')}</span><button type="button" data-router-target="${escapeHtml(decision.targetThreadId)}">${t('打开会话')}</button></footer></article>`
+  } else if (runtime?.status === 'failed') {
+    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('路由失败')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header></article>`
+  } else if (turn.status === 'inProgress' || state.routerPending.has(String(turn.id || ''))) {
+    card = `<article class="router-card routing"><header><span class="router-card-mark pulse-mark">↝</span><div><strong>${t('正在选择目标会话')}</strong><small>${t('Router 正在比较会话职责')}</small></div></header></article>`
+  } else {
+    const content = items.map((item) => renderItem(item, turn.id)).join('')
+    return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${content}</section>`
+  }
+  return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
 }
 
 function renderItem(item, turnId) {
@@ -2273,6 +2349,11 @@ function renderMarkdown(value) {
 }
 
 async function handleTranscriptClick(event) {
+  const routerTarget = event.target.closest('[data-router-target]')
+  if (routerTarget) {
+    await selectThread(routerTarget.dataset.routerTarget, { backend: 'codex' })
+    return
+  }
   const favoriteButton = event.target.closest('[data-favorite-message]')
   if (favoriteButton) {
     const element = favoriteButton.closest('[data-turn-id][data-item-id]')
@@ -2735,14 +2816,16 @@ function renderComposerState() {
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = shellMode ? t('运行命令') : active && state.backend === 'codex' ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? t('运行命令') : isRouterThread() ? t('路由') : active && state.backend === 'codex' ? '追加意见' : '发送'
   const details = [
     options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
     options.sandboxPolicy?.type,
     state.pendingSkills[selectedStateKey()]?.length && t('{count} 个技能', { count: state.pendingSkills[selectedStateKey()].length }),
     state.pendingFiles[selectedStateKey()]?.length && t('{count} 个文件', { count: state.pendingFiles[selectedStateKey()].length }),
   ].filter(Boolean)
-  const baseHint = shellMode
+  const baseHint = isRouterThread() && !shellMode
+    ? active ? 'Router 正在选择目标会话' : '请求将由 Codex 路由，并在目标会话中执行'
+    : shellMode
     ? active
       ? 'Shell 命令需等待当前 Turn 完成'
       : '本地 Shell · 不经过模型且不受 Turn sandbox 限制'
@@ -2792,6 +2875,19 @@ async function sendComposer(event) {
     return
   }
   if (!text || !state.selectedId) return
+  if (isRouterThread()) {
+    const button = $('#send-message')
+    button.disabled = true
+    transcriptScrollFollower.reset()
+    try {
+      await startRouterTurn(text)
+      input.value = ''
+      hideComposerMenu()
+      renderComposerState()
+    } catch (error) { showError(error) }
+    finally { button.disabled = false }
+    return
+  }
   const skillInputs = state.pendingSkills[selectedStateKey()] || []
   const turnInput = [{ type: 'text', text }, ...skillInputs, ...(state.pendingFiles[selectedStateKey()] || [])]
   const button = $('#send-message')
@@ -2849,6 +2945,112 @@ async function prepareSessionMapTurn() {
     })
   }
   setSessionMapSyncState('syncing', '当前 Map 已加入本次 Turn 上下文')
+}
+
+function isRouterThread(threadId = state.selectedId, backend = state.backend) {
+  return backend === 'codex' && Boolean(threadId) && threadId === state.router.threadId
+}
+
+function currentRouterCandidates() {
+  return routerCandidates(state.router, state.threadsByBackend.codex, state.openingMessages)
+}
+
+async function startRouterTurn(text) {
+  if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('Router 正在处理上一条请求。'))
+  const candidates = currentRouterCandidates()
+  if (!candidates.length) throw new Error(t('Router 没有可用的目标会话，请先打开“路由设置”。'))
+  await rpc('thread/resume', {
+    threadId: state.router.threadId,
+    developerInstructions: routerDeveloperInstructions(candidates),
+  })
+  const result = await rpc('turn/start', {
+    threadId: state.router.threadId,
+    clientUserMessageId: randomId(),
+    input: [{ type: 'text', text }],
+    outputSchema: routerDecisionSchema(),
+    ...currentTurnOptions(),
+  })
+  if (!result?.turn) throw new Error(t('Router 未能启动新的 Turn。'))
+  const turnId = String(result.turn.id || '')
+  state.routerPending.set(turnId, {
+    candidateIds: candidates.map((candidate) => candidate.id),
+    requestedAt: Date.now(),
+  })
+  state.routerDispatches.set(turnId, { status: 'routing' })
+  applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: state.router.threadId, turn: result.turn } })
+  cacheThreadModel('codex', state.router.threadId, state.model)
+  renderTranscript()
+}
+
+async function completeRouterTurn(message, model) {
+  const turnId = String(message.params?.turn?.id || message.params?.turnId || '')
+  if (!turnId) return
+  const routed = state.routerTargetTurns.get(turnId)
+  if (routed) {
+    const completed = model.turns?.find((turn) => turn.id === turnId) || message.params?.turn
+    const existing = state.routerDispatches.get(routed.routerTurnId) || {}
+    state.routerDispatches.set(routed.routerTurnId, {
+      ...existing,
+      status: completed?.status === 'failed' ? 'failed' : 'completed',
+      error: completed?.error?.message || '',
+    })
+    state.routerTargetTurns.delete(turnId)
+    if (isRouterThread()) renderTranscript()
+    return
+  }
+
+  const pending = state.routerPending.get(turnId)
+  if (!pending) return
+  state.routerPending.delete(turnId)
+  const turn = model.turns?.find((candidate) => candidate.id === turnId) || message.params?.turn
+  try {
+    const decision = parseRouterDecision(finalAgentText(turn), pending.candidateIds)
+    if (decision.action === 'clarify') {
+      state.routerDispatches.set(turnId, { status: 'clarify', decision })
+      if (isRouterThread()) renderTranscript()
+      return
+    }
+    const target = state.threadsByBackend.codex.find((thread) => thread.id === decision.targetThreadId)
+    if (!target) throw new Error(t('目标会话已不存在。'))
+    state.routerDispatches.set(turnId, { status: 'dispatching', decision })
+    if (isRouterThread()) renderTranscript()
+    const targetModel = await ensureCodexThreadModel(target.id)
+    if (targetModel.activeTurnId) throw new Error(t('“{title}”正在运行，暂时不能接收新请求。', { title: threadTitle(target) }))
+    const result = await rpc('turn/start', {
+      threadId: target.id,
+      clientUserMessageId: randomId(),
+      input: [{ type: 'text', text: decision.forwardedPrompt }],
+    })
+    if (!result?.turn) throw new Error(t('目标会话未能启动新的 Turn。'))
+    applyCodexNotification(targetModel, { method: 'turn/started', params: { threadId: target.id, turn: result.turn } })
+    cacheThreadModel('codex', target.id, targetModel)
+    updateLoadedThreadTimestamp('codex', target.id)
+    state.routerDispatches.set(turnId, {
+      status: 'running', decision, targetTurnId: result.turn.id,
+    })
+    state.routerTargetTurns.set(String(result.turn.id), { routerTurnId: turnId, targetThreadId: target.id })
+    renderThreadList()
+    if (isRouterThread() || state.model === targetModel) {
+      renderWorkspace()
+      renderTranscript()
+    }
+  } catch (error) {
+    state.routerDispatches.set(turnId, { status: 'failed', error: error.message })
+    if (isRouterThread()) renderTranscript()
+    toast(t('路由失败：{message}', { message: error.message }), 'error')
+  }
+}
+
+async function ensureCodexThreadModel(threadId) {
+  const key = threadCatalogKey('codex', threadId)
+  const result = await rpc('thread/read', { threadId, includeTurns: true })
+  const model = state.backend === 'codex' && state.selectedId === threadId
+    ? state.model
+    : state.threadModels.get(key)?.model || createCodexViewModel()
+  hydrateCodexThread(model, result.thread)
+  mergeThreadMetadata(result.thread)
+  cacheThreadModel('codex', threadId, model)
+  return model
 }
 
 async function interruptTurn() {
@@ -3548,6 +3750,7 @@ async function loadPreferences() {
   }
   state.annotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
   state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
+  state.router = normalizeThreadRouter(saved.router)
   preferencesReady = true
 }
 
@@ -3565,6 +3768,7 @@ function preferencesSnapshot() {
     annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
     openingMessages: state.openingMessages,
+    router: state.router.threadId || Object.keys(state.router.responsibilities).length ? state.router : null,
   }
 }
 
@@ -3575,6 +3779,115 @@ function persistPreferences() {
     const response = await fetch('/studio/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
   }).catch((error) => console.error('Unable to persist preferences', error))
+}
+
+function openRouterDialog() {
+  closeActionMenus()
+  if (state.backend !== 'codex') return
+  const managed = state.threadsByBackend.codex.find((thread) => thread.id === state.router.threadId)
+  $('#managed-router-status').textContent = managed
+    ? t('已创建并持续复用 · {title}', { title: threadTitle(managed) })
+    : t('首次保存时由 Studio 自动创建')
+  state.routerEditor = {
+    page: 0,
+    pageSize: 12,
+    query: '',
+    responsibilities: Object.fromEntries(Object.entries(state.router.responsibilities).map(([id, value]) => [id, { ...value }])),
+  }
+  $('#router-target-search').value = ''
+  $('#router-error').classList.add('hidden')
+  renderRouterResponsibilities({ capture: false })
+  $('#router-dialog').showModal()
+}
+
+function closeRouterDialog() {
+  $('#router-dialog').close()
+  state.routerEditor = null
+}
+
+function captureRouterVisibleEdits() {
+  if (!state.routerEditor) return
+  for (const row of $$('#router-responsibilities .router-responsibility')) {
+    const description = row.querySelector('.router-description').value.trim()
+    const fallback = row.querySelector('.router-fallback').value
+    if (description || fallback !== 'none') state.routerEditor.responsibilities[row.dataset.routerThreadId] = { description, fallback }
+    else delete state.routerEditor.responsibilities[row.dataset.routerThreadId]
+  }
+}
+
+function renderRouterResponsibilities({ capture = true } = {}) {
+  if (!state.routerEditor) return
+  if (capture) captureRouterVisibleEdits()
+  const routerId = state.router.threadId
+  const container = $('#router-responsibilities')
+  const query = state.routerEditor.query
+  const targets = state.threadsByBackend.codex.filter((thread) => {
+    if (thread.id === routerId) return false
+    if (!query) return true
+    const assignment = state.routerEditor.responsibilities[thread.id]
+    return [threadTitle(thread), thread.cwd, assignment?.description].some((value) => String(value || '').toLowerCase().includes(query))
+  })
+  const pages = Math.max(1, Math.ceil(targets.length / state.routerEditor.pageSize))
+  state.routerEditor.page = Math.min(state.routerEditor.page, pages - 1)
+  const start = state.routerEditor.page * state.routerEditor.pageSize
+  const visible = targets.slice(start, start + state.routerEditor.pageSize)
+  container.innerHTML = visible.length ? visible.map((thread) => {
+    const assignment = state.routerEditor.responsibilities[thread.id] || { description: '', fallback: 'none' }
+    return `<section class="router-responsibility" data-router-thread-id="${escapeHtml(thread.id)}">
+      <header><div><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n>${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></div><select class="router-fallback" aria-label="${t('目标角色')}"><option value="none"${assignment.fallback === 'none' ? ' selected' : ''}>${t('普通目标')}</option><option value="fallback"${assignment.fallback === 'fallback' ? ' selected' : ''}>${t('兜底目标')}</option></select></header>
+      <textarea class="router-description" rows="2" maxlength="4096" placeholder="${t('例如：负责书籍阅读、概念学习和知识整理')}">${escapeHtml(assignment.description)}</textarea>
+    </section>`
+  }).join('') : `<div class="list-empty">${t(query ? '没有匹配的目标会话' : '没有可作为目标的 Codex 会话')}</div>`
+  $('#router-page-summary').textContent = t('第 {page} / {pages} 页 · 共 {count} 个', { page: state.routerEditor.page + 1, pages, count: targets.length })
+  $('#router-page-previous').disabled = state.routerEditor.page === 0
+  $('#router-page-next').disabled = state.routerEditor.page >= pages - 1
+}
+
+function changeRouterPage(offset) {
+  if (!state.routerEditor) return
+  captureRouterVisibleEdits()
+  state.routerEditor.page = Math.max(0, state.routerEditor.page + offset)
+  renderRouterResponsibilities({ capture: false })
+}
+
+async function saveRouterSettings(event) {
+  event.preventDefault()
+  captureRouterVisibleEdits()
+  const responsibilities = state.routerEditor?.responsibilities || {}
+  const button = $('#router-form .primary-button')
+  button.disabled = true
+  $('#router-error').classList.add('hidden')
+  try {
+    const threadId = await ensureManagedRouterThread()
+    delete responsibilities[threadId]
+    state.router = normalizeThreadRouter({ threadId, responsibilities })
+    persistPreferences()
+    closeRouterDialog()
+    renderThreadList()
+    renderWorkspace()
+    toast(t('Router 设置已保存'))
+  } catch (error) {
+    $('#router-error').textContent = error.message
+    $('#router-error').classList.remove('hidden')
+  } finally { button.disabled = false }
+}
+
+async function ensureManagedRouterThread() {
+  const cwd = state.backendInfo?.routerWorkspace
+  if (!cwd) throw new Error(t('无法确定 Studio Router 的工作目录。'))
+  const existing = state.threadsByBackend.codex.find((thread) => thread.id === state.router.threadId)
+  if (existing?.cwd === cwd) return existing.id
+  const result = await rpc('thread/start', {
+    cwd,
+    approvalPolicy: 'never',
+    sandbox: 'read-only',
+  })
+  if (!result?.thread?.id) throw new Error(t('无法创建系统 Router 会话。'))
+  await rpc('thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
+  mergeThreadMetadata({ ...result.thread, name: 'Thread Router' })
+  state.router = normalizeThreadRouter({ ...state.router, threadId: result.thread.id })
+  persistPreferences()
+  return result.thread.id
 }
 
 function openSettings() {
@@ -3788,4 +4101,4 @@ function toast(message, kind = 'info') {
   $('#toast-region').appendChild(element)
   setTimeout(() => element.remove(), 3200)
 }
-function showError(error) { console.error(error); toast(error?.message || String(error), 'error') }
+function showError(error) { console.error(error); reportClientError(error); toast(error?.message || String(error), 'error') }

@@ -63,6 +63,7 @@
                 <button id="refresh-thread" type="button" role="menuitem">重载</button>
                 <span class="menu-separator"></span>
                 <button id="session-map-action" type="button" role="menuitem">创建 Map</button>
+                <button id="router-settings-action" type="button" role="menuitem">路由设置</button>
                 <button id="thread-info" type="button" role="menuitem">会话信息</button>
               </div>
             </div>
@@ -263,6 +264,21 @@
       <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button" type="button">复制起始问题</button><button id="done-thread-info" class="primary-button" type="button">完成</button></footer>
     </dialog>
 
+    <dialog id="router-dialog" class="dialog router-dialog">
+      <form id="router-form">
+        <header class="dialog-header"><div><span class="eyebrow">THREAD ROUTER</span><h2>会话路由</h2><p>在一个固定入口发送请求，由 Codex 转发到最合适的目标会话。</p></div><button id="close-router-dialog" class="icon-button" type="button">×</button></header>
+        <div class="router-dialog-body">
+          <section class="managed-router"><span class="router-card-mark">R</span><div><strong>Thread Router</strong><small id="managed-router-status">由 Studio 自动创建并持续复用</small></div><span>系统会话</span></section>
+          <div class="router-section-heading"><div><strong>会话职责</strong><small>名称、目录和起始问题会自动提供给 Router；这里补充最明确的职责边界。</small></div></div>
+          <label class="router-search"><span aria-hidden="true">⌕</span><input id="router-target-search" type="search" placeholder="搜索目标会话或目录" /></label>
+          <div id="router-responsibilities" class="router-responsibilities"></div>
+          <div class="router-pagination"><span id="router-page-summary"></span><div><button id="router-page-previous" class="subtle-button compact" type="button">上一页</button><button id="router-page-next" class="subtle-button compact" type="button">下一页</button></div></div>
+          <div id="router-error" class="form-error hidden"></div>
+        </div>
+        <footer class="dialog-footer"><button id="cancel-router" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+      </form>
+    </dialog>
+
     <dialog id="favorite-dialog" class="dialog favorite-dialog">
       <form id="favorite-form">
         <header class="dialog-header">
@@ -325,7 +341,7 @@
           <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small>必须是本机绝对路径。</small></label>
           <label class="field"><span>模型（可选）</span><input id="new-thread-model" placeholder="使用 Codex 默认模型" /></label>
           <label id="new-thread-approval-field" class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
-          <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspaceWrite">项目目录可写</option><option value="readOnly">只读</option><option value="dangerFullAccess">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
+          <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspace-write">项目目录可写</option><option value="read-only">只读</option><option value="danger-full-access">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
           <div id="new-thread-error" class="form-error hidden"></div>
         </div>
         <footer class="dialog-footer"><button id="cancel-new-thread" class="subtle-button" type="button">取消</button><button id="create-thread" class="primary-button" type="submit">创建并打开</button></footer>

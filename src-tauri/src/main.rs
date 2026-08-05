@@ -76,6 +76,24 @@ struct OpeningMessage {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RouterResponsibility {
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    fallback: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadRouterPreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    responsibilities: BTreeMap<String, RouterResponsibility>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
@@ -105,6 +123,8 @@ struct StudioPreferences {
     annotation_prompt_templates: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     opening_messages: BTreeMap<String, OpeningMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    router: Option<ThreadRouterPreferences>,
 }
 
 #[derive(Serialize)]
@@ -115,6 +135,7 @@ struct BackendInfo {
     binary: String,
     protocol: &'static str,
     transport: &'static str,
+    router_workspace: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -198,6 +219,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/favorites.mjs", get(favorites_js))
         .route("/session-map.mjs", get(session_map_js))
+        .route("/thread-router.mjs", get(thread_router_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
         .route("/vendor/marked.esm.js", get(marked_js))
@@ -210,6 +232,7 @@ fn gateway_router(state: GatewayState) -> Router {
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
         )
+        .route("/studio/client-log", axum::routing::post(client_log))
         .route(
             "/studio/favorites",
             get(list_favorites).post(create_favorite),
@@ -285,6 +308,10 @@ async fn session_map_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-map.mjs"))
 }
 
+async fn thread_router_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-router.mjs"))
+}
+
 async fn turn_navigator_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/turn-navigator.mjs"))
 }
@@ -332,12 +359,17 @@ async fn github_markdown_css() -> impl IntoResponse {
 }
 
 async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
+    let router_workspace = studio_router_workspace_path();
+    if let Err(error) = fs::create_dir_all(&router_workspace) {
+        eprintln!("failed to create Studio Router workspace: {error}");
+    }
     axum::Json(BackendInfo {
         app_name: "Codex Thread Studio",
         app_version: env!("CARGO_PKG_VERSION"),
         binary: state.codex.binary().to_string(),
         protocol: "Codex App Server v2",
         transport: "stdio JSONL via Studio WebSocket",
+        router_workspace: router_workspace.to_string_lossy().into_owned(),
     })
 }
 
@@ -407,6 +439,12 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
         Ok(()) => json_response(StatusCode::OK, &preferences),
         Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
     }
+}
+
+async fn client_log(body: String) -> StatusCode {
+    let message = body.chars().take(16 * 1024).collect::<String>();
+    eprintln!("Studio WebView: {message}");
+    StatusCode::NO_CONTENT
 }
 
 async fn list_favorites(
@@ -636,6 +674,16 @@ fn studio_preferences_path() -> PathBuf {
     env::temp_dir().join("codex-thread-studio-settings.json")
 }
 
+fn studio_router_workspace_path() -> PathBuf {
+    if let Some(path) = env::var_os("XDG_DATA_HOME").filter(|path| !path.is_empty()) {
+        return PathBuf::from(path).join("codex-thread-studio/router");
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".local/share/codex-thread-studio/router");
+    }
+    env::temp_dir().join("codex-thread-studio-router")
+}
+
 fn legacy_preferences_path() -> PathBuf {
     if let Some(path) = env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
         return PathBuf::from(path)
@@ -821,6 +869,23 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         })
     {
         return Err("opening message preferences are invalid".to_string());
+    }
+    if let Some(router) = &preferences.router {
+        if router
+            .thread_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 256)
+            || router.responsibilities.len() > 2048
+            || router.responsibilities.iter().any(|(id, responsibility)| {
+                id.is_empty()
+                    || id.len() > 256
+                    || router.thread_id.as_ref() == Some(id)
+                    || responsibility.description.len() > 4096
+                    || !matches!(responsibility.fallback.as_str(), "none" | "fallback")
+            })
+        {
+            return Err("thread router preferences are invalid".to_string());
+        }
     }
     Ok(())
 }
@@ -1326,6 +1391,45 @@ mod tests {
         preferences
             .attention_threads
             .push("unknown:thread-1".to_string());
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_thread_router_preferences() {
+        let mut preferences = StudioPreferences::default();
+        preferences.router = Some(ThreadRouterPreferences {
+            thread_id: Some("router-thread".to_string()),
+            responsibilities: BTreeMap::from([
+                (
+                    "learn-thread".to_string(),
+                    RouterResponsibility {
+                        description: "Books and structured learning".to_string(),
+                        fallback: "fallback".to_string(),
+                    },
+                ),
+                (
+                    "general-thread".to_string(),
+                    RouterResponsibility {
+                        description: "Requests without a better match".to_string(),
+                        fallback: "fallback".to_string(),
+                    },
+                ),
+            ]),
+        });
+        assert!(validate_preferences(&preferences).is_ok());
+
+        preferences
+            .router
+            .as_mut()
+            .unwrap()
+            .responsibilities
+            .insert(
+                "router-thread".to_string(),
+                RouterResponsibility {
+                    description: String::new(),
+                    fallback: "none".to_string(),
+                },
+            );
         assert!(validate_preferences(&preferences).is_err());
     }
 

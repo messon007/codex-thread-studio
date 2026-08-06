@@ -29,6 +29,7 @@ import {
   isMarkdownFile,
   lineNumberAt,
   normalizeAnnotationTarget,
+  snapshotAnnotationSelection,
 } from './document-review.mjs'
 import {
   autoFavoriteTitle,
@@ -180,6 +181,7 @@ const state = {
   annotationPromptTemplate: annotationPromptDefaults['zh-CN'],
   openingMessages: {},
   pendingSelection: null,
+  pendingAnnotation: null,
   artifact: null,
   artifactView: 'preview',
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
@@ -3956,8 +3958,10 @@ function openAnnotationFromSelection() {
     captureTranscriptSelection()
     if (!state.pendingSelection?.quote) return toast('请先在 Codex 输出中选择文字', 'error')
   }
-  $('#annotation-quote').textContent = state.pendingSelection.quote
-  const target = state.pendingSelection.target
+  state.pendingAnnotation = snapshotAnnotationSelection(state.pendingSelection)
+  if (!state.pendingAnnotation) return toast('请重新选择需要批注的文字', 'error')
+  $('#annotation-quote').textContent = state.pendingAnnotation.quote
+  const target = state.pendingAnnotation.target
   $('#annotation-source-hint').textContent = target?.kind === 'fileRange'
     ? t('来自 {path}，批注会保留文件位置并交给当前会话。', { path: target.filePath })
     : t('来自当前会话回复，批注会保留消息位置。')
@@ -4006,6 +4010,7 @@ function hideSelectionPopover(clear = true) {
 
 function closeAnnotationDialog() {
   $('#annotation-dialog').close()
+  state.pendingAnnotation = null
   state.pendingSelection = null
   window.getSelection()?.removeAllRanges()
 }
@@ -4018,7 +4023,8 @@ function addAnnotation(event) {
   event.preventDefault()
   const comment = $('#annotation-comment').value.trim()
   const errorBox = $('#annotation-error')
-  if (!state.selectedId || !state.pendingSelection?.quote || !comment) {
+  const annotation = state.pendingAnnotation
+  if (!state.selectedId || !annotation?.quote || !comment) {
     errorBox.textContent = '选中内容和意见都不能为空。'
     errorBox.classList.remove('hidden')
     return
@@ -4031,12 +4037,12 @@ function addAnnotation(event) {
   }
   state.annotationDrafts[selectedStateKey()] = [...drafts, {
     id: randomId(),
-    quote: state.pendingSelection.quote,
+    quote: annotation.quote,
     comment: comment.slice(0, 16000),
     createdAt: new Date().toISOString(),
-    itemId: state.pendingSelection.itemId,
-    turnId: state.pendingSelection.turnId,
-    target: state.pendingSelection.target || normalizeAnnotationTarget(state.pendingSelection),
+    itemId: annotation.itemId,
+    turnId: annotation.turnId,
+    target: annotation.target,
   }]
   persistPreferences()
   closeAnnotationDialog()

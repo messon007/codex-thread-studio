@@ -383,6 +383,7 @@ const english = {
   '归档当前 Codex 会话？': 'Archive the current Codex session?',
   '永久删除当前 Codex 会话及其持久化历史？此操作无法撤销。': 'Permanently delete this Codex session and its stored history? This cannot be undone.',
   '请先在 Codex 输出中选择文字': 'Select text in the Codex output first',
+  '请重新选择需要批注的文字': 'Select the text to comment on again',
   '请先在 AI 输出中选择文字': 'Select text in the AI output first',
   '无法确定所选文字的消息位置，请在一条回复内选择': 'The selected text could not be anchored. Select within a single response.',
   '选中内容和意见都不能为空。': 'The selected text and comment are required.',

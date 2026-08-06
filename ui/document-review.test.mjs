@@ -6,6 +6,7 @@ import {
   lineNumberAt,
   locateQuote,
   normalizeAnnotationTarget,
+  snapshotAnnotationSelection,
 } from './document-review.mjs'
 
 test('locates a selected file range and preserves nearby anchors', () => {
@@ -29,4 +30,21 @@ test('normalizes legacy chat annotations without losing anchors', () => {
 
 test('extracts a portable file display name', () => {
   assert.equal(fileDisplayName('C:\\work\\README.md'), 'README.md')
+})
+
+test('snapshots a document annotation independently from transient selection state', () => {
+  const selection = {
+    quote: 'selected paragraph',
+    target: {
+      kind: 'fileRange', filePath: '/work/README.md', root: '/work', baseHash: 'abc',
+      startOffset: 12, endOffset: 30, prefix: 'before', suffix: 'after',
+    },
+  }
+  const snapshot = snapshotAnnotationSelection(selection)
+  selection.quote = ''
+  selection.target.filePath = '/changed.md'
+
+  assert.equal(snapshot.quote, 'selected paragraph')
+  assert.equal(snapshot.target.filePath, '/work/README.md')
+  assert.equal(snapshot.target.startOffset, 12)
 })

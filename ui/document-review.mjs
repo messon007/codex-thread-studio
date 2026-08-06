@@ -21,6 +21,17 @@ export function normalizeAnnotationTarget(draft = {}) {
   }
 }
 
+export function snapshotAnnotationSelection(selection) {
+  const quote = String(selection?.quote || '').trim().slice(0, MAX_QUOTE_LENGTH)
+  if (!quote) return null
+  return {
+    quote,
+    itemId: selection?.itemId ? String(selection.itemId).slice(0, 256) : null,
+    turnId: selection?.turnId ? String(selection.turnId).slice(0, 256) : null,
+    target: normalizeAnnotationTarget(selection),
+  }
+}
+
 export function locateQuote(content, quote, fromOffset = 0) {
   const source = String(content || '')
   const selected = String(quote || '').slice(0, MAX_QUOTE_LENGTH)

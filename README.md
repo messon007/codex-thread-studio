@@ -39,7 +39,8 @@ The Rust broker owns the Codex handshake and the OpenCode process/authentication
 - Tauri 2 system dependencies
 - A current Codex CLI with `codex app-server`
 - OpenCode CLI for OpenCode mode (`opencode serve`)
-- A supported system WebView (WebKitGTK on Linux or WKWebView on macOS)
+- A supported system WebView (WebKitGTK on Linux, WKWebView on macOS, or WebView2 on Windows 11)
+- WSL2 with Codex and/or OpenCode installed inside the selected distribution when running the Windows client
 
 ## Run
 
@@ -65,6 +66,14 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-
 
 Use `CODEX_THREAD_STUDIO_OPENCODE_BIN=/absolute/path/to/opencode` when OpenCode is outside the GUI launcher's `PATH`.
 
+On Windows, Studio itself is native but its AI backends run only inside WSL2; Windows `.cmd` and `.exe` backend installations are not used. Configure the distribution, Linux user, and optional backend paths in Settings, restart Studio, and enter project paths in Linux form such as `/home/user/project`.
+
+```powershell
+wsl --list --verbose
+wsl -d Ubuntu -- bash -lc 'codex --version; opencode --version'
+cargo run --package codex-thread-studio
+```
+
 ## Verification
 
 ```bash
@@ -80,7 +89,7 @@ The desktop runtime has no Node.js or network dependency. Markdown browser asset
 
 `src-tauri/Cargo.toml` is the single manually maintained application-version source; Tauri inherits it automatically. The About panel shows the same compile-time value.
 
-Release notes live in [CHANGELOG.md](CHANGELOG.md). Maintainers add notes under **Unreleased**, run `npm run version:bump -- <semver>`, verify with `npm run version:check`, commit, and push a matching `v<semver>` tag. The tag workflow validates all version metadata and creates a draft GitHub Release with Linux and macOS bundles.
+Release notes live in [CHANGELOG.md](CHANGELOG.md). Maintainers add notes under **Unreleased**, run `npm run version:bump -- <semver>`, verify with `npm run version:check`, commit, and push a matching `v<semver>` tag. The tag workflow validates all version metadata and creates a draft GitHub Release with Linux, macOS, and Windows bundles.
 
 See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Thread Router specification](docs/thread-router/specification.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
 

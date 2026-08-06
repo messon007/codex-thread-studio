@@ -7,8 +7,11 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, Mutex};
+
+use crate::backend_runtime::BackendRuntime;
+#[cfg(windows)]
+use crate::backend_runtime::RuntimeFile;
 
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
 const MAX_CLIENT_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -16,7 +19,7 @@ const MAX_CLIENT_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone)]
 pub struct CodexAppServer {
     binary: Arc<str>,
-    path: Arc<std::ffi::OsString>,
+    runtime: Arc<BackendRuntime>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
     events: broadcast::Sender<String>,
     generation: Arc<AtomicU64>,
@@ -30,11 +33,11 @@ struct ProcessConnection {
 }
 
 impl CodexAppServer {
-    pub fn new(binary: String, path: std::ffi::OsString) -> Self {
+    pub fn new(binary: String, runtime: BackendRuntime) -> Self {
         let (events, _) = broadcast::channel(2_048);
         Self {
             binary: Arc::from(binary),
-            path: Arc::new(path),
+            runtime: Arc::new(runtime),
             process: Arc::new(Mutex::new(None)),
             events,
             generation: Arc::new(AtomicU64::new(0)),
@@ -45,21 +48,39 @@ impl CodexAppServer {
         &self.binary
     }
 
+    pub fn execution_environment(&self) -> &'static str {
+        self.runtime.environment()
+    }
+
+    pub fn wsl_distribution(&self) -> Option<&str> {
+        self.runtime.wsl_distribution()
+    }
+
+    #[cfg(windows)]
+    pub async fn read_wsl_file(
+        &self,
+        root: &str,
+        path: &str,
+        max_bytes: u64,
+    ) -> std::io::Result<RuntimeFile> {
+        self.runtime.read_wsl_file(root, path, max_bytes).await
+    }
+
     async fn ensure_started(&self) -> Result<(), String> {
         if self.process.lock().await.is_some() {
             return Ok(());
         }
 
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut command = Command::new(self.binary.as_ref());
+        let mut command = self.runtime.command(
+            self.binary.as_ref(),
+            &["app-server", "--stdio"],
+            &[("LOG_FORMAT", "json")],
+        );
         command
-            .args(["app-server", "--stdio"])
-            .env("PATH", self.path.as_ref())
-            .env("LOG_FORMAT", "json")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(false);
+            .stderr(Stdio::piped());
 
         let mut child = command.spawn().map_err(|error| {
             format!(
@@ -68,16 +89,13 @@ impl CodexAppServer {
             )
         })?;
         let stdin = child
-            .stdin
-            .take()
+            .take_stdin()
             .ok_or("codex app-server stdin is unavailable")?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or("codex app-server stdout is unavailable")?;
         let stderr = child
-            .stderr
-            .take()
+            .take_stderr()
             .ok_or("codex app-server stderr is unavailable")?;
         let (input, mut input_rx) = mpsc::channel::<String>(512);
 

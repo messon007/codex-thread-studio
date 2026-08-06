@@ -49,6 +49,14 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/Codex/绝对路径 cargo run -p codex-thread-stud
 
 OpenCode 不在图形桌面 `PATH` 中时，可设置 `CODEX_THREAD_STUDIO_OPENCODE_BIN=/OpenCode/绝对路径`。
 
+Windows 版 Studio 是原生桌面客户端，但 AI 后端只在 WSL2 中运行，不会使用 Windows 下的 `.cmd` 或 `.exe` 版 Codex/OpenCode。在“设置”中配置 Distribution、Linux 用户和可选的后端命令，重启 Studio 后生效；项目目录使用 `/home/user/project` 这样的 Linux 路径。
+
+```powershell
+wsl --list --verbose
+wsl -d Ubuntu -- bash -lc 'codex --version; opencode --version'
+cargo run --package codex-thread-studio
+```
+
 ## 验证
 
 ```bash
@@ -64,7 +72,7 @@ npm run version:check
 
 `src-tauri/Cargo.toml` 是唯一需要人工维护的应用版本来源，Tauri 会自动继承；About 面板显示相同的编译期版本。
 
-发布说明记录在 [CHANGELOG.md](CHANGELOG.md)。维护者先在 **Unreleased** 下填写变更，运行 `npm run version:bump -- <semver>`，再以 `npm run version:check` 验证。提交后推送匹配的 `v<semver>` Tag，GitHub 工作流会核对所有版本信息，并创建包含 Linux、macOS 安装包的草稿 Release。
+发布说明记录在 [CHANGELOG.md](CHANGELOG.md)。维护者先在 **Unreleased** 下填写变更，运行 `npm run version:bump -- <semver>`，再以 `npm run version:check` 验证。提交后推送匹配的 `v<semver>` Tag，GitHub 工作流会核对所有版本信息，并创建包含 Linux、macOS、Windows 安装包的草稿 Release。
 
 详细内容参见[成熟度路线图](docs/maturity-roadmap.md)、[系统架构](docs/architecture.md)、[产品需求与验收标准](docs/product.md)、[开发指南](docs/development.md)和[故障排查](docs/troubleshooting.md)。
 

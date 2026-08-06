@@ -372,7 +372,7 @@
         <div class="dialog-body">
           <label class="field full"><span>AI 后端</span><select id="new-thread-backend"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select></label>
           <label class="field full"><span>会话名称（可选）</span><input id="new-thread-name" placeholder="例如：实现 Codex 原生界面" /></label>
-          <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small>必须是本机绝对路径。</small></label>
+          <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small id="new-thread-cwd-help">必须是本机绝对路径。</small></label>
           <label class="field"><span>模型（可选）</span><input id="new-thread-model" placeholder="使用 Codex 默认模型" /></label>
           <label id="new-thread-approval-field" class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
           <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspace-write">项目目录可写</option><option value="read-only">只读</option><option value="danger-full-access">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
@@ -403,6 +403,15 @@
           <label class="field"><span>代码字重</span><select id="code-font-weight"><option value="400">常规 400</option><option value="500">中等 500</option><option value="600">较粗 600</option></select></label>
           <label class="field"><span>代码字号</span><input id="code-font-size" type="number" min="11" max="20" /></label>
           <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>增强文字对比度</strong><small>加深次要文字和代码输出</small></span></label>
+          <section id="wsl-settings" class="settings-section full hidden">
+            <header><strong>WSL 后端</strong><small>Windows 客户端通过 WSL2 运行 Codex 和 OpenCode；保存后重启 Studio 生效。</small></header>
+            <div class="settings-section-grid">
+              <label class="field"><span>Distribution（可选）</span><input id="wsl-distribution" maxlength="128" placeholder="默认 WSL Distribution" /></label>
+              <label class="field"><span>Linux 用户（可选）</span><input id="wsl-user" maxlength="128" placeholder="使用 Distribution 默认用户" /></label>
+              <label class="field full"><span>Codex 命令</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>可填写 WSL 内的命令名或绝对路径。</small></label>
+              <label class="field full"><span>OpenCode 命令</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>可填写 WSL 内的命令名或绝对路径。</small></label>
+            </div>
+          </section>
           <label class="field full"><span>批注提示词模板</span><textarea id="annotation-template" rows="7"></textarea><small>必须包含 <code>{{annotations}}</code>；可选 <code>{{additional}}</code>。</small></label>
           <div id="settings-error" class="form-error hidden"></div>
         </div>

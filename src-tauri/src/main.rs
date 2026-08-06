@@ -17,14 +17,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
+mod backend_runtime;
 mod codex_app_server;
 mod favorites;
 mod opencode_server;
 mod session_map;
 
-use codex_app_server::{find_codex_binary, CodexAppServer};
+use backend_runtime::{BackendRuntime, WslSettings};
+#[cfg(not(windows))]
+use codex_app_server::find_codex_binary;
+use codex_app_server::CodexAppServer;
 use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
-use opencode_server::{find_opencode_binary, OpenCodeServer};
+#[cfg(not(windows))]
+use opencode_server::find_opencode_binary;
+use opencode_server::OpenCodeServer;
 use session_map::{ApplyOperationsRequest, CreateMapRequest, MAX_MAP_BODY_BYTES};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
@@ -125,6 +131,14 @@ struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content_width: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    wsl_distribution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wsl_user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wsl_codex_binary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wsl_opencode_binary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     typography: Option<TypographyPreferences>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_thread: Option<String>,
@@ -163,6 +177,9 @@ struct BackendInfo {
     protocol: &'static str,
     transport: &'static str,
     router_workspace: String,
+    execution_environment: &'static str,
+    wsl_distribution: Option<String>,
+    host_platform: &'static str,
 }
 
 #[derive(Default, Deserialize)]
@@ -194,14 +211,18 @@ struct ReviewFileResponse {
 
 fn main() {
     let cli_path = augmented_cli_path();
-    let codex_binary = find_codex_binary(&cli_path);
-    let opencode_binary = find_opencode_binary(&cli_path);
     let preferences_path = studio_preferences_path();
     let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
     let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
+    let startup_preferences = load_preferences(&preferences_path).unwrap_or_else(|error| {
+        eprintln!("Codex Thread Studio could not load startup settings: {error}");
+        StudioPreferences::default()
+    });
+    let (codex_binary, opencode_binary, runtime) =
+        backend_configuration(&startup_preferences, cli_path);
     if let Err(error) = favorites::initialize(&favorites_path) {
         eprintln!("Codex Thread Studio could not initialize favorites: {error}");
     }
@@ -209,8 +230,8 @@ fn main() {
         eprintln!("Codex Thread Studio could not initialize session maps: {error}");
     }
     let state = GatewayState {
-        codex: CodexAppServer::new(codex_binary, cli_path),
-        opencode: OpenCodeServer::new(opencode_binary, augmented_cli_path()),
+        codex: CodexAppServer::new(codex_binary, runtime.clone()),
+        opencode: OpenCodeServer::new(opencode_binary, runtime),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
         favorites_path: Arc::new(favorites_path),
@@ -325,7 +346,51 @@ async fn index() -> impl IntoResponse {
     )
 }
 
-async fn read_review_file(Json(request): Json<ReviewFileRequest>) -> Response<Body> {
+async fn read_review_file(
+    State(_state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if _state.codex.execution_environment() == "wsl" {
+        return match _state
+            .codex
+            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_FILE_BYTES)
+            .await
+        {
+            Ok(file) => match String::from_utf8(file.content) {
+                Ok(content) => {
+                    let response = ReviewFileResponse {
+                        root: file.root,
+                        path: file.path.clone(),
+                        relative_path: file.relative_path,
+                        hash: stable_content_hash(content.as_bytes()),
+                        size: file.size,
+                        line_count: if content.is_empty() {
+                            0
+                        } else {
+                            content.lines().count()
+                        },
+                        language: review_language(std::path::Path::new(&file.path)).to_string(),
+                        content,
+                    };
+                    json_response(StatusCode::OK, &response)
+                }
+                Err(_) => json_error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "only UTF-8 text files can be reviewed",
+                ),
+            },
+            Err(error) => {
+                let status = match error.kind() {
+                    std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                    std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+                    std::io::ErrorKind::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                    _ => StatusCode::BAD_REQUEST,
+                };
+                json_error(status, &format!("unable to read WSL file: {error}"))
+            }
+        };
+    }
     match load_review_file(&request) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
@@ -533,10 +598,15 @@ async fn github_markdown_css() -> impl IntoResponse {
 }
 
 async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
-    let router_workspace = studio_router_workspace_path();
-    if let Err(error) = fs::create_dir_all(&router_workspace) {
-        eprintln!("failed to create Studio Router workspace: {error}");
-    }
+    let router_workspace = if state.codex.execution_environment() == "wsl" {
+        PathBuf::from("/var/tmp/codex-thread-studio-router")
+    } else {
+        let workspace = studio_router_workspace_path();
+        if let Err(error) = fs::create_dir_all(&workspace) {
+            eprintln!("failed to create Studio Router workspace: {error}");
+        }
+        workspace
+    };
     axum::Json(BackendInfo {
         app_name: "Codex Thread Studio",
         app_version: env!("CARGO_PKG_VERSION"),
@@ -544,6 +614,9 @@ async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
         protocol: "Codex App Server v2",
         transport: "stdio JSONL via Studio WebSocket",
         router_workspace: router_workspace.to_string_lossy().into_owned(),
+        execution_environment: state.codex.execution_environment(),
+        wsl_distribution: state.codex.wsl_distribution().map(str::to_string),
+        host_platform: std::env::consts::OS,
     })
 }
 
@@ -930,6 +1003,25 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         return Err("content width must be comfortable, wide, or full".to_string());
     }
     if preferences
+        .wsl_distribution
+        .as_ref()
+        .is_some_and(|value| !valid_runtime_value(value, 128))
+        || preferences
+            .wsl_user
+            .as_ref()
+            .is_some_and(|value| !valid_runtime_value(value, 128))
+        || preferences
+            .wsl_codex_binary
+            .as_ref()
+            .is_some_and(|value| !valid_runtime_value(value, 4096))
+        || preferences
+            .wsl_opencode_binary
+            .as_ref()
+            .is_some_and(|value| !valid_runtime_value(value, 4096))
+    {
+        return Err("WSL backend settings are invalid".to_string());
+    }
+    if preferences
         .artifact_width_ratio
         .is_some_and(|ratio| !(0.2..=0.65).contains(&ratio))
     {
@@ -1080,6 +1172,59 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     Ok(())
 }
 
+fn valid_runtime_value(value: &str, max_len: usize) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= max_len
+        && !value.starts_with('-')
+        && !value.chars().any(|character| character.is_control())
+}
+
+fn backend_configuration(
+    preferences: &StudioPreferences,
+    cli_path: OsString,
+) -> (String, String, BackendRuntime) {
+    let wsl = WslSettings {
+        distribution: preferences
+            .wsl_distribution
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        user: preferences
+            .wsl_user
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    };
+
+    #[cfg(windows)]
+    let binaries = (
+        preferences
+            .wsl_codex_binary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("codex")
+            .to_string(),
+        preferences
+            .wsl_opencode_binary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("opencode")
+            .to_string(),
+    );
+    #[cfg(not(windows))]
+    let binaries = (
+        find_codex_binary(&cli_path),
+        find_opencode_binary(&cli_path),
+    );
+
+    (binaries.0, binaries.1, BackendRuntime::new(cli_path, wsl))
+}
+
 fn augmented_cli_path() -> OsString {
     let original = env::var_os("PATH").unwrap_or_default();
     let mut paths = Vec::<PathBuf>::new();
@@ -1168,8 +1313,14 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
-                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
-                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                codex: CodexAppServer::new(
+                    "codex".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
+                opencode: OpenCodeServer::new(
+                    "opencode".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-test.json"),
                 ),
@@ -1225,8 +1376,14 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
-                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
-                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                codex: CodexAppServer::new(
+                    "codex".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
+                opencode: OpenCodeServer::new(
+                    "opencode".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-test.json"),
                 ),
@@ -1272,8 +1429,14 @@ mod tests {
             );
             let maps_path = env::temp_dir().join(unique);
             let state = GatewayState {
-                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
-                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                codex: CodexAppServer::new(
+                    "codex".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
+                opencode: OpenCodeServer::new(
+                    "opencode".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-map-api-settings.json"),
                 ),
@@ -1389,8 +1552,14 @@ mod tests {
             );
             let favorites_path = env::temp_dir().join(unique);
             let state = GatewayState {
-                codex: CodexAppServer::new("codex".to_string(), OsString::new()),
-                opencode: OpenCodeServer::new("opencode".to_string(), OsString::new()),
+                codex: CodexAppServer::new(
+                    "codex".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
+                opencode: OpenCodeServer::new(
+                    "opencode".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
                 preferences_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-favorites-api-settings.json"),
                 ),
@@ -1597,6 +1766,24 @@ mod tests {
     }
 
     #[test]
+    fn validates_wsl_backend_preferences() {
+        let preferences = StudioPreferences {
+            wsl_distribution: Some("Ubuntu-24.04".to_string()),
+            wsl_user: Some("rui".to_string()),
+            wsl_codex_binary: Some("/home/rui/.local/bin/codex".to_string()),
+            wsl_opencode_binary: Some("opencode".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_ok());
+
+        let invalid = StudioPreferences {
+            wsl_distribution: Some("Ubuntu\ninvalid".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&invalid).is_err());
+    }
+
+    #[test]
     fn validates_namespaced_thread_activity_preferences() {
         let mut preferences = StudioPreferences::default();
         preferences
@@ -1624,26 +1811,28 @@ mod tests {
 
     #[test]
     fn validates_thread_router_preferences() {
-        let mut preferences = StudioPreferences::default();
-        preferences.router = Some(ThreadRouterPreferences {
-            thread_id: Some("router-thread".to_string()),
-            responsibilities: BTreeMap::from([
-                (
-                    "learn-thread".to_string(),
-                    RouterResponsibility {
-                        description: "Books and structured learning".to_string(),
-                        fallback: "fallback".to_string(),
-                    },
-                ),
-                (
-                    "general-thread".to_string(),
-                    RouterResponsibility {
-                        description: "Requests without a better match".to_string(),
-                        fallback: "fallback".to_string(),
-                    },
-                ),
-            ]),
-        });
+        let mut preferences = StudioPreferences {
+            router: Some(ThreadRouterPreferences {
+                thread_id: Some("router-thread".to_string()),
+                responsibilities: BTreeMap::from([
+                    (
+                        "learn-thread".to_string(),
+                        RouterResponsibility {
+                            description: "Books and structured learning".to_string(),
+                            fallback: "fallback".to_string(),
+                        },
+                    ),
+                    (
+                        "general-thread".to_string(),
+                        RouterResponsibility {
+                            description: "Requests without a better match".to_string(),
+                            fallback: "fallback".to_string(),
+                        },
+                    ),
+                ]),
+            }),
+            ..StudioPreferences::default()
+        };
         assert!(validate_preferences(&preferences).is_ok());
 
         preferences

@@ -10,8 +10,9 @@ use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use serde::Serialize;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::Mutex;
+
+use crate::backend_runtime::BackendRuntime;
 
 const MAX_PROXY_BODY_BYTES: usize = 4 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
@@ -19,7 +20,7 @@ const START_ATTEMPTS: usize = 50;
 #[derive(Clone)]
 pub struct OpenCodeServer {
     binary: Arc<str>,
-    path: Arc<std::ffi::OsString>,
+    runtime: Arc<BackendRuntime>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
     generation: Arc<AtomicU64>,
     client: reqwest::Client,
@@ -40,16 +41,19 @@ pub struct OpenCodeInfo {
     pub binary: String,
     pub protocol: &'static str,
     pub transport: &'static str,
+    pub execution_environment: &'static str,
+    pub wsl_distribution: Option<String>,
+    pub host_platform: &'static str,
     pub backend_version: Option<String>,
     pub reachable: bool,
     pub error: Option<String>,
 }
 
 impl OpenCodeServer {
-    pub fn new(binary: String, path: std::ffi::OsString) -> Self {
+    pub fn new(binary: String, runtime: BackendRuntime) -> Self {
         Self {
             binary: Arc::from(binary),
-            path: Arc::new(path),
+            runtime: Arc::new(runtime),
             process: Arc::new(Mutex::new(None)),
             generation: Arc::new(AtomicU64::new(0)),
             client: reqwest::Client::builder()
@@ -77,6 +81,9 @@ impl OpenCodeServer {
                         binary: self.binary.to_string(),
                         protocol: "OpenCode Server API",
                         transport: "HTTP/OpenAPI + SSE via Studio gateway",
+                        execution_environment: self.runtime.environment(),
+                        wsl_distribution: self.runtime.wsl_distribution().map(str::to_string),
+                        host_platform: std::env::consts::OS,
                         backend_version: value
                             .get("version")
                             .and_then(serde_json::Value::as_str)
@@ -101,6 +108,9 @@ impl OpenCodeServer {
             binary: self.binary.to_string(),
             protocol: "OpenCode Server API",
             transport: "HTTP/OpenAPI + SSE via Studio gateway",
+            execution_environment: self.runtime.environment(),
+            wsl_distribution: self.runtime.wsl_distribution().map(str::to_string),
+            host_platform: std::env::consts::OS,
             backend_version: None,
             reachable: false,
             error: Some(error),
@@ -127,20 +137,16 @@ impl OpenCodeServer {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let password = uuid::Uuid::new_v4().simple().to_string();
         let port_string = port.to_string();
-        let mut child = Command::new(self.binary.as_ref())
-            .args([
-                "serve",
-                "--hostname",
-                "127.0.0.1",
-                "--port",
-                &port_string,
-            ])
-            .env("PATH", self.path.as_ref())
-            .env("OPENCODE_SERVER_PASSWORD", &password)
+        let mut command = self.runtime.command(
+            self.binary.as_ref(),
+            &["serve", "--hostname", "127.0.0.1", "--port", &port_string],
+            &[("OPENCODE_SERVER_PASSWORD", password.as_str())],
+        );
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .stderr(Stdio::piped());
+        let mut child = command
             .spawn()
             .map_err(|error| {
                 format!(
@@ -149,10 +155,10 @@ impl OpenCodeServer {
                 )
             })?;
 
-        if let Some(stdout) = child.stdout.take() {
+        if let Some(stdout) = child.take_stdout() {
             tokio::spawn(log_lines(stdout, "stdout"));
         }
-        if let Some(stderr) = child.stderr.take() {
+        if let Some(stderr) = child.take_stderr() {
             tokio::spawn(log_lines(stderr, "stderr"));
         }
 
@@ -183,7 +189,7 @@ impl OpenCodeServer {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let _ = child.kill().await;
+        let _ = child.kill_tree().await;
         let mut process = self.process.lock().await;
         if process
             .as_ref()

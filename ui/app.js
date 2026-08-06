@@ -143,6 +143,8 @@ const state = {
   ready: false,
   backendInfo: null,
   backendInfos: { codex: null, opencode: null },
+  hostPlatform: null,
+  wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
   backendStates: {
     codex: { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' },
     opencode: { kind: 'idle', label: 'OpenCode', caption: '按需连接' },
@@ -535,10 +537,14 @@ async function loadBackendInfo(backend = state.backend) {
     state.backendInfos[backend] = response.ok
       ? info
       : { ...info, error: info?.error || `HTTP ${response.status}` }
+    if (info?.hostPlatform) state.hostPlatform = info.hostPlatform
   } catch (error) {
     state.backendInfos[backend] = { binary: descriptor.binary, protocol: descriptor.protocol, transport: descriptor.transport, error: error.message }
   }
-  if (backend === state.backend) state.backendInfo = state.backendInfos[backend]
+  if (backend === state.backend) {
+    state.backendInfo = state.backendInfos[backend]
+    applyBackendCopy()
+  }
   return state.backendInfos[backend]
 }
 
@@ -595,6 +601,11 @@ function applyBackendCopy() {
     : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
   $('#composer-input').placeholder = t('向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell', { backend: descriptor.name })
   $('#rename-thread-description').textContent = t('名称由 {backend} 持久化。', { backend: descriptor.name })
+  const wsl = state.backendInfo?.executionEnvironment === 'wsl'
+  $('#new-thread-cwd').placeholder = '/home/user/projects/project'
+  $('#new-thread-cwd-help').textContent = t(wsl
+    ? '填写 WSL 中的 Linux 绝对路径，例如 /home/user/project。'
+    : '必须是本机绝对路径。')
 }
 
 function connectAppServer() {
@@ -3549,8 +3560,15 @@ async function createThread(event) {
   errorBox.classList.add('hidden')
   const backend = $('#new-thread-backend').value
   const name = $('#new-thread-name').value.trim()
+  const cwd = $('#new-thread-cwd').value.trim()
+  if (state.hostPlatform === 'windows' && !cwd.startsWith('/')) {
+    errorBox.textContent = t('Windows 客户端需要 WSL 中的 Linux 绝对路径。')
+    errorBox.classList.remove('hidden')
+    button.disabled = false
+    return
+  }
   const params = {
-    cwd: $('#new-thread-cwd').value.trim(),
+    cwd,
     ...(backend === 'codex' ? {
       approvalPolicy: $('#new-thread-approval').value,
       sandbox: $('#new-thread-sandbox').value,
@@ -4343,6 +4361,12 @@ async function loadPreferences() {
   state.language = normalizeLanguage(saved.language)
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
+  state.wsl = {
+    distribution: String(saved.wslDistribution || '').trim(),
+    user: String(saved.wslUser || '').trim(),
+    codexBinary: String(saved.wslCodexBinary || 'codex').trim() || 'codex',
+    opencodeBinary: String(saved.wslOpencodeBinary || 'opencode').trim() || 'opencode',
+  }
   state.sidebarCollapsed = Boolean(saved.sidebarCollapsed)
   state.artifactWidthRatio = normalizeArtifactWidthRatio(saved.artifactWidthRatio)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
@@ -4381,6 +4405,10 @@ function preferencesSnapshot() {
     language: state.language,
     theme: state.theme,
     contentWidth: state.contentWidth,
+    wslDistribution: state.wsl.distribution || null,
+    wslUser: state.wsl.user || null,
+    wslCodexBinary: state.wsl.codexBinary || 'codex',
+    wslOpencodeBinary: state.wsl.opencodeBinary || 'opencode',
     sidebarCollapsed: state.sidebarCollapsed,
     artifactWidthRatio: state.artifactWidthRatio,
     typography: state.typography,
@@ -4529,6 +4557,11 @@ function populateSettingsForm() {
   $('#code-font-size').value = String(state.typography.codeFontSize)
   $('#code-font-weight').value = String(state.typography.codeFontWeight)
   $('#high-contrast').checked = state.typography.highContrast
+  $('#wsl-settings').classList.toggle('hidden', state.hostPlatform !== 'windows')
+  $('#wsl-distribution').value = state.wsl.distribution
+  $('#wsl-user').value = state.wsl.user
+  $('#wsl-codex-binary').value = state.wsl.codexBinary
+  $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
   $('#annotation-template').value = state.annotationPromptTemplate
   $('#settings-error').classList.add('hidden')
 }
@@ -4555,6 +4588,15 @@ function saveSettings(event) {
     codeFontWeight: Number($('#code-font-weight').value),
     highContrast: $('#high-contrast').checked,
   })
+  const previousWsl = JSON.stringify(state.wsl)
+  if (state.hostPlatform === 'windows') {
+    state.wsl = {
+      distribution: $('#wsl-distribution').value.trim(),
+      user: $('#wsl-user').value.trim(),
+      codexBinary: $('#wsl-codex-binary').value.trim() || 'codex',
+      opencodeBinary: $('#wsl-opencode-binary').value.trim() || 'opencode',
+    }
+  }
   const nextLocale = getLocale()
   state.annotationPromptTemplate = nextLocale === previousLocale
     ? template.slice(0, 32000)
@@ -4564,6 +4606,9 @@ function saveSettings(event) {
   persistPreferences()
   $('#settings-dialog').close()
   renderLocalizedUI()
+  if (state.hostPlatform === 'windows' && JSON.stringify(state.wsl) !== previousWsl) {
+    toast(t('WSL 设置已保存，重启 Studio 后生效'))
+  }
 }
 
 function resetSettings() {
@@ -4572,6 +4617,7 @@ function resetSettings() {
   state.theme = 'light'
   state.contentWidth = 'comfortable'
   state.typography = { ...typographyDefaults }
+  state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
   state.annotationPromptTemplate = defaultAnnotationPrompt()
   populateSettingsForm()
@@ -4650,6 +4696,7 @@ function renderBackendDialog() {
       <div class="detail-row"><span>${t('后端版本')}</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
       <div class="detail-row"><span>${t('协议')}</span><strong>${escapeHtml(info.protocol || descriptor.protocol)}</strong></div>
       <div class="detail-row"><span>${t('传输')}</span><strong>${escapeHtml(info.transport || descriptor.transport)}</strong></div>
+      <div class="detail-row"><span>${t('执行环境')}</span><strong>${escapeHtml(info.executionEnvironment === 'wsl' ? `WSL · ${info.wslDistribution || t('默认 Distribution')}` : t('本机'))}</strong></div>
     </section>`
   }).join('')
   $('#backend-dialog-content').innerHTML = `<section class="about-section">

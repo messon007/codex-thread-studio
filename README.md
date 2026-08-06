@@ -39,8 +39,18 @@ The Rust broker owns the Codex handshake and the OpenCode process/authentication
 - Tauri 2 system dependencies
 - A current Codex CLI with `codex app-server`
 - OpenCode CLI for OpenCode mode (`opencode serve`)
-- A supported system WebView (WebKitGTK on Linux, WKWebView on macOS, or WebView2 on Windows 11)
-- WSL2 with Codex and/or OpenCode installed inside the selected distribution when running the Windows client
+- A supported system WebView (WebKitGTK on Linux, WKWebView on macOS, WebView2 on Windows 11)
+
+### Windows native mode
+
+On Windows 11, Studio runs as a native Tauri desktop app (no WSL required). The native launcher resolves backends through:
+
+- `CODEX_THREAD_STUDIO_CODEX_BIN` / `CODEX_THREAD_STUDIO_OPENCODE_BIN`
+- `NVM_HOME`, `NVM_SYMLINK`, `FNM_MULTISHELL_PATH`, `NVM_BIN`, `PATH`
+- `APPDATA\\npm`, `LOCALAPPDATA\\Programs`, `USERPROFILE\\.cargo\\bin`
+- `USERPROFILE\\AppData\\Local\\nvm` and `USERPROFILE\\AppData\\Local\\Programs` fallback directories
+
+WSL remains a valid external workflow, but Studio itself does not depend on it for process launch on Windows.
 
 ## Run
 
@@ -66,11 +76,11 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-
 
 Use `CODEX_THREAD_STUDIO_OPENCODE_BIN=/absolute/path/to/opencode` when OpenCode is outside the GUI launcher's `PATH`.
 
-On Windows, Studio itself is native but its AI backends run only inside WSL2; Windows `.cmd` and `.exe` backend installations are not used. Configure the distribution, Linux user, and optional backend paths in Settings, restart Studio, and enter project paths in Linux form such as `/home/user/project`.
+On Windows, run Studio and its AI backends natively from PowerShell. The launcher supports `.exe`, `.cmd`, and `.bat` installations and searches common npm, NVM, FNM, Cargo, Scoop, and WinGet locations.
 
 ```powershell
-wsl --list --verbose
-wsl -d Ubuntu -- bash -lc 'codex --version; opencode --version'
+where.exe codex
+where.exe opencode
 cargo run --package codex-thread-studio
 ```
 

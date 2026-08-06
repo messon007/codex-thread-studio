@@ -14,7 +14,7 @@ Tauri process
 
 There is no terminal emulator, tmux process, direct model API integration, or separate Studio session database. Each backend remains the source of truth for its own sessions and credentials.
 
-On Windows 11, only the client and loopback gateway are native Windows processes. The backend boundary is `wsl.exe`: Codex JSONL is relayed over its stdio and OpenCode HTTP/SSE is reached through WSL2 localhost forwarding. Windows Codex/OpenCode executables are intentionally out of scope. Linux and macOS launch their local backend executables directly.
+On Windows 11, the client, loopback gateway, and AI backends run as native Windows processes. Linux and macOS use the same adapter contract with their local backend executables.
 
 The experimental Session Map feature adds Studio-owned structured navigation state without changing that history boundary. Its revisioned Items, Relations, and change history are local presentation/workflow data; Codex and OpenCode remain authoritative for Threads, Turns, and Items. A Map is created only after an explicit user action. Missing Maps are represented by the absence of a database row and do not produce a rail or placeholder for existing Threads. See the [Session Map specification](session-map/specification.md).
 
@@ -24,7 +24,7 @@ The optional Thread Router is a Codex-only orchestration layer implemented in th
 
 App Server uses newline-delimited JSON over stdio. The Rust broker:
 
-1. resolves Codex from `CODEX_THREAD_STUDIO_CODEX_BIN`, NVM/FNM/Cargo/common user paths, then `PATH` on Linux/macOS; Windows starts the configured WSL command through `wsl.exe`;
+1. resolves Codex from `CODEX_THREAD_STUDIO_CODEX_BIN`, NVM/FNM/Cargo/common user paths, then `PATH`; on Windows it also supports npm batch shims and common Scoop/WinGet locations;
 2. starts `codex app-server --stdio` on the first WebSocket connection;
 3. sends one `initialize` request with Studio client metadata;
 4. sends `initialized` only after the initialization response;
@@ -36,7 +36,7 @@ The App Server experimental WebSocket listener is deliberately not used. Studio 
 
 ## OpenCode transport
 
-The Rust gateway resolves `opencode`, starts `opencode serve` lazily on a random loopback port, and supplies a fresh `OPENCODE_SERVER_PASSWORD`. On Windows the command runs inside the selected WSL2 distribution and the gateway uses Windows-to-WSL localhost forwarding. Only Rust knows the password. The WebView calls same-origin `/opencode/*`; Rust adds Basic authentication and streams ordinary HTTP or SSE responses.
+The Rust gateway resolves `opencode`, starts `opencode serve` lazily on a random loopback port, and supplies a fresh `OPENCODE_SERVER_PASSWORD`. Only Rust knows the password. The WebView calls same-origin `/opencode/*`; Rust adds Basic authentication and streams ordinary HTTP or SSE responses.
 
 The adapter uses `/experimental/session` for the cross-project list, `/session/*` for CRUD/history/prompt/abort, and `/global/event` for live events. Every project-scoped request carries the session `directory`. SSE reconnects trigger history reconciliation because OpenCode does not expose an SSE replay cursor.
 
@@ -129,4 +129,6 @@ The WebView uses a local Chinese-to-English interface catalog for both initial m
 
 ## Lifecycle limitation
 
-Backend children belong to the Tauri process in this milestone. On Windows, each WSL launch records a private Linux process group and Studio explicitly terminates that group during managed shutdown or startup failure. History is durable, but active execution is not guaranteed to survive closing Studio. Codex supports steering an active Turn; OpenCode mode intentionally disables send while busy because its server has no equivalent steer operation.
+Backend children belong to the Tauri process in this milestone. On Windows, process startup uses native path resolution (`CODEX_THREAD_STUDIO_*` overrides, Node/CLI profile paths, `PATH`) and `cmd`/`CreateProcess` window flags to keep backend processes console-less.
+
+Windows backend trees are assigned to a Job Object so shutdown and startup failures terminate the wrapper and its descendants. History is durable, but active execution is not guaranteed to survive closing Studio. Codex supports steering an active Turn; OpenCode mode intentionally disables send while busy because its server has no equivalent steer operation.

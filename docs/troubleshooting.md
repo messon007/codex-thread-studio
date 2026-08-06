@@ -1,22 +1,13 @@
 # Troubleshooting
 
-## Windows client cannot start a WSL backend
-
-Studio does not launch Windows Codex/OpenCode installations. Confirm WSL2 and the selected distribution from PowerShell:
-
-```powershell
-wsl --list --verbose
-wsl -d Ubuntu -- bash -lc 'command -v codex; codex --version'
-wsl -d Ubuntu -- bash -lc 'command -v opencode; opencode --version'
-```
-
-If a version manager keeps the commands outside the normal login `PATH`, enter their Linux absolute paths in Studio Settings. Studio also checks common NVM and FNM installation directories. Save, close Studio completely, and reopen it. Project directories must be Linux paths such as `/home/rui/project`, not `C:\project` or `\\wsl.localhost\...`.
-
-OpenCode uses Windows-to-WSL localhost forwarding. Update WSL with `wsl --update`; if localhost forwarding is disabled by local policy, enable mirrored networking or restore WSL localhost forwarding before retrying.
-
 ## Codex executable is not found
 
-An interactive shell and a desktop launcher often have different `PATH` values. Check:
+An interactive shell and a desktop launcher often have different `PATH` values.
+
+- Linux/macOS default: `$PATH`, `.local/bin`, `~/.cargo/bin`
+- Windows: `PATH`, `NVM_HOME`, `NVM_SYMLINK`, `NVM_BIN`, `FNM_MULTISHELL_PATH`, `APPDATA\\npm`, `LOCALAPPDATA\\Programs`, `USERPROFILE\\.cargo\\bin`, `USERPROFILE\\AppData\\Local\\nvm`
+
+Check:
 
 ```bash
 command -v codex
@@ -30,7 +21,12 @@ Then launch with an explicit path:
 CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-studio
 ```
 
-Studio also searches NVM, FNM, `~/.local/bin`, and `~/.cargo/bin`.
+Studio also supports explicit overrides:
+
+- `CODEX_THREAD_STUDIO_CODEX_BIN`
+- `CODEX_THREAD_STUDIO_OPENCODE_BIN`
+
+When you launch from a desktop shortcut, ensure the shortcut inherits environment variables; desktop launchers often do not load shell startup files.
 
 ## App Server starts but initialization fails
 
@@ -64,3 +60,22 @@ The native composer and dialogs are ordinary WebKitGTK textareas; there is no xt
 ## Closing Studio interrupted work
 
 This is a known first-version lifecycle boundary: the stdio App Server child belongs to Studio. Reopen Studio and resume the persisted Thread. Moving to the App Server daemon/control socket is tracked as the next lifecycle milestone.
+
+## Windows process launch failures
+
+If startup fails with an explicit path/permission message, verify:
+
+- The discovered executable path points to the real binary (`.exe`, `.cmd`, `.bat`) and is launchable from a normal `cmd /c` session.
+- `Windows Subsystem for Linux` is not required for Studio itself; failures should surface with full CLI-specific messages from the Rust side.
+- No old `codex` / `opencode` process is holding the same workspace lock or state directory.
+
+Useful checks:
+
+```bat
+where codex
+where opencode
+where /R %APPDATA% codex.exe
+where /R %LOCALAPPDATA% opencode.exe
+```
+
+Studio assigns each Windows backend tree to a Job Object. Closing the job or handling a startup failure terminates both a batch wrapper and its child Node process.

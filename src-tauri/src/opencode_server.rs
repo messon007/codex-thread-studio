@@ -1,5 +1,4 @@
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -13,6 +12,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::backend_runtime::BackendRuntime;
+use crate::command_runtime::resolve_command_binary;
 
 const MAX_PROXY_BODY_BYTES: usize = 4 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
@@ -308,34 +308,7 @@ fn json_error(status: StatusCode, message: &str) -> Response<Body> {
 }
 
 pub fn find_opencode_binary(path: &std::ffi::OsStr) -> String {
-    if let Ok(value) = std::env::var("CODEX_THREAD_STUDIO_OPENCODE_BIN") {
-        if !value.trim().is_empty() {
-            return value;
-        }
-    }
-    find_on_path("opencode", path)
-        .unwrap_or_else(|| PathBuf::from("opencode"))
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn find_on_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
-    std::env::split_paths(path)
-        .map(|directory| directory.join(name))
-        .find(|candidate| is_executable(candidate))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    resolve_command_binary("opencode", "CODEX_THREAD_STUDIO_OPENCODE_BIN", path)
 }
 
 #[cfg(test)]

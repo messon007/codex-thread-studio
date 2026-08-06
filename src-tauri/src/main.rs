@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
@@ -13,12 +15,14 @@ use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
 use axum::{Json, Router};
+use dirs::{config_dir, data_local_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod backend_runtime;
 mod codex_app_server;
+mod command_runtime;
 mod favorites;
 mod opencode_server;
 mod session_map;
@@ -350,47 +354,6 @@ async fn read_review_file(
     State(_state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
-    #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
-        return match _state
-            .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_FILE_BYTES)
-            .await
-        {
-            Ok(file) => match String::from_utf8(file.content) {
-                Ok(content) => {
-                    let response = ReviewFileResponse {
-                        root: file.root,
-                        path: file.path.clone(),
-                        relative_path: file.relative_path,
-                        hash: stable_content_hash(content.as_bytes()),
-                        size: file.size,
-                        line_count: if content.is_empty() {
-                            0
-                        } else {
-                            content.lines().count()
-                        },
-                        language: review_language(std::path::Path::new(&file.path)).to_string(),
-                        content,
-                    };
-                    json_response(StatusCode::OK, &response)
-                }
-                Err(_) => json_error(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    "only UTF-8 text files can be reviewed",
-                ),
-            },
-            Err(error) => {
-                let status = match error.kind() {
-                    std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
-                    std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
-                    std::io::ErrorKind::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-                    _ => StatusCode::BAD_REQUEST,
-                };
-                json_error(status, &format!("unable to read WSL file: {error}"))
-            }
-        };
-    }
     match load_review_file(&request) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
@@ -910,6 +873,11 @@ fn parse_favorite_body(body: &str) -> Result<Favorite, (StatusCode, String)> {
 }
 
 fn studio_preferences_path() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(path) = config_dir() {
+            return path.join("codex-thread-studio").join("settings.json");
+        }
+    }
     if let Some(path) = env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
         return PathBuf::from(path)
             .join("codex-thread-studio")
@@ -922,6 +890,17 @@ fn studio_preferences_path() -> PathBuf {
 }
 
 fn studio_router_workspace_path() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(code_home) = env::var_os("CODEX_HOME").filter(|path| !path.is_empty()) {
+            return PathBuf::from(code_home).join("codex-thread-studio/router");
+        }
+        if let Some(path) = data_local_dir() {
+            return path.join("codex-thread-studio").join("router");
+        }
+        if let Some(home) = env::var_os("USERPROFILE") {
+            return PathBuf::from(home).join("AppData/Local/codex-thread-studio/router");
+        }
+    }
     if let Some(path) = env::var_os("XDG_DATA_HOME").filter(|path| !path.is_empty()) {
         return PathBuf::from(path).join("codex-thread-studio/router");
     }
@@ -932,6 +911,13 @@ fn studio_router_workspace_path() -> PathBuf {
 }
 
 fn legacy_preferences_path() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(path) = config_dir() {
+            return path
+                .join("agent-deck-studio")
+                .join("codex-native-settings.json");
+        }
+    }
     if let Some(path) = env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
         return PathBuf::from(path)
             .join("agent-deck-studio")
@@ -1199,24 +1185,6 @@ fn backend_configuration(
             .map(str::to_string),
     };
 
-    #[cfg(windows)]
-    let binaries = (
-        preferences
-            .wsl_codex_binary
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("codex")
-            .to_string(),
-        preferences
-            .wsl_opencode_binary
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("opencode")
-            .to_string(),
-    );
-    #[cfg(not(windows))]
     let binaries = (
         find_codex_binary(&cli_path),
         find_opencode_binary(&cli_path),
@@ -1236,6 +1204,21 @@ fn augmented_cli_path() -> OsString {
 
     if let Some(path) = env::var_os("NVM_BIN") {
         add(PathBuf::from(path));
+    }
+    if cfg!(windows) {
+        if let Some(path) = env::var_os("NVM_HOME") {
+            add(PathBuf::from(path));
+        }
+        if let Some(path) = env::var_os("NVM_SYMLINK") {
+            add(PathBuf::from(path));
+        }
+        for path in windows_cli_candidate_dirs(
+            env::var_os("APPDATA").map(PathBuf::from),
+            env::var_os("LOCALAPPDATA").map(PathBuf::from),
+            env::var_os("USERPROFILE").map(PathBuf::from),
+        ) {
+            add(path);
+        }
     }
     if let Some(path) = env::var_os("FNM_MULTISHELL_PATH") {
         let path = PathBuf::from(path);
@@ -1261,6 +1244,32 @@ fn augmented_cli_path() -> OsString {
         add(path);
     }
     env::join_paths(paths).unwrap_or(original)
+}
+
+fn windows_cli_candidate_dirs(
+    app_data: Option<PathBuf>,
+    local_app_data: Option<PathBuf>,
+    user_profile: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(app_data) = app_data {
+        candidates.push(app_data.join("npm"));
+    }
+    if let Some(local_app_data) = local_app_data {
+        let programs = local_app_data.join("Programs");
+        for application in ["Codex", "codex", "OpenCode", "opencode"] {
+            let application_dir = programs.join(application);
+            candidates.push(application_dir.clone());
+            candidates.push(application_dir.join("bin"));
+        }
+        candidates.push(local_app_data.join("Microsoft/WinGet/Links"));
+    }
+    if let Some(user_profile) = user_profile {
+        candidates.push(user_profile.join(".cargo/bin"));
+        candidates.push(user_profile.join("scoop/shims"));
+        candidates.push(user_profile.join("AppData/Local/nvm"));
+    }
+    candidates
 }
 
 fn node_version_key(path: &std::path::Path) -> (u32, u32, u32) {
@@ -1848,6 +1857,27 @@ mod tests {
                 },
             );
         assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn windows_cli_candidates_include_app_specific_install_directories() {
+        let candidates = windows_cli_candidate_dirs(
+            Some(PathBuf::from(r"C:\Users\rui\AppData\Roaming")),
+            Some(PathBuf::from(r"C:\Users\rui\AppData\Local")),
+            Some(PathBuf::from(r"C:\Users\rui")),
+        );
+
+        assert!(candidates.contains(&PathBuf::from(r"C:\Users\rui\AppData\Roaming/npm")));
+        assert!(candidates.contains(&PathBuf::from(
+            r"C:\Users\rui\AppData\Local/Programs/OpenCode"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            r"C:\Users\rui\AppData\Local/Programs/OpenCode/bin"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            r"C:\Users\rui\AppData\Local/Microsoft/WinGet/Links"
+        )));
+        assert!(candidates.contains(&PathBuf::from(r"C:\Users\rui/scoop/shims")));
     }
 
     #[test]

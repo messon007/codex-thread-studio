@@ -4557,7 +4557,7 @@ function populateSettingsForm() {
   $('#code-font-size').value = String(state.typography.codeFontSize)
   $('#code-font-weight').value = String(state.typography.codeFontWeight)
   $('#high-contrast').checked = state.typography.highContrast
-  $('#wsl-settings').classList.toggle('hidden', state.hostPlatform !== 'windows')
+  $('#wsl-settings').classList.toggle('hidden', state.backendInfo?.executionEnvironment !== 'wsl')
   $('#wsl-distribution').value = state.wsl.distribution
   $('#wsl-user').value = state.wsl.user
   $('#wsl-codex-binary').value = state.wsl.codexBinary

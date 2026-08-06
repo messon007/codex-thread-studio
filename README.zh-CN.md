@@ -34,6 +34,17 @@ Rust Broker 负责 Codex 的 `initialize`/`initialized` 握手，以及 OpenCode
 
 ## 启动
 
+### Windows 原生模式说明
+
+在 Windows 11 上，Studio 为原生 Tauri 客户端，不需要也不依赖 WSL 来启动后端进程。Rust 侧会按以下顺序解析可执行文件：
+
+- `CODEX_THREAD_STUDIO_CODEX_BIN` / `CODEX_THREAD_STUDIO_OPENCODE_BIN`（显式覆盖）
+- `NVM_HOME`、`NVM_SYMLINK`、`FNM_MULTISHELL_PATH`、`NVM_BIN`、`PATH`
+- `APPDATA\\npm`、`LOCALAPPDATA\\Programs`、`USERPROFILE\\.cargo\\bin`
+- `USERPROFILE\\AppData\\Local\\nvm`、`USERPROFILE\\AppData\\Local\\Programs` 等常见回退目录
+
+WSL 仍可作为外部工作流继续使用，但 Studio 本体在 Windows 下不要求通过 WSL 启动 app-server / opencode。
+
 ```bash
 ./scripts/install-linux-dev-deps.sh
 codex --version
@@ -49,11 +60,11 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/Codex/绝对路径 cargo run -p codex-thread-stud
 
 OpenCode 不在图形桌面 `PATH` 中时，可设置 `CODEX_THREAD_STUDIO_OPENCODE_BIN=/OpenCode/绝对路径`。
 
-Windows 版 Studio 是原生桌面客户端，但 AI 后端只在 WSL2 中运行，不会使用 Windows 下的 `.cmd` 或 `.exe` 版 Codex/OpenCode。在“设置”中配置 Distribution、Linux 用户和可选的后端命令，重启 Studio 后生效；项目目录使用 `/home/user/project` 这样的 Linux 路径。
+Windows 下请从 PowerShell 原生运行 Studio 及其 AI 后端。启动器支持 `.exe`、`.cmd` 和 `.bat`，并搜索 npm、NVM、FNM、Cargo、Scoop 和 WinGet 的常见安装目录。
 
 ```powershell
-wsl --list --verbose
-wsl -d Ubuntu -- bash -lc 'codex --version; opencode --version'
+where.exe codex
+where.exe opencode
 cargo run --package codex-thread-studio
 ```
 

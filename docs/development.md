@@ -44,13 +44,13 @@ Prepare a release as follows:
 5. Create and push an annotated matching tag, for example `git tag -a v0.3.0 -m "Codex Thread Studio v0.3.0"` and `git push origin v0.3.0`.
 6. Review and publish the draft GitHub Release produced by `.github/workflows/release.yml`.
 
-`version:check` rejects mismatches between Cargo and `Cargo.lock`, a duplicated Tauri config version, a missing changelog section, or a release tag that differs from `v<Cargo version>`. Linux, macOS, and Windows 11 desktop bundles are built automatically. The Windows client requires WSL2 for its Codex and OpenCode backends.
+`version:check` rejects mismatches between Cargo and `Cargo.lock`, a duplicated Tauri config version, a missing changelog section, or a release tag that differs from `v<Cargo version>`. Linux, macOS, and Windows 11 desktop bundles are built automatically from CI matrices; Windows is native (no WSL required).
 
-Windows runs the Studio client natively while both AI backends run inside WSL2. It does not discover or launch Windows `codex.cmd`, `codex.exe`, or `opencode.exe`. Configure the WSL distribution, Linux user, and backend commands in Studio settings, restart Studio, and use Linux project paths such as `/home/user/project`.
+On Windows, prefer running directly with a native shell:
 
 ```powershell
-wsl --list --verbose
-wsl -d Ubuntu -- bash -lc 'command -v codex; codex --version; command -v opencode; opencode --version'
+where.exe codex
+where.exe opencode
 cargo run --package codex-thread-studio
 ```
 

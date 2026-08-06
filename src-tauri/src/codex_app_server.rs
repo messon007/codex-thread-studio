@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -10,8 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::backend_runtime::BackendRuntime;
-#[cfg(windows)]
-use crate::backend_runtime::RuntimeFile;
+use crate::command_runtime::resolve_command_binary;
 
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
 const MAX_CLIENT_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -54,16 +52,6 @@ impl CodexAppServer {
 
     pub fn wsl_distribution(&self) -> Option<&str> {
         self.runtime.wsl_distribution()
-    }
-
-    #[cfg(windows)]
-    pub async fn read_wsl_file(
-        &self,
-        root: &str,
-        path: &str,
-        max_bytes: u64,
-    ) -> std::io::Result<RuntimeFile> {
-        self.runtime.read_wsl_file(root, path, max_bytes).await
     }
 
     async fn ensure_started(&self) -> Result<(), String> {
@@ -362,34 +350,7 @@ fn client_error(message: &str) -> String {
 }
 
 pub fn find_codex_binary(path: &std::ffi::OsStr) -> String {
-    if let Ok(value) = std::env::var("CODEX_THREAD_STUDIO_CODEX_BIN") {
-        if !value.trim().is_empty() {
-            return value;
-        }
-    }
-    find_on_path("codex", path)
-        .unwrap_or_else(|| PathBuf::from("codex"))
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn find_on_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
-    std::env::split_paths(path)
-        .map(|directory| directory.join(name))
-        .find(|candidate| is_executable(candidate))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    resolve_command_binary("codex", "CODEX_THREAD_STUDIO_CODEX_BIN", path)
 }
 
 #[cfg(test)]

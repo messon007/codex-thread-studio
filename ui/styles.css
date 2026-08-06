@@ -202,7 +202,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .turn + .turn { padding-top: 22px; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .turn-separator { display: none; }
 .message { margin: 0 0 13px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 11px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
-.message.user { width: 100%; max-width: none; margin: 0 0 15px; padding: 0 3px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.68; }
+.message.user { width: 100%; max-width: none; margin: 0 0 15px; padding: 0 3px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 15px; font-weight: normal; line-height: 1.68; }
 .message.agent { padding: 0 3px 2px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; font-size: 15px; white-space: normal; transition: background .2s, box-shadow .2s; }
 .message-content { min-width: 0; }
 .message-track-mark { width: 18px; height: 25px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; user-select: none; }

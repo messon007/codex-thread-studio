@@ -4,7 +4,7 @@
 
 - Rust stable with `rustfmt`
 - Tauri 2 native dependencies
-- Node.js for browser-state unit tests and deliberately refreshing vendored Markdown assets; the runtime UI has no bundler or package install step
+- Node.js for browser-state unit tests and deliberately refreshing vendored Markdown/Mermaid assets; the runtime UI has no bundler or package install step
 - A current Codex CLI with `codex app-server`
 - A current OpenCode CLI with `opencode serve` when testing OpenCode mode
 - WebKitGTK on Linux, WKWebView on macOS, or WebView2 on Windows 11
@@ -20,7 +20,7 @@ npm run version:check
 cargo run -p codex-thread-studio
 ```
 
-The Markdown stack is pinned in `package-lock.json` and copied into `ui/vendor`, which Rust embeds at compile time. To deliberately update it:
+The Markdown and Mermaid stack is pinned in `package-lock.json` and copied into `ui/vendor`, which Rust embeds at compile time. To deliberately update it:
 
 ```bash
 npm ci
@@ -76,7 +76,7 @@ Protocol responsibilities are split as follows:
 - `ui/app.js`: RPC correlation, Thread flows, structured rendering, approval UI, comments, native favorites, settings.
 - `ui/favorites.mjs`: pure helpers for Turn question association, source identities, titles, tags, and copy output.
 - `src-tauri/src/favorites.rs`: validated global favorites persistence and search summaries.
-- `ui/vendor`: lockfile-pinned Marked, DOMPurify, GitHub Markdown CSS, and license texts for offline rendering.
+- `ui/vendor`: lockfile-pinned Marked, DOMPurify, Mermaid, GitHub Markdown CSS, and license texts for offline rendering.
 
 ## Compatibility checks
 

@@ -57,7 +57,7 @@ Thread
 
 The browser lazily builds one in-memory render model per `backend:thread-id` from Codex `thread/resume` or OpenCode session/message history, then keeps that model current with live notifications. Returning to an unchanged Thread renders this cache immediately instead of reading its complete history again. Catalog timestamps invalidate stale models, and Reload explicitly re-reads the selected Thread. Every selectable rendered block carries `data-turn-id` and `data-item-id`.
 
-Agent prose and reasoning summaries pass through locally vendored Marked (GFM parsing), then DOMPurify (HTML sanitization), then GitHub Markdown CSS plus Studio theme overrides. Code-copy and table wrappers are added only after sanitization. The outer structured Item element remains the selection/comment anchor.
+Agent prose and reasoning summaries pass through locally vendored Marked (GFM parsing), then DOMPurify (HTML sanitization), then GitHub Markdown CSS plus Studio theme overrides. Code-copy and table wrappers are added only after sanitization. A validated `markdown.mode` preference changes only presentation density; fenced plain-text blocks deliberately omit code chrome. Mermaid appearance uses a separate validated whitelist while its security controls remain fixed. See [rendering configuration](rendering-configuration.md). The outer structured Item element remains the selection/comment anchor.
 
 ## Streaming render path
 
@@ -124,7 +124,7 @@ The WebView uses a local Chinese-to-English interface catalog for both initial m
 - The gateway binds to a random `127.0.0.1` port.
 - No provider credential or OpenCode server password crosses into browser storage or Studio preferences.
 - App Server and Codex configuration decide sandbox and approval behavior.
-- User, command, diff, tool, and unknown payloads are escaped as text. Agent Markdown is sanitized with DOMPurify; scripts, styles, frames, embedded objects, forms, buttons, and inline style attributes are forbidden.
+- User, command, diff, tool, and unknown payloads are escaped as text. Agent Markdown is sanitized with DOMPurify; scripts, styles, frames, embedded objects, forms, buttons, and inline style attributes are forbidden. Fenced Mermaid source is rendered separately with Mermaid `securityLevel: strict`, bounded input, automatic execution disabled, SVG text labels instead of `foreignObject` HTML, and a second SVG/HTML sanitization pass; invalid diagrams fall back to their source.
 - App Server request messages and proxied OpenCode bodies are bounded to 4 MiB; preferences are bounded to 1 MiB.
 
 ## Lifecycle limitation

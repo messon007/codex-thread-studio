@@ -6,6 +6,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Add switchable Codex App Server and OpenCode Server backends with structured session history, streaming events, native CRUD, file/skill discovery, permissions, and isolated UI state.
 - Add a native Windows client that runs Codex and OpenCode exclusively inside a configurable WSL2 distribution, including managed Linux process-group cleanup and WSL file review.
+- Render fenced Mermaid diagrams in chat messages, Markdown document previews, and favorites using a locally vendored, strict-mode renderer with configurable appearance and source fallback.
+- Add configuration-file-only Markdown reading, technical, and compact presentation modes; render fenced plain text without code-language or copy chrome.
 
 ### Fixed
 

@@ -38,6 +38,11 @@ import {
   questionForTurn,
 } from './favorites.mjs'
 import {
+  MERMAID_PREFERENCES_DEFAULTS,
+  mermaidInitializeConfig,
+  normalizeMermaidPreferences,
+} from './mermaid-config.mjs'
+import {
   assistantOperationSchema,
   bootstrapMapInput,
   flattenSessionMap,
@@ -167,6 +172,8 @@ const state = {
   sidebarCollapsed: false,
   artifactWidthRatio: 0.44,
   typography: { ...typographyDefaults },
+  mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
+  markdown: { mode: 'technical' },
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -220,6 +227,12 @@ let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
+const MAX_MERMAID_SOURCE_CHARS = 100_000
+let mermaidObserver = null
+let mermaidRenderChain = Promise.resolve()
+let mermaidRenderSequence = 0
+let mermaidGeneration = 0
+let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
 
@@ -239,6 +252,7 @@ async function init() {
   setLanguage(state.language)
   startTranslationObserver()
   applyAppearance()
+  startMermaidRendering()
   applyBackendCopy()
   await loadFavorites().catch(showError)
   await loadBackendInfo()
@@ -335,6 +349,7 @@ function bindUI() {
   $('#artifact-resizer').addEventListener('dblclick', resetArtifactWidth)
   $('#artifact-resizer').addEventListener('keydown', handleArtifactResizeKey)
   $('#transcript').addEventListener('click', handleTranscriptClick)
+  document.addEventListener('click', (event) => handleMarkdownActionClick(event).catch(reportClientError))
   $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
   $('#favorite-menu-button').addEventListener('click', () => toggleActionMenu('favorite-menu', 'favorite-menu-button'))
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
@@ -2631,7 +2646,8 @@ function renderItem(item, turnId) {
 function renderMarkdown(value) {
   const source = String(value || '')
   if (!source) return ''
-  const cached = markdownRenderCache.get(source)
+  const cacheKey = `${getLocale()}\u0000${source}`
+  const cached = markdownRenderCache.get(cacheKey)
   if (cached != null) return cached
   const dirty = marked.parse(source)
   const clean = DOMPurify.sanitize(dirty, {
@@ -2656,6 +2672,7 @@ function renderMarkdown(value) {
     const language = languageClass ? languageClass.slice('language-'.length) : 'code'
     const block = document.createElement('div')
     block.className = 'markdown-code-block'
+    const normalizedLanguage = language.toLowerCase()
     const header = document.createElement('div')
     header.className = 'markdown-code-header'
     const label = document.createElement('span')
@@ -2663,10 +2680,37 @@ function renderMarkdown(value) {
     const copy = document.createElement('button')
     copy.className = 'copy-code-button'
     copy.type = 'button'
-    copy.textContent = '复制'
-    header.append(label, copy)
+    copy.textContent = t('复制')
     pre.replaceWith(block)
-    block.append(header, pre)
+    if (normalizedLanguage === 'mermaid') {
+      block.classList.add('markdown-mermaid')
+      block.dataset.mermaidState = 'pending'
+      block.dataset.mermaidGeneration = String(mermaidGeneration)
+      const actions = document.createElement('div')
+      actions.className = 'markdown-code-actions'
+      const sourceToggle = document.createElement('button')
+      sourceToggle.className = 'mermaid-source-button'
+      sourceToggle.type = 'button'
+      sourceToggle.setAttribute('aria-expanded', 'false')
+      sourceToggle.textContent = t('源码')
+      actions.append(sourceToggle, copy)
+      header.append(label, actions)
+      const canvas = document.createElement('div')
+      canvas.className = 'markdown-mermaid-canvas'
+      canvas.dataset.noI18n = ''
+      canvas.setAttribute('role', 'img')
+      canvas.setAttribute('aria-label', t('Mermaid 图表'))
+      canvas.setAttribute('aria-busy', 'true')
+      canvas.textContent = t('正在渲染图表…')
+      pre.classList.add('markdown-mermaid-source')
+      block.append(header, canvas, pre)
+    } else if (normalizedLanguage === 'text' || normalizedLanguage === 'plaintext' || normalizedLanguage === 'txt') {
+      block.classList.add('markdown-plain-text')
+      block.append(pre)
+    } else {
+      header.append(label, copy)
+      block.append(header, pre)
+    }
   })
   template.content.querySelectorAll('table').forEach((table) => {
     const wrapper = document.createElement('div')
@@ -2676,10 +2720,141 @@ function renderMarkdown(value) {
   })
   const rendered = template.innerHTML
   if (source.length <= 64_000) {
-    markdownRenderCache.set(source, rendered)
+    markdownRenderCache.set(cacheKey, rendered)
     if (markdownRenderCache.size > 256) markdownRenderCache.delete(markdownRenderCache.keys().next().value)
   }
   return rendered
+}
+
+function startMermaidRendering() {
+  if (mermaidObserver || !globalThis.MutationObserver) return
+  mermaidObserver = new MutationObserver((records) => {
+    records.forEach((record) => record.addedNodes.forEach(scanMermaidNode))
+  })
+  mermaidObserver.observe(document.body, { subtree: true, childList: true })
+  scanMermaidNode(document.body)
+}
+
+function scanMermaidNode(node) {
+  if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return
+  if (node.matches?.('.markdown-mermaid[data-mermaid-state="pending"]')) queueMermaidBlock(node)
+  node.querySelectorAll?.('.markdown-mermaid[data-mermaid-state="pending"]').forEach(queueMermaidBlock)
+}
+
+function queueMermaidBlock(block) {
+  if (block.dataset.mermaidState !== 'pending') return
+  block.dataset.mermaidState = 'queued'
+  const generation = Number(block.dataset.mermaidGeneration || mermaidGeneration)
+  mermaidRenderChain = mermaidRenderChain
+    .then(() => renderMermaidBlock(block, generation))
+    .catch(reportClientError)
+}
+
+async function renderMermaidBlock(block, generation) {
+  if (!block.isConnected || generation !== mermaidGeneration) return
+  const source = block.querySelector('.markdown-mermaid-source code')?.textContent || ''
+  if (source.length > MAX_MERMAID_SOURCE_CHARS) {
+    showMermaidError(block, t('图表内容过大，已显示源码。'))
+    return
+  }
+  const mermaid = globalThis.mermaid
+  if (!mermaid?.initialize || !mermaid?.render) {
+    showMermaidError(block, t('图表无法渲染'))
+    return
+  }
+  const config = mermaidInitializeConfig(state.mermaid, {
+    dark: state.theme === 'dark',
+    fontFamily: state.typography.uiFontFamily,
+  })
+  const configSignature = JSON.stringify(config)
+  if (mermaidInitializedConfig !== configSignature) {
+    mermaid.initialize(config)
+    mermaidInitializedConfig = configSignature
+  }
+  const canvas = block.querySelector('.markdown-mermaid-canvas')
+  if (!canvas) return
+  block.dataset.mermaidState = 'rendering'
+  canvas.setAttribute('aria-busy', 'true')
+  canvas.textContent = t('正在渲染图表…')
+  const diagramId = `studio-mermaid-${++mermaidRenderSequence}`
+  try {
+    const result = await mermaid.render(diagramId, source)
+    if (!block.isConnected || generation !== mermaidGeneration) return
+    const cleanSvg = DOMPurify.sanitize(result.svg, {
+      USE_PROFILES: { html: true, svg: true, svgFilters: true },
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+    })
+    const template = document.createElement('template')
+    template.innerHTML = cleanSvg
+    if (!template.content.querySelector('svg')) throw new Error('Mermaid did not produce an SVG')
+    canvas.replaceChildren(template.content.cloneNode(true))
+    canvas.setAttribute('aria-busy', 'false')
+    block.dataset.mermaidState = 'rendered'
+    result.bindFunctions?.(canvas)
+    requestAnimationFrame(() => {
+      if (block.closest('#transcript')) followTranscriptOutput()
+      scheduleTurnNavigatorSync()
+    })
+  } catch (error) {
+    document.getElementById(diagramId)?.remove()
+    showMermaidError(block, t('图表无法渲染'))
+    reportClientError(error)
+  }
+}
+
+function showMermaidError(block, message) {
+  const canvas = block.querySelector('.markdown-mermaid-canvas')
+  if (canvas) {
+    canvas.textContent = message
+    canvas.setAttribute('aria-busy', 'false')
+  }
+  block.dataset.mermaidState = 'error'
+  setMermaidSourceVisible(block, true)
+}
+
+function setMermaidSourceVisible(block, visible) {
+  block.classList.toggle('show-source', visible)
+  const button = block.querySelector('.mermaid-source-button')
+  if (!button) return
+  button.setAttribute('aria-expanded', String(visible))
+  button.textContent = t(visible ? '隐藏源码' : '源码')
+}
+
+function resetMermaidRendering() {
+  if (!mermaidObserver) return
+  mermaidGeneration += 1
+  mermaidInitializedConfig = ''
+  document.querySelectorAll('.markdown-mermaid').forEach((block) => {
+    block.dataset.mermaidState = 'pending'
+    block.dataset.mermaidGeneration = String(mermaidGeneration)
+    const canvas = block.querySelector('.markdown-mermaid-canvas')
+    if (canvas) {
+      canvas.setAttribute('aria-busy', 'true')
+      canvas.textContent = t('正在渲染图表…')
+    }
+    queueMermaidBlock(block)
+  })
+}
+
+async function handleMarkdownActionClick(event) {
+  const sourceButton = event.target.closest('.mermaid-source-button')
+  if (sourceButton) {
+    const block = sourceButton.closest('.markdown-mermaid')
+    if (block) setMermaidSourceVisible(block, !block.classList.contains('show-source'))
+    return
+  }
+  const button = event.target.closest('.copy-code-button')
+  if (!button) return
+  const code = button.closest('.markdown-code-block')?.querySelector('code')
+  if (!code) return
+  try {
+    await navigator.clipboard.writeText(code.textContent || '')
+    const original = button.textContent
+    button.textContent = t('已复制')
+    setTimeout(() => { if (button.isConnected) button.textContent = original }, 1400)
+  } catch {
+    toast(t('无法复制代码'), 'error')
+  }
 }
 
 async function handleTranscriptClick(event) {
@@ -2732,18 +2907,6 @@ async function handleTranscriptClick(event) {
       toast(t('无法复制回复'), 'error')
     }
     return
-  }
-  const button = event.target.closest('.copy-code-button')
-  if (!button) return
-  const code = button.closest('.markdown-code-block')?.querySelector('code')
-  if (!code) return
-  try {
-    await navigator.clipboard.writeText(code.textContent || '')
-    const original = button.textContent
-    button.textContent = '已复制'
-    setTimeout(() => { if (button.isConnected) button.textContent = original }, 1400)
-  } catch (error) {
-    toast('无法复制代码', 'error')
   }
 }
 
@@ -4370,6 +4533,8 @@ async function loadPreferences() {
   state.sidebarCollapsed = Boolean(saved.sidebarCollapsed)
   state.artifactWidthRatio = normalizeArtifactWidthRatio(saved.artifactWidthRatio)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
+  state.mermaid = normalizeMermaidPreferences(saved.mermaid)
+  state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
   state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
   state.selectedByBackend = {
     codex: null,
@@ -4412,6 +4577,8 @@ function preferencesSnapshot() {
     sidebarCollapsed: state.sidebarCollapsed,
     artifactWidthRatio: state.artifactWidthRatio,
     typography: state.typography,
+    mermaid: state.mermaid,
+    markdown: state.markdown,
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
     selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
@@ -4640,11 +4807,13 @@ function applyAppearance() {
   root.dataset.theme = state.theme
   root.dataset.contentWidth = state.contentWidth
   root.dataset.highContrast = String(state.typography.highContrast)
+  root.dataset.markdownMode = state.markdown.mode
   root.style.setProperty('--ui-font-family', state.typography.uiFontFamily)
   root.style.setProperty('--ui-font-weight', state.typography.uiFontWeight)
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
+  resetMermaidRendering()
 }
 
 function backendStatusView(backend) {

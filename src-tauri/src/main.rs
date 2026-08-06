@@ -121,6 +121,42 @@ struct ThreadRouterPreferences {
     responsibilities: BTreeMap<String, RouterResponsibility>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MermaidPreferences {
+    style: String,
+    density: String,
+    curve: String,
+    layout: String,
+    font_size: u8,
+}
+
+impl Default for MermaidPreferences {
+    fn default() -> Self {
+        Self {
+            style: "auto".to_string(),
+            density: "standard".to_string(),
+            curve: "rounded".to_string(),
+            layout: "auto".to_string(),
+            font_size: 15,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkdownPreferences {
+    mode: String,
+}
+
+impl Default for MarkdownPreferences {
+    fn default() -> Self {
+        Self {
+            mode: "technical".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudioPreferences {
@@ -140,6 +176,10 @@ struct StudioPreferences {
     wsl_opencode_binary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     typography: Option<TypographyPreferences>,
+    #[serde(default)]
+    mermaid: MermaidPreferences,
+    #[serde(default)]
+    markdown: MarkdownPreferences,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_thread: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,10 +257,18 @@ fn main() {
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
-    let startup_preferences = load_preferences(&preferences_path).unwrap_or_else(|error| {
-        eprintln!("Codex Thread Studio could not load startup settings: {error}");
-        StudioPreferences::default()
-    });
+    let startup_preferences = match load_preferences(&preferences_path) {
+        Ok(preferences) => {
+            if let Err(error) = save_preferences(&preferences_path, &preferences) {
+                eprintln!("Codex Thread Studio could not write default settings: {error}");
+            }
+            preferences
+        }
+        Err(error) => {
+            eprintln!("Codex Thread Studio could not load startup settings: {error}");
+            StudioPreferences::default()
+        }
+    };
     let (codex_binary, opencode_binary, runtime) =
         backend_configuration(&startup_preferences, cli_path);
     if let Err(error) = favorites::initialize(&favorites_path) {
@@ -288,6 +336,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/document-review.mjs", get(document_review_js))
         .route("/favorites.mjs", get(favorites_js))
         .route("/session-map.mjs", get(session_map_js))
+        .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
@@ -297,6 +346,7 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
+        .route("/vendor/mermaid.min.js", get(mermaid_js))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route("/studio/codex", get(codex_info))
@@ -547,6 +597,10 @@ async fn session_map_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-map.mjs"))
 }
 
+async fn mermaid_config_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/mermaid-config.mjs"))
+}
+
 async fn thread_router_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-router.mjs"))
 }
@@ -565,6 +619,10 @@ async fn marked_js() -> impl IntoResponse {
 
 async fn dompurify_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/purify.es.mjs"))
+}
+
+async fn mermaid_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/mermaid.min.js"))
 }
 
 fn javascript(source: &'static str) -> impl IntoResponse {
@@ -1002,6 +1060,28 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     {
         return Err("content width must be comfortable, wide, or full".to_string());
     }
+    if !matches!(
+        preferences.mermaid.style.as_str(),
+        "auto" | "classic" | "neo" | "handDrawn" | "document"
+    ) || !matches!(
+        preferences.mermaid.density.as_str(),
+        "compact" | "standard" | "loose"
+    ) || !matches!(
+        preferences.mermaid.curve.as_str(),
+        "rounded" | "linear" | "step" | "basis"
+    ) || !matches!(
+        preferences.mermaid.layout.as_str(),
+        "auto" | "dagre" | "elk"
+    ) || !(12..=20).contains(&preferences.mermaid.font_size)
+    {
+        return Err("Mermaid rendering settings are invalid".to_string());
+    }
+    if !matches!(
+        preferences.markdown.mode.as_str(),
+        "reading" | "technical" | "compact"
+    ) {
+        return Err("Markdown mode must be reading, technical, or compact".to_string());
+    }
     if preferences
         .wsl_distribution
         .as_ref()
@@ -1347,9 +1427,11 @@ mod tests {
                 "/document-review.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
+                "/mermaid-config.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
                 "/transcript-presentation.mjs",
+                "/vendor/mermaid.min.js",
                 "/styles.css",
             ] {
                 let response = router
@@ -1736,6 +1818,28 @@ mod tests {
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_rendering_preferences() {
+        let defaults = StudioPreferences::default();
+        assert_eq!(defaults.markdown.mode, "technical");
+        assert_eq!(defaults.mermaid.style, "auto");
+        assert!(validate_preferences(&defaults).is_ok());
+
+        for mode in ["reading", "technical", "compact"] {
+            let mut preferences = StudioPreferences::default();
+            preferences.markdown.mode = mode.to_string();
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+
+        let mut invalid = StudioPreferences::default();
+        invalid.mermaid.layout = "unbounded".to_string();
+        assert!(validate_preferences(&invalid).is_err());
+
+        let mut invalid = StudioPreferences::default();
+        invalid.mermaid.font_size = 24;
+        assert!(validate_preferences(&invalid).is_err());
     }
 
     #[test]

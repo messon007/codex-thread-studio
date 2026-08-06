@@ -12,7 +12,8 @@
   "dependencies": {
     "dompurify": "3.4.12",
     "github-markdown-css": "5.8.1",
-    "marked": "17.0.2"
+    "marked": "17.0.2",
+    "mermaid": "11.16.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4"

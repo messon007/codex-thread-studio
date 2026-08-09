@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createFileRangeTarget,
+  findTextMatchRanges,
   fileDisplayName,
   lineNumberAt,
   locateQuote,
@@ -60,6 +61,14 @@ test('keeps an unresolved rendered selection unresolved after normalization', ()
   assert.equal(target.startOffset, null)
   assert.equal(normalizeAnnotationTarget({ target }).startOffset, null)
   assert.equal(normalizeAnnotationTarget({ target }).endOffset, null)
+})
+
+test('finds every non-overlapping match in one text node', () => {
+  assert.deepEqual(findTextMatchRanges('Test and test and TEST', 'test'), [
+    { start: 0, end: 4 },
+    { start: 9, end: 13 },
+    { start: 18, end: 22 },
+  ])
 })
 
 test('createFileRangeTarget rejects zero-length quotes', () => {

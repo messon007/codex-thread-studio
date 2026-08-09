@@ -48,6 +48,23 @@ export function locateQuote(content, quote, fromOffset = 0) {
   }
 }
 
+export function findTextMatchRanges(text, query) {
+  const source = String(text || '')
+  const needle = String(query || '')
+  if (!source || !needle) return []
+  const loweredSource = source.toLowerCase()
+  const loweredNeedle = needle.toLowerCase()
+  const matches = []
+  for (let index = 0; index < source.length;) {
+    const start = loweredSource.indexOf(loweredNeedle, index)
+    if (start < 0) break
+    const end = start + needle.length
+    matches.push({ start, end })
+    index = end
+  }
+  return matches
+}
+
 export function createFileRangeTarget(file, quote, hintOffset = 0) {
   const selected = String(quote || '').slice(0, MAX_QUOTE_LENGTH)
   const located = locateQuote(file?.content, selected, hintOffset)

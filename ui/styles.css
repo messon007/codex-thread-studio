@@ -401,6 +401,18 @@ body.resizing-artifact, body.resizing-artifact * { cursor: col-resize !important
 .artifact-content { flex: 1; min-height: 0; overflow: auto; padding: 30px clamp(25px, 4vw, 54px) 56px; scroll-behavior: smooth; user-select: text; }
 .artifact-content.markdown-body { color: var(--text); font-size: 14px; line-height: 1.75; }
 .artifact-source { margin: 0; color: var(--text); font: var(--code-font-weight) var(--code-font-size)/1.72 var(--code-font-family); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-search-wrap { min-height: 39px; padding: 8px 11px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); color: var(--muted); }
+.artifact-search-wrap.hidden { display: none; }
+.artifact-search { height: 28px; flex: 1; min-width: 0; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--faint); }
+.artifact-search:focus-within { border-color: var(--favorite); box-shadow: 0 0 0 3px var(--favorite-soft); }
+.artifact-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
+.artifact-search-summary { color: var(--faint); font-size: 10px; white-space: nowrap; }
+.artifact-search-actions { display: flex; align-items: center; gap: 4px; }
+.artifact-search-actions button { width: 23px; height: 23px; border: 1px solid var(--border); border-radius: 7px; color: var(--faint); background: var(--panel); cursor: pointer; font-size: 12px; font-weight: 700; line-height: 1; }
+.artifact-search-actions button:hover { color: var(--text); border-color: var(--border-strong); }
+.artifact-search-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.artifact-search-highlight { padding: 0 1px; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--amber-soft) 70%, var(--panel)); color: var(--text); box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber-soft) 18%, transparent) inset; }
+.artifact-search-highlight.current { background: color-mix(in srgb, var(--amber) 28%, var(--panel)); outline: 1px solid color-mix(in srgb, var(--amber) 70%, transparent); }
 .artifact-state { flex: 1; padding: 60px 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .artifact-state > span { width: 34px; height: 34px; margin-bottom: 12px; display: grid; place-items: center; border-radius: 10px; background: var(--panel-strong); color: var(--brand); }
 .artifact-state.error > span { background: var(--red-soft); color: var(--red); font-weight: 800; }

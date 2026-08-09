@@ -203,6 +203,17 @@
             <button id="close-artifact" class="icon-button" type="button" aria-label="关闭文档">×</button>
           </div>
         </header>
+        <div id="artifact-search-toolbar" class="artifact-search-wrap hidden" role="search">
+          <label class="artifact-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="artifact-search-input" type="search" placeholder="搜索文档内容…" autocomplete="off" />
+          </label>
+          <span id="artifact-search-summary" class="artifact-search-summary"></span>
+          <div class="artifact-search-actions">
+            <button id="artifact-search-prev" type="button" title="上一个匹配" aria-label="上一个匹配">↑</button>
+            <button id="artifact-search-next" type="button" title="下一个匹配" aria-label="下一个匹配">↓</button>
+          </div>
+        </div>
         <div id="artifact-loading" class="artifact-state hidden"><span class="artifact-spinner"></span><strong>正在打开文档…</strong></div>
         <div id="artifact-error" class="artifact-state error hidden"><span>!</span><strong>无法打开文档</strong><p id="artifact-error-message"></p></div>
         <article id="artifact-content" class="artifact-content"></article>

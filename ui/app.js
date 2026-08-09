@@ -26,6 +26,7 @@ import {
 import {
   createFileRangeTarget,
   fileDisplayName,
+  findTextMatchRanges,
   isMarkdownFile,
   lineNumberAt,
   normalizeAnnotationTarget,
@@ -184,6 +185,9 @@ const state = {
   pendingAnnotation: null,
   artifact: null,
   artifactView: 'preview',
+  artifactSearch: '',
+  artifactSearchMatches: [],
+  artifactSearchIndex: -1,
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
@@ -222,6 +226,7 @@ let annotationPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
 let composerSearchTimer = null
+let artifactSearchTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
 let favoritesSearchTimer = null
@@ -344,6 +349,10 @@ function bindUI() {
   $('#refresh-artifact').addEventListener('click', () => refreshArtifact().catch(showError))
   $('#artifact-preview').addEventListener('click', () => setArtifactView('preview'))
   $('#artifact-source').addEventListener('click', () => setArtifactView('source'))
+  $('#artifact-search-input').addEventListener('input', handleArtifactSearchInput)
+  $('#artifact-search-input').addEventListener('keydown', handleArtifactSearchKeydown)
+  $('#artifact-search-prev').addEventListener('click', () => navigateArtifactSearch(-1))
+  $('#artifact-search-next').addEventListener('click', () => navigateArtifactSearch(1))
   $('#artifact-resizer').addEventListener('pointerdown', beginArtifactResize)
   $('#artifact-resizer').addEventListener('pointermove', continueArtifactResize)
   $('#artifact-resizer').addEventListener('pointerup', finishArtifactResize)
@@ -2842,7 +2851,10 @@ async function handleMarkdownActionClick(event) {
   const sourceButton = event.target.closest('.mermaid-source-button')
   if (sourceButton) {
     const block = sourceButton.closest('.markdown-mermaid')
-    if (block) setMermaidSourceVisible(block, !block.classList.contains('show-source'))
+    if (block) {
+      setMermaidSourceVisible(block, !block.classList.contains('show-source'))
+      if (state.artifactSearch.trim() && block.closest('#artifact-content')) applyArtifactSearchHighlights()
+    }
     return
   }
   const button = event.target.closest('.copy-code-button')
@@ -3808,6 +3820,7 @@ async function openArtifact(file) {
   const root = String(file.root || thread.cwd)
   const path = fuzzyFileLabel(file)
   if (!path) throw new Error(t('文件路径为空。'))
+  resetArtifactSearch()
   hideComposerMenu()
   closeActionMenus()
   $('#session-map-rail').classList.add('hidden')
@@ -3815,6 +3828,7 @@ async function openArtifact(file) {
   $('#favorites-rail').classList.add('hidden')
   $('#artifact-rail').classList.remove('hidden')
   $('#artifact-content').classList.add('hidden')
+  $('#artifact-search-toolbar').classList.add('hidden')
   $('#artifact-error').classList.add('hidden')
   $('#artifact-loading').classList.remove('hidden')
   state.artifact = { root, path, threadKey: selectedStateKey(), loading: true }
@@ -3844,6 +3858,7 @@ async function refreshArtifact() {
 function closeArtifactRail({ restoreMap = true } = {}) {
   $('#artifact-rail').classList.add('hidden')
   state.artifact = null
+  resetArtifactSearch()
   hideSelectionPopover()
   if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()
 }
@@ -3859,6 +3874,7 @@ function renderArtifact() {
   const file = state.artifact
   if (!file) {
     rail.classList.add('hidden')
+    resetArtifactSearch()
     return
   }
   applyArtifactWidth()
@@ -3876,14 +3892,176 @@ function renderArtifact() {
   $('#artifact-view-switch').classList.toggle('hidden', !markdown)
   $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
   $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
+  const canSearch = ready && markdown && state.artifactView === 'preview'
+  $('#artifact-search-toolbar').classList.toggle('hidden', !canSearch)
+  $('#artifact-search-input').setAttribute('placeholder', t('搜索文档内容…'))
+  $('#artifact-search-prev').title = t('上一个匹配')
+  $('#artifact-search-prev').setAttribute('aria-label', t('上一个匹配'))
+  $('#artifact-search-next').title = t('下一个匹配')
+  $('#artifact-search-next').setAttribute('aria-label', t('下一个匹配'))
   if (!ready) return
   if (markdown && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body'
     content.innerHTML = renderMarkdown(file.content)
+    if (state.artifactSearch) applyArtifactSearchHighlights()
+    else renderArtifactSearchStatus()
   } else {
     content.className = 'artifact-content'
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(file.content)}</pre>`
   }
+}
+
+function resetArtifactSearch() {
+  state.artifactSearch = ''
+  state.artifactSearchIndex = -1
+  state.artifactSearchMatches = []
+  const searchInput = $('#artifact-search-input')
+  if (searchInput) searchInput.value = ''
+  clearArtifactSearchHighlights()
+  renderArtifactSearchStatus()
+  clearTimeout(artifactSearchTimer)
+}
+
+function handleArtifactSearchInput(event) {
+  state.artifactSearch = event.target.value
+  clearTimeout(artifactSearchTimer)
+  if (!state.artifact || !state.artifactSearch.trim()) {
+    clearArtifactSearchHighlights()
+    renderArtifactSearchStatus()
+    return
+  }
+  artifactSearchTimer = setTimeout(() => {
+    const content = $('#artifact-content')
+    if (!content || content.classList.contains('hidden')) return
+    applyArtifactSearchHighlights()
+  }, 140)
+}
+
+function handleArtifactSearchKeydown(event) {
+  if (event.key !== 'Enter') return
+  event.preventDefault()
+  if (!state.artifactSearch.trim() || state.artifactSearchMatches.length === 0) return
+  navigateArtifactSearch(event.shiftKey ? -1 : 1)
+}
+
+function handleArtifactSearchMatches(raw = '') {
+  const content = $('#artifact-content')
+  if (!content || !raw.trim()) return []
+  const query = raw.trim()
+  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_SKIP
+      const parent = node.parentElement
+      if (!parent) return NodeFilter.FILTER_REJECT
+      if (parent.closest('button, .markdown-code-header, .markdown-mermaid-canvas, script, style, textarea, .artifact-search-highlight')) {
+        return NodeFilter.FILTER_REJECT
+      }
+      const mermaidSource = parent.closest('.markdown-mermaid-source')
+      if (mermaidSource && !mermaidSource.closest('.markdown-mermaid.show-source')) return NodeFilter.FILTER_REJECT
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+
+  const matches = []
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    findTextMatchRanges(node.nodeValue, query).forEach(({ start, end }) => {
+      matches.push({ node, start, end })
+    })
+  }
+  return matches
+}
+
+function clearArtifactSearchHighlights() {
+  const content = $('#artifact-content')
+  if (!content) return
+  content.querySelectorAll('mark.artifact-search-highlight').forEach((mark) => {
+    const parent = mark.parentElement
+    if (!parent) return
+    parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+    parent.normalize()
+  })
+  state.artifactSearchMatches = []
+  state.artifactSearchIndex = -1
+}
+
+function applyArtifactSearchHighlights() {
+  const content = $('#artifact-content')
+  if (!content || !isMarkdownFile(state.artifact?.path) || state.artifactView !== 'preview') {
+    clearArtifactSearchHighlights()
+    return
+  }
+  clearArtifactSearchHighlights()
+  const query = state.artifactSearch.trim()
+  if (!query) {
+    renderArtifactSearchStatus()
+    return
+  }
+
+  const nodeGroups = new Map()
+  handleArtifactSearchMatches(query).forEach(({ node, start, end }) => {
+    if (!nodeGroups.has(node)) nodeGroups.set(node, [])
+    nodeGroups.get(node).push([start, end])
+  })
+  nodeGroups.forEach((positions, node) => {
+    const text = node.nodeValue
+    const parent = node.parentNode
+    if (!parent) return
+    const fragment = document.createDocumentFragment()
+    let cursor = 0
+    positions.sort((a, b) => a[0] - b[0]).forEach(([start, end]) => {
+      if (start < cursor || end > text.length) return
+      if (start > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, start)))
+      const mark = document.createElement('mark')
+      mark.className = 'artifact-search-highlight'
+      mark.textContent = text.slice(start, end)
+      fragment.appendChild(mark)
+      cursor = end
+    })
+    if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)))
+    parent.replaceChild(fragment, node)
+  })
+
+  state.artifactSearchMatches = [...content.querySelectorAll('mark.artifact-search-highlight')]
+  state.artifactSearchIndex = state.artifactSearchMatches.length ? 0 : -1
+  if (state.artifactSearchMatches.length) scrollArtifactSearchToMatch(0, { behavior: 'auto' })
+  renderArtifactSearchStatus()
+}
+
+function renderArtifactSearchStatus() {
+  const summary = $('#artifact-search-summary')
+  const total = state.artifactSearchMatches.length
+  const query = state.artifactSearch.trim()
+  if (!summary) return
+  if (!query || !state.artifact || !isMarkdownFile(state.artifact.path) || state.artifactView !== 'preview') {
+    summary.textContent = ''
+    $('#artifact-search-prev').disabled = true
+    $('#artifact-search-next').disabled = true
+    return
+  }
+  summary.textContent = total
+    ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total })
+    : t('未找到匹配内容')
+  $('#artifact-search-prev').disabled = total === 0
+  $('#artifact-search-next').disabled = total === 0
+}
+
+function scrollArtifactSearchToMatch(index, { behavior = 'smooth' } = {}) {
+  if (!state.artifactSearchMatches.length) return
+  const current = ((index % state.artifactSearchMatches.length) + state.artifactSearchMatches.length) % state.artifactSearchMatches.length
+  state.artifactSearchIndex = current
+  state.artifactSearchMatches.forEach((match, matchIndex) => {
+    match.classList.toggle('current', matchIndex === current)
+  })
+  const target = state.artifactSearchMatches[current]
+  if (target?.isConnected) target.scrollIntoView({ behavior, block: 'center', inline: 'nearest' })
+  renderArtifactSearchStatus()
+}
+
+function navigateArtifactSearch(step) {
+  if (!state.artifactSearchMatches.length) return
+  const next = state.artifactSearchIndex < 0 ? 0 : state.artifactSearchIndex + step
+  scrollArtifactSearchToMatch(next)
 }
 
 function formatFileSize(value) {

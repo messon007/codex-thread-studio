@@ -3,15 +3,18 @@ const MAX_QUOTE_LENGTH = 16_000
 export function normalizeAnnotationTarget(draft = {}) {
   const target = draft.target
   if (target?.kind === 'fileRange' && target.filePath) {
+    const startOffset = finiteOffset(target.startOffset)
+    const endOffset = finiteOffset(target.endOffset)
+    const validRange = startOffset != null && endOffset != null && endOffset > startOffset
     return {
       kind: 'fileRange',
       filePath: String(target.filePath).slice(0, 4096),
       root: String(target.root || '').slice(0, 4096),
       baseHash: String(target.baseHash || '').slice(0, 128),
-      startOffset: finiteOffset(target.startOffset),
-      endOffset: finiteOffset(target.endOffset),
-      prefix: String(target.prefix || '').slice(0, 256),
-      suffix: String(target.suffix || '').slice(0, 256),
+      startOffset: validRange ? startOffset : null,
+      endOffset: validRange ? endOffset : null,
+      prefix: validRange ? String(target.prefix || '').slice(0, 256) : '',
+      suffix: validRange ? String(target.suffix || '').slice(0, 256) : '',
     }
   }
   return {
@@ -51,6 +54,19 @@ export function createFileRangeTarget(file, quote, hintOffset = 0) {
   const start = located.startOffset
   const end = located.endOffset
   const source = String(file?.content || '')
+  if (start == null || end == null || end <= start) {
+    return {
+      kind: 'fileRange',
+      filePath: String(file?.path || ''),
+      root: String(file?.root || ''),
+      baseHash: String(file?.hash || ''),
+      startOffset: null,
+      endOffset: null,
+      prefix: '',
+      suffix: '',
+      ambiguous: located.ambiguous,
+    }
+  }
   return {
     kind: 'fileRange',
     filePath: String(file?.path || ''),
@@ -79,6 +95,8 @@ export function isMarkdownFile(path) {
 }
 
 function finiteOffset(value) {
+  if (value == null || typeof value === 'boolean') return null
+  if (typeof value === 'string' && !value.trim()) return null
   const number = Number(value)
   return Number.isInteger(number) && number >= 0 ? number : null
 }

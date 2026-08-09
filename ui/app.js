@@ -4104,7 +4104,7 @@ async function reopenAnnotationSource(id) {
   const relocated = createFileRangeTarget(state.artifact, draft.quote)
   const startOffset = relocated.startOffset ?? target.startOffset
   const endOffset = relocated.endOffset ?? target.endOffset
-  if (startOffset == null || endOffset == null) return
+  if (startOffset == null || endOffset == null || endOffset <= startOffset) return
   const node = source.firstChild
   if (!node) return
   const range = document.createRange()
@@ -4159,7 +4159,11 @@ function buildAnnotationPrompt(drafts, additional = '') {
   const annotations = drafts.map((draft, index) => {
     const target = normalizeAnnotationTarget(draft)
     const anchor = target.kind === 'fileRange'
-      ? [target.filePath, target.startOffset != null && `offset ${target.startOffset}-${target.endOffset}`, target.baseHash && `base ${target.baseHash}`].filter(Boolean).join(' / ')
+      ? [
+        target.filePath,
+        target.startOffset != null && target.endOffset != null && target.endOffset > target.startOffset && `offset ${target.startOffset}-${target.endOffset}`,
+        target.baseHash && `base ${target.baseHash}`,
+      ].filter(Boolean).join(' / ')
       : [target.turnId && `Turn ${target.turnId}`, target.itemId && `Item ${target.itemId}`].filter(Boolean).join(' / ')
     const quote = draft.quote.split('\n').map((line) => `> ${line}`).join('\n')
     return t(anchor

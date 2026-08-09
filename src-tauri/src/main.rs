@@ -1181,13 +1181,35 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                                 .is_some_and(|value| value.len() > 256)
                             || draft.target.as_ref().is_some_and(|target| {
                                 !matches!(target.kind.as_str(), "chatRange" | "fileRange")
-                                    || target.file_path.as_ref().is_some_and(|value| value.len() > 4096)
+                                    || target
+                                        .file_path
+                                        .as_ref()
+                                        .is_some_and(|value| value.len() > 4096)
                                     || target.root.as_ref().is_some_and(|value| value.len() > 4096)
-                                    || target.base_hash.as_ref().is_some_and(|value| value.len() > 128)
-                                    || target.prefix.as_ref().is_some_and(|value| value.len() > 256)
-                                    || target.suffix.as_ref().is_some_and(|value| value.len() > 256)
-                                    || matches!((target.start_offset, target.end_offset), (Some(start), Some(end)) if start > end)
-                                    || (target.kind == "fileRange" && target.file_path.as_deref().unwrap_or_default().is_empty())
+                                    || target
+                                        .base_hash
+                                        .as_ref()
+                                        .is_some_and(|value| value.len() > 128)
+                                    || target
+                                        .prefix
+                                        .as_ref()
+                                        .is_some_and(|value| value.len() > 256)
+                                    || target
+                                        .suffix
+                                        .as_ref()
+                                        .is_some_and(|value| value.len() > 256)
+                                    || (target.kind == "fileRange"
+                                        && match (target.start_offset, target.end_offset) {
+                                            (None, None) => false,
+                                            (Some(start), Some(end)) => end <= start,
+                                            _ => true,
+                                        })
+                                    || (target.kind == "fileRange"
+                                        && target
+                                            .file_path
+                                            .as_deref()
+                                            .unwrap_or_default()
+                                            .is_empty())
                             })
                     })
             })
@@ -1758,6 +1780,66 @@ mod tests {
             }],
         );
         assert!(validate_preferences(&preferences).is_ok());
+
+        let mut invalid = preferences.clone();
+        invalid.annotation_drafts.insert(
+            "thread-1".to_string(),
+            vec![AnnotationDraft {
+                id: "draft-2".to_string(),
+                quote: "selected output".to_string(),
+                comment: "please clarify".to_string(),
+                created_at: "2026-07-16T00:00:00Z".to_string(),
+                item_id: Some("item-2".to_string()),
+                turn_id: Some("turn-2".to_string()),
+                target: Some(AnnotationTarget {
+                    kind: "fileRange".to_string(),
+                    file_path: Some("/tmp/docs/change.md".to_string()),
+                    root: Some("/tmp/docs".to_string()),
+                    base_hash: Some("hash-1".to_string()),
+                    start_offset: Some(10),
+                    end_offset: Some(10),
+                    prefix: None,
+                    suffix: None,
+                }),
+            }],
+        );
+        assert!(validate_preferences(&invalid).is_err());
+
+        {
+            let invalid_target = invalid
+                .annotation_drafts
+                .get_mut("thread-1")
+                .and_then(|drafts| drafts.first_mut())
+                .and_then(|draft| draft.target.as_mut())
+                .expect("file target");
+            invalid_target.start_offset = None;
+            invalid_target.end_offset = Some(10);
+        }
+        assert!(validate_preferences(&invalid).is_err());
+
+        {
+            let invalid_target = invalid
+                .annotation_drafts
+                .get_mut("thread-1")
+                .and_then(|drafts| drafts.first_mut())
+                .and_then(|draft| draft.target.as_mut())
+                .expect("file target");
+            invalid_target.start_offset = Some(10);
+            invalid_target.end_offset = None;
+        }
+        assert!(validate_preferences(&invalid).is_err());
+
+        {
+            let invalid_target = invalid
+                .annotation_drafts
+                .get_mut("thread-1")
+                .and_then(|drafts| drafts.first_mut())
+                .and_then(|draft| draft.target.as_mut())
+                .expect("file target");
+            invalid_target.start_offset = None;
+            invalid_target.end_offset = None;
+        }
+        assert!(validate_preferences(&invalid).is_ok());
     }
 
     #[test]

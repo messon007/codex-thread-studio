@@ -473,7 +473,8 @@ mod tests {
         assert!(args.iter().any(|value| value.contains("kill -TERM")));
     }
 
-    #[cfg(unix)]
+    // WSL is Linux, and the launch contract intentionally relies on Linux's setsid.
+    #[cfg(target_os = "linux")]
     #[test]
     fn wsl_launch_script_preserves_environment_and_cleans_pid_file() {
         let pid_file = std::env::temp_dir().join(format!(

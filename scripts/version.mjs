@@ -29,7 +29,9 @@ function cargoVersion(source = read(cargoPath)) {
 }
 
 function lockedVersion(source = read(lockPath)) {
-  const match = source.match(/\[\[package\]\]\nname = "codex-thread-studio"\nversion = "([^"]+)"/u)
+  const match = source.match(
+    /\[\[package\]\]\r?\nname\s*=\s*"codex-thread-studio"\r?\nversion\s*=\s*"([^"]+)"/u,
+  )
   if (!match) fail('Cargo.lock does not contain the codex-thread-studio package')
   return match[1]
 }
@@ -79,7 +81,7 @@ function bump(nextVersion) {
     `$1${nextVersion}$2`,
   )
   const lock = read(lockPath).replace(
-    /(\[\[package\]\]\nname = "codex-thread-studio"\nversion = ")[^"]+("\n)/u,
+    /(\[\[package\]\]\r?\nname\s*=\s*"codex-thread-studio"\r?\nversion\s*=\s*")[^"]+("\r?\n)/u,
     `$1${nextVersion}$2`,
   )
   const date = new Date().toISOString().slice(0, 10)

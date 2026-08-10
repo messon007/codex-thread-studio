@@ -66,6 +66,7 @@ import {
   sessionMapTurnConfiguration,
   sessionMapVisibleText,
   shouldBootstrapSessionMap,
+  structuredWorkerText,
   visibleMapItems,
 } from './session-map.mjs'
 import { marked } from './vendor/marked.esm.js'
@@ -2179,9 +2180,9 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
       if (!hiddenTurnId || String(messageTurnId || '') !== String(hiddenTurnId)) return
       applyCodexNotification(hiddenModel, message)
       if (message.method !== 'turn/completed') return
-      const answer = answerForMapTurn(hiddenModel.turns.find((turn) => String(turn.id) === String(hiddenTurnId)))
+      const completedTurn = hiddenModel.turns.find((turn) => String(turn.id) === String(hiddenTurnId)) || message.params?.turn
       try {
-        finish(null, parseStructuredJson(answer))
+        finish(null, parseStructuredJson(structuredWorkerText(completedTurn)))
       } catch (error) {
         finish(error)
       }

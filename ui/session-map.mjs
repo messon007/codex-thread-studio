@@ -231,48 +231,25 @@ Return only safe incremental operations. Create a useful outline of normally 4�
 
 export function assistantOperationSchema() {
   const itemId = { type: 'string', minLength: 1, maxLength: 128 }
+  const nullableItemId = { anyOf: [itemId, { type: 'null' }] }
+  const nullableTitle = { anyOf: [{ type: 'string', minLength: 1, maxLength: 200 }, { type: 'null' }] }
+  const nullableKind = { anyOf: [{ type: 'string', minLength: 1, maxLength: 40 }, { type: 'null' }] }
+  const nullableSummary = { anyOf: [{ type: 'string', maxLength: 1000 }, { type: 'null' }] }
+  const states = ['notStarted', 'active', 'visited']
   const operation = {
-    oneOf: [
-      {
-        type: 'object',
-        properties: {
-          op: { const: 'addItem' },
-          itemId: itemId,
-          parentId: { anyOf: [itemId, { type: 'null' }] },
-          afterItemId: { anyOf: [itemId, { type: 'null' }] },
-          title: { type: 'string', minLength: 1, maxLength: 200 },
-          kind: { type: 'string', minLength: 1, maxLength: 40 },
-          summary: { type: 'string', maxLength: 1000 },
-          state: { enum: ['notStarted', 'active', 'visited'] },
-        },
-        required: ['op', 'itemId', 'parentId', 'afterItemId', 'title', 'kind', 'summary', 'state'],
-        additionalProperties: false,
-      },
-      {
-        type: 'object',
-        properties: {
-          op: { const: 'updateItem' },
-          itemId,
-          title: { anyOf: [{ type: 'string', minLength: 1, maxLength: 200 }, { type: 'null' }] },
-          kind: { anyOf: [{ type: 'string', minLength: 1, maxLength: 40 }, { type: 'null' }] },
-          summary: { anyOf: [{ type: 'string', maxLength: 1000 }, { type: 'null' }] },
-        },
-        required: ['op', 'itemId', 'title', 'kind', 'summary'],
-        additionalProperties: false,
-      },
-      {
-        type: 'object',
-        properties: { op: { const: 'setCurrent' }, itemId: { anyOf: [itemId, { type: 'null' }] } },
-        required: ['op', 'itemId'],
-        additionalProperties: false,
-      },
-      {
-        type: 'object',
-        properties: { op: { const: 'setState' }, itemId, state: { enum: ['notStarted', 'active', 'visited'] } },
-        required: ['op', 'itemId', 'state'],
-        additionalProperties: false,
-      },
-    ],
+    type: 'object',
+    properties: {
+      op: { type: 'string', enum: ['addItem', 'updateItem', 'setCurrent', 'setState'] },
+      itemId: nullableItemId,
+      parentId: nullableItemId,
+      afterItemId: nullableItemId,
+      title: nullableTitle,
+      kind: nullableKind,
+      summary: nullableSummary,
+      state: { anyOf: [{ type: 'string', enum: states }, { type: 'null' }] },
+    },
+    required: ['op', 'itemId', 'parentId', 'afterItemId', 'title', 'kind', 'summary', 'state'],
+    additionalProperties: false,
   }
   return {
     type: 'object',
@@ -286,12 +263,78 @@ export function assistantOperationSchema() {
 
 export function safeAssistantOperations(value) {
   const operations = Array.isArray(value?.operations) ? value.operations : []
-  return operations.filter((operation) => {
-    if (!operation || typeof operation !== 'object') return false
-    if (operation.op === 'addItem') return ['notStarted', 'active', 'visited'].includes(operation.state)
-    if (operation.op === 'updateItem' || operation.op === 'setCurrent') return true
-    return operation.op === 'setState' && ['notStarted', 'active', 'visited'].includes(operation.state)
-  })
+  return operations.map(normalizeAssistantOperation).filter(Boolean)
+}
+
+export function structuredWorkerText(turn) {
+  const text = (turn?.items || [])
+    .filter((item) => item?.type === 'agentMessage' && item.text)
+    .map((item) => String(item.text))
+    .join('\n')
+    .trim()
+  if (text) return text
+  const error = structuredWorkerError(turn?.error)
+  if (error) throw new Error(`结构化 AI 任务失败：${error}`)
+  throw new Error('结构化 AI 任务没有返回结果')
+}
+
+function normalizeAssistantOperation(operation) {
+  if (!operation || typeof operation !== 'object') return null
+  const itemId = boundedText(operation.itemId, 128)
+  if (operation.op === 'addItem') {
+    const title = boundedText(operation.title, 200)
+    if (!itemId || !title || !SAFE_ASSISTANT_STATES.has(operation.state)) return null
+    return {
+      op: 'addItem',
+      itemId,
+      parentId: boundedText(operation.parentId, 128) || null,
+      afterItemId: boundedText(operation.afterItemId, 128) || null,
+      title,
+      kind: boundedText(operation.kind, 40) || 'item',
+      summary: boundedText(operation.summary, 1000),
+      state: operation.state,
+    }
+  }
+  if (operation.op === 'updateItem') {
+    if (!itemId) return null
+    const normalized = {
+      op: 'updateItem',
+      itemId,
+      title: nullableBoundedText(operation.title, 200),
+      kind: nullableBoundedText(operation.kind, 40),
+      summary: nullableBoundedText(operation.summary, 1000),
+    }
+    return [normalized.title, normalized.kind, normalized.summary].some((part) => part !== null) ? normalized : null
+  }
+  if (operation.op === 'setCurrent') {
+    if (operation.itemId != null && !itemId) return null
+    return { op: 'setCurrent', itemId: itemId || null }
+  }
+  if (operation.op === 'setState' && itemId && SAFE_ASSISTANT_STATES.has(operation.state)) {
+    return { op: 'setState', itemId, state: operation.state }
+  }
+  return null
+}
+
+const SAFE_ASSISTANT_STATES = new Set(['notStarted', 'active', 'visited'])
+
+function boundedText(value, max) {
+  return typeof value === 'string' ? value.trim().slice(0, max) : ''
+}
+
+function nullableBoundedText(value, max) {
+  return value == null ? null : boundedText(value, max) || null
+}
+
+function structuredWorkerError(error) {
+  const message = String(error?.message || '').trim()
+  if (!message) return ''
+  try {
+    const parsed = JSON.parse(message)
+    return String(parsed?.error?.message || message).trim().slice(0, 2000)
+  } catch {
+    return message.slice(0, 2000)
+  }
 }
 
 export function sessionMapTurnConfiguration(map) {

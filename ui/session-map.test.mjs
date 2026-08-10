@@ -18,6 +18,7 @@ import {
   sessionMapEndpoint,
   shouldBootstrapSessionMap,
   sessionMapVisibleText,
+  structuredWorkerText,
 } from './session-map.mjs'
 
 const map = normalizeSessionMap({
@@ -51,11 +52,33 @@ test('filters automatic operations to the safe protocol subset', () => {
     { op: 'addItem', itemId: 'next', title: 'Next', state: 'notStarted' },
   ] })
   assert.deepEqual(operations.map((operation) => operation.op), ['setCurrent', 'addItem'])
-  assert.equal(assistantOperationSchema().properties.operations.maxItems, 40)
+  assert.deepEqual(operations[1], {
+    op: 'addItem', itemId: 'next', parentId: null, afterItemId: null,
+    title: 'Next', kind: 'item', summary: '', state: 'notStarted',
+  })
+  const schema = assistantOperationSchema()
+  assert.equal(schema.properties.operations.maxItems, 40)
+  const operationSchema = schema.properties.operations.items
+  assert.equal(operationSchema.oneOf, undefined)
+  assert.deepEqual(new Set(operationSchema.required), new Set(Object.keys(operationSchema.properties)))
   const configuration = sessionMapTurnConfiguration(map)
   assert.equal(configuration.dynamicTools[0].name, 'update_session_map')
   assert.match(configuration.developerInstructions, /Current Session Map JSON/)
   assert.match(configuration.developerInstructions, new RegExp(SESSION_MAP_UPDATE_START))
+})
+
+test('returns structured worker output and preserves the backend failure reason', () => {
+  assert.equal(structuredWorkerText({
+    items: [{ type: 'agentMessage', text: '{"operations":[]}' }],
+  }), '{"operations":[]}')
+  const backendError = JSON.stringify({
+    error: { message: "Invalid schema: 'oneOf' is not permitted." },
+  })
+  assert.throws(
+    () => structuredWorkerText({ status: 'failed', items: [], error: { message: backendError } }),
+    /oneOf.*not permitted/u,
+  )
+  assert.throws(() => structuredWorkerText({ status: 'completed', items: [] }), /没有返回结果/u)
 })
 
 test('extracts and hides the inline Map update envelope, including partial streaming markers', () => {

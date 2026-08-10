@@ -7,6 +7,9 @@ import {
   catalogTimestamp,
   filterCatalogEntries,
   groupCatalogEntries,
+  isSessionDirectoryHidden,
+  normalizeHiddenSessionDirectories,
+  normalizeSessionDirectoryIgnore,
   threadCatalogKey,
 } from './thread-catalog.mjs'
 
@@ -67,6 +70,39 @@ test('all and active modes keep catalog order', () => {
 test('search includes the backend tag and project directory', () => {
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'OC' }).map(({ thread }) => thread.name), ['OpenCode task'])
   assert.deepEqual(filterCatalogEntries(catalogs, { search: '/work/codex' }).map(({ thread }) => thread.name), ['Codex task'])
+})
+
+test('hides configured directories and all descendants without deleting catalog data', () => {
+  const hiddenDirectories = ['/work/codex/', 'C:\\Users\\Rui\\Archive']
+  assert.deepEqual(normalizeHiddenSessionDirectories(hiddenDirectories), ['/work/codex', 'C:/Users/Rui/Archive'])
+  assert.equal(isSessionDirectoryHidden('/work/codex/subproject', hiddenDirectories), true)
+  assert.equal(isSessionDirectoryHidden('/work/codex-other', hiddenDirectories), false)
+  assert.equal(isSessionDirectoryHidden('c:/users/rui/archive/project', hiddenDirectories), true)
+  assert.deepEqual(
+    filterCatalogEntries(catalogs, { hiddenDirectories }).map(({ backend, thread }) => `${backend}:${thread.id}`),
+    ['codex:running-cx', 'opencode:same-id'],
+  )
+  assert.deepEqual(
+    catalogCountsWithAttention(catalogs, new Set(), hiddenDirectories),
+    { all: 2, active: 1, attention: 0 },
+  )
+})
+
+test('applies ordered gitignore-style directory rules with negation and globstars', () => {
+  const patterns = [
+    '# generated projects',
+    '/home/rui/desktop/lisource/aswcodex/',
+    '**/node_modules/',
+    'scratch-*',
+    '!/home/rui/desktop/lisource/aswcodex/keep-this/',
+  ]
+  assert.equal(normalizeSessionDirectoryIgnore(patterns).length, 4)
+  assert.equal(isSessionDirectoryHidden('/home/rui/desktop/lisource/aswcodex', [], patterns), true)
+  assert.equal(isSessionDirectoryHidden('/home/rui/desktop/lisource/aswcodex/project-a', [], patterns), true)
+  assert.equal(isSessionDirectoryHidden('/home/rui/desktop/lisource/aswcodex/keep-this/subproject', [], patterns), false)
+  assert.equal(isSessionDirectoryHidden('/work/app/node_modules/library', [], patterns), true)
+  assert.equal(isSessionDirectoryHidden('/work/scratch-demo/nested', [], patterns), true)
+  assert.equal(isSessionDirectoryHidden('/work/production', [], patterns), false)
 })
 
 test('groups regular views by full directory and uses the last path level as the label', () => {

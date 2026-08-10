@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 
 import {
   composerTrigger,
+  isPreviewableImageFile,
+  isPreviewableTextFile,
   matchingSkills,
   matchingSlashCommands,
   replaceComposerTrigger,
+  previewableFileKind,
   selectedFileReference,
   selectedSkillReference,
   shellCommandFromComposer,
@@ -47,6 +50,24 @@ test('filters slash commands and formats file references', () => {
   assert.equal(matchingSlashCommands('comp')[0].name, 'compact')
   assert.equal(selectedFileReference({ path: 'src/main.rs' }), 'src/main.rs ')
   assert.equal(selectedFileReference({ path: 'docs/design notes.md' }), '"docs/design notes.md" ')
+})
+
+test('enables document preview only for known text file types', () => {
+  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt']) {
+    assert.equal(isPreviewableTextFile({ path }), true, path)
+  }
+  for (const path of ['image.png', 'diagram.svg', 'archive.zip', 'program.exe', 'data.bin', 'unknown']) {
+    assert.equal(isPreviewableTextFile({ path }), false, path)
+  }
+})
+
+test('enables static image previews without treating other binaries as documents', () => {
+  for (const path of ['image.png', 'photo.JPG', 'diagram.webp', 'animation.gif', 'drawing.svg']) {
+    assert.equal(isPreviewableImageFile({ path }), true, path)
+    assert.equal(previewableFileKind({ path }), 'image', path)
+  }
+  assert.equal(previewableFileKind({ path: 'docs/guide.md' }), 'text')
+  assert.equal(previewableFileKind({ path: 'archive.zip' }), null)
 })
 
 test('filters and formats app-server skills', () => {

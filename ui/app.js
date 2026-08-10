@@ -15,6 +15,7 @@ import {
 import {
   composerTrigger,
   fuzzyFileLabel,
+  previewableFileKind,
   matchingSkills,
   matchingSlashCommands,
   replaceComposerTrigger,
@@ -24,13 +25,18 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import {
+  artifactSearchAvailable,
   createFileRangeTarget,
+  fileAnnotationAnchor,
   fileDisplayName,
   findTextMatchRanges,
+  isHtmlFile,
   isMarkdownFile,
-  lineNumberAt,
+  lineRangeForTarget,
   normalizeAnnotationTarget,
   snapshotAnnotationSelection,
+  STATIC_HTML_FORBIDDEN_ATTRIBUTES,
+  STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
 import {
   autoFavoriteTitle,
@@ -65,6 +71,7 @@ import {
 import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
+  navigableTurns,
   turnNavigationLabel,
   turnPromptPreview,
 } from './turn-navigator.mjs'
@@ -88,6 +95,8 @@ import {
   catalogTimestamp,
   filterCatalogEntries,
   groupCatalogEntries,
+  isSessionDirectoryHidden,
+  normalizeHiddenSessionDirectories,
   threadCatalogKey,
 } from './thread-catalog.mjs'
 import {
@@ -171,6 +180,8 @@ const state = {
   language: 'system',
   theme: 'light',
   contentWidth: 'comfortable',
+  hiddenSessionDirectories: [],
+  sessionDirectoryIgnore: [],
   sidebarCollapsed: false,
   artifactWidthRatio: 0.44,
   typography: { ...typographyDefaults },
@@ -1203,9 +1214,10 @@ async function loadThreads() {
   }
   renderThreadList()
   refreshInactiveCatalog()
+  const visibleThreads = state.threads.filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
   const preferred = state.selectedId
-  const recent = [...state.threads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
-  const nextId = state.threads.some((thread) => thread.id === preferred) ? preferred : recent?.id
+  const recent = [...visibleThreads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
+  const nextId = visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
   if (nextId) await selectThread(nextId, { force: true })
   else renderWorkspace()
 }
@@ -1220,12 +1232,14 @@ function visibleThreadEntries() {
     filter: state.filter,
     search: state.search,
     attention: state.attentionThreads,
+    hiddenDirectories: state.hiddenSessionDirectories,
+    ignorePatterns: state.sessionDirectoryIgnore,
   })
 }
 
 function renderThreadList() {
   const list = $('#thread-list')
-  const counts = catalogCountsWithAttention(state.threadsByBackend, state.attentionThreads)
+  const counts = catalogCountsWithAttention(state.threadsByBackend, state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
   $('#count-all').textContent = counts.all
   $('#count-active').textContent = counts.active
   $('#count-attention').textContent = counts.attention
@@ -2306,7 +2320,7 @@ function followTranscriptOutput() {
 function renderTurnNavigator() {
   const navigator = $('#turn-navigator')
   const list = $('#turn-navigator-list')
-  const turns = state.model.turns || []
+  const turns = navigableTurns(state.model.turns)
   if (turns.length < 2) {
     navigator.classList.add('hidden')
     list.innerHTML = ''
@@ -2315,7 +2329,7 @@ function renderTurnNavigator() {
 
   list.innerHTML = turns.map((turn, index) => {
     const label = turnNavigationLabel(turn, index)
-    const title = turnPromptPreview(turn) || `Turn ${index + 1}`
+    const title = turnPromptPreview(turn) || t('用户输入 {index}', { index: index + 1 })
     return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(turn.id || '')}" aria-label="${escapeHtml(label)}"><span class="turn-nav-title">${escapeHtml(title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
   }).join('')
   navigator.classList.remove('hidden')
@@ -2334,7 +2348,9 @@ function syncTurnNavigator() {
   const transcript = $('#transcript')
   const transcriptRect = transcript.getBoundingClientRect()
   const marker = transcriptRect.top + Math.min(transcript.clientHeight * 0.28, 160)
+  const navigableIds = new Set(navigableTurns(state.model.turns).map((turn) => String(turn.id || '')))
   const positions = [...transcript.querySelectorAll('.turn[data-turn-id]')]
+    .filter((element) => navigableIds.has(element.dataset.turnId))
     .map((element) => ({ id: element.dataset.turnId, top: element.getBoundingClientRect().top }))
   const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 8
   setActiveTurnNavigator(activeTurnAtMarker(positions, marker, atBottom))
@@ -3099,7 +3115,8 @@ function handleComposerMenuClick(event) {
   if (openFile) {
     event.stopPropagation()
     const option = state.composerMenu.options[Number(openFile.dataset.openFileIndex)]
-    if (option) openArtifact(option).catch(showError)
+    if (option && previewableFileKind(option)) openArtifact(option).catch(showError)
+    else toast('此文件类型不能在文档审阅器中打开', 'error')
     return
   }
   const option = event.target.closest('[data-composer-index]')
@@ -3137,7 +3154,10 @@ function renderComposerMenu(message = '') {
       : type === 'skill'
         ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
         : option.root
-    const openAction = type === 'file' ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t('在审阅区打开')}">${t('打开')}</button>` : ''
+    const previewable = type === 'file' && Boolean(previewableFileKind(option))
+    const openAction = type === 'file'
+      ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t(previewable ? '在审阅区打开' : '仅支持预览文本和常见图片')}"${previewable ? '' : ' disabled aria-disabled="true"'}>${t('打开')}</button>`
+      : ''
     return `<div id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small>${openAction}</div>`
   }).join('')
   $('#composer-input').setAttribute('aria-activedescendant', `composer-option-${state.composerMenu.selected}`)
@@ -3820,6 +3840,8 @@ async function openArtifact(file) {
   const root = String(file.root || thread.cwd)
   const path = fuzzyFileLabel(file)
   if (!path) throw new Error(t('文件路径为空。'))
+  const kind = previewableFileKind(file)
+  if (!kind) throw new Error(t('此文件类型不能在文档审阅器中打开'))
   resetArtifactSearch()
   hideComposerMenu()
   closeActionMenus()
@@ -3831,22 +3853,50 @@ async function openArtifact(file) {
   $('#artifact-search-toolbar').classList.add('hidden')
   $('#artifact-error').classList.add('hidden')
   $('#artifact-loading').classList.remove('hidden')
-  state.artifact = { root, path, threadKey: selectedStateKey(), loading: true }
-  const response = await fetch('/studio/review-file', {
+  const requestId = randomId()
+  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), loading: true }
+  const response = await fetch(kind === 'image' ? '/studio/review-image' : '/studio/review-file', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root, path }),
   })
-  const result = await response.json().catch(() => null)
   if (!response.ok) {
+    const result = await response.json().catch(() => null)
     const message = result?.error?.message || `HTTP ${response.status}`
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
     state.artifact = { ...state.artifact, loading: false, error: message }
     renderArtifact()
     throw new Error(message)
   }
-  if (state.artifact?.threadKey !== selectedStateKey()) return
-  state.artifact = { ...result, threadKey: selectedStateKey(), loading: false }
-  state.artifactView = isMarkdownFile(result.path) ? 'preview' : 'source'
+  if (kind === 'image') {
+    const blob = await response.blob()
+    if (!blob.type.startsWith('image/')) {
+      const message = t('图片响应格式无效')
+      if (state.artifact?.requestId === requestId) {
+        state.artifact = { ...state.artifact, loading: false, error: message }
+        renderArtifact()
+      }
+      throw new Error(message)
+    }
+    const imageUrl = await blobToDataUrl(blob)
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
+      return
+    }
+    state.artifact = {
+      ...state.artifact,
+      loading: false,
+      mimeType: blob.type,
+      imageUrl,
+      relativePath: path,
+      size: blob.size,
+    }
+    state.artifactView = 'image'
+  } else {
+    const result = await response.json()
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+    state.artifact = { ...result, kind: 'text', requestId, threadKey: selectedStateKey(), loading: false }
+    state.artifactView = isMarkdownFile(result.path) || isHtmlFile(result.path) ? 'preview' : 'source'
+  }
   renderArtifact()
 }
 
@@ -3864,7 +3914,8 @@ function closeArtifactRail({ restoreMap = true } = {}) {
 }
 
 function setArtifactView(view) {
-  if (!state.artifact || (view === 'preview' && !isMarkdownFile(state.artifact.path))) return
+  if (!state.artifact || state.artifact.kind !== 'text') return
+  if (view === 'preview' && !isMarkdownFile(state.artifact.path) && !isHtmlFile(state.artifact.path)) return
   state.artifactView = view
   renderArtifact()
 }
@@ -3884,15 +3935,21 @@ function renderArtifact() {
   $('#artifact-loading').classList.toggle('hidden', !file.loading)
   $('#artifact-error').classList.toggle('hidden', !file.error)
   $('#artifact-error-message').textContent = file.error || ''
-  const ready = !file.loading && !file.error && typeof file.content === 'string'
+  const textReady = !file.loading && !file.error && file.kind === 'text' && typeof file.content === 'string'
+  const imageReady = !file.loading && !file.error && file.kind === 'image' && Boolean(file.imageUrl)
+  const ready = textReady || imageReady
   const content = $('#artifact-content')
   content.classList.toggle('hidden', !ready)
-  $('#artifact-meta').textContent = ready ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) }) : ''
-  const markdown = ready && isMarkdownFile(file.path)
-  $('#artifact-view-switch').classList.toggle('hidden', !markdown)
+  $('#artifact-meta').textContent = textReady
+    ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
+    : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}` : ''
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : '选择文字即可批注')
+  const markdown = textReady && isMarkdownFile(file.path)
+  const html = textReady && isHtmlFile(file.path)
+  $('#artifact-view-switch').classList.toggle('hidden', !markdown && !html)
   $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
   $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
-  const canSearch = ready && markdown && state.artifactView === 'preview'
+  const canSearch = artifactSearchAvailable(file, state.artifactView)
   $('#artifact-search-toolbar').classList.toggle('hidden', !canSearch)
   $('#artifact-search-input').setAttribute('placeholder', t('搜索文档内容…'))
   $('#artifact-search-prev').title = t('上一个匹配')
@@ -3900,15 +3957,59 @@ function renderArtifact() {
   $('#artifact-search-next').title = t('下一个匹配')
   $('#artifact-search-next').setAttribute('aria-label', t('下一个匹配'))
   if (!ready) return
+  if (imageReady) {
+    content.className = 'artifact-content artifact-image-preview'
+    content.innerHTML = `<div class="artifact-image-stage"><img src="${escapeHtml(file.imageUrl)}" alt="${escapeHtml(fileDisplayName(file.path))}" draggable="false" /></div>`
+    const image = content.querySelector('img')
+    image?.addEventListener('load', () => {
+      if (state.artifact?.requestId !== file.requestId) return
+      $('#artifact-meta').textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
+    }, { once: true })
+    image?.addEventListener('error', () => {
+      if (state.artifact?.requestId !== file.requestId) return
+      state.artifact = { ...state.artifact, error: t('无法解码图片') }
+      renderArtifact()
+    }, { once: true })
+    renderArtifactSearchStatus()
+    return
+  }
   if (markdown && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body'
     content.innerHTML = renderMarkdown(file.content)
-    if (state.artifactSearch) applyArtifactSearchHighlights()
-    else renderArtifactSearchStatus()
+  } else if (html && state.artifactView === 'preview') {
+    content.className = 'artifact-content markdown-body artifact-html-preview'
+    content.innerHTML = renderStaticHtml(file.content)
   } else {
     content.className = 'artifact-content'
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(file.content)}</pre>`
   }
+  if (state.artifactSearch) applyArtifactSearchHighlights()
+  else renderArtifactSearchStatus()
+}
+
+function renderStaticHtml(value) {
+  const clean = DOMPurify.sanitize(String(value || ''), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: STATIC_HTML_FORBIDDEN_TAGS,
+    FORBID_ATTR: STATIC_HTML_FORBIDDEN_ATTRIBUTES,
+  })
+  const template = document.createElement('template')
+  template.innerHTML = clean
+  template.content.querySelectorAll('*').forEach((element) => {
+    for (const attribute of [...element.attributes]) {
+      if (/^on/iu.test(attribute.name)) element.removeAttribute(attribute.name)
+    }
+  })
+  return template.innerHTML
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
+    reader.addEventListener('error', () => reject(reader.error || new Error(t('无法解码图片'))), { once: true })
+    reader.readAsDataURL(blob)
+  })
 }
 
 function resetArtifactSearch() {
@@ -3987,7 +4088,7 @@ function clearArtifactSearchHighlights() {
 
 function applyArtifactSearchHighlights() {
   const content = $('#artifact-content')
-  if (!content || !isMarkdownFile(state.artifact?.path) || state.artifactView !== 'preview') {
+  if (!content || !artifactSearchAvailable(state.artifact, state.artifactView)) {
     clearArtifactSearchHighlights()
     return
   }
@@ -4033,7 +4134,7 @@ function renderArtifactSearchStatus() {
   const total = state.artifactSearchMatches.length
   const query = state.artifactSearch.trim()
   if (!summary) return
-  if (!query || !state.artifact || !isMarkdownFile(state.artifact.path) || state.artifactView !== 'preview') {
+  if (!query || !artifactSearchAvailable(state.artifact, state.artifactView)) {
     summary.textContent = ''
     $('#artifact-search-prev').disabled = true
     $('#artifact-search-next').disabled = true
@@ -4099,6 +4200,7 @@ function captureTranscriptSelection() {
 function captureArtifactSelection() {
   const selection = window.getSelection()
   const text = selection?.toString().trim()
+  if (state.artifact?.kind === 'image') return hideSelectionPopover()
   if (!state.artifact || !text || selection.rangeCount === 0) return hideSelectionPopover()
   const range = selection.getRangeAt(0)
   const content = $('#artifact-content')
@@ -4265,8 +4367,11 @@ function renderAnnotationRail() {
 function annotationSourceLabel(draft, index) {
   const target = normalizeAnnotationTarget(draft)
   if (target.kind === 'fileRange') {
-    const line = state.artifact?.path === target.filePath ? lineNumberAt(state.artifact.content, target.startOffset) : null
-    return `${fileDisplayName(target.filePath)}${line ? ` · L${line}` : ''}`
+    const range = lineRangeForTarget(target, artifactContentForTarget(target))
+    const label = range.startLine
+      ? ` · L${range.startLine}${range.endLine > range.startLine ? `–${range.endLine}` : ''}`
+      : ''
+    return `${fileDisplayName(target.filePath)}${label}`
   }
   return `${t('回复批注 {index}', { index: index + 1 })}${target.turnId ? ` · ${target.turnId.slice(0, 8)}` : ''}`
 }
@@ -4337,11 +4442,7 @@ function buildAnnotationPrompt(drafts, additional = '') {
   const annotations = drafts.map((draft, index) => {
     const target = normalizeAnnotationTarget(draft)
     const anchor = target.kind === 'fileRange'
-      ? [
-        target.filePath,
-        target.startOffset != null && target.endOffset != null && target.endOffset > target.startOffset && `offset ${target.startOffset}-${target.endOffset}`,
-        target.baseHash && `base ${target.baseHash}`,
-      ].filter(Boolean).join(' / ')
+      ? fileAnnotationAnchor(target, artifactContentForTarget(target))
       : [target.turnId && `Turn ${target.turnId}`, target.itemId && `Item ${target.itemId}`].filter(Boolean).join(' / ')
     const quote = draft.quote.split('\n').map((line) => `> ${line}`).join('\n')
     return t(anchor
@@ -4362,6 +4463,10 @@ function buildAnnotationPrompt(drafts, additional = '') {
     .replaceAll('{{additional}}', additionalBlock)
     .replace(/\n{3,}/g, '\n\n')
     .trim()].filter(Boolean).join('\n\n')
+}
+
+function artifactContentForTarget(target) {
+  return state.artifact?.path === target?.filePath ? state.artifact.content : null
 }
 
 function insertAnnotations() {
@@ -4712,6 +4817,10 @@ async function loadPreferences() {
   state.language = normalizeLanguage(saved.language)
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
+  state.hiddenSessionDirectories = normalizeHiddenSessionDirectories(saved.hiddenSessionDirectories)
+  state.sessionDirectoryIgnore = Array.isArray(saved.sessionDirectoryIgnore)
+    ? saved.sessionDirectoryIgnore.map((value) => String(value)).filter((value) => value.length <= 4096)
+    : []
   state.wsl = {
     distribution: String(saved.wslDistribution || '').trim(),
     user: String(saved.wslUser || '').trim(),
@@ -4758,6 +4867,8 @@ function preferencesSnapshot() {
     language: state.language,
     theme: state.theme,
     contentWidth: state.contentWidth,
+    hiddenSessionDirectories: state.hiddenSessionDirectories,
+    sessionDirectoryIgnore: state.sessionDirectoryIgnore,
     wslDistribution: state.wsl.distribution || null,
     wslUser: state.wsl.user || null,
     wslCodexBinary: state.wsl.codexBinary || 'codex',

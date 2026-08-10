@@ -394,20 +394,25 @@ body.resizing-artifact, body.resizing-artifact * { cursor: col-resize !important
 .artifact-file-mark svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
 .artifact-heading h2 { max-width: min(280px, 24vw); margin: 0; overflow: hidden; font-size: 15px; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-heading p { max-width: min(330px, 28vw); margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-header-actions { display: flex; align-items: center; gap: 4px; }
+.artifact-header-actions { min-width: 0; display: flex; align-items: center; gap: 4px; }
 .segmented-control { height: 30px; padding: 2px; display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .segmented-control button { min-width: 43px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; font-size: 9px; }
 .segmented-control button.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
 .artifact-content { flex: 1; min-height: 0; overflow: auto; padding: 30px clamp(25px, 4vw, 54px) 56px; scroll-behavior: smooth; user-select: text; }
 .artifact-content.markdown-body { color: var(--text); font-size: 14px; line-height: 1.75; }
 .artifact-source { margin: 0; color: var(--text); font: var(--code-font-weight) var(--code-font-size)/1.72 var(--code-font-family); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
-.artifact-search-wrap { min-height: 39px; padding: 8px 11px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); color: var(--muted); }
+.artifact-html-preview { color: var(--text); }
+.artifact-html-preview a { color: var(--brand); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand) 38%, transparent); text-underline-offset: 2px; }
+.artifact-image-preview { padding: 18px; display: grid; place-items: center; overflow: auto; user-select: none; }
+.artifact-image-stage { min-width: 100%; min-height: 100%; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); }
+.artifact-image-stage img { display: block; max-width: 100%; max-height: calc(100vh - 170px); object-fit: contain; }
+.artifact-search-wrap { width: clamp(180px, 16vw, 210px); height: 30px; min-width: 0; display: flex; align-items: center; gap: 5px; color: var(--muted); }
 .artifact-search-wrap.hidden { display: none; }
-.artifact-search { height: 28px; flex: 1; min-width: 0; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--faint); }
+.artifact-search { height: 28px; flex: 1; min-width: 90px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--faint); }
 .artifact-search:focus-within { border-color: var(--favorite); box-shadow: 0 0 0 3px var(--favorite-soft); }
 .artifact-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
 .artifact-search-summary { color: var(--faint); font-size: 10px; white-space: nowrap; }
-.artifact-search-actions { display: flex; align-items: center; gap: 4px; }
+.artifact-search-actions { display: flex; align-items: center; gap: 3px; }
 .artifact-search-actions button { width: 23px; height: 23px; border: 1px solid var(--border); border-radius: 7px; color: var(--faint); background: var(--panel); cursor: pointer; font-size: 12px; font-weight: 700; line-height: 1; }
 .artifact-search-actions button:hover { color: var(--text); border-color: var(--border-strong); }
 .artifact-search-actions button:disabled { opacity: .45; cursor: not-allowed; }
@@ -599,6 +604,8 @@ body.resizing-artifact, body.resizing-artifact * { cursor: col-resize !important
 .composer-option small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .composer-file-open { min-height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--muted); cursor: pointer; font-size: 9px; }
 .composer-file-open:hover { border-color: var(--brand); color: var(--brand); }
+.composer-file-open:disabled { border-color: var(--border); background: var(--panel-soft); color: var(--faint); cursor: not-allowed; opacity: .52; }
+.composer-file-open:disabled:hover { border-color: var(--border); color: var(--faint); }
 .composer-menu-empty { padding: 14px; color: var(--muted); font-size: 10px; text-align: center; }
 .streaming-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
 .command-dialog { width: min(720px, calc(100vw - 48px)); }

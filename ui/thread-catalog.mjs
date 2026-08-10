@@ -14,8 +14,9 @@ export function catalogEntries(catalogs = {}) {
   )
 }
 
-export function catalogCountsWithAttention(catalogs = {}, attention = new Set()) {
+export function catalogCountsWithAttention(catalogs = {}, attention = new Set(), hiddenDirectories = [], ignorePatterns = []) {
   const entries = catalogEntries(catalogs)
+    .filter(({ thread }) => !isSessionDirectoryHidden(thread?.cwd, hiddenDirectories, ignorePatterns))
   return {
     all: entries.length,
     active: entries.filter(({ thread }) => isActiveCatalogThread(thread)).length,
@@ -41,9 +42,12 @@ export function filterCatalogEntries(catalogs, {
   filter = 'all',
   search = '',
   attention = new Set(),
+  hiddenDirectories = [],
+  ignorePatterns = [],
 } = {}) {
   const query = search.trim().toLowerCase()
   const entries = catalogEntries(catalogs).filter(({ backend, thread }) => {
+    if (isSessionDirectoryHidden(thread?.cwd, hiddenDirectories, ignorePatterns)) return false
     if (filter === 'active' && !isActiveCatalogThread(thread)) return false
     if (filter === 'attention' && !attention.has(threadCatalogKey(backend, thread.id))) return false
     if (!query) return true
@@ -67,6 +71,113 @@ export function filterCatalogEntries(catalogs, {
     return String(left.thread.name || left.thread.title || left.thread.id)
       .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
   })
+}
+
+export function normalizeHiddenSessionDirectories(values = []) {
+  if (!Array.isArray(values)) return []
+  return [...new Set(values.map(normalizeDirectoryPath).filter(Boolean))]
+}
+
+export function isSessionDirectoryHidden(directory, hiddenDirectories = [], ignorePatterns = []) {
+  const path = normalizeDirectoryPath(directory)
+  if (!path) return false
+  let hidden = normalizeHiddenSessionDirectories(hiddenDirectories).some((hidden) => {
+    const caseInsensitive = isWindowsDirectory(path) || isWindowsDirectory(hidden)
+    const candidate = caseInsensitive ? path.toLowerCase() : path
+    const prefix = caseInsensitive ? hidden.toLowerCase() : hidden
+    return candidate === prefix || candidate.startsWith(`${prefix}/`)
+  })
+  for (const rule of normalizeSessionDirectoryIgnore(ignorePatterns)) {
+    if (rule.regex.test(path)) hidden = !rule.negated
+  }
+  return hidden
+}
+
+export function normalizeSessionDirectoryIgnore(patterns = []) {
+  if (!Array.isArray(patterns)) return []
+  return patterns.map(parseIgnoreRule).filter(Boolean)
+}
+
+function parseIgnoreRule(value) {
+  let pattern = String(value || '').replace(/\s+$/u, '')
+  if (!pattern || pattern.startsWith('#')) return null
+  let negated = false
+  if (pattern.startsWith('!')) {
+    negated = true
+    pattern = pattern.slice(1)
+  } else if (pattern.startsWith('\\!') || pattern.startsWith('\\#')) {
+    pattern = pattern.slice(1)
+  }
+  if (!pattern) return null
+  pattern = pattern.replaceAll('\\', '/')
+  const directoryOnly = pattern.endsWith('/')
+  pattern = pattern.replace(/\/+$/u, '')
+  if (!pattern) return null
+  const anchored = pattern.startsWith('/') || /^[a-z]:\//iu.test(pattern) || pattern.startsWith('//')
+  const containsSlash = pattern.includes('/')
+  const body = globPatternSource(pattern)
+  const start = anchored ? '^' : containsSlash ? '(?:^|.*/)' : '(?:^|/)'
+  const end = directoryOnly || containsSlash ? '(?:/.*)?$' : '(?:/|$)'
+  try {
+    return {
+      negated,
+      regex: new RegExp(`${start}${body}${end}`, isWindowsDirectory(pattern) ? 'iu' : 'u'),
+    }
+  } catch {
+    return null
+  }
+}
+
+function globPatternSource(pattern) {
+  let source = ''
+  for (let index = 0; index < pattern.length;) {
+    const character = pattern[index]
+    if (character === '*') {
+      if (pattern[index + 1] === '*') {
+        while (pattern[index + 1] === '*') index += 1
+        if (pattern[index + 1] === '/') {
+          source += '(?:.*/)?'
+          index += 2
+        } else {
+          source += '.*'
+          index += 1
+        }
+      } else {
+        source += '[^/]*'
+        index += 1
+      }
+    } else if (character === '?') {
+      source += '[^/]'
+      index += 1
+    } else if (character === '[') {
+      const closing = pattern.indexOf(']', index + 1)
+      if (closing > index + 1) {
+        let content = pattern.slice(index + 1, closing)
+        if (content.startsWith('!')) content = `^${content.slice(1)}`
+        source += `[${content.replaceAll('\\', '\\\\')}]`
+        index = closing + 1
+      } else {
+        source += '\\['
+        index += 1
+      }
+    } else {
+      source += /[.+^${}()|\\]/u.test(character) ? `\\${character}` : character
+      index += 1
+    }
+  }
+  return source
+}
+
+function normalizeDirectoryPath(value) {
+  let path = String(value || '').trim().replaceAll('\\', '/')
+  if (!path) return ''
+  const networkPrefix = path.startsWith('//') ? '//' : ''
+  path = networkPrefix + path.slice(networkPrefix.length).replace(/\/{2,}/gu, '/')
+  return path.length > 1 ? path.replace(/\/+$/gu, '') : path
+}
+
+function isWindowsDirectory(path) {
+  return /^[a-z]:\//iu.test(path) || path.startsWith('//')
 }
 
 export function catalogTimestamp(value) {

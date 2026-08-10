@@ -11,6 +11,14 @@ export function turnPromptPreview(turn, maxLength = 72) {
   return `${text.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
 }
 
+export function turnHasUserInput(turn) {
+  return (turn?.items || []).some((item) => item?.type === 'userMessage')
+}
+
+export function navigableTurns(turns) {
+  return (turns || []).filter(turnHasUserInput)
+}
+
 export function activeTurnAtMarker(positions, marker, atBottom = false) {
   const available = (positions || []).filter((position) => position?.id)
   if (!available.length) return null
@@ -26,5 +34,5 @@ export function activeTurnAtMarker(positions, marker, atBottom = false) {
 
 export function turnNavigationLabel(turn, index) {
   const preview = turnPromptPreview(turn)
-  return preview ? `Turn ${index + 1}: ${preview}` : `Turn ${index + 1}`
+  return preview ? `User input ${index + 1}: ${preview}` : `User input ${index + 1}`
 }

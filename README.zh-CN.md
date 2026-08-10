@@ -8,7 +8,7 @@
 
 ## 主要能力
 
-- 按项目目录分组，直接列出、创建、自动恢复、重新载入、重命名、Fork、归档和删除 Codex Thread，并显示原生会话树、Fork 和父会话信息。
+- 按项目目录分组，直接列出、创建、自动恢复、重新载入、重命名、Fork、归档和删除 Codex Thread；可从侧边栏隐藏指定目录树，不改动后端历史。参见 [会话目录过滤](docs/session-directory-filtering.zh-CN.md)。
 - 结构化显示用户/Agent 消息、推理摘要、执行计划、命令及输出、文件修改、工具调用、Turn 状态、错误和 Token 用量；Agent 正文使用完全本地、经过安全清洗的 GitHub 风格 Markdown，并支持可配置的阅读密度、代码块、表格和 Mermaid 图表。参见 [渲染配置](docs/rendering-configuration.zh-CN.md)。
 - 对 App Server 的高频增量事件进行批处理，只更新当前活动 Item；长响应不再反复解析整段历史记录。
 - 支持开始 Turn、向运行中的 Turn 追加意见、停止 Turn，以及处理命令、文件修改和权限审批。

@@ -35,6 +35,7 @@ use session_map::{ApplyOperationsRequest, CreateMapRequest, MAX_MAP_BODY_BYTES};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
 const MAX_REVIEW_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_REVIEW_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Clone)]
 struct GatewayState {
@@ -88,6 +89,10 @@ struct AnnotationTarget {
     start_offset: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     end_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    end_line: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +171,10 @@ struct StudioPreferences {
     theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content_width: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hidden_session_directories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    session_directory_ignore: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wsl_distribution: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,6 +367,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/client-log", axum::routing::post(client_log))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
+            "/studio/review-image",
+            axum::routing::post(read_review_image),
+        )
+        .route(
             "/studio/favorites",
             get(list_favorites).post(create_favorite),
         )
@@ -447,9 +460,145 @@ async fn read_review_file(
     }
 }
 
+async fn read_review_image(
+    State(_state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if _state.codex.execution_environment() == "wsl" {
+        return match _state
+            .codex
+            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_IMAGE_BYTES)
+            .await
+        {
+            Ok(file) => match review_image_mime(std::path::Path::new(&file.path), &file.content) {
+                Some(mime) => review_image_response(file.content, mime),
+                None => json_error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "only PNG, JPEG, WebP, GIF, and SVG images can be previewed",
+                ),
+            },
+            Err(error) => {
+                let status = match error.kind() {
+                    std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                    std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+                    std::io::ErrorKind::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                    _ => StatusCode::BAD_REQUEST,
+                };
+                json_error(status, &format!("unable to read WSL image: {error}"))
+            }
+        };
+    }
+    match load_review_image(&request) {
+        Ok((bytes, mime)) => review_image_response(bytes, mime),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+fn review_image_response(bytes: Vec<u8>, mime: &'static str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("x-content-type-options", "nosniff")
+        .body(Body::from(bytes))
+        .expect("valid image response")
+}
+
+fn load_review_image(
+    request: &ReviewFileRequest,
+) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
+    let (_root, path, _metadata) =
+        resolve_review_path(request, MAX_REVIEW_IMAGE_BYTES, "25 MiB image")?;
+    let bytes = fs::read(&path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unable to read image: {error}"),
+        )
+    })?;
+    let mime = review_image_mime(&path, &bytes).ok_or((
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "only PNG, JPEG, WebP, GIF, and SVG images can be previewed".to_string(),
+    ))?;
+    Ok((bytes, mime))
+}
+
+fn review_image_mime(path: &std::path::Path, bytes: &[u8]) -> Option<&'static str> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Some("image/png"),
+        "jpg" | "jpeg" if bytes.starts_with(&[0xff, 0xd8, 0xff]) => Some("image/jpeg"),
+        "gif" if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") => Some("image/gif"),
+        "webp"
+            if bytes.len() >= 12
+                && bytes.starts_with(b"RIFF")
+                && bytes.get(8..12) == Some(b"WEBP") =>
+        {
+            Some("image/webp")
+        }
+        "svg" if looks_like_svg(bytes) => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let Ok(source) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let source = source.trim_start_matches('\u{feff}').trim_start();
+    source
+        .get(..source.len().min(4096))
+        .is_some_and(|prefix| prefix.contains("<svg") && !prefix.contains("<html"))
+}
+
 fn load_review_file(
     request: &ReviewFileRequest,
 ) -> Result<ReviewFileResponse, (StatusCode, String)> {
+    let (root, path, metadata) =
+        resolve_review_path(request, MAX_REVIEW_FILE_BYTES, "2 MiB review")?;
+    let bytes = fs::read(&path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unable to read file: {error}"),
+        )
+    })?;
+    let content = String::from_utf8(bytes).map_err(|_| {
+        (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "only UTF-8 text files can be reviewed".to_string(),
+        )
+    })?;
+
+    let relative_path = path
+        .strip_prefix(&root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned();
+    Ok(ReviewFileResponse {
+        root: root.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
+        relative_path,
+        hash: stable_content_hash(content.as_bytes()),
+        size: metadata.len(),
+        line_count: if content.is_empty() {
+            0
+        } else {
+            content.lines().count()
+        },
+        language: review_language(&path).to_string(),
+        content,
+    })
+}
+
+fn resolve_review_path(
+    request: &ReviewFileRequest,
+    max_bytes: u64,
+    limit_label: &str,
+) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
     let root = fs::canonicalize(&request.root).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -482,43 +631,13 @@ fn load_review_file(
             "path is not a regular file".to_string(),
         ));
     }
-    if metadata.len() > MAX_REVIEW_FILE_BYTES {
+    if metadata.len() > max_bytes {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
-            "file exceeds the 2 MiB review limit".to_string(),
+            format!("file exceeds the {limit_label} limit"),
         ));
     }
-    let bytes = fs::read(&path).map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("unable to read file: {error}"),
-        )
-    })?;
-    let content = String::from_utf8(bytes).map_err(|_| {
-        (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "only UTF-8 text files can be reviewed".to_string(),
-        )
-    })?;
-    let relative_path = path
-        .strip_prefix(&root)
-        .unwrap_or(&path)
-        .to_string_lossy()
-        .into_owned();
-    Ok(ReviewFileResponse {
-        root: root.to_string_lossy().into_owned(),
-        path: path.to_string_lossy().into_owned(),
-        relative_path,
-        hash: stable_content_hash(content.as_bytes()),
-        size: metadata.len(),
-        line_count: if content.is_empty() {
-            0
-        } else {
-            content.lines().count()
-        },
-        language: review_language(&path).to_string(),
-        content,
-    })
+    Ok((root, path, metadata))
 }
 
 fn stable_content_hash(bytes: &[u8]) -> String {
@@ -1060,6 +1179,22 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     {
         return Err("content width must be comfortable, wide, or full".to_string());
     }
+    if preferences.hidden_session_directories.len() > 256
+        || preferences
+            .hidden_session_directories
+            .iter()
+            .any(|path| !valid_session_directory(path))
+    {
+        return Err("hidden session directories are invalid".to_string());
+    }
+    if preferences.session_directory_ignore.len() > 512
+        || preferences
+            .session_directory_ignore
+            .iter()
+            .any(|pattern| pattern.len() > 4096 || pattern.chars().any(char::is_control))
+    {
+        return Err("session directory ignore rules are invalid".to_string());
+    }
     if !matches!(
         preferences.mermaid.style.as_str(),
         "auto" | "classic" | "neo" | "handDrawn" | "document"
@@ -1205,6 +1340,12 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                                             _ => true,
                                         })
                                     || (target.kind == "fileRange"
+                                        && match (target.start_line, target.end_line) {
+                                            (None, None) => false,
+                                            (Some(start), Some(end)) => start == 0 || end < start,
+                                            _ => true,
+                                        })
+                                    || (target.kind == "fileRange"
                                         && target
                                             .file_path
                                             .as_deref()
@@ -1279,6 +1420,13 @@ fn valid_runtime_value(value: &str, max_len: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_len
         && !value.starts_with('-')
+        && !value.chars().any(|character| character.is_control())
+}
+
+fn valid_session_directory(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 4096
         && !value.chars().any(|character| character.is_control())
 }
 
@@ -1798,6 +1946,8 @@ mod tests {
                     base_hash: Some("hash-1".to_string()),
                     start_offset: Some(10),
                     end_offset: Some(10),
+                    start_line: Some(2),
+                    end_line: Some(2),
                     prefix: None,
                     suffix: None,
                 }),
@@ -1840,6 +1990,18 @@ mod tests {
             invalid_target.end_offset = None;
         }
         assert!(validate_preferences(&invalid).is_ok());
+
+        {
+            let invalid_target = invalid
+                .annotation_drafts
+                .get_mut("thread-1")
+                .and_then(|drafts| drafts.first_mut())
+                .and_then(|draft| draft.target.as_mut())
+                .expect("file target");
+            invalid_target.start_line = None;
+            invalid_target.end_line = Some(2);
+        }
+        assert!(validate_preferences(&invalid).is_err());
     }
 
     #[test]
@@ -1878,6 +2040,61 @@ mod tests {
     }
 
     #[test]
+    fn review_image_reader_validates_type_and_project_boundary() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-image-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        let outside = base.join("outside.png");
+        fs::create_dir_all(&root).expect("create image fixture");
+        fs::write(root.join("preview.png"), b"\x89PNG\r\n\x1a\nfixture")
+            .expect("write PNG fixture");
+        fs::write(
+            root.join("diagram.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><text>diagram</text></svg>"#,
+        )
+        .expect("write SVG fixture");
+        fs::write(root.join("fake.png"), b"not an image").expect("write fake image");
+        fs::write(&outside, b"\x89PNG\r\n\x1a\nprivate").expect("write outside image");
+
+        let (bytes, mime) = load_review_image(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "preview.png".to_string(),
+        })
+        .expect("read project image");
+        assert_eq!(mime, "image/png");
+        assert!(bytes.starts_with(b"\x89PNG"));
+
+        let (svg, mime) = load_review_image(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "diagram.svg".to_string(),
+        })
+        .expect("read project SVG");
+        assert_eq!(mime, "image/svg+xml");
+        assert!(svg.starts_with(b"<svg"));
+
+        let fake = load_review_image(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "fake.png".to_string(),
+        });
+        assert!(matches!(fake, Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, _))));
+
+        let escaped = load_review_image(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: outside.to_string_lossy().into_owned(),
+        });
+        assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
+
+        fs::remove_file(root.join("preview.png")).ok();
+        fs::remove_file(root.join("diagram.svg")).ok();
+        fs::remove_file(root.join("fake.png")).ok();
+        fs::remove_file(&outside).ok();
+        fs::remove_dir(&root).ok();
+        fs::remove_dir(&base).ok();
+    }
+
+    #[test]
     fn rejects_a_template_without_annotations_slot() {
         let preferences = StudioPreferences {
             annotation_prompt_template: Some("no placeholder".to_string()),
@@ -1897,6 +2114,34 @@ mod tests {
         }
         let preferences = StudioPreferences {
             content_width: Some("unbounded".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_hidden_session_directories() {
+        let preferences = StudioPreferences {
+            hidden_session_directories: vec![
+                "/home/user/archive".to_string(),
+                r"C:\Users\User\Archive".to_string(),
+            ],
+            session_directory_ignore: vec![
+                "**/node_modules/".to_string(),
+                "!/home/user/archive/keep/".to_string(),
+            ],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_ok());
+
+        let preferences = StudioPreferences {
+            hidden_session_directories: vec!["invalid\npath".to_string()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_err());
+
+        let preferences = StudioPreferences {
+            session_directory_ignore: vec!["invalid\npattern".to_string()],
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());

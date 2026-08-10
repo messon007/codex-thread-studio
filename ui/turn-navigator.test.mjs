@@ -3,7 +3,9 @@ import test from 'node:test'
 
 import {
   activeTurnAtMarker,
+  navigableTurns,
   turnNavigationLabel,
+  turnHasUserInput,
   turnPromptPreview,
 } from './turn-navigator.mjs'
 
@@ -15,7 +17,7 @@ test('builds a compact preview from the user message in a turn', () => {
     }],
   }
   assert.equal(turnPromptPreview(turn), 'explain this code')
-  assert.equal(turnNavigationLabel(turn, 2), 'Turn 3: explain this code')
+  assert.equal(turnNavigationLabel(turn, 2), 'User input 3: explain this code')
 })
 
 test('truncates long turn previews and handles missing user text', () => {
@@ -24,6 +26,17 @@ test('truncates long turn previews and handles missing user text', () => {
   }
   assert.equal(turnPromptPreview(turn, 6), 'abcde…')
   assert.equal(turnPromptPreview({ items: [] }), '')
+})
+
+test('uses only actual user inputs as navigation split points', () => {
+  const userTurn = { id: 'user', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'Question' }] }] }
+  const assistantTurn = { id: 'assistant', items: [{ type: 'agentMessage', text: 'Answer' }] }
+  const activityTurn = { id: 'activity', items: [{ type: 'commandExecution', command: ['pwd'] }] }
+  const imageTurn = { id: 'image', items: [{ type: 'userMessage', content: [{ type: 'localImage', path: '/tmp/a.png' }] }] }
+
+  assert.equal(turnHasUserInput(userTurn), true)
+  assert.equal(turnHasUserInput(assistantTurn), false)
+  assert.deepEqual(navigableTurns([userTurn, assistantTurn, activityTurn, imageTurn]), [userTurn, imageTurn])
 })
 
 test('selects the last turn above the reading marker', () => {

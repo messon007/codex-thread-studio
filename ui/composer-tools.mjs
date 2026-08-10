@@ -60,6 +60,46 @@ export function fuzzyFileLabel(file) {
   return String(file.path || file.file_name || '')
 }
 
+const PREVIEWABLE_TEXT_EXTENSIONS = new Set([
+  'adoc', 'asciidoc', 'bash', 'bat', 'c', 'cc', 'cfg', 'cjs', 'cmake', 'conf', 'cpp', 'cs', 'css',
+  'csv', 'cxx', 'diff', 'dist', 'editorconfig', 'env', 'example', 'fish', 'gitattributes', 'gitignore', 'go', 'gql', 'gradle', 'graphql',
+  'groovy', 'h', 'hpp', 'htm', 'html', 'ini', 'java', 'js', 'json', 'json5', 'jsonc', 'jsonl', 'jsx',
+  'in', 'kt', 'kts', 'less', 'lock', 'log', 'lua', 'md', 'mdown', 'mjs', 'mk', 'mkd', 'ndjson', 'npmrc', 'nvmrc', 'patch',
+  'markdown', 'php', 'properties', 'proto', 'ps1', 'py', 'pyi', 'rb', 'rs', 'rst', 'sass', 'scss', 'sh', 'sql',
+  'sample', 'swift', 'template', 'text', 'tmpl', 'toml', 'ts', 'tsv', 'tsx', 'txt', 'xhtml', 'xml', 'yaml', 'yml', 'zsh',
+])
+
+const PREVIEWABLE_TEXT_NAMES = new Set([
+  'authors', 'changelog', 'cmakelists.txt', 'code_of_conduct', 'containerfile', 'contributing', 'copying',
+  'dockerfile', 'gemfile', 'jenkinsfile', 'license', 'makefile', 'notice', 'procfile', 'rakefile', 'readme',
+  'security', 'vagrantfile',
+])
+
+const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['gif', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
+
+export function isPreviewableTextFile(file) {
+  const path = fuzzyFileLabel(file).replaceAll('\\', '/')
+  const name = path.split('/').filter(Boolean).pop()?.toLowerCase() || ''
+  if (!name) return false
+  const stem = name.replace(/\.[^.]+$/u, '')
+  if (PREVIEWABLE_TEXT_NAMES.has(name) || PREVIEWABLE_TEXT_NAMES.has(stem)) return true
+  const extension = name.includes('.') ? name.split('.').pop() : ''
+  return PREVIEWABLE_TEXT_EXTENSIONS.has(extension)
+}
+
+export function isPreviewableImageFile(file) {
+  const path = fuzzyFileLabel(file).replaceAll('\\', '/')
+  const name = path.split('/').filter(Boolean).pop()?.toLowerCase() || ''
+  const extension = name.includes('.') ? name.split('.').pop() : ''
+  return PREVIEWABLE_IMAGE_EXTENSIONS.has(extension)
+}
+
+export function previewableFileKind(file) {
+  if (isPreviewableImageFile(file)) return 'image'
+  if (isPreviewableTextFile(file)) return 'text'
+  return null
+}
+
 export function selectedFileReference(file) {
   const path = fuzzyFileLabel(file)
   if (!path) return ''

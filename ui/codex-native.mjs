@@ -140,10 +140,25 @@ function upsertTurn(model, incoming) {
     model.turns.push({ id, status: incoming.status || 'inProgress', items: [], ...structuredCloneSafe(incoming) })
     return model.turns.at(-1)
   }
-  const items = model.turns[index].items || []
-  model.turns[index] = { ...model.turns[index], ...structuredCloneSafe(incoming) }
-  if (!Array.isArray(incoming.items) || incoming.items.length === 0) model.turns[index].items = items
+  const current = model.turns[index]
+  const next = structuredCloneSafe(incoming)
+  model.turns[index] = {
+    ...current,
+    ...next,
+    // App Server turn notifications are lifecycle snapshots, while item/*
+    // notifications are the canonical item stream. A completion snapshot may
+    // therefore be empty or partial and must never erase an earlier user input.
+    items: mergeTurnItems(current.items, next.items),
+  }
   return model.turns[index]
+}
+
+function mergeTurnItems(current, incoming) {
+  const merged = Array.isArray(current) ? structuredCloneSafe(current) : []
+  if (!Array.isArray(incoming)) return merged
+  const turn = { items: merged }
+  for (const item of incoming) upsertItem(turn, item)
+  return turn.items
 }
 
 function ensureTurn(model, turnId) {

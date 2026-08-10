@@ -29,6 +29,37 @@ test('assembles streamed structured items and completion state', () => {
   assert.equal(model.status, 'idle')
 })
 
+test('turn completion never drops the original user message from a partial snapshot', () => {
+  const model = createCodexViewModel()
+  model.threadId = 'thread-1'
+  applyCodexNotification(model, { method: 'turn/started', params: { turn: { id: 'turn-1', status: 'inProgress', items: [] } } })
+  applyCodexNotification(model, {
+    method: 'item/started',
+    params: {
+      turnId: 'turn-1',
+      item: { id: 'question', type: 'userMessage', content: [{ type: 'text', text: 'Keep my question visible' }] },
+    },
+  })
+  applyCodexNotification(model, {
+    method: 'item/completed',
+    params: { turnId: 'turn-1', item: { id: 'answer', type: 'agentMessage', text: 'Done.' } },
+  })
+
+  applyCodexNotification(model, {
+    method: 'turn/completed',
+    params: {
+      turn: {
+        id: 'turn-1',
+        status: 'completed',
+        items: [{ id: 'answer', type: 'agentMessage', text: 'Done.' }],
+      },
+    },
+  })
+
+  assert.deepEqual(model.turns[0].items.map((item) => item.id), ['question', 'answer'])
+  assert.equal(textFromUserContent(model.turns[0].items[0].content), 'Keep my question visible')
+})
+
 test('tracks approval requests and responses', () => {
   const model = createCodexViewModel()
   applyCodexNotification(model, { id: 41, method: 'item/commandExecution/requestApproval', params: { command: 'cargo test' } })

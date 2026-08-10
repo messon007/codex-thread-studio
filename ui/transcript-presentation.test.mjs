@@ -128,6 +128,23 @@ test('detects equal-length message replacement and incrementally rebuilds one tu
   assert.equal(updated.turns.get('2').presentation.blocks[0].item.text, 'New')
 })
 
+test('rebuilds a cached turn when user message text changes', () => {
+  const cache = new TranscriptPresentationCache()
+  const model = {
+    turns: [{
+      id: '1',
+      status: 'inProgress',
+      items: [{ id: 'question', type: 'userMessage', content: [{ type: 'text', text: 'Original question' }] }],
+    }],
+  }
+  const first = cache.get('thread', model).turns.get('1').presentation
+  model.turns[0].items[0].content[0].text = 'Updated question'
+  const second = cache.get('thread', model).turns.get('1').presentation
+
+  assert.notEqual(second, first)
+  assert.equal(second.blocks[0].item.content[0].text, 'Updated question')
+})
+
 test('keeps the rendered history window bounded until the user loads earlier turns', () => {
   const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
   const model = { turns: [1, 2, 3].map((id) => ({ id: String(id), status: 'completed', items: [] })) }

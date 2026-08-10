@@ -214,7 +214,7 @@ function itemSignature(item) {
   const changes = Array.isArray(item?.changes) ? item.changes : []
   return [
     item?.id || '', item?.type || '', item?.status || '',
-    textFingerprint(item?.text), textFingerprint(arrayText(item?.summary)), textFingerprint(arrayText(item?.content)),
+    textFingerprint(item?.text), textFingerprint(arrayText(item?.summary)), valueFingerprint(item?.content),
     textFingerprint(item?.aggregatedOutput), changesFingerprint(changes), valueFingerprint(item?.result), valueFingerprint(item?.error),
   ].join(':')
 }

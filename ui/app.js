@@ -242,6 +242,9 @@ let composerSearchTimer = null
 let artifactSearchTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
+let threadCatalogRetryTimer = null
+let threadCatalogRetryAttempt = 0
+let threadCatalogErrorMessage = null
 let favoritesSearchTimer = null
 let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
@@ -345,7 +348,14 @@ async function init() {
   startMermaidRendering()
   applyBackendCopy()
   await loadFavorites().catch(showError)
-  await loadBackendInfo()
+  // Catalog discovery is independent of the active backend connection. A
+  // transient failure in one backend must not leave the whole sidebar empty
+  // while the other backend is healthy.
+  refreshInactiveCatalog()
+  // Codex metadata is not required before its WebSocket connects. OpenCode
+  // loads its metadata as part of connectOpenCode(), so it is not requested
+  // twice and cannot block initial catalog discovery.
+  if (state.backend === 'codex') loadBackendInfo()
   connectBackend()
 }
 
@@ -784,7 +794,9 @@ async function connectOpenCode() {
     setBackendState('checking', 'OpenCode 正在重连', 'SSE 事件流')
     $('#native-connection').textContent = '正在重连事件流…'
   }
-  await loadThreads()
+  await loadThreads().catch((error) => {
+    handleThreadCatalogFailure('opencode', generation, error)
+  })
 }
 
 function cleanupSocket() {
@@ -796,6 +808,10 @@ function cleanupSocket() {
 
 function cleanupConnections() {
   clearTimeout(state.reconnectTimer)
+  clearTimeout(threadCatalogRetryTimer)
+  threadCatalogRetryTimer = null
+  threadCatalogRetryAttempt = 0
+  threadCatalogErrorMessage = null
   cleanupSocket()
   if (state.eventSource) {
     state.eventSource.close()
@@ -813,7 +829,7 @@ function handleAppServerMessage(message) {
       setBackendState('online', 'Codex App Server', '原生结构化连接')
       $('#native-connection').textContent = '已连接'
       setNativeError(null)
-      if (firstReady) loadThreads().catch(showError)
+      if (firstReady) loadThreads().catch((error) => handleThreadCatalogFailure('codex', state.socketGeneration, error))
     } else if (status === 'starting') {
       setBackendState('checking', '正在启动 Codex', message.params?.binary || 'App Server')
     } else if (status === 'error' || status === 'stopped') {
@@ -1162,7 +1178,39 @@ async function refreshInactiveCatalog() {
     renderThreadList()
   } catch (error) {
     console.warn(`Unable to refresh ${backend} catalog`, error)
+    reportClientError(new Error(`${backend} inactive session catalog failed: ${error?.message || error}`))
   }
+}
+
+function handleThreadCatalogFailure(backend, generation, error) {
+  if (backend !== state.backend || generation !== state.socketGeneration || !state.ready) return
+  threadCatalogRetryAttempt += 1
+  threadCatalogErrorMessage = t('无法加载 {backend} 会话列表，Studio 将自动重试。', {
+    backend: backendDescriptor(backend).name,
+  })
+  console.warn(`${backend} session catalog load failed`, error)
+  reportClientError(new Error(`${backend} session catalog load failed: ${error?.message || error}`))
+  if (threadCatalogRetryAttempt === 1) {
+    setNativeError(threadCatalogErrorMessage)
+    toast(threadCatalogErrorMessage, 'error')
+  }
+  clearTimeout(threadCatalogRetryTimer)
+  const delay = Math.min(1_500 * (2 ** (threadCatalogRetryAttempt - 1)), 15_000)
+  threadCatalogRetryTimer = setTimeout(() => {
+    threadCatalogRetryTimer = null
+    if (backend !== state.backend || generation !== state.socketGeneration || !state.ready) return
+    loadThreads().catch((retryError) => handleThreadCatalogFailure(backend, generation, retryError))
+  }, delay)
+}
+
+function markThreadCatalogLoaded() {
+  clearTimeout(threadCatalogRetryTimer)
+  threadCatalogRetryTimer = null
+  threadCatalogRetryAttempt = 0
+  if (threadCatalogErrorMessage && $('#native-error-message').textContent === threadCatalogErrorMessage) {
+    setNativeError(null)
+  }
+  threadCatalogErrorMessage = null
 }
 
 function directoryQuery(directory = selectedThread()?.cwd) {
@@ -1281,8 +1329,9 @@ function rejectPending(error) {
 async function loadThreads() {
   const result = await rpc('thread/list', { limit: 100 })
   setActiveThreads(Array.isArray(result?.data) ? result.data : [])
+  markThreadCatalogLoaded()
   if (state.backend === 'codex') {
-    await ensureManagedRouterThread()
+    await ensureManagedRouterThread().catch(showError)
   }
   renderThreadList()
   refreshInactiveCatalog()
@@ -1290,7 +1339,7 @@ async function loadThreads() {
   const preferred = state.selectedId
   const recent = [...visibleThreads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
   const nextId = visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
-  if (nextId) await selectThread(nextId, { force: true })
+  if (nextId) await selectThread(nextId, { force: true }).catch(showError)
   else renderWorkspace()
 }
 

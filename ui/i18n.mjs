@@ -452,6 +452,7 @@ const english = {
   '已复制最近一条 {backend} 回复': 'Copied the latest {backend} response',
   '新建 {backend} 会话': 'New {backend} session',
   '{backend} Server 无法使用': '{backend} Server unavailable',
+  '无法加载 {backend} 会话列表，Studio 将自动重试。': 'Unable to load the {backend} session list. Studio will retry automatically.',
   '结构化 {backend} 工作台': 'Structured {backend} workspace',
   '向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell': 'Message {backend}… @ files · $ skills · / commands · ! shell',
   '创建 {backend} 会话': 'Create {backend} session',

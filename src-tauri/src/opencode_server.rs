@@ -58,6 +58,7 @@ impl OpenCodeServer {
             generation: Arc::new(AtomicU64::new(0)),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(10))
                 .build()
                 .expect("failed to build OpenCode HTTP client"),
         }

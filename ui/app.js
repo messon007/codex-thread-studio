@@ -1384,6 +1384,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   if (state.artifact?.threadKey !== sessionMapKey(state.backend, id)) closeArtifactRail({ restoreMap: false })
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
+  setNativeError(null)
   state.sessionMapSelectedItem = null
   closeSessionMapItemMenu()
   const key = sessionMapKey(state.backend, id)

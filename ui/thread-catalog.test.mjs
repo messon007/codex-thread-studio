@@ -138,6 +138,7 @@ test('session selection renders a valid cache before performing a first history 
   const end = source.indexOf('\nfunction markThreadLoaded', start)
   const selectThread = source.slice(start, end)
   assert.ok(selectThread.indexOf('freshThreadModel(') < selectThread.indexOf('renderTranscript()'))
+  assert.ok(selectThread.indexOf('setNativeError(null)') < selectThread.indexOf('if (cached)'))
   assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id)'))
   assert.doesNotMatch(selectThread, /thread\/unsubscribe/)
 })

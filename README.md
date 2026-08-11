@@ -91,7 +91,7 @@ The desktop runtime has no Node.js or network dependency. Markdown browser asset
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md). Maintainers add notes under **Unreleased**, run `npm run version:bump -- <semver>`, verify with `npm run version:check`, commit, and push a matching `v<semver>` tag. The tag workflow validates all version metadata and creates a draft GitHub Release with Linux, macOS, and Windows bundles.
 
-See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Thread Router specification](docs/thread-router/specification.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
+See [Maturity roadmap](docs/maturity-roadmap.md), [Architecture](docs/architecture.md), [Thread Router specification](docs/thread-router/specification.md), the experimental [Browser Workspace specification](docs/browser-workspace/specification.md), [Product and acceptance criteria](docs/product.md), [Development](docs/development.md), and [Troubleshooting](docs/troubleshooting.md).
 
 ## Current lifecycle boundary
 

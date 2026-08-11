@@ -74,7 +74,7 @@ npm run version:check
 
 发布说明记录在 [CHANGELOG.md](CHANGELOG.md)。维护者先在 **Unreleased** 下填写变更，运行 `npm run version:bump -- <semver>`，再以 `npm run version:check` 验证。提交后推送匹配的 `v<semver>` Tag，GitHub 工作流会核对所有版本信息，并创建包含 Linux、macOS、Windows 安装包的草稿 Release。
 
-详细内容参见[成熟度路线图](docs/maturity-roadmap.md)、[系统架构](docs/architecture.md)、[产品需求与验收标准](docs/product.md)、[开发指南](docs/development.md)和[故障排查](docs/troubleshooting.md)。
+详细内容参见[成熟度路线图](docs/maturity-roadmap.md)、[系统架构](docs/architecture.md)、[Browser Workspace 实验规格](docs/browser-workspace/specification.md)、[产品需求与验收标准](docs/product.md)、[开发指南](docs/development.md)和[故障排查](docs/troubleshooting.md)。
 
 ## 当前生命周期边界
 

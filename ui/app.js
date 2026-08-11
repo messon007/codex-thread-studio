@@ -188,6 +188,7 @@ const state = {
   typography: { ...typographyDefaults },
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
   markdown: { mode: 'technical' },
+  browser: null,
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -262,7 +263,77 @@ window.addEventListener('unhandledrejection', (event) => reportClientError(event
 function reportClientError(error) {
   const summary = error?.message || String(error || 'Unknown WebView error')
   const message = error?.stack && !String(error.stack).includes(summary) ? `${summary}\n${error.stack}` : error?.stack || summary
-  fetch('/studio/client-log', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: message.slice(0, 16 * 1024) }).catch(() => {})
+  gatewayFetch('/studio/client-log', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: message.slice(0, 16 * 1024) }).catch(() => {})
+}
+
+function gatewayToken() {
+  const token = window.__CODEX_THREAD_STUDIO_GATEWAY__?.token
+  if (!token) throw new Error('Studio gateway credential is unavailable')
+  return token
+}
+
+function gatewayFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {})
+  headers.set('Authorization', `Bearer ${gatewayToken()}`)
+  return window.fetch(input, { ...init, headers })
+}
+
+function gatewayWebSocket(url) {
+  return new WebSocket(url, `codex-thread-studio.auth.${gatewayToken()}`)
+}
+
+function gatewayEventSource(url) {
+  const stream = {
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    closed: false,
+    controller: null,
+    reconnectTimer: null,
+    close() {
+      this.closed = true
+      this.controller?.abort()
+      clearTimeout(this.reconnectTimer)
+    },
+  }
+  const connect = async () => {
+    if (stream.closed) return
+    stream.controller = new AbortController()
+    try {
+      const response = await gatewayFetch(url, {
+        headers: { Accept: 'text/event-stream' },
+        cache: 'no-store',
+        signal: stream.controller.signal,
+      })
+      if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`)
+      stream.onopen?.()
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!stream.closed) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n?/gu, '\n')
+        let boundary
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const record = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const data = record
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).replace(/^ /u, ''))
+            .join('\n')
+          if (data) stream.onmessage?.({ data })
+        }
+        if (done) throw new Error('SSE stream closed')
+      }
+    } catch (error) {
+      if (stream.closed || error.name === 'AbortError') return
+      stream.onerror?.(error)
+      stream.reconnectTimer = setTimeout(connect, 1500)
+    }
+  }
+  queueMicrotask(connect)
+  return stream
 }
 
 async function init() {
@@ -570,7 +641,7 @@ function closeActionMenus() {
 async function loadBackendInfo(backend = state.backend) {
   const descriptor = backendDescriptor(backend)
   try {
-    const response = await fetch(descriptor.infoPath, { cache: 'no-store' })
+    const response = await gatewayFetch(descriptor.infoPath, { cache: 'no-store' })
     const info = await response.json()
     state.backendInfos[backend] = response.ok
       ? info
@@ -655,7 +726,7 @@ function connectAppServer() {
   setBackendState('checking', '正在启动 Codex', 'App Server · stdio')
   setNativeError(null)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = new WebSocket(`${protocol}//${location.host}/ws/codex`)
+  const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
   state.socket = socket
 
   socket.onmessage = (event) => {
@@ -696,7 +767,7 @@ async function connectOpenCode() {
   state.ready = true
   setBackendState('online', 'OpenCode Server', '原生结构化连接')
   $('#native-connection').textContent = '已连接'
-  const events = new EventSource('/opencode/global/event')
+  const events = gatewayEventSource('/opencode/global/event')
   state.eventSource = events
   events.onopen = () => {
     if (generation !== state.socketGeneration) return
@@ -1010,7 +1081,7 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(`/opencode${path}`, {
+    const response = await gatewayFetch(`/opencode${path}`, {
       method,
       headers: body == null ? {} : { 'Content-Type': 'application/json' },
       body: body == null ? undefined : JSON.stringify(body),
@@ -1031,7 +1102,7 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
 
 async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {}) {
   if (allowInactive) {
-    const response = await fetch('/studio/opencode', { cache: 'no-store' })
+    const response = await gatewayFetch('/studio/opencode', { cache: 'no-store' })
     if (!response.ok) {
       const info = await response.json().catch(() => ({}))
       throw new Error(info.error || `OpenCode Server HTTP ${response.status}`)
@@ -1049,7 +1120,7 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {})
 function fetchCodexCatalog(limit = 100) {
   return new Promise((resolve, reject) => {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${protocol}//${location.host}/ws/codex`)
+    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
     const timer = setTimeout(() => finish(new Error('Codex 会话目录请求超时')), 15_000)
     let requested = false
@@ -1604,7 +1675,7 @@ function selectedSessionMap() {
 }
 
 async function sessionMapFetch(path, { method = 'GET', body } = {}) {
-  const response = await fetch(path, {
+  const response = await gatewayFetch(path, {
     method,
     headers: body == null ? {} : { 'Content-Type': 'application/json' },
     body: body == null ? undefined : JSON.stringify(body),
@@ -2142,7 +2213,7 @@ function disposeSessionMapWorker(key) {
 function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }) {
   return new Promise((resolve, reject) => {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${protocol}//${location.host}/ws/codex`)
+    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
     const pending = new Map()
     const buffered = []
     const hiddenModel = createCodexViewModel()
@@ -3856,7 +3927,7 @@ async function openArtifact(file) {
   $('#artifact-loading').classList.remove('hidden')
   const requestId = randomId()
   state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), loading: true }
-  const response = await fetch(kind === 'image' ? '/studio/review-image' : '/studio/review-file', {
+  const response = await gatewayFetch(kind === 'image' ? '/studio/review-image' : '/studio/review-file', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root, path }),
@@ -4483,7 +4554,7 @@ function insertAnnotations() {
 }
 
 async function favoriteRequest(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await gatewayFetch(path, {
     cache: 'no-store',
     ...options,
     headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : options.headers,
@@ -4535,7 +4606,7 @@ function closeFavoritesRail() {
 }
 
 async function exportFavorites() {
-  const response = await fetch('/studio/favorites/export', { cache: 'no-store' })
+  const response = await gatewayFetch('/studio/favorites/export', { cache: 'no-store' })
   if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`)
   const url = URL.createObjectURL(await response.blob())
   const link = document.createElement('a')
@@ -4812,7 +4883,7 @@ function waitFor(predicate, timeoutMs) {
 async function loadPreferences() {
   let saved = {}
   try {
-    const response = await fetch('/studio/preferences', { cache: 'no-store' })
+    const response = await gatewayFetch('/studio/preferences', { cache: 'no-store' })
     if (response.ok) saved = await response.json()
   } catch (error) { console.warn('Unable to load preferences', error) }
   state.language = normalizeLanguage(saved.language)
@@ -4833,6 +4904,17 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
+  state.browser = saved.browser || {
+    enabled: false,
+    restoreTabs: true,
+    workspaceProfiles: true,
+    allowHttp: true,
+    allowPrivateNetwork: false,
+    allowLocalhost: true,
+    previewJavaScript: true,
+    externalOpenFallback: true,
+    agent: { enabled: false, provider: 'playwright-mcp', profile: 'persistent', approval: 'interactive', allowedOrigins: [] },
+  }
   state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
   state.selectedByBackend = {
     codex: null,
@@ -4879,6 +4961,7 @@ function preferencesSnapshot() {
     typography: state.typography,
     mermaid: state.mermaid,
     markdown: state.markdown,
+    browser: state.browser,
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
     selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
@@ -4895,7 +4978,7 @@ function persistPreferences() {
   if (!preferencesReady) return
   const body = JSON.stringify(preferencesSnapshot())
   preferencesWriteChain = preferencesWriteChain.then(async () => {
-    const response = await fetch('/studio/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
+    const response = await gatewayFetch('/studio/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
   }).catch((error) => console.error('Unable to persist preferences', error))
 }

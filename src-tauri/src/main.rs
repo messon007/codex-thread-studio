@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
 use axum::{Json, Router};
@@ -18,16 +19,20 @@ use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod backend_runtime;
+mod browser_runtime;
 mod codex_app_server;
 mod favorites;
+mod gateway_security;
 mod opencode_server;
 mod session_map;
 
 use backend_runtime::{BackendRuntime, WslSettings};
+use browser_runtime::{BrowserController, BrowserPreferences};
 #[cfg(not(windows))]
 use codex_app_server::find_codex_binary;
 use codex_app_server::CodexAppServer;
 use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
+use gateway_security::{AuthorizationError, GatewaySecurity};
 #[cfg(not(windows))]
 use opencode_server::find_opencode_binary;
 use opencode_server::OpenCodeServer;
@@ -47,6 +52,8 @@ struct GatewayState {
     favorites_lock: Arc<Mutex<()>>,
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
+    security: GatewaySecurity,
+    browser: BrowserController,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -189,6 +196,8 @@ struct StudioPreferences {
     mermaid: MermaidPreferences,
     #[serde(default)]
     markdown: MarkdownPreferences,
+    #[serde(default)]
+    browser: BrowserPreferences,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected_thread: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,6 +238,28 @@ struct BackendInfo {
     execution_environment: &'static str,
     wsl_distribution: Option<String>,
     host_platform: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserInfo {
+    enabled: bool,
+    phase: u8,
+}
+
+#[derive(Deserialize)]
+struct BrowserPolicyQuery {
+    url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserPolicyResponse {
+    allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -286,6 +317,17 @@ fn main() {
     if let Err(error) = session_map::initialize(&session_maps_path) {
         eprintln!("Codex Thread Studio could not initialize session maps: {error}");
     }
+    let gateway_listener = TcpListener::bind("127.0.0.1:0")
+        .expect("failed to reserve a local Codex Thread Studio gateway port");
+    gateway_listener
+        .set_nonblocking(true)
+        .expect("failed to configure Codex Thread Studio gateway socket");
+    let gateway_addr = gateway_listener
+        .local_addr()
+        .expect("failed to determine Codex Thread Studio gateway address");
+    let gateway_origin = format!("http://{gateway_addr}");
+    let security = GatewaySecurity::new(gateway_origin);
+    let initialization_script = security.initialization_script();
     let state = GatewayState {
         codex: CodexAppServer::new(codex_binary, runtime.clone()),
         opencode: OpenCodeServer::new(opencode_binary, runtime),
@@ -295,16 +337,9 @@ fn main() {
         favorites_lock: Arc::new(Mutex::new(())),
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
+        security,
+        browser: BrowserController::new(startup_preferences.browser.clone()),
     };
-
-    let gateway_listener = TcpListener::bind("127.0.0.1:0")
-        .expect("failed to reserve a local Codex Thread Studio gateway port");
-    gateway_listener
-        .set_nonblocking(true)
-        .expect("failed to configure Codex Thread Studio gateway socket");
-    let gateway_addr = gateway_listener
-        .local_addr()
-        .expect("failed to determine Codex Thread Studio gateway address");
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -322,6 +357,7 @@ fn main() {
 
             let url = format!("http://{gateway_addr}/").parse()?;
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                .initialization_script(&initialization_script)
                 .title("Codex Thread Studio")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(980.0, 660.0)
@@ -333,33 +369,14 @@ fn main() {
 }
 
 fn gateway_router(state: GatewayState) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .route("/app.js", get(app_js))
-        .route("/i18n.mjs", get(i18n_js))
-        .route("/codex-native.mjs", get(codex_native_js))
-        .route("/opencode-native.mjs", get(opencode_native_js))
-        .route("/thread-catalog.mjs", get(thread_catalog_js))
-        .route("/thread-workset.mjs", get(thread_workset_js))
-        .route("/composer-tools.mjs", get(composer_tools_js))
-        .route("/document-review.mjs", get(document_review_js))
-        .route("/favorites.mjs", get(favorites_js))
-        .route("/session-map.mjs", get(session_map_js))
-        .route("/mermaid-config.mjs", get(mermaid_config_js))
-        .route("/thread-router.mjs", get(thread_router_js))
-        .route("/turn-navigator.mjs", get(turn_navigator_js))
-        .route("/transcript-scroll.mjs", get(transcript_scroll_js))
-        .route(
-            "/transcript-presentation.mjs",
-            get(transcript_presentation_js),
-        )
-        .route("/vendor/marked.esm.js", get(marked_js))
-        .route("/vendor/purify.es.mjs", get(dompurify_js))
-        .route("/vendor/mermaid.min.js", get(mermaid_js))
-        .route("/vendor/github-markdown.css", get(github_markdown_css))
-        .route("/styles.css", get(styles_css))
+    let protected = Router::new()
         .route("/studio/codex", get(codex_info))
         .route("/studio/opencode", get(opencode_info))
+        .route("/studio/browser", get(browser_info))
+        .route(
+            "/studio/browser/navigation-policy",
+            get(browser_navigation_policy),
+        )
         .route(
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
@@ -399,7 +416,74 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/ws/codex", get(codex_app_server_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_gateway_auth,
+        ));
+
+    Router::new()
+        .route("/", get(index))
+        .route("/app.js", get(app_js))
+        .route("/i18n.mjs", get(i18n_js))
+        .route("/codex-native.mjs", get(codex_native_js))
+        .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/thread-catalog.mjs", get(thread_catalog_js))
+        .route("/thread-workset.mjs", get(thread_workset_js))
+        .route("/composer-tools.mjs", get(composer_tools_js))
+        .route("/document-review.mjs", get(document_review_js))
+        .route("/favorites.mjs", get(favorites_js))
+        .route("/session-map.mjs", get(session_map_js))
+        .route("/mermaid-config.mjs", get(mermaid_config_js))
+        .route("/thread-router.mjs", get(thread_router_js))
+        .route("/turn-navigator.mjs", get(turn_navigator_js))
+        .route("/transcript-scroll.mjs", get(transcript_scroll_js))
+        .route(
+            "/transcript-presentation.mjs",
+            get(transcript_presentation_js),
+        )
+        .route("/vendor/marked.esm.js", get(marked_js))
+        .route("/vendor/purify.es.mjs", get(dompurify_js))
+        .route("/vendor/mermaid.min.js", get(mermaid_js))
+        .route("/vendor/github-markdown.css", get(github_markdown_css))
+        .route("/styles.css", get(styles_css))
+        .merge(protected)
         .with_state(state)
+}
+
+async fn require_gateway_auth(
+    State(state): State<GatewayState>,
+    request: Request,
+    next: Next,
+) -> Response<Body> {
+    let websocket = request.uri().path() == "/ws/codex";
+    let authorization = if websocket {
+        state.security.authorize_websocket(request.headers())
+    } else {
+        state.security.authorize_http(request.headers())
+    };
+    match authorization {
+        Ok(()) => next.run(request).await,
+        Err(error) => {
+            if websocket {
+                let reason = match error {
+                    AuthorizationError::InvalidOrigin => "origin rejected",
+                    AuthorizationError::InvalidHost => "host rejected",
+                    AuthorizationError::MissingCredential => "credential missing",
+                    AuthorizationError::InvalidCredential => "credential rejected",
+                };
+                eprintln!("Codex Thread Studio rejected App Server WebSocket: {reason}");
+            }
+            let status = match error {
+                AuthorizationError::InvalidOrigin | AuthorizationError::InvalidHost => {
+                    StatusCode::FORBIDDEN
+                }
+                AuthorizationError::MissingCredential | AuthorizationError::InvalidCredential => {
+                    StatusCode::UNAUTHORIZED
+                }
+            };
+            json_error(status, "Studio gateway authorization failed")
+        }
+    }
 }
 
 async fn index() -> impl IntoResponse {
@@ -807,6 +891,32 @@ async fn opencode_info(State(state): State<GatewayState>) -> impl IntoResponse {
     (status, axum::Json(info))
 }
 
+async fn browser_info(State(state): State<GatewayState>) -> Json<BrowserInfo> {
+    Json(BrowserInfo {
+        enabled: state.browser.is_enabled(),
+        phase: 0,
+    })
+}
+
+async fn browser_navigation_policy(
+    State(state): State<GatewayState>,
+    Query(query): Query<BrowserPolicyQuery>,
+) -> Json<BrowserPolicyResponse> {
+    let response = match state.browser.prepare_navigation(&query.url) {
+        Ok(navigation) => BrowserPolicyResponse {
+            allowed: true,
+            normalized_url: Some(navigation.url.to_string()),
+            reason: None,
+        },
+        Err(error) => BrowserPolicyResponse {
+            allowed: false,
+            normalized_url: None,
+            reason: Some(error.to_string()),
+        },
+    };
+    Json(response)
+}
+
 async fn proxy_opencode(
     State(state): State<GatewayState>,
     AxumPath(path): AxumPath<String>,
@@ -822,7 +932,9 @@ async fn codex_app_server_ws(
     ws: WebSocketUpgrade,
     State(state): State<GatewayState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| async move { state.codex.bridge(socket).await })
+    let protocol = state.security.websocket_protocol();
+    ws.protocols([protocol])
+        .on_upgrade(move |socket| async move { state.codex.bridge(socket).await })
 }
 
 async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
@@ -1158,6 +1270,7 @@ fn save_preferences(path: &std::path::Path, preferences: &StudioPreferences) -> 
 }
 
 fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
+    preferences.browser.validate()?;
     if preferences
         .language
         .as_deref()
@@ -1558,6 +1671,109 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    fn secured_test_gateway(security: GatewaySecurity) -> GatewayState {
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        GatewayState {
+            codex: CodexAppServer::new(
+                "codex".to_string(),
+                BackendRuntime::new(OsString::new(), WslSettings::default()),
+            ),
+            opencode: OpenCodeServer::new(
+                "opencode".to_string(),
+                BackendRuntime::new(OsString::new(), WslSettings::default()),
+            ),
+            preferences_path: Arc::new(
+                env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.json")),
+            ),
+            preferences_lock: Arc::new(Mutex::new(())),
+            favorites_path: Arc::new(
+                env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.sqlite3")),
+            ),
+            favorites_lock: Arc::new(Mutex::new(())),
+            session_maps_path: Arc::new(env::temp_dir().join(format!(
+                "codex-thread-studio-security-maps-{suffix}.sqlite3"
+            ))),
+            session_maps_lock: Arc::new(Mutex::new(())),
+            security,
+            browser: BrowserController::new(BrowserPreferences::default()),
+        }
+    }
+
+    #[test]
+    fn protects_gateway_data_and_websocket_from_untrusted_pages() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            const ORIGIN: &str = "http://127.0.0.1:41234";
+            const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+            let security = GatewaySecurity::for_tests(ORIGIN, TOKEN);
+            let protocol = security.websocket_protocol();
+            let router = gateway_router(secured_test_gateway(security));
+
+            for path in [
+                "/studio/preferences",
+                "/studio/favorites",
+                "/studio/session-map/codex/thread-1",
+            ] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .body(Body::empty())
+                            .expect("unauthenticated request"),
+                    )
+                    .await
+                    .expect("gateway response");
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+            }
+
+            let authorized = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/preferences")
+                        .header(header::ORIGIN, ORIGIN)
+                        .header(header::HOST, "127.0.0.1:41234")
+                        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                        .body(Body::empty())
+                        .expect("authorized request"),
+                )
+                .await
+                .expect("authorized response");
+            assert_eq!(authorized.status(), StatusCode::OK);
+
+            let websocket = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/ws/codex")
+                        .header(header::ORIGIN, "https://untrusted.example")
+                        .header(header::HOST, "127.0.0.1:41234")
+                        .header(header::SEC_WEBSOCKET_PROTOCOL, protocol)
+                        .body(Body::empty())
+                        .expect("foreign websocket request"),
+                )
+                .await
+                .expect("foreign websocket response");
+            assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+        });
+    }
+
+    #[test]
+    fn browser_labels_do_not_match_main_webview_capabilities() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("valid Tauri capability JSON");
+        assert_eq!(capability["windows"], json!(["main"]));
+        let labels = capability["windows"]
+            .as_array()
+            .expect("capability window labels");
+        assert!(!labels.iter().any(|label| {
+            label
+                .as_str()
+                .is_some_and(|label| label == "*" || label.starts_with("browser"))
+        }));
+    }
+
     #[test]
     fn serves_all_embedded_frontend_modules() {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
@@ -1583,6 +1799,8 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                security: GatewaySecurity::disabled_for_tests(),
+                browser: BrowserController::new(BrowserPreferences::default()),
             };
             let router = gateway_router(state);
             for path in [
@@ -1648,6 +1866,8 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                security: GatewaySecurity::disabled_for_tests(),
+                browser: BrowserController::new(BrowserPreferences::default()),
             };
             let response = gateway_router(state)
                 .oneshot(
@@ -1699,6 +1919,8 @@ mod tests {
                 favorites_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                security: GatewaySecurity::disabled_for_tests(),
+                browser: BrowserController::new(BrowserPreferences::default()),
             };
             let router = gateway_router(state);
             let missing = router
@@ -1822,6 +2044,8 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                security: GatewaySecurity::disabled_for_tests(),
+                browser: BrowserController::new(BrowserPreferences::default()),
             };
             let router = gateway_router(state);
             let favorite = json!({
@@ -2166,6 +2390,27 @@ mod tests {
 
         let mut invalid = StudioPreferences::default();
         invalid.mermaid.font_size = 24;
+        assert!(validate_preferences(&invalid).is_err());
+    }
+
+    #[test]
+    fn browser_preferences_use_safe_partial_defaults_and_validate_origins() {
+        let defaults = StudioPreferences::default();
+        assert!(!defaults.browser.enabled);
+        assert!(!defaults.browser.allow_private_network);
+        assert!(!defaults.browser.agent.enabled);
+
+        let partial: StudioPreferences = serde_json::from_value(json!({
+            "browser": { "enabled": true }
+        }))
+        .expect("partial browser preferences");
+        assert!(partial.browser.enabled);
+        assert!(partial.browser.allow_localhost);
+        assert!(!partial.browser.allow_private_network);
+        assert!(validate_preferences(&partial).is_ok());
+
+        let mut invalid = StudioPreferences::default();
+        invalid.browser.agent.allowed_origins = vec!["javascript:alert(1)".to_string()];
         assert!(validate_preferences(&invalid).is_err());
     }
 

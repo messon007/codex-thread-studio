@@ -38,6 +38,10 @@
             </button>
             <div id="studio-menu" class="action-menu studio-menu hidden" role="menu">
               <button id="open-favorites" type="button" role="menuitem"><span>全局收藏</span><span id="favorites-badge" class="studio-menu-count hidden">0</span></button>
+              <button id="open-browser-workspace" type="button" role="menuitem" title="启动或显示浏览器">
+                <span>浏览器</span>
+                <span id="browser-menu-status" class="browser-menu-status offline"><i></i><small>default</small></span>
+              </button>
               <span class="menu-separator"></span>
               <button id="connections-button" type="button" role="menuitem"><span>连接与账号</span></button>
               <button id="settings-button" type="button" role="menuitem"><span>设置</span></button>
@@ -299,7 +303,7 @@
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
       <form id="annotation-form">
         <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2>批注选中内容</h2><p id="annotation-source-hint">批注会保留原位置，发送时交给当前会话处理。</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>你的意见</span><textarea id="annotation-comment" required rows="5" placeholder="说明问题和期望调整。"></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
+        <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>你的意见（可选）</span><textarea id="annotation-comment" rows="5" placeholder="说明问题和期望调整，也可以直接将选中内容加入草稿。"></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
         <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">加入草稿</button></footer>
       </form>
     </dialog>

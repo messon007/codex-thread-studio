@@ -27,17 +27,28 @@ import {
 import {
   artifactSearchAvailable,
   createFileRangeTarget,
-  fileAnnotationAnchor,
   fileDisplayName,
   findTextMatchRanges,
   isHtmlFile,
   isMarkdownFile,
-  lineRangeForTarget,
-  normalizeAnnotationTarget,
-  snapshotAnnotationSelection,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
+import {
+  CommentSourceRegistry,
+  commentSelectionSnapshot,
+  createCommentDraft,
+  normalizeCommentDrafts,
+} from './comment-core.mjs'
+import {
+  chatCommentSource,
+  createChatCommentProvider,
+  createDocumentCommentProvider,
+  documentCommentSource,
+  legacyCommentSource,
+  relocateDocumentComment,
+} from './comment-source-providers.mjs'
+import { createBrowserCommentProvider } from './browser-comment-provider.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -81,6 +92,7 @@ import {
   activityOutputPreview,
   reasoningStage,
 } from './transcript-presentation.mjs'
+
 import {
   formatDate as formatLocalizedDate,
   getLocale,
@@ -114,6 +126,11 @@ import {
   routerDeveloperInstructions,
 } from './thread-router.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
+
+const commentSources = new CommentSourceRegistry()
+  .register(createChatCommentProvider())
+  .register(createDocumentCommentProvider())
+  .register(createBrowserCommentProvider())
 
 marked.setOptions({
   async: false,
@@ -189,6 +206,9 @@ const state = {
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
   markdown: { mode: 'technical' },
   browser: null,
+  browserInfo: null,
+  browserStatus: null,
+  browserLaunching: false,
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -258,6 +278,7 @@ let mermaidGeneration = 0
 let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
+let browserEventStream = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
@@ -347,6 +368,8 @@ async function init() {
   applyAppearance()
   startMermaidRendering()
   applyBackendCopy()
+  loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
+  connectBrowserEvents()
   await loadFavorites().catch(showError)
   // Catalog discovery is independent of the active backend connection. A
   // transient failure in one backend must not leave the whole sidebar empty
@@ -361,7 +384,11 @@ async function init() {
 
 function bindUI() {
   $('#new-thread').addEventListener('click', openNewThreadDialog)
-  $('#studio-menu-button').addEventListener('click', () => toggleActionMenu('studio-menu', 'studio-menu-button'))
+  $('#studio-menu-button').addEventListener('click', () => {
+    const opening = $('#studio-menu').classList.contains('hidden')
+    toggleActionMenu('studio-menu', 'studio-menu-button')
+    if (opening) refreshGlobalBrowserStatus().catch(reportClientError)
+  })
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
@@ -434,6 +461,7 @@ function bindUI() {
   $('#composer-review-insert').addEventListener('click', insertAnnotations)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
+  $('#open-browser-workspace').addEventListener('click', () => openGlobalBrowser().catch(showError))
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
   $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
   $('#artifact-content').addEventListener('mouseup', captureArtifactSelection)
@@ -564,6 +592,133 @@ function applySidebarState() {
   button.setAttribute('aria-label', t(state.sidebarCollapsed ? '展开会话栏' : '收起会话栏'))
   button.querySelector('span').textContent = state.sidebarCollapsed ? '›' : '‹'
   setTimeout(applyArtifactWidth, 220)
+}
+
+async function browserRequest(path, { method = 'GET', body } = {}) {
+  const response = await gatewayFetch(path, {
+    method,
+    cache: 'no-store',
+    headers: body == null ? {} : { 'Content-Type': 'application/json' },
+    body: body == null ? undefined : JSON.stringify(body),
+  })
+  const text = await response.text()
+  let value = null
+  try { value = text ? JSON.parse(text) : null } catch { value = text }
+  if (!response.ok) throw new Error(value?.error?.message || value?.message || String(value || `HTTP ${response.status}`))
+  return value
+}
+
+async function loadBrowserInfo() {
+  state.browserInfo = await browserRequest('/studio/browser')
+  renderBrowserMenuStatus()
+  return state.browserInfo
+}
+
+async function refreshGlobalBrowserStatus() {
+  try {
+    state.browserStatus = await browserRequest('/studio/browser/workspace')
+  } catch (error) {
+    state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: error.message }
+  }
+  renderBrowserMenuStatus()
+}
+
+function connectBrowserEvents() {
+  browserEventStream?.close()
+  browserEventStream = gatewayEventSource('/studio/browser/events')
+  browserEventStream.onmessage = (event) => {
+    try {
+      state.browserStatus = JSON.parse(event.data)
+      renderBrowserMenuStatus()
+    } catch (error) {
+      console.warn('Invalid Browser event', error)
+    }
+  }
+  browserEventStream.onerror = () => {
+    state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: 'Browser event stream disconnected' }
+    renderBrowserMenuStatus()
+  }
+}
+
+function renderBrowserMenuStatus() {
+  const element = $('#browser-menu-status')
+  if (!element) return
+  const running = Boolean(state.browserStatus?.running)
+  const error = Boolean(state.browserStatus?.lastError) && !running
+  element.className = `browser-menu-status ${state.browserLaunching ? 'starting' : running ? 'online' : error ? 'error' : 'offline'}`
+  element.querySelector('small').textContent = 'default'
+  const label = t(state.browserLaunching ? '正在启动' : running ? '已连接' : error ? '异常' : '未启动')
+  const button = $('#open-browser-workspace')
+  button.title = `${t('浏览器')} · ${label} · default`
+  button.setAttribute('aria-label', button.title)
+}
+
+async function openGlobalBrowser() {
+  closeActionMenus()
+  // CDP lifecycle events normally keep this current. An explicit click still
+  // takes one authoritative snapshot so a just-closed tab/window cannot leave
+  // us activating a stale target ID during the event-delivery race.
+  state.browserStatus = await browserRequest('/studio/browser/workspace')
+  renderBrowserMenuStatus()
+  if (!state.browserStatus.running) {
+    await launchGlobalBrowser()
+    return
+  }
+  if (await activateFirstBrowserPage(state.browserStatus)) {
+    toast('Wayland 可能阻止应用抢占焦点；可从任务栏选择 Chromium')
+    return
+  }
+
+  // A page can disappear between the snapshot and activation. Refresh once
+  // for this user action; this is not a timer or background poll.
+  state.browserStatus = await browserRequest('/studio/browser/workspace')
+  renderBrowserMenuStatus()
+  if (!state.browserStatus.running) {
+    await launchGlobalBrowser()
+    return
+  }
+  if (await activateFirstBrowserPage(state.browserStatus)) {
+    toast('Wayland 可能阻止应用抢占焦点；可从任务栏选择 Chromium')
+  }
+}
+
+async function launchGlobalBrowser(url = null) {
+  if (state.browserLaunching) return
+  state.browserLaunching = true
+  state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: null }
+  renderBrowserMenuStatus()
+  try {
+    state.browserStatus = await browserRequest('/studio/browser/workspace', {
+      method: 'POST',
+      body: { ...(url ? { url } : {}) },
+    })
+  } finally {
+    state.browserLaunching = false
+    renderBrowserMenuStatus()
+  }
+}
+
+async function activateFirstBrowserPage(status) {
+  const pages = (status?.tabs || []).filter((candidate) => candidate.type === 'page' || candidate.kind === 'page')
+  for (const tab of pages) {
+    try {
+      await browserRequest('/studio/browser/tabs/activate', { method: 'POST', body: { tabId: tab.id } })
+      return true
+    } catch (error) {
+      if (!String(error?.message || error).includes('404')) throw error
+    }
+  }
+  return false
+}
+
+async function openBrowserUrl(url) {
+  state.browserStatus = await browserRequest('/studio/browser/workspace')
+  if (!state.browserStatus.running) {
+    await launchGlobalBrowser(url)
+  } else {
+    await browserRequest('/studio/browser/tabs', { method: 'POST', body: { url } })
+  }
+  renderBrowserMenuStatus()
 }
 
 function normalizeArtifactWidthRatio(value) {
@@ -4310,11 +4465,10 @@ function captureTranscriptSelection() {
     quote: text.slice(0, 16000),
     itemId: item?.dataset.itemId || null,
     turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
-    target: {
-      kind: 'chatRange',
+    source: chatCommentSource({
       itemId: item?.dataset.itemId || null,
       turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
-    },
+    }),
   }
   positionSelectionPopover(range, { allowFavorite: true })
 }
@@ -4341,7 +4495,7 @@ function captureArtifactSelection() {
     quote: text.slice(0, 16000),
     itemId: null,
     turnId: null,
-    target: createFileRangeTarget(state.artifact, text, hintOffset),
+    source: documentCommentSource(createFileRangeTarget(state.artifact, text, hintOffset)),
   }
   positionSelectionPopover(range, { allowFavorite: false })
 }
@@ -4360,13 +4514,10 @@ function openAnnotationFromSelection() {
     captureTranscriptSelection()
     if (!state.pendingSelection?.quote) return toast('请先在 Codex 输出中选择文字', 'error')
   }
-  state.pendingAnnotation = snapshotAnnotationSelection(state.pendingSelection)
+  state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
   if (!state.pendingAnnotation) return toast('请重新选择需要批注的文字', 'error')
-  $('#annotation-quote').textContent = state.pendingAnnotation.quote
-  const target = state.pendingAnnotation.target
-  $('#annotation-source-hint').textContent = target?.kind === 'fileRange'
-    ? t('来自 {path}，批注会保留文件位置并交给当前会话。', { path: target.filePath })
-    : t('来自当前会话回复，批注会保留消息位置。')
+  $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
+  $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
   $('#annotation-comment').value = ''
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
@@ -4426,8 +4577,8 @@ function addAnnotation(event) {
   const comment = $('#annotation-comment').value.trim()
   const errorBox = $('#annotation-error')
   const annotation = state.pendingAnnotation
-  if (!state.selectedId || !annotation?.quote || !comment) {
-    errorBox.textContent = '选中内容和意见都不能为空。'
+  if (!state.selectedId || !annotation?.excerpt) {
+    errorBox.textContent = '选中内容不能为空。'
     errorBox.classList.remove('hidden')
     return
   }
@@ -4437,15 +4588,8 @@ function addAnnotation(event) {
     errorBox.classList.remove('hidden')
     return
   }
-  state.annotationDrafts[selectedStateKey()] = [...drafts, {
-    id: randomId(),
-    quote: annotation.quote,
-    comment: comment.slice(0, 16000),
-    createdAt: new Date().toISOString(),
-    itemId: annotation.itemId,
-    turnId: annotation.turnId,
-    target: annotation.target,
-  }]
+  const draft = createCommentDraft({ ...annotation, note: comment }, { registry: commentSources })
+  state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
   persistPreferences()
   closeAnnotationDialog()
   renderAnnotationRail()
@@ -4479,7 +4623,7 @@ function renderAnnotationRail() {
   $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
     <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('删除批注 {index}', { index: index + 1 })}">×</button></header>
-    <blockquote>${escapeHtml(draft.quote)}</blockquote><p>${escapeHtml(draft.comment)}</p>
+    <blockquote>${escapeHtml(draft.excerpt)}</blockquote>${draft.note ? `<p>${escapeHtml(draft.note)}</p>` : ''}
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
   $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
@@ -4487,28 +4631,21 @@ function renderAnnotationRail() {
 }
 
 function annotationSourceLabel(draft, index) {
-  const target = normalizeAnnotationTarget(draft)
-  if (target.kind === 'fileRange') {
-    const range = lineRangeForTarget(target, artifactContentForTarget(target))
-    const label = range.startLine
-      ? ` · L${range.startLine}${range.endLine > range.startLine ? `–${range.endLine}` : ''}`
-      : ''
-    return `${fileDisplayName(target.filePath)}${label}`
-  }
-  return `${t('回复批注 {index}', { index: index + 1 })}${target.turnId ? ` · ${target.turnId.slice(0, 8)}` : ''}`
+  return commentSources.describe(draft, commentProviderContext(index))
 }
 
 async function reopenAnnotationSource(id) {
   const draft = currentAnnotations().find((candidate) => candidate.id === id)
-  const target = draft && normalizeAnnotationTarget(draft)
-  if (!draft || target.kind !== 'fileRange') return
+  if (!draft) return
+  await commentSources.reopen(draft, commentProviderContext())
+}
+
+async function reopenDocumentComment(target, excerpt) {
   await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
   setArtifactView('source')
   const source = $('#artifact-content .artifact-source')
   if (!source) return
-  const relocated = createFileRangeTarget(state.artifact, draft.quote)
-  const startOffset = relocated.startOffset ?? target.startOffset
-  const endOffset = relocated.endOffset ?? target.endOffset
+  const { startOffset, endOffset } = relocateDocumentComment({ anchor: target }, state.artifact, excerpt)
   if (startOffset == null || endOffset == null || endOffset <= startOffset) return
   const node = source.firstChild
   if (!node) return
@@ -4527,11 +4664,8 @@ function renderComposerReviewContext() {
   const context = $('#composer-review-context')
   context.classList.toggle('hidden', !drafts.length)
   if (!drafts.length) return
-  const fileCount = drafts.filter((draft) => normalizeAnnotationTarget(draft).kind === 'fileRange').length
   $('#composer-review-count').textContent = t('{count} 条批注待发送', { count: drafts.length })
-  $('#composer-review-source').textContent = fileCount
-    ? t('包含 {count} 条文档批注', { count: fileCount })
-    : t('来自当前会话回复')
+  $('#composer-review-source').textContent = t('等待加入消息')
 }
 
 function deleteAnnotation(id) {
@@ -4562,33 +4696,34 @@ function saveAnnotationAdditional(event) {
 
 function buildAnnotationPrompt(drafts, additional = '') {
   const annotations = drafts.map((draft, index) => {
-    const target = normalizeAnnotationTarget(draft)
-    const anchor = target.kind === 'fileRange'
-      ? fileAnnotationAnchor(target, artifactContentForTarget(target))
-      : [target.turnId && `Turn ${target.turnId}`, target.itemId && `Item ${target.itemId}`].filter(Boolean).join(' / ')
-    const quote = draft.quote.split('\n').map((line) => `> ${line}`).join('\n')
+    const anchor = commentSources.promptAnchor(draft, commentProviderContext(index))
+    const quote = draft.excerpt.split('\n').map((line) => `> ${line}`).join('\n')
     return t(anchor
       ? '批注 {index}（{anchor}）\n引用：\n{quote}\n\n我的意见：\n{comment}'
       : '批注 {index}\n引用：\n{quote}\n\n我的意见：\n{comment}', {
       index: index + 1,
       anchor,
       quote,
-      comment: draft.comment,
+      comment: draft.note || t('无补充意见'),
     })
   }).join('\n\n---\n\n')
   const additionalBlock = additional.trim() ? t('整体补充：\n{text}', { text: additional.trim() }) : ''
-  const fileInstruction = drafts.some((draft) => normalizeAnnotationTarget(draft).kind === 'fileRange')
-    ? t('文档批注：请先读取标注路径的当前文件，再依据引用、位置和上下文完成修改。')
-    : ''
-  return [fileInstruction, state.annotationPromptTemplate
+  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.annotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
     .replace(/\n{3,}/g, '\n\n')
     .trim()].filter(Boolean).join('\n\n')
 }
 
-function artifactContentForTarget(target) {
-  return state.artifact?.path === target?.filePath ? state.artifact.content : null
+function commentProviderContext(index = 0) {
+  return {
+    index,
+    translate: t,
+    unknownLabel: t('已保存批注'),
+    contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
+    openDocument: reopenDocumentComment,
+    openWebSource: openBrowserUrl,
+  }
 }
 
 function insertAnnotations() {
@@ -4957,7 +5092,6 @@ async function loadPreferences() {
   state.browser = saved.browser || {
     enabled: false,
     restoreTabs: true,
-    workspaceProfiles: true,
     allowHttp: true,
     allowPrivateNetwork: false,
     allowLocalhost: true,
@@ -5389,21 +5523,11 @@ function normalizeLanguage(value) {
 }
 
 function normalizeAnnotationDrafts(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).flatMap(([threadId, drafts]) => {
-    if (!threadId || !Array.isArray(drafts)) return []
-    const normalized = drafts.slice(0, 32).flatMap((draft) => draft?.quote && draft?.comment ? [{
-      id: String(draft.id || randomId()).slice(0, 128),
-      quote: String(draft.quote).slice(0, 16000),
-      comment: String(draft.comment).slice(0, 16000),
-      createdAt: String(draft.createdAt || new Date().toISOString()).slice(0, 128),
-      itemId: draft.itemId ? String(draft.itemId).slice(0, 256) : null,
-      turnId: draft.turnId ? String(draft.turnId).slice(0, 256) : null,
-      target: normalizeAnnotationTarget(draft),
-    }] : [])
-    const key = threadId.includes(':') ? threadId : `codex:${threadId}`
-    return normalized.length ? [[key, normalized]] : []
-  }))
+  return normalizeCommentDrafts(value, {
+    idFactory: randomId,
+    migrateSource: legacyCommentSource,
+    registry: commentSources,
+  })
 }
 
 function normalizeAdditional(value) {

@@ -29,8 +29,12 @@ normally, then run:
 ```bash
 target/debug/codex-thread-studio --dev-screenshot
 target/debug/codex-thread-studio --dev-show-browser
+target/debug/codex-thread-studio --dev-hide-browser
+target/debug/codex-thread-studio --dev-exit-browser
+target/debug/codex-thread-studio --dev-new-browser-tab https://example.org
 target/debug/codex-thread-studio --dev-show-browser-menu
 target/debug/codex-thread-studio --dev-show-browser-info
+target/debug/codex-thread-studio --dev-show-browser-downloads
 target/debug/codex-thread-studio --dev-open-browser https://example.com
 ```
 

@@ -8,6 +8,7 @@ const english = {
   '显示浏览器': 'Show browser',
   '正在连接 Chromium…': 'Connecting to Chromium…',
   'Browser Workspace 无法使用': 'Browser Workspace unavailable',
+  '当前平台不支持嵌入浏览器': 'The embedded browser is unavailable on this platform',
   '由 Studio 管理专属浏览器': 'A dedicated browser managed by Studio',
   '登录状态和标签页保存在当前项目的独立 Profile 中。': 'Sign-in state and tabs are stored in a separate profile for this project.',
   '所有会话共享同一个持久 Profile、浏览器窗口和标签页。': 'All sessions share one persistent profile, browser window, and tab set.',

@@ -1,10 +1,22 @@
 #![cfg(target_os = "linux")]
 
-use std::{cell::RefCell, env, fs, path::PathBuf, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gtk::prelude::*;
 use serde::{Deserialize, Serialize};
 use url::Url;
+use webkit2gtk::{
+    DownloadExt, PermissionRequestExt, URIRequestExt, URIResponseExt, WebContextExt,
+    WebProcessTerminationReason, WebViewExt as WebKitWebViewExt,
+};
 use wry::{
     PageLoadEvent, WebContext, WebView, WebViewBuilder, WebViewBuilderExtUnix, WebViewExtUnix,
 };
@@ -14,11 +26,14 @@ use crate::browser_runtime::{validate_browser_url, BrowserPreferences};
 const DEFAULT_URL: &str = "https://example.com";
 const MIN_STUDIO_WIDTH: i32 = 520;
 const MIN_BROWSER_WIDTH: i32 = 480;
-const TOOLBAR_HEIGHT: i32 = 82;
+// Keep the two-row browser chrome aligned with the 75px Studio thread toolbar.
+const TOOLBAR_HEIGHT: i32 = 75;
 const MAX_SELECTION_BYTES: usize = 16 * 1024;
 const MIN_ZOOM: f64 = 0.5;
 const MAX_ZOOM: f64 = 2.0;
 const ZOOM_STEP: f64 = 0.1;
+const RECOVERY_WINDOW: Duration = Duration::from_secs(30);
+const MAX_DOWNLOAD_RECORDS: usize = 100;
 const TOOLBAR_HTML: &str = include_str!("../../ui/embedded-browser.html");
 
 thread_local! {
@@ -28,6 +43,9 @@ thread_local! {
 #[derive(Debug)]
 enum BrowserAction {
     Toggle,
+    Show,
+    Open(String),
+    Exit,
     Navigate(String),
     NewTab(Option<String>),
     ActivateTab(u64),
@@ -45,6 +63,22 @@ enum BrowserAction {
     CopyUrl,
     ShowMenu,
     ShowInfo,
+    ShowDownloads,
+    PageTerminated {
+        id: u64,
+        reason: WebProcessTerminationReason,
+    },
+    ToolbarTerminated(WebProcessTerminationReason),
+    DownloadStarted {
+        url: String,
+        path: PathBuf,
+    },
+    DownloadFinished {
+        url: String,
+        path: Option<PathBuf>,
+        success: bool,
+    },
+    DownloadRejected(String),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -70,15 +104,30 @@ struct BrowserTab {
     webview: WebView,
     zoom: f64,
     fit_width: bool,
+    crashed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BrowserDownloadState {
+    Downloading,
+    Completed,
+    Failed,
+}
+
+struct BrowserDownload {
+    url: String,
+    path: PathBuf,
+    state: BrowserDownloadState,
 }
 
 struct EmbeddedBrowserWorkspace {
     _window: tauri::Window,
     split: gtk::Paned,
     browser_column: gtk::Fixed,
+    toolbar_host: gtk::Fixed,
     browser_stack: gtk::Stack,
     studio_webview: WebView,
-    toolbar_webview: WebView,
+    toolbar_webview: Option<WebView>,
     tabs: Vec<BrowserTab>,
     active_tab_id: u64,
     next_tab_id: u64,
@@ -87,13 +136,18 @@ struct EmbeddedBrowserWorkspace {
     visible: bool,
     browser_width: i32,
     _studio_context: WebContext,
-    _toolbar_context: WebContext,
-    browser_context: WebContext,
+    _toolbar_context: Option<WebContext>,
+    browser_context: Option<WebContext>,
+    download_handler_installed: bool,
     browser_profile_directory: PathBuf,
     browser_cache_directory: PathBuf,
     webkit_version: String,
+    recent_recoveries: HashMap<u64, Instant>,
+    toolbar_recovery: Option<Instant>,
+    downloads: Vec<BrowserDownload>,
     overflow_menu: Option<gtk::Menu>,
     info_dialog: Option<gtk::Dialog>,
+    downloads_dialog: Option<gtk::Dialog>,
 }
 
 pub fn is_supported() -> bool {
@@ -214,10 +268,88 @@ pub fn show_for_debug(url: Option<String>) -> Result<(), String> {
     if !visible {
         toggle_workspace();
     }
+    let ready = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| {
+                slot.as_ref()
+                    .map(|workspace| workspace.visible && browser_runtime_loaded(workspace))
+            })
+            .unwrap_or(false)
+    });
+    if !ready {
+        return Err("Studio browser could not be initialized".to_owned());
+    }
     if let Some(url) = url {
         dispatch_action(BrowserAction::Navigate(url));
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub fn hide_for_debug() -> Result<(), String> {
+    let visible = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|workspace| workspace.visible))
+            .ok_or("Studio browser is not initialized")
+    })?;
+    if visible {
+        toggle_workspace();
+    }
+    let hidden = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|workspace| !workspace.visible))
+            .unwrap_or(false)
+    });
+    hidden
+        .then_some(())
+        .ok_or_else(|| "Studio browser could not be hidden".to_owned())
+}
+
+#[cfg(debug_assertions)]
+pub fn exit_for_debug() -> Result<(), String> {
+    dispatch_action(BrowserAction::Exit);
+    let released = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| {
+                slot.as_ref()
+                    .map(|workspace| !browser_runtime_loaded(workspace))
+            })
+            .unwrap_or(false)
+    });
+    released
+        .then_some(())
+        .ok_or_else(|| "Studio browser runtime could not be released".to_owned())
+}
+
+#[cfg(debug_assertions)]
+pub fn new_tab_for_debug(url: String) -> Result<(), String> {
+    show_for_debug(None)?;
+    let expected = WORKSPACE.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio browser is busy".to_owned())?;
+        let workspace = slot.as_ref().ok_or("Studio browser is not initialized")?;
+        validate_browser_url(&url, &workspace.preferences)
+            .map(|url| url.to_string())
+            .map_err(|error| error.to_string())
+    })?;
+    dispatch_action(BrowserAction::NewTab(Some(expected.clone())));
+    WORKSPACE.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio browser is busy".to_owned())?;
+        let workspace = slot.as_ref().ok_or("Studio browser is not initialized")?;
+        workspace
+            .tabs
+            .iter()
+            .any(|tab| tab.url == expected)
+            .then_some(())
+            .ok_or_else(|| "Studio browser did not create the requested tab".to_owned())
+    })
 }
 
 #[cfg(debug_assertions)]
@@ -231,6 +363,13 @@ pub fn show_info_for_debug() -> Result<(), String> {
         show_browser_info(workspace);
         Ok(())
     })
+}
+
+#[cfg(debug_assertions)]
+pub fn show_downloads_for_debug() -> Result<(), String> {
+    show_for_debug(None)?;
+    dispatch_action(BrowserAction::ShowDownloads);
+    Ok(())
 }
 
 #[cfg(debug_assertions)]
@@ -257,6 +396,7 @@ pub fn build(
     }
 
     env::set_var("GDK_BACKEND", "wayland");
+    install_browser_native_styles();
     let window = tauri::window::WindowBuilder::new(app, "main")
         .title("Codex Thread Studio")
         .inner_size(1400.0, 900.0)
@@ -266,13 +406,14 @@ pub fn build(
 
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_wide_handle(true);
+    split.style_context().add_class("studio-browser-split");
 
     let studio_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     studio_host.set_size_request(MIN_STUDIO_WIDTH, -1);
     // WebKitGTK reports a large natural height for a WebView. A GtkBox uses that
-    // natural height even when the toolbar host has an 82px size request, which
+    // natural height even when the toolbar host has a fixed size request, which
     // can leave the page stack with only half of the available height. GtkFixed
-    // lets this split pane own the geometry explicitly: toolbar=82px, page=rest.
+    // lets this split pane own the geometry explicitly: toolbar=75px, page=rest.
     let browser_column = gtk::Fixed::new();
     browser_column.set_size_request(MIN_BROWSER_WIDTH, -1);
     let toolbar_host = gtk::Fixed::new();
@@ -306,14 +447,9 @@ pub fn build(
     split.show_all();
 
     let studio_profile = profile_directory("studio-shell");
-    let toolbar_profile = profile_directory("browser-toolbar");
     let browser_profile = profile_directory("embedded-browser");
     fs::create_dir_all(&studio_profile)?;
-    fs::create_dir_all(&toolbar_profile)?;
-    fs::create_dir_all(&browser_profile)?;
     let mut studio_context = WebContext::new(Some(studio_profile));
-    let mut toolbar_context = WebContext::new(Some(toolbar_profile));
-    let mut browser_context = WebContext::new(Some(browser_profile.clone()));
     let browser_cache = browser_cache_directory();
     let webkit_version = wry::webview_version().unwrap_or_else(|_| "Unknown".to_owned());
 
@@ -324,25 +460,17 @@ pub fn build(
         .with_navigation_handler(|url| intercept_action(&url))
         .build_gtk(&studio_host)?;
 
-    let toolbar_webview = WebViewBuilder::with_web_context(&mut toolbar_context)
-        .with_html(TOOLBAR_HTML)
-        .with_clipboard(true)
-        .with_navigation_handler(|url| intercept_action(&url))
-        .build_gtk(&toolbar_host)?;
-    let toolbar_widget = toolbar_webview.webview();
-    toolbar_widget.set_size_request(1, TOOLBAR_HEIGHT);
-    toolbar_host.connect_size_allocate(move |host, allocation| {
-        host.move_(&toolbar_widget, 0, 0);
-        toolbar_widget.size_allocate(&gtk::Allocation::new(
-            0,
-            0,
-            allocation.width().max(1),
-            TOOLBAR_HEIGHT,
-        ));
+    toolbar_host.connect_size_allocate(|host, allocation| {
+        for child in host.children() {
+            host.move_(&child, 0, 0);
+            child.size_allocate(&gtk::Allocation::new(
+                0,
+                0,
+                allocation.width().max(1),
+                TOOLBAR_HEIGHT,
+            ));
+        }
     });
-
-    let initial_tab = build_browser_tab(&mut browser_context, &browser_stack, 1, DEFAULT_URL)?;
-    browser_stack.set_visible_child(&initial_tab.host);
 
     split.show_all();
     browser_column.hide();
@@ -353,24 +481,30 @@ pub fn build(
             _window: window,
             split,
             browser_column,
+            toolbar_host,
             browser_stack,
             studio_webview,
-            toolbar_webview,
-            tabs: vec![initial_tab],
-            active_tab_id: 1,
-            next_tab_id: 2,
+            toolbar_webview: None,
+            tabs: Vec::new(),
+            active_tab_id: 0,
+            next_tab_id: 1,
             resize_generation: 0,
             preferences,
             visible: false,
             browser_width,
             _studio_context: studio_context,
-            _toolbar_context: toolbar_context,
-            browser_context,
+            _toolbar_context: None,
+            browser_context: None,
+            download_handler_installed: false,
             browser_profile_directory: browser_profile,
             browser_cache_directory: browser_cache,
             webkit_version,
+            recent_recoveries: HashMap::new(),
+            toolbar_recovery: None,
+            downloads: Vec::new(),
             overflow_menu: None,
             info_dialog: None,
+            downloads_dialog: None,
         });
     });
     split_signal.connect_position_notify(|split| {
@@ -407,6 +541,107 @@ pub fn build(
     Ok(())
 }
 
+fn browser_runtime_loaded(workspace: &EmbeddedBrowserWorkspace) -> bool {
+    browser_runtime_parts_loaded(
+        workspace.toolbar_webview.is_some(),
+        workspace._toolbar_context.is_some(),
+        workspace.browser_context.is_some(),
+        workspace.tabs.len(),
+    )
+}
+
+fn browser_runtime_parts_loaded(
+    toolbar_webview: bool,
+    toolbar_context: bool,
+    browser_context: bool,
+    tab_count: usize,
+) -> bool {
+    toolbar_webview && toolbar_context && browser_context && tab_count > 0
+}
+
+fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<(), String> {
+    if browser_runtime_loaded(workspace) {
+        return Ok(());
+    }
+
+    // A previous failed attempt must not leave native children behind. Runtime fields are
+    // assigned only after both WebViews build successfully, so retrying remains deterministic.
+    for child in workspace.toolbar_host.children() {
+        workspace.toolbar_host.remove(&child);
+    }
+    for child in workspace.browser_stack.children() {
+        workspace.browser_stack.remove(&child);
+    }
+    workspace.toolbar_webview = None;
+    workspace.tabs.clear();
+    workspace.active_tab_id = 0;
+    workspace.next_tab_id = 1;
+
+    let toolbar_profile = profile_directory("browser-toolbar");
+    fs::create_dir_all(&toolbar_profile).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&workspace.browser_profile_directory).map_err(|error| error.to_string())?;
+
+    if workspace._toolbar_context.is_none() {
+        workspace._toolbar_context = Some(WebContext::new(Some(toolbar_profile)));
+    }
+    if workspace.browser_context.is_none() {
+        workspace.browser_context = Some(WebContext::new(Some(
+            workspace.browser_profile_directory.clone(),
+        )));
+        workspace.download_handler_installed = false;
+    }
+    let toolbar_host = workspace.toolbar_host.clone();
+    let browser_stack = workspace.browser_stack.clone();
+    let toolbar_context = workspace
+        ._toolbar_context
+        .as_mut()
+        .expect("toolbar context was initialized");
+    let toolbar_webview = WebViewBuilder::with_web_context(toolbar_context)
+        .with_html(TOOLBAR_HTML)
+        .with_clipboard(true)
+        .with_navigation_handler(|url| intercept_action(&url))
+        .build_gtk(&toolbar_host)
+        .map_err(|error| error.to_string())?;
+    toolbar_webview
+        .webview()
+        .connect_web_process_terminated(|_, reason| {
+            if reason != WebProcessTerminationReason::TerminatedByApi {
+                queue_action(BrowserAction::ToolbarTerminated(reason));
+            }
+        });
+    toolbar_webview
+        .webview()
+        .set_size_request(1, TOOLBAR_HEIGHT);
+
+    let browser_context = workspace
+        .browser_context
+        .as_mut()
+        .expect("browser context was initialized");
+    let initial_tab = match build_browser_tab(browser_context, &browser_stack, 1, DEFAULT_URL) {
+        Ok(tab) => tab,
+        Err(error) => {
+            drop(toolbar_webview);
+            for child in workspace.toolbar_host.children() {
+                workspace.toolbar_host.remove(&child);
+            }
+            for child in workspace.browser_stack.children() {
+                workspace.browser_stack.remove(&child);
+            }
+            return Err(error.to_string());
+        }
+    };
+    workspace.browser_stack.set_visible_child(&initial_tab.host);
+    if !workspace.download_handler_installed {
+        install_download_handler(&initial_tab.webview);
+        workspace.download_handler_installed = true;
+    }
+    workspace.toolbar_webview = Some(toolbar_webview);
+    workspace.tabs = vec![initial_tab];
+    workspace.active_tab_id = 1;
+    workspace.next_tab_id = 2;
+    Ok(())
+}
+
 fn build_browser_tab(
     context: &mut WebContext,
     stack: &gtk::Stack,
@@ -418,7 +653,7 @@ fn build_browser_tab(
     host.set_vexpand(true);
     stack.add_named(&host, &format!("tab-{id}"));
 
-    let webview = WebViewBuilder::with_web_context(context)
+    let builder = WebViewBuilder::with_web_context(context)
         .with_url(url)
         .with_clipboard(true)
         .with_document_title_changed_handler(move |title| {
@@ -431,8 +666,9 @@ fn build_browser_tab(
         .with_new_window_req_handler(move |url| {
             queue_action(BrowserAction::NewTab(Some(url)));
             false
-        })
-        .build_gtk(&host)?;
+        });
+    let webview = builder.build_gtk(&host)?;
+    install_page_guards(&webview, id);
     webview.webview().connect_key_press_event(move |_, event| {
         use gtk::gdk::{keys::constants, ModifierType};
 
@@ -470,7 +706,83 @@ fn build_browser_tab(
         webview,
         zoom: 1.0,
         fit_width: true,
+        crashed: false,
     })
+}
+
+fn install_download_handler(webview: &WebView) {
+    let Some(context) = webview.webview().context() else {
+        return;
+    };
+    context.connect_download_started(|_, download| {
+        let url = download
+            .request()
+            .and_then(|request| request.uri())
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let destination = Rc::new(RefCell::new(None::<PathBuf>));
+        let failed = Rc::new(Cell::new(false));
+
+        let url_for_response = url.clone();
+        let destination_for_response = destination.clone();
+        download.connect_response_notify(move |download| {
+            if destination_for_response.borrow().is_some() {
+                return;
+            }
+            let filename = download
+                .response()
+                .and_then(|response| response.suggested_filename())
+                .map(|value| sanitize_download_filename(&value))
+                .unwrap_or_else(|| download_filename(&url_for_response));
+            match download_destination_for_name(&filename) {
+                Ok(path) => {
+                    download.set_destination(&path.to_string_lossy());
+                    *destination_for_response.borrow_mut() = Some(path.clone());
+                    queue_action(BrowserAction::DownloadStarted {
+                        url: url_for_response.clone(),
+                        path,
+                    });
+                }
+                Err(error) => {
+                    download.cancel();
+                    queue_action(BrowserAction::DownloadRejected(error));
+                }
+            }
+        });
+        let failed_for_signal = failed.clone();
+        download.connect_failed(move |_, _| failed_for_signal.set(true));
+        download.connect_finished(move |_| {
+            let path = destination.borrow().clone();
+            queue_action(BrowserAction::DownloadFinished {
+                url: url.clone(),
+                success: !failed.get() && path.is_some(),
+                path,
+            });
+        });
+    });
+}
+
+fn install_page_guards(webview: &WebView, id: u64) {
+    webview
+        .webview()
+        .connect_web_process_terminated(move |_, reason| {
+            if reason != WebProcessTerminationReason::TerminatedByApi {
+                queue_action(BrowserAction::PageTerminated { id, reason });
+            }
+        });
+    webview.webview().connect_permission_request(|_, request| {
+        let sensitive = request.is::<webkit2gtk::UserMediaPermissionRequest>()
+            || request.is::<webkit2gtk::DeviceInfoPermissionRequest>()
+            || request.is::<webkit2gtk::GeolocationPermissionRequest>()
+            || request.is::<webkit2gtk::NotificationPermissionRequest>()
+            || request.is::<webkit2gtk::PointerLockPermissionRequest>();
+        if sensitive {
+            request.deny();
+            true
+        } else {
+            false
+        }
+    });
 }
 
 fn intercept_action(url: &str) -> bool {
@@ -489,6 +801,20 @@ fn queue_action(action: BrowserAction) {
 }
 
 fn dispatch_action(action: BrowserAction) {
+    if let BrowserAction::Open(url) = &action {
+        let url = url.clone();
+        show_workspace();
+        dispatch_action(BrowserAction::Navigate(url));
+        return;
+    }
+    if matches!(action, BrowserAction::Exit) {
+        exit_workspace();
+        return;
+    }
+    if matches!(action, BrowserAction::Show) {
+        show_workspace();
+        return;
+    }
     if matches!(action, BrowserAction::Toggle) {
         toggle_workspace();
         return;
@@ -507,7 +833,10 @@ fn dispatch_action(action: BrowserAction) {
             }
         }
         match action {
-            BrowserAction::Toggle => unreachable!("toggle is handled without a nested borrow"),
+            BrowserAction::Toggle | BrowserAction::Show | BrowserAction::Open(_) => {
+                unreachable!("workspace visibility actions are handled without a nested borrow")
+            }
+            BrowserAction::Exit => unreachable!("exit is handled without a nested borrow"),
             BrowserAction::Navigate(raw) => {
                 match validate_browser_url(&raw, &workspace.preferences) {
                     Ok(url) => {
@@ -528,8 +857,15 @@ fn dispatch_action(action: BrowserAction) {
                     Ok(url) => {
                         let id = workspace.next_tab_id;
                         workspace.next_tab_id = workspace.next_tab_id.wrapping_add(1).max(1);
+                        let Some(browser_context) = workspace.browser_context.as_mut() else {
+                            notify(
+                                &workspace.studio_webview,
+                                "Embedded browser is not initialized",
+                            );
+                            return;
+                        };
                         match build_browser_tab(
-                            &mut workspace.browser_context,
+                            browser_context,
                             &workspace.browser_stack,
                             id,
                             url.as_str(),
@@ -569,8 +905,12 @@ fn dispatch_action(action: BrowserAction) {
                 }
             }
             BrowserAction::Reload => {
-                if let Some(tab) = active_tab(workspace) {
-                    let _ = tab.webview.evaluate_script("location.reload()");
+                let active = workspace.active_tab_id;
+                if active_tab(workspace).is_some_and(|tab| tab.crashed) {
+                    workspace.recent_recoveries.remove(&active);
+                    recover_tab(workspace, active, false);
+                } else if let Some(tab) = active_tab(workspace) {
+                    let _ = tab.webview.load_url(&tab.url);
                 }
             }
             BrowserAction::ZoomIn => adjust_zoom(workspace, ZOOM_STEP),
@@ -612,6 +952,31 @@ fn dispatch_action(action: BrowserAction) {
             }
             BrowserAction::ShowMenu => show_browser_menu(workspace),
             BrowserAction::ShowInfo => show_browser_info(workspace),
+            BrowserAction::ShowDownloads => show_downloads(workspace),
+            BrowserAction::PageTerminated { id, reason } => {
+                handle_page_termination(workspace, id, reason)
+            }
+            BrowserAction::ToolbarTerminated(reason) => {
+                handle_toolbar_termination(workspace, reason)
+            }
+            BrowserAction::DownloadStarted { url, path } => {
+                workspace.downloads.insert(
+                    0,
+                    BrowserDownload {
+                        url,
+                        path,
+                        state: BrowserDownloadState::Downloading,
+                    },
+                );
+                workspace.downloads.truncate(MAX_DOWNLOAD_RECORDS);
+                refresh_downloads_if_open(workspace);
+            }
+            BrowserAction::DownloadFinished { url, path, success } => {
+                finish_download(workspace, &url, path.as_deref(), success);
+            }
+            BrowserAction::DownloadRejected(error) => {
+                notify(&workspace.studio_webview, &error);
+            }
         }
     });
     sync_toolbar();
@@ -670,6 +1035,103 @@ fn adjust_zoom(workspace: &mut EmbeddedBrowserWorkspace, delta: f64) {
     }
 }
 
+fn handle_page_termination(
+    workspace: &mut EmbeddedBrowserWorkspace,
+    id: u64,
+    reason: WebProcessTerminationReason,
+) {
+    let repeated = workspace
+        .recent_recoveries
+        .get(&id)
+        .is_some_and(|attempt| attempt.elapsed() < RECOVERY_WINDOW);
+    if repeated {
+        if let Some(tab) = workspace.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.crashed = true;
+            tab.title = match reason {
+                WebProcessTerminationReason::ExceededMemoryLimit => "页面内存超限".to_owned(),
+                _ => "页面异常退出".to_owned(),
+            };
+        }
+        notify(
+            &workspace.studio_webview,
+            "网页连续异常退出，请使用重新加载手动恢复",
+        );
+        return;
+    }
+    workspace.recent_recoveries.insert(id, Instant::now());
+    recover_tab(workspace, id, true);
+}
+
+fn recover_tab(workspace: &mut EmbeddedBrowserWorkspace, id: u64, automatic: bool) {
+    let Some(index) = workspace.tabs.iter().position(|tab| tab.id == id) else {
+        return;
+    };
+    let was_active = workspace.active_tab_id == id;
+    let old = workspace.tabs.remove(index);
+    let url = old.url.clone();
+    let zoom = old.zoom;
+    let fit_width = old.fit_width;
+    workspace.browser_stack.remove(&old.host);
+    drop(old);
+
+    let Some(context) = workspace.browser_context.as_mut() else {
+        return;
+    };
+    match build_browser_tab(context, &workspace.browser_stack, id, &url) {
+        Ok(mut tab) => {
+            tab.zoom = zoom;
+            tab.fit_width = fit_width;
+            let _ = tab.webview.zoom(zoom);
+            workspace.tabs.insert(index, tab);
+            if was_active {
+                workspace.active_tab_id = id;
+                workspace
+                    .browser_stack
+                    .set_visible_child(&workspace.tabs[index].host);
+            }
+            if automatic {
+                notify(&workspace.studio_webview, "网页渲染进程已自动恢复");
+            }
+        }
+        Err(error) => {
+            notify(
+                &workspace.studio_webview,
+                &format!("Unable to recover browser tab: {error}"),
+            );
+            if workspace.tabs.is_empty() {
+                queue_action(BrowserAction::Exit);
+            }
+        }
+    }
+}
+
+fn handle_toolbar_termination(
+    workspace: &mut EmbeddedBrowserWorkspace,
+    _reason: WebProcessTerminationReason,
+) {
+    let repeated = workspace
+        .toolbar_recovery
+        .is_some_and(|attempt| attempt.elapsed() < RECOVERY_WINDOW);
+    if repeated {
+        notify(
+            &workspace.studio_webview,
+            "浏览器工具栏连续异常退出，浏览器已关闭",
+        );
+        queue_action(BrowserAction::Exit);
+        return;
+    }
+    workspace.toolbar_recovery = Some(Instant::now());
+    if let Some(toolbar) = workspace.toolbar_webview.as_ref() {
+        if let Err(error) = toolbar.load_html(TOOLBAR_HTML) {
+            notify(
+                &workspace.studio_webview,
+                &format!("Unable to recover browser toolbar: {error}"),
+            );
+            queue_action(BrowserAction::Exit);
+        }
+    }
+}
+
 fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
     if let Some(menu) = workspace.overflow_menu.take() {
         let was_visible = menu.is_visible();
@@ -678,7 +1140,7 @@ fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
             return;
         }
     }
-    install_browser_menu_styles();
+    install_browser_native_styles();
     let menu = gtk::Menu::new();
     menu.set_size_request(292, -1);
     menu.style_context().add_class("browser-overflow-menu");
@@ -715,9 +1177,21 @@ fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
         Some("›"),
         || queue_action(BrowserAction::ShowInfo),
     ));
+    menu.append(&browser_native_menu_item(
+        "下载内容",
+        Some("›"),
+        || queue_action(BrowserAction::ShowDownloads),
+    ));
+    menu.append(&gtk::SeparatorMenuItem::new());
+    menu.append(&browser_native_menu_item("退出浏览器", None, || {
+        queue_action(BrowserAction::Exit)
+    }));
     menu.show_all();
+    let Some(toolbar_webview) = workspace.toolbar_webview.as_ref() else {
+        return;
+    };
     menu.popup_at_widget(
-        &workspace.toolbar_webview.webview(),
+        &toolbar_webview.webview(),
         gtk::gdk::Gravity::SouthEast,
         gtk::gdk::Gravity::NorthEast,
         None::<&gtk::gdk::Event>,
@@ -784,7 +1258,7 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
     dialog.set_resizable(false);
     dialog.set_default_size(520, -1);
     dialog.set_position(gtk::WindowPosition::CenterOnParent);
-    install_browser_menu_styles();
+    install_browser_native_styles();
     dialog.style_context().add_class("browser-info-dialog");
 
     let info = gtk::Box::new(gtk::Orientation::Vertical, 9);
@@ -874,6 +1348,168 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
     workspace.info_dialog = Some(dialog);
 }
 
+fn show_downloads(workspace: &mut EmbeddedBrowserWorkspace) {
+    if let Some(dialog) = workspace.downloads_dialog.take() {
+        dialog.close();
+    }
+    let parent = match workspace._window.gtk_window() {
+        Ok(parent) => parent,
+        Err(error) => {
+            notify(
+                &workspace.studio_webview,
+                &format!("Unable to open downloads: {error}"),
+            );
+            return;
+        }
+    };
+    let dialog = gtk::Dialog::new();
+    dialog.set_title("下载内容");
+    dialog.set_transient_for(Some(&parent));
+    dialog.set_destroy_with_parent(true);
+    dialog.set_modal(false);
+    dialog.set_resizable(true);
+    dialog.set_default_size(560, 420);
+    dialog.set_position(gtk::WindowPosition::CenterOnParent);
+    dialog.style_context().add_class("browser-info-dialog");
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+    content.set_margin_top(14);
+    content.set_margin_bottom(14);
+    if workspace.downloads.is_empty() {
+        let empty = gtk::Label::new(Some("还没有下载记录"));
+        empty.set_xalign(0.0);
+        empty.style_context().add_class("dim-label");
+        content.pack_start(&empty, false, false, 0);
+    } else {
+        let scroller = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        for (index, download) in workspace.downloads.iter().enumerate() {
+            if index > 0 {
+                list.pack_start(
+                    &gtk::Separator::new(gtk::Orientation::Horizontal),
+                    false,
+                    false,
+                    4,
+                );
+            }
+            list.pack_start(&download_row(download), false, false, 0);
+        }
+        scroller.add(&list);
+        content.pack_start(&scroller, true, true, 0);
+    }
+    dialog.content_area().add(&content);
+    dialog.show_all();
+    dialog.present();
+    workspace.downloads_dialog = Some(dialog);
+}
+
+fn download_row(download: &BrowserDownload) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.set_margin_top(6);
+    row.set_margin_bottom(6);
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    copy.set_hexpand(true);
+    let name = gtk::Label::new(download.path.file_name().and_then(|value| value.to_str()));
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name.set_tooltip_text(Some(&download.url));
+    let detail = gtk::Label::new(Some(&format!(
+        "{}  ·  {}",
+        download_state_label(download.state),
+        download.path.display()
+    )));
+    detail.set_xalign(0.0);
+    detail.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    detail.style_context().add_class("dim-label");
+    copy.pack_start(&name, false, false, 0);
+    copy.pack_start(&detail, false, false, 0);
+    row.pack_start(&copy, true, true, 0);
+    let open = gtk::Button::with_label("打开目录");
+    open.set_sensitive(download.state == BrowserDownloadState::Completed);
+    let directory = download.path.parent().map(Path::to_path_buf);
+    open.connect_clicked(move |_| {
+        if let Some(directory) = directory.as_ref() {
+            let _ = Command::new("xdg-open")
+                .arg(directory)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    });
+    row.pack_end(&open, false, false, 0);
+    row
+}
+
+fn download_state_label(state: BrowserDownloadState) -> &'static str {
+    match state {
+        BrowserDownloadState::Downloading => "下载中",
+        BrowserDownloadState::Completed => "已完成",
+        BrowserDownloadState::Failed => "失败",
+    }
+}
+
+fn finish_download(
+    workspace: &mut EmbeddedBrowserWorkspace,
+    url: &str,
+    path: Option<&Path>,
+    success: bool,
+) {
+    let index = path
+        .and_then(|path| {
+            workspace
+                .downloads
+                .iter()
+                .position(|download| download.path == path)
+        })
+        .or_else(|| {
+            workspace.downloads.iter().position(|download| {
+                download.url == url && download.state == BrowserDownloadState::Downloading
+            })
+        });
+    if let Some(index) = index {
+        let record = &mut workspace.downloads[index];
+        record.state = if success {
+            BrowserDownloadState::Completed
+        } else {
+            BrowserDownloadState::Failed
+        };
+        let filename = record
+            .path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("download");
+        notify(
+            &workspace.studio_webview,
+            &format!(
+                "{}：{filename}",
+                if success {
+                    "下载完成"
+                } else {
+                    "下载失败"
+                }
+            ),
+        );
+    } else if !success {
+        notify(&workspace.studio_webview, "下载失败");
+    }
+    refresh_downloads_if_open(workspace);
+}
+
+fn refresh_downloads_if_open(workspace: &mut EmbeddedBrowserWorkspace) {
+    let visible = workspace
+        .downloads_dialog
+        .as_ref()
+        .is_some_and(gtk::prelude::WidgetExt::is_visible);
+    if visible {
+        show_downloads(workspace);
+    }
+}
+
 fn confirm_clear_browser_data(parent: &gtk::Dialog, status: gtk::Label) {
     let confirmation = gtk::MessageDialog::new(
         Some(parent),
@@ -946,7 +1582,7 @@ fn browser_menu_square_button(
     button
 }
 
-fn install_browser_menu_styles() {
+fn install_browser_native_styles() {
     let Some(screen) = gtk::gdk::Screen::default() else {
         return;
     };
@@ -1006,6 +1642,17 @@ fn install_browser_menu_styles() {
               font-weight: 600;
             }
             .browser-clear-data:hover { background: #fdebec; color: #9e1c27; }
+            paned.studio-browser-split > separator {
+              min-width: 9px;
+              border-left: 4px solid #ffffff;
+              border-right: 4px solid #ffffff;
+              background: #d5dee2;
+            }
+            paned.studio-browser-split > separator:hover {
+              border-left-width: 3px;
+              border-right-width: 3px;
+              background: #6aa398;
+            }
             "#,
         )
         .is_ok()
@@ -1070,14 +1717,23 @@ fn toggle_workspace() {
             return None;
         };
         let workspace = slot.as_mut()?;
-        workspace.visible = !workspace.visible;
-        if !workspace.visible {
+        if workspace.visible {
+            workspace.visible = false;
             if let Some(menu) = workspace.overflow_menu.take() {
                 menu.popdown();
             }
             if let Some(dialog) = workspace.info_dialog.take() {
                 dialog.close();
             }
+        } else {
+            if let Err(error) = ensure_browser_runtime(workspace) {
+                notify(
+                    &workspace.studio_webview,
+                    &format!("Unable to initialize embedded browser: {error}"),
+                );
+                return None;
+            }
+            workspace.visible = true;
         }
         Some((
             workspace.visible,
@@ -1094,10 +1750,13 @@ fn toggle_workspace() {
     // across these GTK calls or the callback would panic across FFI and abort the process.
     if visible {
         browser_column.show_all();
-        let available = split.allocation().width();
-        let max_width = (available - MIN_STUDIO_WIDTH).max(MIN_BROWSER_WIDTH);
-        let width = browser_width.clamp(MIN_BROWSER_WIDTH, max_width);
-        split.set_position(available - width);
+        position_browser_split(&split, browser_width);
+        // During startup GTK may not have allocated the Paned yet. Reapply after the first
+        // layout pass so an early developer/browser action cannot expand the browser to 100%.
+        let split_after_layout = split.clone();
+        gtk::glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            position_browser_split(&split_after_layout, browser_width);
+        });
     } else {
         browser_column.hide();
     }
@@ -1119,11 +1778,113 @@ fn toggle_workspace() {
             "window.__studioEmbeddedBrowser?.setVisible",
             &visible,
         );
+        if visible {
+            evaluate(
+                &workspace.studio_webview,
+                "window.__studioEmbeddedBrowser?.setRuntimeLoaded",
+                &true,
+            );
+        }
     });
     if visible {
         measure_active_fit();
     }
     sync_toolbar();
+}
+
+fn show_workspace() {
+    let visible = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|workspace| workspace.visible))
+            .unwrap_or(false)
+    });
+    if !visible {
+        toggle_workspace();
+    }
+}
+
+fn exit_workspace() {
+    let released = WORKSPACE.with(|slot| {
+        let Ok(mut slot) = slot.try_borrow_mut() else {
+            return None;
+        };
+        let workspace = slot.as_mut()?;
+        workspace.visible = false;
+        workspace.active_tab_id = 0;
+        workspace.next_tab_id = 1;
+        workspace.recent_recoveries.clear();
+        workspace.toolbar_recovery = None;
+        Some((
+            workspace.overflow_menu.take(),
+            workspace.info_dialog.take(),
+            workspace.downloads_dialog.take(),
+            std::mem::take(&mut workspace.tabs),
+            workspace.toolbar_webview.take(),
+            workspace.browser_column.clone(),
+            workspace.browser_stack.clone(),
+            workspace.toolbar_host.clone(),
+        ))
+    });
+    let Some((
+        menu,
+        dialog,
+        downloads_dialog,
+        tabs,
+        toolbar_webview,
+        browser_column,
+        browser_stack,
+        toolbar_host,
+    )) = released
+    else {
+        return;
+    };
+    if let Some(menu) = menu {
+        menu.popdown();
+    }
+    if let Some(dialog) = dialog {
+        dialog.close();
+    }
+    if let Some(dialog) = downloads_dialog {
+        dialog.close();
+    }
+    browser_column.hide();
+    drop(tabs);
+    drop(toolbar_webview);
+    for child in browser_stack.children() {
+        browser_stack.remove(&child);
+    }
+    for child in toolbar_host.children() {
+        toolbar_host.remove(&child);
+    }
+    WORKSPACE.with(|slot| {
+        let Ok(slot) = slot.try_borrow() else {
+            return;
+        };
+        let Some(workspace) = slot.as_ref() else {
+            return;
+        };
+        evaluate(
+            &workspace.studio_webview,
+            "window.__studioEmbeddedBrowser?.setVisible",
+            &false,
+        );
+        evaluate(
+            &workspace.studio_webview,
+            "window.__studioEmbeddedBrowser?.setRuntimeLoaded",
+            &false,
+        );
+    });
+}
+
+fn position_browser_split(split: &gtk::Paned, browser_width: i32) {
+    let available = split.allocation().width();
+    if available < MIN_STUDIO_WIDTH + MIN_BROWSER_WIDTH {
+        return;
+    }
+    let max_width = (available - MIN_STUDIO_WIDTH).max(MIN_BROWSER_WIDTH);
+    let width = browser_width.clamp(MIN_BROWSER_WIDTH, max_width);
+    split.set_position(available - width);
 }
 
 fn update_tab_navigation(id: u64, url: Option<String>, title: Option<String>, finished: bool) {
@@ -1290,6 +2051,9 @@ fn sync_toolbar() {
             let Some(workspace) = slot.as_ref() else {
                 return;
             };
+            let Some(toolbar_webview) = workspace.toolbar_webview.as_ref() else {
+                return;
+            };
             let tabs = workspace
                 .tabs
                 .iter()
@@ -1311,7 +2075,7 @@ fn sync_toolbar() {
                 "fitWidth": active.is_some_and(|tab| tab.fit_width),
             });
             evaluate(
-                &workspace.toolbar_webview,
+                toolbar_webview,
                 "window.__embeddedBrowserToolbar?.setState",
                 &payload,
             );
@@ -1390,6 +2154,8 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
     }
     match url.host_str()? {
         "toggle-browser" => Some(BrowserAction::Toggle),
+        "show-browser" => Some(BrowserAction::Show),
+        "open-browser" => query_value(&url, "url").map(BrowserAction::Open),
         "navigate" => query_value(&url, "url").map(BrowserAction::Navigate),
         "new-tab" => Some(BrowserAction::NewTab(query_value(&url, "url"))),
         "activate-tab" => query_u64(&url, "id").map(BrowserAction::ActivateTab),
@@ -1454,6 +2220,116 @@ fn preferred_browser_width(preferences: &BrowserPreferences) -> i32 {
     preferences.embedded_width.clamp(480, 1200) as i32
 }
 
+fn download_destination_for_name(filename: &str) -> Result<PathBuf, String> {
+    let directory = download_directory();
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("无法创建下载目录 {}：{error}", directory.display()))?;
+    Ok(unique_download_path(
+        &directory,
+        &sanitize_download_filename(filename),
+    ))
+}
+
+fn download_directory() -> PathBuf {
+    if let Some(path) = env::var_os("CODEX_THREAD_STUDIO_DOWNLOAD_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return path;
+    }
+    if let Some(path) = env::var_os("XDG_DOWNLOAD_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return path;
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join("Downloads");
+    }
+    env::temp_dir().join("codex-thread-studio-downloads")
+}
+
+fn download_filename(raw_url: &str) -> String {
+    let candidate = Url::parse(raw_url)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(percent_decode_filename)
+        })
+        .unwrap_or_else(|| "download".to_owned());
+    sanitize_download_filename(&candidate)
+}
+
+fn percent_decode_filename(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = (bytes[index + 1] as char).to_digit(16);
+            let low = (bytes[index + 2] as char).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                decoded.push(((high << 4) | low) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_owned())
+}
+
+fn sanitize_download_filename(value: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len().min(180));
+    for character in value.chars().take(180) {
+        if character.is_control()
+            || matches!(
+                character,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+            )
+        {
+            sanitized.push('_');
+        } else {
+            sanitized.push(character);
+        }
+    }
+    let sanitized =
+        sanitized.trim_matches(|character: char| character == '.' || character.is_whitespace());
+    if sanitized.is_empty() {
+        "download".to_owned()
+    } else {
+        sanitized.to_owned()
+    }
+}
+
+fn unique_download_path(directory: &Path, filename: &str) -> PathBuf {
+    let initial = directory.join(filename);
+    if !initial.exists() {
+        return initial;
+    }
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for suffix in 1..=10_000 {
+        let name = match extension {
+            Some(extension) => format!("{stem} ({suffix}).{extension}"),
+            None => format!("{stem} ({suffix})"),
+        };
+        let candidate = directory.join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    directory.join(format!("download-{}", std::process::id()))
+}
+
 fn profile_directory(name: &str) -> PathBuf {
     if let Some(path) = env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
         return PathBuf::from(path).join("codex-thread-studio").join(name);
@@ -1500,6 +2376,14 @@ mod tests {
         assert!(matches!(
             parse_action("studio-action://toggle-browser"),
             Some(BrowserAction::Toggle)
+        ));
+        assert!(matches!(
+            parse_action("studio-action://show-browser"),
+            Some(BrowserAction::Show)
+        ));
+        assert!(matches!(
+            parse_action("studio-action://open-browser?url=https%3A%2F%2Fexample.com"),
+            Some(BrowserAction::Open(url)) if url == "https://example.com"
         ));
         assert!(matches!(
             parse_action("studio-action://navigate?url=https%3A%2F%2Fexample.com"),
@@ -1552,8 +2436,45 @@ mod tests {
 
     #[test]
     fn browser_page_always_uses_height_below_the_toolbar() {
-        assert_eq!(browser_page_height(853), 771);
+        assert_eq!(browser_page_height(853), 853 - TOOLBAR_HEIGHT);
         assert_eq!(browser_page_height(TOOLBAR_HEIGHT), 1);
         assert_eq!(browser_page_height(1), 1);
+    }
+
+    #[test]
+    fn lazy_browser_runtime_is_ready_only_when_every_component_exists() {
+        assert!(!browser_runtime_parts_loaded(false, false, false, 0));
+        assert!(!browser_runtime_parts_loaded(true, true, true, 0));
+        assert!(!browser_runtime_parts_loaded(true, false, true, 1));
+        assert!(!browser_runtime_parts_loaded(false, true, true, 1));
+        assert!(browser_runtime_parts_loaded(true, true, true, 1));
+    }
+
+    #[test]
+    fn download_names_are_decoded_sanitized_and_never_traverse_directories() {
+        assert_eq!(
+            download_filename("https://example.com/files/Studio%20Guide.pdf?token=1"),
+            "Studio Guide.pdf"
+        );
+        assert_eq!(
+            sanitize_download_filename("../../unsafe\\name?.txt"),
+            "_.._unsafe_name_.txt"
+        );
+        assert_eq!(download_filename("https://example.com/"), "download");
+    }
+
+    #[test]
+    fn existing_downloads_receive_a_collision_suffix() {
+        let directory = env::temp_dir().join(format!(
+            "codex-thread-studio-download-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("test download directory");
+        fs::write(directory.join("report.pdf"), b"existing").expect("existing download");
+        assert_eq!(
+            unique_download_path(&directory, "report.pdf"),
+            directory.join("report (1).pdf")
+        );
+        fs::remove_dir_all(directory).expect("remove test download directory");
     }
 }

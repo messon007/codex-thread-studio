@@ -1,6 +1,10 @@
 # Browser Workspace 特性规格
 
 状态：Phase 0、Phase 1、Phase 2A 已完成；Phase 2B Wayland 内嵌 Browser Workspace 开发中
+
+> 2026-08 产品决策：Studio 默认且仅使用内嵌 Browser Workspace。外部 Chromium/Brave
+> 进程管理、CDP 连接和对应 fallback 已从运行时代码删除。本文中 Phase 1 的外部浏览器
+> 内容仅保留为历史设计记录，不再代表当前实现或后续验收目标。
 适用产品：Codex Thread Studio
 最后更新：2026-08-11
 

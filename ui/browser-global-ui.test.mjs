@@ -13,22 +13,18 @@ test('Browser has one global entry and no session or right-rail duplicate', () =
   assert.doesNotMatch(html, /class="[^\"]*browser-entry-button/)
 })
 
-test('Browser status is driven by the protected event stream without polling', () => {
-  assert.match(source, /gatewayEventSource\('\/studio\/browser\/events'\)/)
+test('Browser status is local to the embedded runtime without an external event stream or polling', () => {
+  assert.doesNotMatch(source, /\/studio\/browser\/events/)
+  assert.doesNotMatch(source, /\/studio\/browser\/workspace/)
   assert.doesNotMatch(source, /setInterval\([^\n]*[Bb]rowser/)
   assert.doesNotMatch(source, /browserWorkspacePoll/)
 })
 
-test('A global Browser click toggles embedded presentation or validates external live state', () => {
+test('A global Browser click only shows the embedded presentation', () => {
   assert.match(source, /usesEmbeddedBrowser\(\)/)
-  assert.match(source, /studio-action:\/\/toggle-browser/)
-  assert.match(source, /browserRequest\('\/studio\/browser\/workspace'\)/)
-  assert.match(source, /activateFirstBrowserPage/)
-})
-
-test('Opening Local workspace refreshes the visible Browser status', () => {
-  assert.match(source, /if \(opening && !usesEmbeddedBrowser\(\)\) refreshGlobalBrowserStatus\(\)/)
-  assert.match(source, /async function refreshGlobalBrowserStatus\(\)/)
+  assert.match(source, /studio-action:\/\/show-browser/)
+  assert.doesNotMatch(source, /launchGlobalBrowser/)
+  assert.doesNotMatch(source, /activateFirstBrowserPage/)
 })
 
 test('Embedded Browser selection enters the shared Comment Core flow', () => {

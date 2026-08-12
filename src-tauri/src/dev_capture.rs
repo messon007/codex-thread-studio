@@ -23,8 +23,12 @@ const MAX_MESSAGE_BYTES: u64 = 16 * 1024;
 enum DeveloperRequest {
     Screenshot,
     ShowBrowser,
+    HideBrowser,
+    ExitBrowser,
+    NewBrowserTab { url: String },
     ShowBrowserMenu,
     ShowBrowserInfo,
+    ShowBrowserDownloads,
     OpenBrowser { url: String },
 }
 
@@ -44,8 +48,12 @@ pub fn requested(arguments: &[OsString]) -> bool {
             Some(
                 "--dev-screenshot"
                     | "--dev-show-browser"
+                    | "--dev-hide-browser"
+                    | "--dev-exit-browser"
+                    | "--dev-new-browser-tab"
                     | "--dev-show-browser-menu"
                     | "--dev-show-browser-info"
+                    | "--dev-show-browser-downloads"
                     | "--dev-open-browser"
             )
         )
@@ -93,11 +101,24 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
     match command {
         "--dev-screenshot" if arguments.len() == 1 => Ok(Some(DeveloperRequest::Screenshot)),
         "--dev-show-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::ShowBrowser)),
+        "--dev-hide-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::HideBrowser)),
+        "--dev-exit-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::ExitBrowser)),
+        "--dev-new-browser-tab" if arguments.len() == 2 => {
+            let url = arguments[1]
+                .to_str()
+                .ok_or("developer browser URL must be valid UTF-8")?;
+            Ok(Some(DeveloperRequest::NewBrowserTab {
+                url: url.to_owned(),
+            }))
+        }
         "--dev-show-browser-menu" if arguments.len() == 1 => {
             Ok(Some(DeveloperRequest::ShowBrowserMenu))
         }
         "--dev-show-browser-info" if arguments.len() == 1 => {
             Ok(Some(DeveloperRequest::ShowBrowserInfo))
+        }
+        "--dev-show-browser-downloads" if arguments.len() == 1 => {
+            Ok(Some(DeveloperRequest::ShowBrowserDownloads))
         }
         "--dev-open-browser" if arguments.len() == 2 => {
             let url = arguments[1]
@@ -109,11 +130,16 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         }
         "--dev-screenshot"
         | "--dev-show-browser"
+        | "--dev-hide-browser"
+        | "--dev-exit-browser"
         | "--dev-show-browser-menu"
-        | "--dev-show-browser-info" => {
+        | "--dev-show-browser-info"
+        | "--dev-show-browser-downloads" => {
             Err(format!("{command} does not accept additional arguments"))
         }
-        "--dev-open-browser" => Err("--dev-open-browser requires exactly one URL".to_owned()),
+        "--dev-open-browser" | "--dev-new-browser-tab" => {
+            Err(format!("{command} requires exactly one URL"))
+        }
         _ => Ok(None),
     }
 }
@@ -191,11 +217,23 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             DeveloperRequest::ShowBrowser => {
                 crate::embedded_browser::show_for_debug(None).map(|_| None)
             }
+            DeveloperRequest::HideBrowser => {
+                crate::embedded_browser::hide_for_debug().map(|_| None)
+            }
+            DeveloperRequest::ExitBrowser => {
+                crate::embedded_browser::exit_for_debug().map(|_| None)
+            }
+            DeveloperRequest::NewBrowserTab { url } => {
+                crate::embedded_browser::new_tab_for_debug(url).map(|_| None)
+            }
             DeveloperRequest::ShowBrowserMenu => {
                 crate::embedded_browser::show_menu_for_debug().map(|_| None)
             }
             DeveloperRequest::ShowBrowserInfo => {
                 crate::embedded_browser::show_info_for_debug().map(|_| None)
+            }
+            DeveloperRequest::ShowBrowserDownloads => {
+                crate::embedded_browser::show_downloads_for_debug().map(|_| None)
             }
             DeveloperRequest::OpenBrowser { url } => {
                 crate::embedded_browser::show_for_debug(Some(url)).map(|_| None)
@@ -281,12 +319,32 @@ mod tests {
             Some(DeveloperRequest::ShowBrowser)
         ));
         assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-hide-browser"])).unwrap(),
+            Some(DeveloperRequest::HideBrowser)
+        ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-exit-browser"])).unwrap(),
+            Some(DeveloperRequest::ExitBrowser)
+        ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&[
+                "--dev-new-browser-tab",
+                "https://example.org"
+            ]))
+            .unwrap(),
+            Some(DeveloperRequest::NewBrowserTab { url }) if url == "https://example.org"
+        ));
+        assert!(matches!(
             parse_cli_request(&arguments(&["--dev-show-browser-menu"])).unwrap(),
             Some(DeveloperRequest::ShowBrowserMenu)
         ));
         assert!(matches!(
             parse_cli_request(&arguments(&["--dev-show-browser-info"])).unwrap(),
             Some(DeveloperRequest::ShowBrowserInfo)
+        ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-show-browser-downloads"])).unwrap(),
+            Some(DeveloperRequest::ShowBrowserDownloads)
         ));
         assert!(matches!(
             parse_cli_request(&arguments(&["--dev-open-browser", "https://example.com"])).unwrap(),
@@ -303,8 +361,12 @@ mod tests {
     fn only_known_developer_commands_claim_the_process() {
         assert!(requested(&arguments(&["--dev-screenshot"])));
         assert!(requested(&arguments(&["--dev-show-browser"])));
+        assert!(requested(&arguments(&["--dev-hide-browser"])));
+        assert!(requested(&arguments(&["--dev-exit-browser"])));
+        assert!(requested(&arguments(&["--dev-new-browser-tab"])));
         assert!(requested(&arguments(&["--dev-show-browser-menu"])));
         assert!(requested(&arguments(&["--dev-show-browser-info"])));
+        assert!(requested(&arguments(&["--dev-show-browser-downloads"])));
         assert!(requested(&arguments(&["--dev-open-browser"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));

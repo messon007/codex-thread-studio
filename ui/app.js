@@ -207,9 +207,8 @@ const state = {
   markdown: { mode: 'technical' },
   browser: null,
   browserInfo: null,
-  browserStatus: null,
-  browserLaunching: false,
   embeddedBrowserVisible: false,
+  embeddedBrowserLoaded: false,
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -279,7 +278,6 @@ let mermaidGeneration = 0
 let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
-let browserEventStream = null
 let embeddedBrowserWidthTimer = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
@@ -371,7 +369,6 @@ async function init() {
   startMermaidRendering()
   applyBackendCopy()
   await loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
-  if (!usesEmbeddedBrowser()) connectBrowserEvents()
   await loadFavorites().catch(showError)
   // Catalog discovery is independent of the active backend connection. A
   // transient failure in one backend must not leave the whole sidebar empty
@@ -387,9 +384,7 @@ async function init() {
 function bindUI() {
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#studio-menu-button').addEventListener('click', () => {
-    const opening = $('#studio-menu').classList.contains('hidden')
     toggleActionMenu('studio-menu', 'studio-menu-button')
-    if (opening && !usesEmbeddedBrowser()) refreshGlobalBrowserStatus().catch(reportClientError)
   })
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
@@ -616,77 +611,28 @@ async function loadBrowserInfo() {
   return state.browserInfo
 }
 
-async function refreshGlobalBrowserStatus() {
-  try {
-    state.browserStatus = await browserRequest('/studio/browser/workspace')
-  } catch (error) {
-    state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: error.message }
-  }
-  renderBrowserMenuStatus()
-}
-
-function connectBrowserEvents() {
-  browserEventStream?.close()
-  browserEventStream = gatewayEventSource('/studio/browser/events')
-  browserEventStream.onmessage = (event) => {
-    try {
-      state.browserStatus = JSON.parse(event.data)
-      renderBrowserMenuStatus()
-    } catch (error) {
-      console.warn('Invalid Browser event', error)
-    }
-  }
-  browserEventStream.onerror = () => {
-    state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: 'Browser event stream disconnected' }
-    renderBrowserMenuStatus()
-  }
-}
-
 function renderBrowserMenuStatus() {
   const element = $('#browser-menu-status')
   if (!element) return
-  const embedded = usesEmbeddedBrowser()
-  const running = embedded ? state.embeddedBrowserVisible : Boolean(state.browserStatus?.running)
-  const error = Boolean(state.browserStatus?.lastError) && !running
-  element.className = `browser-menu-status ${state.browserLaunching ? 'starting' : running ? 'online' : error ? 'error' : 'offline'}`
-  element.querySelector('small').textContent = embedded ? 'embedded' : 'default'
-  const label = t(state.browserLaunching ? '正在启动' : running ? (embedded ? '已显示' : '已连接') : error ? '异常' : (embedded ? '已隐藏' : '未启动'))
+  const available = usesEmbeddedBrowser()
+  element.className = `browser-menu-status ${state.embeddedBrowserVisible ? 'online' : available ? 'offline' : 'error'}`
+  element.querySelector('small').textContent = 'embedded'
+  const label = t(!available ? '不可用' : state.embeddedBrowserVisible ? '已显示' : state.embeddedBrowserLoaded ? '已隐藏' : '未启动')
   const button = $('#open-browser-workspace')
-  button.title = `${t('浏览器')} · ${label} · default`
+  button.disabled = !available
+  button.title = `${t('浏览器')} · ${label} · embedded`
   button.setAttribute('aria-label', button.title)
 }
 
 async function openGlobalBrowser() {
   closeActionMenus()
-  if (usesEmbeddedBrowser()) {
-    window.location.href = 'studio-action://toggle-browser'
-    return
-  }
-  // CDP lifecycle events normally keep this current. An explicit click still
-  // takes one authoritative snapshot so a just-closed tab/window cannot leave
-  // us activating a stale target ID during the event-delivery race.
-  state.browserStatus = await browserRequest('/studio/browser/workspace')
-  renderBrowserMenuStatus()
-  if (!state.browserStatus.running) {
-    await launchGlobalBrowser()
-    return
-  }
-  if (await activateFirstBrowserPage(state.browserStatus)) {
-    toast('Wayland 可能阻止应用抢占焦点；可从任务栏选择 Chromium')
-    return
-  }
+  if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  window.location.href = 'studio-action://show-browser'
+}
 
-  // A page can disappear between the snapshot and activation. Refresh once
-  // for this user action; this is not a timer or background poll.
-  state.browserStatus = await browserRequest('/studio/browser/workspace')
-  renderBrowserMenuStatus()
-  if (!state.browserStatus.running) {
-    await launchGlobalBrowser()
-    return
-  }
-  if (await activateFirstBrowserPage(state.browserStatus)) {
-    toast('Wayland 可能阻止应用抢占焦点；可从任务栏选择 Chromium')
-  }
+async function openBrowserUrl(url) {
+  if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  window.location.href = `studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}`
 }
 
 function usesEmbeddedBrowser() {
@@ -714,6 +660,10 @@ window.__studioEmbeddedBrowser = Object.freeze({
     state.embeddedBrowserVisible = Boolean(visible)
     renderBrowserMenuStatus()
   },
+  setRuntimeLoaded(loaded) {
+    state.embeddedBrowserLoaded = Boolean(loaded)
+    renderBrowserMenuStatus()
+  },
   setWidth(width) {
     const value = Math.round(Number(width))
     if (!Number.isFinite(value) || value < 480 || value > 2400 || state.browser?.embeddedWidth === value) return
@@ -728,45 +678,6 @@ window.__studioEmbeddedBrowser = Object.freeze({
     toast(t(String(message || '')), 'error')
   },
 })
-
-async function launchGlobalBrowser(url = null) {
-  if (state.browserLaunching) return
-  state.browserLaunching = true
-  state.browserStatus = { ...(state.browserStatus || {}), running: false, lastError: null }
-  renderBrowserMenuStatus()
-  try {
-    state.browserStatus = await browserRequest('/studio/browser/workspace', {
-      method: 'POST',
-      body: { ...(url ? { url } : {}) },
-    })
-  } finally {
-    state.browserLaunching = false
-    renderBrowserMenuStatus()
-  }
-}
-
-async function activateFirstBrowserPage(status) {
-  const pages = (status?.tabs || []).filter((candidate) => candidate.type === 'page' || candidate.kind === 'page')
-  for (const tab of pages) {
-    try {
-      await browserRequest('/studio/browser/tabs/activate', { method: 'POST', body: { tabId: tab.id } })
-      return true
-    } catch (error) {
-      if (!String(error?.message || error).includes('404')) throw error
-    }
-  }
-  return false
-}
-
-async function openBrowserUrl(url) {
-  state.browserStatus = await browserRequest('/studio/browser/workspace')
-  if (!state.browserStatus.running) {
-    await launchGlobalBrowser(url)
-  } else {
-    await browserRequest('/studio/browser/tabs', { method: 'POST', body: { url } })
-  }
-  renderBrowserMenuStatus()
-}
 
 function normalizeArtifactWidthRatio(value) {
   return Math.min(0.65, Math.max(0.2, Number(value) || 0.44))
@@ -5137,13 +5048,12 @@ async function loadPreferences() {
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
   state.browser = {
-    enabled: false,
-    restoreTabs: true,
+    enabled: true,
+    restoreTabs: false,
     allowHttp: true,
     allowPrivateNetwork: false,
     allowLocalhost: true,
     previewJavaScript: true,
-    externalOpenFallback: true,
     embeddedWidth: 720,
     agent: { enabled: false, provider: 'playwright-mcp', profile: 'persistent', approval: 'interactive', allowedOrigins: [] },
     ...(saved.browser || {}),

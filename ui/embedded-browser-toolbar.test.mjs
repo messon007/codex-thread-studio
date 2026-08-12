@@ -16,6 +16,9 @@ test('embedded browser tab strip follows normal browser control order', () => {
   assert.match(source.slice(closeBrowser), /data-action="toggle-browser"/u)
   assert.match(source, /\.tabs \{[^}]*flex: 0 1 auto;/u)
   assert.match(source, /\.workspace-close \{[^}]*margin: 0 0 1px auto;/u)
+  assert.match(source, /grid-template-rows: 32px 43px/u)
+  assert.match(source, /\.tabs-row \{[^}]*padding: 4px 10px 0;/u)
+  assert.match(source, /\.toolbar \{[^}]*padding: 0 10px;/u)
 })
 
 test('browser menu is the rightmost address-toolbar action', () => {

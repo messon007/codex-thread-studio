@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -7,7 +6,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
@@ -15,7 +14,6 @@ use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
 use axum::{Json, Router};
-use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -33,10 +31,7 @@ mod opencode_server;
 mod session_map;
 
 use backend_runtime::{BackendRuntime, WslSettings};
-use browser_runtime::{
-    BrowserController, BrowserPreferences, BrowserTabActionRequest, BrowserTabRequest,
-    BrowserWorkspaceRequest,
-};
+use browser_runtime::BrowserPreferences;
 #[cfg(not(windows))]
 use codex_app_server::find_codex_binary;
 use codex_app_server::CodexAppServer;
@@ -62,7 +57,6 @@ struct GatewayState {
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
-    browser: BrowserController,
     embedded_browser: bool,
 }
 
@@ -282,21 +276,6 @@ struct BrowserInfo {
     presentation: &'static str,
 }
 
-#[derive(Deserialize)]
-struct BrowserPolicyQuery {
-    url: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BrowserPolicyResponse {
-    allowed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    normalized_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
-}
-
 #[derive(Default, Deserialize)]
 struct FavoriteQuery {
     #[serde(default)]
@@ -344,8 +323,12 @@ fn main() {
             Some(
                 "--dev-screenshot"
                     | "--dev-show-browser"
+                    | "--dev-hide-browser"
+                    | "--dev-exit-browser"
+                    | "--dev-new-browser-tab"
                     | "--dev-show-browser-menu"
                     | "--dev-show-browser-info"
+                    | "--dev-show-browser-downloads"
                     | "--dev-open-browser"
             )
         )
@@ -407,7 +390,6 @@ fn main() {
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
         security,
-        browser: BrowserController::new(startup_preferences.browser.clone()),
         embedded_browser,
     };
 
@@ -464,27 +446,6 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/codex", get(codex_info))
         .route("/studio/opencode", get(opencode_info))
         .route("/studio/browser", get(browser_info))
-        .route(
-            "/studio/browser/workspace",
-            get(browser_workspace_status).post(launch_browser_workspace),
-        )
-        .route("/studio/browser/events", get(browser_events))
-        .route(
-            "/studio/browser/tabs",
-            axum::routing::post(create_browser_tab),
-        )
-        .route(
-            "/studio/browser/tabs/activate",
-            axum::routing::post(activate_browser_tab),
-        )
-        .route(
-            "/studio/browser/tabs/close",
-            axum::routing::post(close_browser_tab),
-        )
-        .route(
-            "/studio/browser/navigation-policy",
-            get(browser_navigation_policy),
-        )
         .route(
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
@@ -1022,122 +983,15 @@ async fn opencode_info(State(state): State<GatewayState>) -> impl IntoResponse {
 
 async fn browser_info(State(state): State<GatewayState>) -> Json<BrowserInfo> {
     Json(BrowserInfo {
-        enabled: state.browser.is_enabled(),
-        available: state.embedded_browser || state.browser.browser_available(),
-        phase: if state.embedded_browser { 2 } else { 1 },
+        enabled: true,
+        available: state.embedded_browser,
+        phase: 2,
         presentation: if state.embedded_browser {
             "embedded-webview"
         } else {
-            "external-chromium"
+            "unavailable"
         },
     })
-}
-
-async fn browser_workspace_status(State(state): State<GatewayState>) -> Response<Body> {
-    match state.browser.workspace_status().await {
-        Ok(status) => json_response(StatusCode::OK, &status),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
-}
-
-async fn browser_events(State(state): State<GatewayState>) -> Response<Body> {
-    let receiver = state.browser.subscribe();
-    let initial = match state.browser.workspace_status().await {
-        Ok(status) => status,
-        Err(error) => browser_runtime::BrowserWorkspaceStatus {
-            profile_directory: String::new(),
-            running: false,
-            browser_name: None,
-            executable: None,
-            process_id: None,
-            launched_at: None,
-            last_error: Some(error),
-            tabs: Vec::new(),
-        },
-    };
-    let first = stream::once(async move { browser_sse_record(&initial) });
-    let updates = stream::unfold(receiver, |mut receiver| async move {
-        loop {
-            match receiver.recv().await {
-                Ok(status) => return Some((browser_sse_record(&status), receiver)),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
-    });
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-store")
-        .header(header::CONNECTION, "keep-alive")
-        .body(Body::from_stream(first.chain(updates)))
-        .expect("valid Browser event response")
-}
-
-fn browser_sse_record(
-    status: &browser_runtime::BrowserWorkspaceStatus,
-) -> Result<Bytes, Infallible> {
-    let payload = serde_json::to_string(status).unwrap_or_else(|_| "{}".to_string());
-    Ok(Bytes::from(format!("data: {payload}\n\n")))
-}
-
-async fn launch_browser_workspace(
-    State(state): State<GatewayState>,
-    Json(request): Json<BrowserWorkspaceRequest>,
-) -> Response<Body> {
-    match state.browser.launch_workspace(request).await {
-        Ok(status) => json_response(StatusCode::OK, &status),
-        Err(error) => json_error(StatusCode::BAD_GATEWAY, &error),
-    }
-}
-
-async fn create_browser_tab(
-    State(state): State<GatewayState>,
-    Json(request): Json<BrowserTabRequest>,
-) -> Response<Body> {
-    match state.browser.create_tab(request).await {
-        Ok(tab) => json_response(StatusCode::CREATED, &tab),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
-}
-
-async fn activate_browser_tab(
-    State(state): State<GatewayState>,
-    Json(request): Json<BrowserTabActionRequest>,
-) -> Response<Body> {
-    match state.browser.activate_tab(request).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
-}
-
-async fn close_browser_tab(
-    State(state): State<GatewayState>,
-    Json(request): Json<BrowserTabActionRequest>,
-) -> Response<Body> {
-    match state.browser.close_tab(request).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
-}
-
-async fn browser_navigation_policy(
-    State(state): State<GatewayState>,
-    Query(query): Query<BrowserPolicyQuery>,
-) -> Json<BrowserPolicyResponse> {
-    let response = match state.browser.prepare_navigation(&query.url) {
-        Ok(navigation) => BrowserPolicyResponse {
-            allowed: true,
-            normalized_url: Some(navigation.url.to_string()),
-            reason: None,
-        },
-        Err(error) => BrowserPolicyResponse {
-            allowed: false,
-            normalized_url: None,
-            reason: Some(error.to_string()),
-        },
-    };
-    Json(response)
 }
 
 async fn proxy_opencode(
@@ -1928,7 +1782,6 @@ mod tests {
             ))),
             session_maps_lock: Arc::new(Mutex::new(())),
             security,
-            browser: BrowserController::new(BrowserPreferences::default()),
             embedded_browser: false,
         }
     }
@@ -2034,7 +1887,6 @@ mod tests {
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
-                browser: BrowserController::new(BrowserPreferences::default()),
                 embedded_browser: false,
             };
             let router = gateway_router(state);
@@ -2102,7 +1954,6 @@ mod tests {
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
-                browser: BrowserController::new(BrowserPreferences::default()),
                 embedded_browser: false,
             };
             let response = gateway_router(state)
@@ -2156,7 +2007,6 @@ mod tests {
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
-                browser: BrowserController::new(BrowserPreferences::default()),
                 embedded_browser: false,
             };
             let router = gateway_router(state);
@@ -2282,7 +2132,6 @@ mod tests {
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
-                browser: BrowserController::new(BrowserPreferences::default()),
                 embedded_browser: false,
             };
             let router = gateway_router(state);
@@ -2652,7 +2501,8 @@ mod tests {
     #[test]
     fn browser_preferences_use_safe_partial_defaults_and_validate_origins() {
         let defaults = StudioPreferences::default();
-        assert!(!defaults.browser.enabled);
+        assert!(defaults.browser.enabled);
+        assert!(!defaults.browser.restore_tabs);
         assert!(!defaults.browser.allow_private_network);
         assert!(!defaults.browser.agent.enabled);
 

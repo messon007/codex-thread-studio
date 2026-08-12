@@ -23,8 +23,10 @@ cargo run -p codex-thread-studio
 ### Capturing the running Studio window
 
 Linux debug builds expose a user-private Unix socket for capturing Studio's own window. This does
-not request global GNOME screenshot access and cannot capture any other application. Start Studio
-normally, then run:
+not request global GNOME screenshot access and cannot capture any other application. It works in
+both the ordinary Tauri WebView window and the native Wayland embedded-browser window. The ordinary
+window uses WebKit's visible-page snapshot API; the embedded composition captures the complete GTK
+window. Start Studio normally, then run:
 
 ```bash
 target/debug/codex-thread-studio --dev-screenshot
@@ -64,6 +66,16 @@ git diff -- package-lock.json ui/vendor THIRD_PARTY_NOTICES.md
 ```
 
 Never replace the vendored modules with runtime CDN imports. Keep their license files in `ui/vendor/licenses/` and review sanitizer advisories before an upgrade.
+
+CodeMirror and xterm.js are also pinned and split into lazy browser bundles. Refresh them only after
+reviewing the dependency and generated-code diff:
+
+```bash
+npm ci
+npm audit --audit-level=moderate
+npm run vendor:workspace
+git diff -- package-lock.json ui/vendor/workspace-editor.mjs ui/vendor/workspace-terminal.mjs ui/vendor/xterm.css
+```
 
 ## Versioning and releases
 

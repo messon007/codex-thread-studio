@@ -1,0 +1,5 @@
+export { basicSetup } from 'codemirror'
+export { markdown } from '@codemirror/lang-markdown'
+export { EditorState } from '@codemirror/state'
+export { EditorView, keymap } from '@codemirror/view'
+export { indentWithTab } from '@codemirror/commands'

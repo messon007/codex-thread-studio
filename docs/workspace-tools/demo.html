@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Workspace tools demo</title>
+  <link rel="stylesheet" href="../../ui/styles.css" />
+  <style>
+    .demo-transcript { flex: 1; min-height: 0; overflow: hidden; padding: 34px 58px; }
+    .demo-message { max-width: 760px; margin: 0 auto 22px; color: var(--muted); line-height: 1.7; }
+    .demo-message.user { width: fit-content; max-width: min(680px, 85%); margin-right: 0; padding: 12px 15px; border-radius: 13px; background: var(--panel-strong); color: var(--text); }
+    .demo-message h3 { margin: 0 0 9px; color: var(--text); font-size: 15px; }
+    .demo-message p { margin: 5px 0; }
+    .demo-edit-shell { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+    .demo-editor-tree { width: 210px; min-width: 210px; border-right: 1px solid var(--border); background: var(--panel-soft); }
+    .demo-editor-tree .workspace-root-row { background: var(--panel); }
+    .demo-editor-tree .workspace-file-tree { height: calc(100% - 39px); }
+    .demo-artifact { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+    .demo-file-tabs { height: 38px; min-height: 38px; padding: 0 9px; display: flex; align-items: flex-end; gap: 3px; border-bottom: 1px solid var(--border); background: var(--panel-soft); }
+    .demo-file-tab { height: 32px; padding: 0 11px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-bottom: 0; border-radius: 7px 7px 0 0; background: var(--panel); font-size: 9px; }
+    .demo-file-tab i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <header class="brand-row"><div class="brand-mark">C</div><div class="brand-copy"><strong>Codex Thread Studio</strong><span>Codex Desktop</span></div></header>
+      <button class="new-thread-button"><span>＋</span><b>新建会话</b><kbd>Ctrl N</kbd></button>
+      <label class="search-box"><span>⌕</span><input placeholder="搜索会话或目录"/><kbd>/</kbd></label>
+      <div class="filters"><button class="filter active">全部 <span>8</span></button><button class="filter">运行 <span>1</span></button><button class="filter">待处理 <span>4</span></button></div>
+      <div class="thread-list">
+        <section class="thread-group"><button class="thread-group-heading"><span class="twisty">▼</span><strong>CODEX-THREAD-STUDIO</strong><span>3</span></button><div class="thread-group-sessions">
+          <button class="thread-row active"><span class="status-dot active"></span><span class="thread-copy"><strong>Workspace tools design</strong><small>/home/rui/downloads/openresource/codex-thread-studio</small></span><span class="thread-tags"><span class="backend-tag">CX</span></span></button>
+          <button class="thread-row"><span class="status-dot idle"></span><span class="thread-copy"><strong>Windows browser support</strong><small>/home/rui/downloads/openresource/codex-thread-studio</small></span><span class="thread-tags"><span class="backend-tag">CX</span></span></button>
+          <button class="thread-row"><span class="status-dot idle"></span><span class="thread-copy"><strong>OpenCode integration</strong><small>/home/rui/downloads/openresource/codex-thread-studio</small></span><span class="thread-tags"><span class="backend-tag opencode">OC</span></span></button>
+        </div></section>
+        <section class="thread-group"><button class="thread-group-heading"><span class="twisty">▼</span><strong>ANYTHING</strong><span>2</span></button><div class="thread-group-sessions"><button class="thread-row"><span class="status-dot idle"></span><span class="thread-copy"><strong>Read architecture docs</strong><small>/home/rui/downloads/openresource/anything</small></span><span class="thread-tags"><span class="backend-tag">CX</span></span></button></div></section>
+      </div>
+      <footer class="studio-footer"><button class="studio-entry"><span class="studio-avatar">⌂</span><span class="studio-entry-copy"><strong>本机工作区</strong><small>Local workspace</small></span><span class="chevron">›</span></button></footer>
+    </aside>
+    <div class="sidebar-divider"><button><span>‹</span></button></div>
+    <main class="workspace">
+      <header class="thread-toolbar">
+        <div class="thread-toolbar-leading"><div class="thread-heading"><div class="tool-avatar">CX</div><div><div class="title-line"><h1>Workspace tools design</h1><span class="status-badge idle">空闲</span></div><p>/home/rui/downloads/openresource/codex-thread-studio</p></div></div></div>
+        <div class="thread-actions"><button class="toolbar-button">重命名</button><button class="toolbar-button">Fork</button><button class="toolbar-button">归档</button><button class="toolbar-button danger-text">删除</button><span class="thread-action-divider"></span><div class="workspace-tool-launchers"><button class="toolbar-button workspace-tool-launcher icon-only" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 9h17"/></svg></button><button class="toolbar-button workspace-tool-launcher icon-only"><svg viewBox="0 0 24 24"><path d="m5 7 4 4-4 4M11.5 16H19"/></svg></button></div><button class="toolbar-button icon-only">•••</button></div>
+      </header>
+      <section class="native-workspace">
+        <div class="native-chrome"><div><span class="live-dot"></span><strong>CODEX NATIVE</strong><small>已连接</small></div><div class="native-tools"><span>42k tokens</span><button class="text-button">批注 0⌄</button><button class="text-button">收藏 2⌄</button></div></div>
+        <div class="demo-transcript"><div class="demo-message user">请为当前项目增加文件树、Markdown 编辑器与终端。</div><div class="demo-message"><h3>工作区设计</h3><p>文件、编辑和终端都绑定到当前会话目录；会话区保持固定，右侧工具分时使用。</p><p>打开文件后复用文档审阅区，并提供 Preview、Source、Edit 三种模式。</p></div></div>
+        <form class="composer"><textarea rows="3" placeholder="向 Codex 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell"></textarea><div class="composer-footer"><span>将开始一个新的 Turn</span><button class="primary-button">发送</button></div></form>
+      </section>
+    </main>
+
+    <aside id="files-view" class="workspace-tools-rail">
+      <div class="workspace-tools-resizer"><span></span></div>
+      <header class="workspace-tools-header"><div class="workspace-tools-heading"><span class="workspace-tools-mark">⌘</span><div><h2>Files</h2><p>/home/rui/downloads/openresource/codex-thread-studio</p></div></div><button class="icon-button">×</button></header>
+      <section class="workspace-tool-pane workspace-files-pane"><div class="workspace-file-toolbar"><label><span>⌕</span><input placeholder="Filter files"/></label><button class="icon-button">↻</button></div><div class="workspace-root-row"><span class="workspace-root-dot"></span><strong>CODEX-THREAD-STUDIO</strong><small>SESSION ROOT</small></div><div class="workspace-file-tree">
+        <button class="workspace-tree-row directory" style="--tree-depth:0"><span class="tree-twisty">▾</span><span class="tree-icon">▱</span><span class="tree-name">docs</span></button>
+        <button class="workspace-tree-row directory" style="--tree-depth:1"><span class="tree-twisty">▸</span><span class="tree-icon">▱</span><span class="tree-name">browser-workspace</span></button>
+        <button class="workspace-tree-row file selected" style="--tree-depth:1"><span class="tree-twisty"></span><span class="tree-icon">M</span><span class="tree-name">architecture.md</span><span class="tree-size">12 K</span></button>
+        <button class="workspace-tree-row directory" style="--tree-depth:0"><span class="tree-twisty">▾</span><span class="tree-icon">▱</span><span class="tree-name">src-tauri</span></button>
+        <button class="workspace-tree-row directory" style="--tree-depth:1"><span class="tree-twisty">▸</span><span class="tree-icon">▱</span><span class="tree-name">src</span></button>
+        <button class="workspace-tree-row directory" style="--tree-depth:0"><span class="tree-twisty">▾</span><span class="tree-icon">▱</span><span class="tree-name">ui</span></button>
+        <button class="workspace-tree-row file" style="--tree-depth:1"><span class="tree-twisty"></span><span class="tree-icon">J</span><span class="tree-name">app.js</span><span class="tree-size">214 K</span></button>
+        <button class="workspace-tree-row file" style="--tree-depth:1"><span class="tree-twisty"></span><span class="tree-icon">·</span><span class="tree-name">styles.css</span><span class="tree-size">58 K</span></button>
+        <button class="workspace-tree-row file" style="--tree-depth:0"><span class="tree-twisty"></span><span class="tree-icon">M</span><span class="tree-name">README.md</span><span class="tree-size">9 K</span></button>
+        <button class="workspace-tree-row file unavailable" style="--tree-depth:0"><span class="tree-twisty"></span><span class="tree-icon">·</span><span class="tree-name">preview.bin</span><span class="tree-size">2 M</span></button>
+      </div><footer class="workspace-scope-note"><span>⌁</span><p><strong>Scoped workspace</strong><small>仅显示当前会话目录内的文件</small></p></footer></section>
+    </aside>
+
+    <aside id="edit-view" class="artifact-rail hidden" style="--artifact-width:720px">
+      <div class="artifact-resizer"><span></span></div>
+      <header class="artifact-header"><div class="artifact-heading"><span class="artifact-file-mark">MD</span><div><h2>architecture.md •</h2><p>docs/architecture.md</p></div></div><div class="artifact-header-actions"><div class="segmented-control"><button>预览</button><button>源码</button><button class="active">编辑</button></div><button class="icon-button artifact-save"><svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg></button><button class="icon-button artifact-action-icon"><svg viewBox="0 0 24 24"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg></button><button class="icon-button artifact-action-icon"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div></header>
+      <section class="demo-artifact"><div class="demo-file-tabs"><div class="demo-file-tab"><i></i><span>architecture.md</span><span>×</span></div></div><div class="artifact-content editing"><div class="artifact-editor-shell"><pre class="artifact-editor-gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12</pre><textarea class="artifact-editor" spellcheck="false"># Codex Thread Studio architecture
+
+Codex Thread Studio keeps the conversation as its primary surface.
+
+## Workspace boundary
+
+- Files are confined to the selected session directory.
+- Markdown supports Preview, Source, and Edit.
+- Terminal starts with the same directory as its working directory.
+
+```mermaid
+flowchart LR
+    Chat --> Workspace --> Files
+```</textarea></div></div><footer class="artifact-footer"><span>12 行 · 386 B</span><span>UI Demo · 尚未写入磁盘</span></footer></section>
+    </aside>
+
+    <aside id="terminal-view" class="workspace-tools-rail hidden">
+      <header class="workspace-tools-header"><div class="workspace-tools-heading"><span class="workspace-tools-mark">⌘</span><div><h2>Terminal</h2><p>/home/rui/downloads/openresource/codex-thread-studio</p></div></div><button class="icon-button">×</button></header>
+      <section class="workspace-tool-pane workspace-terminal-pane"><div class="workspace-terminal-disconnected"><span class="workspace-terminal-empty-mark">›_</span><strong>终端尚未启动</strong><p>启动后将以当前会话目录作为工作目录。</p><button class="workspace-terminal-start">启动终端</button></div></section>
+    </aside>
+  </div>
+  <script>
+    const view = new URLSearchParams(location.search).get('view') || 'files'
+    document.getElementById('files-view').classList.toggle('hidden', view !== 'files')
+    document.getElementById('edit-view').classList.toggle('hidden', view !== 'edit')
+    document.getElementById('terminal-view').classList.toggle('hidden', view !== 'terminal')
+  </script>
+</body>
+</html>

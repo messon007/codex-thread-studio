@@ -107,6 +107,7 @@ import {
   t,
 } from './i18n.mjs'
 import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
+import { createWorkspaceTools } from './workspace-tools.mjs'
 import {
   catalogCountsWithAttention,
   catalogTimestamp,
@@ -283,7 +284,21 @@ let mermaidGeneration = 0
 let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
+let artifactEditor = null
+let workspaceEditorModule = null
 let embeddedBrowserWidthTimer = null
+
+const workspaceTools = createWorkspaceTools({
+  gatewayFetch,
+  gatewayWebSocket,
+  getThread: selectedThread,
+  getBackend: () => state.backend,
+  openFile: openArtifact,
+  canOpenFile: (file) => Boolean(previewableFileKind(file)),
+  closePeerRails: closeWorkspacePeerRails,
+  translate: t,
+  notify: toast,
+})
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
@@ -387,6 +402,7 @@ async function init() {
 }
 
 function bindUI() {
+  workspaceTools.bind()
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#studio-menu-button').addEventListener('click', () => {
     toggleActionMenu('studio-menu', 'studio-menu-button')
@@ -472,6 +488,8 @@ function bindUI() {
   $('#refresh-artifact').addEventListener('click', () => refreshArtifact().catch(showError))
   $('#artifact-preview').addEventListener('click', () => setArtifactView('preview'))
   $('#artifact-source').addEventListener('click', () => setArtifactView('source'))
+  $('#artifact-edit').addEventListener('click', () => setArtifactView('edit'))
+  $('#artifact-save').addEventListener('click', () => saveArtifact().catch(showError))
   $('#artifact-search-input').addEventListener('input', handleArtifactSearchInput)
   $('#artifact-search-input').addEventListener('keydown', handleArtifactSearchKeydown)
   $('#artifact-search-prev').addEventListener('click', () => navigateArtifactSearch(-1))
@@ -576,6 +594,7 @@ function bindUI() {
       closeFavoritesRail()
       closeSessionMapItemMenu()
       if (artifactWasOpen) closeArtifactRail()
+      workspaceTools.close()
     }
   })
 }
@@ -632,11 +651,13 @@ function renderBrowserMenuStatus() {
 async function openGlobalBrowser() {
   closeActionMenus()
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  activateRightWorkspace('browser')
   window.location.href = 'studio-action://show-browser'
 }
 
 async function openBrowserUrl(url) {
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  activateRightWorkspace('browser')
   window.location.href = `studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}`
 }
 
@@ -1880,6 +1901,7 @@ function renderWorkspace() {
   $('#thread-actions').classList.toggle('hidden', !hasThread)
   $('#empty-workspace').classList.toggle('hidden', hasThread)
   $('#native-workspace').classList.toggle('hidden', !hasThread)
+  workspaceTools.sync(thread)
   if (!thread) {
     renderSessionMap()
     return
@@ -1999,9 +2021,7 @@ function openSessionMapRail() {
   const key = selectedStateKey()
   if (!key || !selectedSessionMap()) return
   state.sessionMapDismissed.delete(key)
-  closeAnnotationRail()
-  closeFavoritesRail()
-  $('#artifact-rail').classList.add('hidden')
+  activateRightWorkspace('map')
   renderSessionMap()
 }
 
@@ -2022,6 +2042,7 @@ function renderSessionMap() {
   const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
     || !$('#annotation-rail').classList.contains('hidden')
     || !$('#favorites-rail').classList.contains('hidden')
+    || workspaceTools.isOpen()
   if (!hasMap || state.sessionMapDismissed.has(key) || anotherDockIsOpen) {
     rail.classList.add('hidden')
     return
@@ -4183,15 +4204,19 @@ async function openArtifact(file) {
   const root = String(file.root || thread.cwd)
   const path = fuzzyFileLabel(file)
   if (!path) throw new Error(t('文件路径为空。'))
+  if (state.artifact?.dirty && state.artifact.root === root && state.artifact.path === path) {
+    activateRightWorkspace('document')
+    return
+  }
+  if (state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
+    if (!confirm(t('当前文档有尚未保存的修改，仍要打开其他文件吗？'))) return
+  }
   const kind = previewableFileKind(file)
   if (!kind) throw new Error(t('此文件类型不能在文档审阅器中打开'))
   resetArtifactSearch()
+  activateRightWorkspace('document')
   hideComposerMenu()
   closeActionMenus()
-  $('#session-map-rail').classList.add('hidden')
-  $('#annotation-rail').classList.add('hidden')
-  $('#favorites-rail').classList.add('hidden')
-  $('#artifact-rail').classList.remove('hidden')
   $('#artifact-content').classList.add('hidden')
   $('#artifact-search-toolbar').classList.add('hidden')
   $('#artifact-error').classList.add('hidden')
@@ -4243,13 +4268,38 @@ async function openArtifact(file) {
   renderArtifact()
 }
 
+function closeWorkspacePeerRails() {
+  activateRightWorkspace('workspace')
+}
+
+function activateRightWorkspace(tool) {
+  const rails = {
+    map: 'session-map-rail',
+    document: 'artifact-rail',
+    comments: 'annotation-rail',
+    favorites: 'favorites-rail',
+  }
+  for (const [candidate, id] of Object.entries(rails)) {
+    $(`#${id}`).classList.toggle('hidden', candidate !== tool)
+  }
+  if (tool !== 'workspace') workspaceTools.close()
+  if (tool !== 'browser' && state.embeddedBrowserVisible) {
+    window.location.href = 'studio-action://hide-browser'
+  }
+  closeActionMenus()
+  hideSelectionPopover()
+}
+
 async function refreshArtifact() {
   if (!state.artifact) return
+  if (state.artifact.dirty && !confirm(t('重新载入会丢失尚未保存的修改，是否继续？'))) return
   await openArtifact({ root: state.artifact.root, path: state.artifact.path })
 }
 
 function closeArtifactRail({ restoreMap = true } = {}) {
+  if (state.artifact?.dirty && !confirm(t('当前文档有尚未保存的修改，是否关闭？'))) return
   $('#artifact-rail').classList.add('hidden')
+  disposeArtifactEditor()
   state.artifact = null
   resetArtifactSearch()
   hideSelectionPopover()
@@ -4259,18 +4309,59 @@ function closeArtifactRail({ restoreMap = true } = {}) {
 function setArtifactView(view) {
   if (!state.artifact || state.artifact.kind !== 'text') return
   if (view === 'preview' && !isMarkdownFile(state.artifact.path) && !isHtmlFile(state.artifact.path)) return
+  if (!['preview', 'source', 'edit'].includes(view)) return
   state.artifactView = view
   renderArtifact()
+}
+
+async function saveArtifact({ overwrite = false } = {}) {
+  const file = state.artifact
+  if (!file || state.artifactView !== 'edit' || !file.dirty) return
+  const content = artifactEditor?.value() ?? file.editContent ?? file.content
+  file.saving = true
+  $('#artifact-save').disabled = true
+  const response = await gatewayFetch('/studio/workspace/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root: file.root, path: file.path, content, expectedHash: file.hash, overwrite }),
+  })
+  const result = await response.json().catch(() => null)
+  if (response.status === 409 && result?.error?.code === 'workspace_file_conflict') {
+    file.saving = false
+    $('#artifact-save').disabled = false
+    if (confirm(t('文件已在磁盘上发生变化。是否用当前编辑内容覆盖磁盘版本？'))) {
+      await saveArtifact({ overwrite: true })
+    }
+    return
+  }
+  if (!response.ok) {
+    file.saving = false
+    $('#artifact-save').disabled = false
+    throw new Error(result?.error?.message || `HTTP ${response.status}`)
+  }
+  state.artifact = {
+    ...result,
+    kind: 'text',
+    requestId: file.requestId,
+    threadKey: file.threadKey,
+    loading: false,
+    dirty: false,
+    editContent: result.content,
+  }
+  renderArtifact()
+  toast('文件已保存')
 }
 
 function renderArtifact() {
   const rail = $('#artifact-rail')
   const file = state.artifact
   if (!file) {
+    disposeArtifactEditor()
     rail.classList.add('hidden')
     resetArtifactSearch()
     return
   }
+  disposeArtifactEditor()
   applyArtifactWidth()
   rail.classList.remove('hidden')
   $('#artifact-title').textContent = fileDisplayName(file.path)
@@ -4289,9 +4380,16 @@ function renderArtifact() {
   $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : '选择文字即可批注')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
-  $('#artifact-view-switch').classList.toggle('hidden', !markdown && !html)
+  const editable = textReady
+  const renderedContent = file.editContent ?? file.content
+  $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
+  $('#artifact-view-switch').classList.toggle('hidden', !editable)
+  $('#artifact-preview').disabled = !markdown && !html
   $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
   $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
+  $('#artifact-edit').classList.toggle('active', state.artifactView === 'edit')
+  $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
+  $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
   const canSearch = artifactSearchAvailable(file, state.artifactView)
   $('#artifact-search-toolbar').classList.toggle('hidden', !canSearch)
   $('#artifact-search-input').setAttribute('placeholder', t('搜索文档内容…'))
@@ -4316,18 +4414,48 @@ function renderArtifact() {
     renderArtifactSearchStatus()
     return
   }
-  if (markdown && state.artifactView === 'preview') {
+  if (state.artifactView === 'edit') {
+    content.className = 'artifact-content editing'
+    content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
+    mountArtifactEditor(file, content.firstElementChild, renderedContent).catch(showError)
+  } else if (markdown && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body'
-    content.innerHTML = renderMarkdown(file.content)
+    content.innerHTML = renderMarkdown(renderedContent)
   } else if (html && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body artifact-html-preview'
-    content.innerHTML = renderStaticHtml(file.content)
+    content.innerHTML = renderStaticHtml(renderedContent)
   } else {
     content.className = 'artifact-content'
-    content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(file.content)}</pre>`
+    content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
   }
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
+}
+
+function disposeArtifactEditor() {
+  artifactEditor?.destroy()
+  artifactEditor = null
+}
+
+async function mountArtifactEditor(file, parent, content) {
+  workspaceEditorModule ||= import('./workspace-editor.mjs')
+  const { createWorkspaceEditor } = await workspaceEditorModule
+  if (state.artifact !== file || state.artifactView !== 'edit' || !parent.isConnected) return
+  artifactEditor = createWorkspaceEditor({
+    parent,
+    content,
+    language: file.language,
+    onSave: () => saveArtifact().catch(showError),
+    onChange: (value) => {
+      file.editContent = value
+      file.dirty = file.editContent !== file.content
+      const lines = file.editContent ? file.editContent.split('\n').length : 1
+      $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
+      $('#artifact-save').disabled = !file.dirty
+      $('#artifact-meta').textContent = t('{lines} 行 · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
+    },
+  })
+  artifactEditor.focus()
 }
 
 function renderStaticHtml(value) {
@@ -4664,10 +4792,7 @@ function addAnnotation(event) {
 }
 
 function openAnnotationRail() {
-  closeFavoritesRail()
-  $('#session-map-rail').classList.add('hidden')
-  $('#artifact-rail').classList.add('hidden')
-  $('#annotation-rail').classList.remove('hidden')
+  activateRightWorkspace('comments')
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
@@ -4840,10 +4965,7 @@ function favoriteForSource(backend, threadId, turnId, itemId) {
 
 function openFavoritesRail(scope = 'global') {
   state.favoriteScope = scope
-  closeAnnotationRail()
-  $('#session-map-rail').classList.add('hidden')
-  $('#artifact-rail').classList.add('hidden')
-  $('#favorites-rail').classList.remove('hidden')
+  activateRightWorkspace('favorites')
   loadFavorites().catch(showError)
   setTimeout(() => $('#favorites-search').focus(), 30)
 }

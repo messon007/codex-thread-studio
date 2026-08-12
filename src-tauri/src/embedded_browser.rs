@@ -44,6 +44,7 @@ thread_local! {
 enum BrowserAction {
     Toggle,
     Show,
+    Hide,
     Open(String),
     Exit,
     Navigate(String),
@@ -895,6 +896,10 @@ fn dispatch_action(action: BrowserAction) {
         show_workspace();
         return;
     }
+    if matches!(action, BrowserAction::Hide) {
+        hide_workspace();
+        return;
+    }
     if matches!(action, BrowserAction::Toggle) {
         toggle_workspace();
         return;
@@ -913,7 +918,10 @@ fn dispatch_action(action: BrowserAction) {
             }
         }
         match action {
-            BrowserAction::Toggle | BrowserAction::Show | BrowserAction::Open(_) => {
+            BrowserAction::Toggle
+            | BrowserAction::Show
+            | BrowserAction::Hide
+            | BrowserAction::Open(_) => {
                 unreachable!("workspace visibility actions are handled without a nested borrow")
             }
             BrowserAction::Exit => unreachable!("exit is handled without a nested borrow"),
@@ -1948,6 +1956,18 @@ fn show_workspace() {
     }
 }
 
+fn hide_workspace() {
+    let visible = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|workspace| workspace.visible))
+            .unwrap_or(false)
+    });
+    if visible {
+        toggle_workspace();
+    }
+}
+
 fn exit_workspace() {
     let released = WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
@@ -2299,6 +2319,7 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
     match url.host_str()? {
         "toggle-browser" => Some(BrowserAction::Toggle),
         "show-browser" => Some(BrowserAction::Show),
+        "hide-browser" => Some(BrowserAction::Hide),
         "open-browser" => query_value(&url, "url").map(BrowserAction::Open),
         "navigate" => query_value(&url, "url").map(BrowserAction::Navigate),
         "new-tab" => Some(BrowserAction::NewTab(query_value(&url, "url"))),
@@ -2524,6 +2545,10 @@ mod tests {
         assert!(matches!(
             parse_action("studio-action://show-browser"),
             Some(BrowserAction::Show)
+        ));
+        assert!(matches!(
+            parse_action("studio-action://hide-browser"),
+            Some(BrowserAction::Hide)
         ));
         assert!(matches!(
             parse_action("studio-action://open-browser?url=https%3A%2F%2Fexample.com"),

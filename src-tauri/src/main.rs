@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -29,6 +30,7 @@ mod favorites;
 mod gateway_security;
 mod opencode_server;
 mod session_map;
+mod terminal_runtime;
 
 use backend_runtime::{BackendRuntime, WslSettings};
 use browser_runtime::BrowserPreferences;
@@ -43,7 +45,8 @@ use opencode_server::OpenCodeServer;
 use session_map::{ApplyOperationsRequest, CreateMapRequest, MAX_MAP_BODY_BYTES};
 
 const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
-const MAX_REVIEW_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_EDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_REVIEW_FILE_BYTES: u64 = MAX_EDIT_FILE_BYTES as u64;
 const MAX_REVIEW_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -303,6 +306,58 @@ struct ReviewFileResponse {
     language: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceListRequest {
+    root: String,
+    #[serde(default)]
+    path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEntry {
+    name: String,
+    path: String,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceListResponse {
+    root: String,
+    path: String,
+    entries: Vec<WorkspaceEntry>,
+    truncated: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSaveRequest {
+    root: String,
+    path: String,
+    content: String,
+    expected_hash: String,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceConflictResponse {
+    error: WorkspaceConflictError,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceConflictError {
+    message: &'static str,
+    code: &'static str,
+    actual_hash: String,
+}
+
 fn main() {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
     #[cfg(all(target_os = "linux", debug_assertions))]
@@ -417,17 +472,19 @@ fn main() {
                     &initialization_script,
                     embedded_browser_preferences.clone(),
                 )?;
-                #[cfg(debug_assertions)]
-                if let Err(error) = dev_capture::start_server() {
-                    eprintln!("Codex Thread Studio developer capture is unavailable: {error}");
-                }
             } else {
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                     .initialization_script(&initialization_script)
                     .title("Codex Thread Studio")
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(980.0, 660.0)
                     .build()?;
+                #[cfg(debug_assertions)]
+                dev_capture::register_tauri_window(&window)?;
+            }
+            #[cfg(all(target_os = "linux", debug_assertions))]
+            if let Err(error) = dev_capture::start_server() {
+                eprintln!("Codex Thread Studio developer capture is unavailable: {error}");
             }
             #[cfg(not(target_os = "linux"))]
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
@@ -452,6 +509,14 @@ fn gateway_router(state: GatewayState) -> Router {
             get(get_preferences).put(put_preferences),
         )
         .route("/studio/client-log", axum::routing::post(client_log))
+        .route(
+            "/studio/workspace/list",
+            axum::routing::post(list_workspace_directory),
+        )
+        .route(
+            "/studio/workspace/save",
+            axum::routing::post(save_workspace_file),
+        )
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
             "/studio/review-image",
@@ -485,6 +550,7 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(undo_session_map),
         )
         .route("/ws/codex", get(codex_app_server_ws))
+        .route("/ws/terminal", get(terminal_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -501,6 +567,8 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
+        .route("/workspace-tools.mjs", get(workspace_tools_js))
+        .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
         .route(
             "/browser-comment-provider.mjs",
@@ -523,6 +591,15 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/mermaid.min.js", get(mermaid_js))
+        .route(
+            "/vendor/workspace-editor.mjs",
+            get(workspace_editor_vendor_js),
+        )
+        .route(
+            "/vendor/workspace-terminal.mjs",
+            get(workspace_terminal_vendor_js),
+        )
+        .route("/vendor/xterm.css", get(xterm_css))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .merge(protected)
@@ -534,7 +611,7 @@ async fn require_gateway_auth(
     request: Request,
     next: Next,
 ) -> Response<Body> {
-    let websocket = request.uri().path() == "/ws/codex";
+    let websocket = request.uri().path().starts_with("/ws/");
     let authorization = if websocket {
         state.security.authorize_websocket(request.headers())
     } else {
@@ -621,6 +698,210 @@ async fn read_review_file(
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
     }
+}
+
+async fn list_workspace_directory(
+    State(_state): State<GatewayState>,
+    Json(request): Json<WorkspaceListRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if _state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "the workspace demo does not list WSL directories yet",
+        );
+    }
+    match load_workspace_directory(&request) {
+        Ok(value) => json_response(StatusCode::OK, &value),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+async fn save_workspace_file(
+    State(_state): State<GatewayState>,
+    Json(request): Json<WorkspaceSaveRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if _state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "editing files in WSL workspaces is not available yet",
+        );
+    }
+    match persist_workspace_file(&request) {
+        Ok(value) => json_response(StatusCode::OK, &value),
+        Err(WorkspaceSaveError::Conflict(actual_hash)) => {
+            let payload = WorkspaceConflictResponse {
+                error: WorkspaceConflictError {
+                    message: "file changed on disk",
+                    code: "workspace_file_conflict",
+                    actual_hash,
+                },
+            };
+            json_response(StatusCode::CONFLICT, &payload)
+        }
+        Err(WorkspaceSaveError::Http(status, message)) => json_error(status, &message),
+    }
+}
+
+#[derive(Debug)]
+enum WorkspaceSaveError {
+    Conflict(String),
+    Http(StatusCode, String),
+}
+
+fn persist_workspace_file(
+    request: &WorkspaceSaveRequest,
+) -> Result<ReviewFileResponse, WorkspaceSaveError> {
+    let bytes = request.content.as_bytes();
+    if bytes.len() > MAX_EDIT_FILE_BYTES {
+        return Err(WorkspaceSaveError::Http(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "edited file exceeds the 5 MiB limit".to_string(),
+        ));
+    }
+    let review_request = ReviewFileRequest {
+        root: request.root.clone(),
+        path: request.path.clone(),
+    };
+    let (_root, path, metadata) =
+        resolve_review_path(&review_request, MAX_EDIT_FILE_BYTES as u64, "5 MiB editing")
+            .map_err(|(status, message)| WorkspaceSaveError::Http(status, message))?;
+    let current = fs::read(&path).map_err(|error| {
+        WorkspaceSaveError::Http(
+            StatusCode::BAD_REQUEST,
+            format!("unable to read current file: {error}"),
+        )
+    })?;
+    let actual_hash = stable_content_hash(&current);
+    if !request.overwrite && actual_hash != request.expected_hash {
+        return Err(WorkspaceSaveError::Conflict(actual_hash));
+    }
+
+    let parent = path.parent().ok_or_else(|| {
+        WorkspaceSaveError::Http(
+            StatusCode::BAD_REQUEST,
+            "file has no parent directory".to_string(),
+        )
+    })?;
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("workspace-file");
+    let temporary = parent.join(format!(".{name}.studio-save-{}.tmp", uuid::Uuid::new_v4()));
+    let write_result = (|| -> std::io::Result<()> {
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        output.set_permissions(metadata.permissions())?;
+        output.write_all(bytes)?;
+        output.sync_all()?;
+        fs::rename(&temporary, &path)?;
+        #[cfg(unix)]
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(WorkspaceSaveError::Http(
+            StatusCode::BAD_REQUEST,
+            format!("unable to save file: {error}"),
+        ));
+    }
+
+    load_review_file(&review_request)
+        .map_err(|(status, message)| WorkspaceSaveError::Http(status, message))
+}
+
+fn load_workspace_directory(
+    request: &WorkspaceListRequest,
+) -> Result<WorkspaceListResponse, (StatusCode, String)> {
+    const MAX_ENTRIES: usize = 500;
+    let root = fs::canonicalize(&request.root).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "project directory is unavailable".to_string(),
+        )
+    })?;
+    let relative = PathBuf::from(&request.path);
+    if relative.is_absolute() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "workspace paths must be relative to the project directory".to_string(),
+        ));
+    }
+    let directory = fs::canonicalize(root.join(&relative)).map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            "directory does not exist".to_string(),
+        )
+    })?;
+    if !directory.starts_with(&root) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "directory is outside the project directory".to_string(),
+        ));
+    }
+    if !directory.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "workspace path is not a directory".to_string(),
+        ));
+    }
+
+    let mut entries = fs::read_dir(&directory)
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("unable to list directory: {error}"),
+            )
+        })?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let canonical = fs::canonicalize(entry.path()).ok()?;
+            if !canonical.starts_with(&root) {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            let kind = if metadata.is_dir() {
+                "directory"
+            } else if metadata.is_file() {
+                "file"
+            } else {
+                return None;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry
+                .path()
+                .strip_prefix(&root)
+                .ok()?
+                .to_string_lossy()
+                .into_owned();
+            Some(WorkspaceEntry {
+                name,
+                path,
+                kind,
+                size: (kind == "file").then_some(metadata.len()),
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        (left.kind != "directory", left.name.to_lowercase())
+            .cmp(&(right.kind != "directory", right.name.to_lowercase()))
+    });
+    let truncated = entries.len() > MAX_ENTRIES;
+    entries.truncate(MAX_ENTRIES);
+    Ok(WorkspaceListResponse {
+        root: root.to_string_lossy().into_owned(),
+        path: directory
+            .strip_prefix(&root)
+            .unwrap_or(&directory)
+            .to_string_lossy()
+            .into_owned(),
+        entries,
+        truncated,
+    })
 }
 
 async fn read_review_image(
@@ -722,7 +1003,7 @@ fn load_review_file(
     request: &ReviewFileRequest,
 ) -> Result<ReviewFileResponse, (StatusCode, String)> {
     let (root, path, metadata) =
-        resolve_review_path(request, MAX_REVIEW_FILE_BYTES, "2 MiB review")?;
+        resolve_review_path(request, MAX_REVIEW_FILE_BYTES, "5 MiB review")?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -871,6 +1152,14 @@ async fn document_review_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/document-review.mjs"))
 }
 
+async fn workspace_tools_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/workspace-tools.mjs"))
+}
+
+async fn workspace_editor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/workspace-editor.mjs"))
+}
+
 async fn comment_core_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/comment-core.mjs"))
 }
@@ -919,6 +1208,14 @@ async fn mermaid_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/mermaid.min.js"))
 }
 
+async fn workspace_editor_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/workspace-editor.mjs"))
+}
+
+async fn workspace_terminal_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/workspace-terminal.mjs"))
+}
+
 fn javascript(source: &'static str) -> impl IntoResponse {
     (
         [
@@ -946,6 +1243,16 @@ async fn github_markdown_css() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         include_str!("../../ui/vendor/github-markdown.css"),
+    )
+}
+
+async fn xterm_css() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        include_str!("../../ui/vendor/xterm.css"),
     )
 }
 
@@ -1013,6 +1320,12 @@ async fn codex_app_server_ws(
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
         .on_upgrade(move |socket| async move { state.codex.bridge(socket).await })
+}
+
+async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
+    let protocol = state.security.websocket_protocol();
+    ws.protocols([protocol])
+        .on_upgrade(terminal_runtime::bridge)
 }
 
 async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
@@ -2365,6 +2678,105 @@ mod tests {
         fs::remove_file(root.join("docs/guide.md")).ok();
         fs::remove_file(&outside).ok();
         fs::remove_dir(root.join("docs")).ok();
+        fs::remove_dir(&root).ok();
+        fs::remove_dir(&base).ok();
+    }
+
+    #[test]
+    fn workspace_directory_listing_is_lazy_sorted_and_confined_to_root() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-workspace-list-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        let outside = base.join("outside");
+        fs::create_dir_all(root.join("docs")).expect("create workspace fixture");
+        fs::create_dir_all(&outside).expect("create outside fixture");
+        fs::write(root.join("README.md"), "# Workspace\n").expect("write workspace file");
+        fs::write(root.join("docs/guide.md"), "# Guide\n").expect("write nested file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("outside-link"))
+            .expect("create escaped symlink");
+
+        let root_listing = load_workspace_directory(&WorkspaceListRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: String::new(),
+        })
+        .expect("list project root");
+        assert_eq!(root_listing.entries.len(), 2);
+        assert_eq!(root_listing.entries[0].name, "docs");
+        assert_eq!(root_listing.entries[0].kind, "directory");
+        assert_eq!(root_listing.entries[1].name, "README.md");
+        assert!(!root_listing
+            .entries
+            .iter()
+            .any(|entry| entry.name == "outside-link"));
+
+        let nested = load_workspace_directory(&WorkspaceListRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "docs".to_string(),
+        })
+        .expect("list nested directory");
+        assert_eq!(nested.path, "docs");
+        assert_eq!(nested.entries[0].path, "docs/guide.md");
+
+        let escaped = load_workspace_directory(&WorkspaceListRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "../outside".to_string(),
+        });
+        assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
+
+        fs::remove_file(root.join("docs/guide.md")).ok();
+        fs::remove_file(root.join("README.md")).ok();
+        #[cfg(unix)]
+        fs::remove_file(root.join("outside-link")).ok();
+        fs::remove_dir(root.join("docs")).ok();
+        fs::remove_dir(&outside).ok();
+        fs::remove_dir(&root).ok();
+        fs::remove_dir(&base).ok();
+    }
+
+    #[test]
+    fn workspace_save_detects_conflicts_and_replaces_only_the_selected_file() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-workspace-save-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        fs::create_dir_all(&root).expect("create workspace fixture");
+        let path = root.join("notes.md");
+        fs::write(&path, "original\n").expect("write workspace file");
+        let original_hash = stable_content_hash(b"original\n");
+
+        let saved = persist_workspace_file(&WorkspaceSaveRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "notes.md".to_string(),
+            content: "edited\n".to_string(),
+            expected_hash: original_hash,
+            overwrite: false,
+        })
+        .expect("save current file");
+        assert_eq!(saved.content, "edited\n");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read saved file"),
+            "edited\n"
+        );
+
+        fs::write(&path, "external change\n").expect("simulate external edit");
+        let conflict = persist_workspace_file(&WorkspaceSaveRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "notes.md".to_string(),
+            content: "stale editor\n".to_string(),
+            expected_hash: saved.hash,
+            overwrite: false,
+        });
+        assert!(matches!(conflict, Err(WorkspaceSaveError::Conflict(_))));
+        assert_eq!(
+            fs::read_to_string(&path).expect("read conflicted file"),
+            "external change\n"
+        );
+
+        fs::remove_file(path).ok();
         fs::remove_dir(&root).ok();
         fs::remove_dir(&base).ok();
     }

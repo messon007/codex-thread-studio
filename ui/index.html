@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Codex Thread Studio</title>
     <link rel="stylesheet" href="/vendor/github-markdown.css" />
+    <link rel="stylesheet" href="/vendor/xterm.css" />
     <link rel="stylesheet" href="/styles.css" />
     <script defer src="/vendor/mermaid.min.js"></script>
     <script type="module" src="/app.js"></script>
@@ -68,6 +69,15 @@
             <button id="fork-thread" class="toolbar-button" type="button">Fork</button>
             <button id="archive-thread" class="toolbar-button" type="button">归档</button>
             <button id="delete-thread" class="toolbar-button danger-text" type="button">删除</button>
+            <span class="thread-action-divider" aria-hidden="true"></span>
+            <div class="workspace-tool-launchers" role="group" aria-label="项目工具">
+              <button id="open-workspace-files" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="文件" aria-label="打开文件树" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 9h17"/></svg>
+              </button>
+              <button id="open-workspace-terminal" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="终端" aria-label="打开终端" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4M11.5 16H19"/></svg>
+              </button>
+            </div>
             <div class="menu-anchor">
               <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="更多会话操作" aria-expanded="false">•••</button>
               <div id="thread-more-menu" class="action-menu hidden" role="menu">
@@ -213,15 +223,58 @@
             <div id="artifact-view-switch" class="segmented-control hidden" role="group" aria-label="文档视图">
               <button id="artifact-preview" class="active" type="button">预览</button>
               <button id="artifact-source" type="button">源码</button>
+              <button id="artifact-edit" type="button">编辑</button>
             </div>
-            <button id="refresh-artifact" class="icon-button" type="button" title="重新载入" aria-label="重新载入">↻</button>
-            <button id="close-artifact" class="icon-button" type="button" aria-label="关闭文档">×</button>
+            <button id="artifact-save" class="icon-button artifact-save hidden" type="button" title="保存" aria-label="保存">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
+            </button>
+            <button id="refresh-artifact" class="icon-button artifact-action-icon" type="button" title="重新载入" aria-label="重新载入">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg>
+            </button>
+            <button id="close-artifact" class="icon-button artifact-action-icon" type="button" aria-label="关闭文档">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+            </button>
           </div>
         </header>
         <div id="artifact-loading" class="artifact-state hidden"><span class="artifact-spinner"></span><strong>正在打开文档…</strong></div>
         <div id="artifact-error" class="artifact-state error hidden"><span>!</span><strong>无法打开文档</strong><p id="artifact-error-message"></p></div>
         <article id="artifact-content" class="artifact-content"></article>
         <footer class="artifact-footer"><span id="artifact-meta"></span><span id="artifact-hint">选择文字即可批注</span></footer>
+      </aside>
+
+      <aside id="workspace-tools-rail" class="workspace-tools-rail hidden" aria-label="项目工作区">
+        <div id="workspace-tools-resizer" class="workspace-tools-resizer" role="separator" aria-orientation="vertical" aria-label="调整项目工作区宽度" tabindex="0"><span></span></div>
+        <header class="workspace-tools-header">
+          <div class="workspace-tools-heading">
+            <span class="workspace-tools-mark" aria-hidden="true">⌘</span>
+            <div><h2 id="workspace-tools-title">Workspace</h2><p id="workspace-tools-path" data-no-i18n></p></div>
+          </div>
+          <button id="close-workspace-tools" class="icon-button" type="button" aria-label="关闭项目工作区">×</button>
+        </header>
+        <section id="workspace-files-pane" class="workspace-tool-pane workspace-files-pane">
+          <div class="workspace-file-toolbar">
+            <label><span aria-hidden="true">⌕</span><input id="workspace-file-filter" type="search" placeholder="Filter files" autocomplete="off" /></label>
+            <button id="workspace-files-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新文件树">↻</button>
+          </div>
+          <div class="workspace-root-row"><span class="workspace-root-dot"></span><strong id="workspace-root-name" data-no-i18n></strong><small>SESSION ROOT</small></div>
+          <div id="workspace-file-tree" class="workspace-file-tree" role="tree" aria-label="当前会话目录"></div>
+          <footer class="workspace-scope-note"><span>⌁</span><p><strong>Scoped workspace</strong><small>仅显示当前会话目录内的文件</small></p></footer>
+        </section>
+        <section id="workspace-terminal-pane" class="workspace-tool-pane workspace-terminal-pane hidden">
+          <div id="workspace-terminal-disconnected" class="workspace-terminal-disconnected">
+            <span class="workspace-terminal-empty-mark" aria-hidden="true">›_</span>
+            <strong>终端尚未启动</strong>
+            <p>启动后将以当前会话目录作为工作目录。</p>
+            <button id="start-workspace-terminal" class="workspace-terminal-start" type="button">启动终端</button>
+          </div>
+          <div id="workspace-terminal-session" class="workspace-terminal-session hidden">
+            <header class="workspace-terminal-toolbar">
+              <div><span class="terminal-live-dot"></span><strong id="workspace-terminal-shell">shell</strong><small id="workspace-terminal-cwd" data-no-i18n></small></div>
+              <div><button id="clear-workspace-terminal" class="icon-button" type="button" title="清空" aria-label="清空终端">⌫</button><button id="stop-workspace-terminal" class="icon-button workspace-terminal-stop" type="button" title="停止终端" aria-label="停止终端"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 7.5h11M9 7.5V5h6v2.5M8 7.5l1 11h6l1-11"/></svg></button></div>
+            </header>
+            <div id="workspace-terminal-screen" class="workspace-terminal-screen" aria-label="终端"></div>
+          </div>
+        </section>
       </aside>
 
       <aside id="annotation-rail" class="annotation-rail hidden">

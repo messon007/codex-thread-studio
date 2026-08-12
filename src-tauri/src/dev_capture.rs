@@ -1,5 +1,6 @@
 #![cfg(all(target_os = "linux", debug_assertions))]
 
+use std::cell::RefCell;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -17,6 +18,10 @@ use serde::{Deserialize, Serialize};
 const SOCKET_NAME: &str = "codex-thread-studio-dev-capture.sock";
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_MESSAGE_BYTES: u64 = 16 * 1024;
+
+thread_local! {
+    static TAURI_WEBVIEW: RefCell<Option<webkit2gtk::WebView>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
@@ -96,6 +101,14 @@ pub fn start_server() -> Result<(), String> {
     Ok(())
 }
 
+pub fn register_tauri_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    window
+        .with_webview(|webview| {
+            TAURI_WEBVIEW.with(|slot| slot.replace(Some(webview.inner())));
+        })
+        .map_err(|error| error.to_string())
+}
+
 fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>, String> {
     let Some(command) = arguments.first().and_then(|argument| argument.to_str()) else {
         return Ok(None);
@@ -152,8 +165,13 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
 
 fn send_request(request: &DeveloperRequest) -> Result<DeveloperResponse, String> {
     let socket = socket_path()?;
-    let mut stream = UnixStream::connect(&socket)
-        .map_err(|error| format!("unable to connect to {}: {error}", socket.display()))?;
+    let mut stream = UnixStream::connect(&socket).map_err(|error| match error.kind() {
+        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => format!(
+            "Studio development control is not running. Start a Linux debug build of Studio before using developer commands ({})",
+            socket.display()
+        ),
+        _ => format!("unable to connect to {}: {error}", socket.display()),
+    })?;
     stream
         .set_read_timeout(Some(RESPONSE_TIMEOUT))
         .map_err(|error| error.to_string())?;
@@ -215,11 +233,22 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
 
     let (sender, receiver) = mpsc::sync_channel(1);
     gtk::glib::MainContext::default().invoke(move || {
+        if matches!(request, DeveloperRequest::Screenshot) {
+            match next_screenshot_path() {
+                Ok(output) => {
+                    let response_path = output.clone();
+                    capture_studio_screenshot(output, move |result| {
+                        let _ = sender.send(result.map(|_| Some(response_path)));
+                    });
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                }
+            }
+            return;
+        }
         let result = match request {
-            DeveloperRequest::Screenshot => next_screenshot_path().and_then(|output| {
-                crate::embedded_browser::capture_screenshot(&output)?;
-                Ok(Some(output))
-            }),
+            DeveloperRequest::Screenshot => unreachable!("screenshot handled asynchronously"),
             DeveloperRequest::ShowBrowser => {
                 crate::embedded_browser::show_for_debug(None).map(|_| None)
             }
@@ -253,6 +282,59 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
     receiver
         .recv_timeout(RESPONSE_TIMEOUT)
         .map_err(|_| "Studio did not complete the developer command in time".to_owned())?
+}
+
+fn capture_studio_screenshot(path: PathBuf, complete: impl FnOnce(Result<(), String>) + 'static) {
+    let webview = TAURI_WEBVIEW.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio window is busy".to_owned())?;
+        Ok::<_, String>(slot.clone())
+    });
+    match webview {
+        Err(error) => complete(Err(error)),
+        Ok(Some(webview)) => {
+            use gtk::prelude::WidgetExt;
+            use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
+            let allocation = webview.allocation();
+            webview.snapshot(
+                SnapshotRegion::Visible,
+                SnapshotOptions::NONE,
+                None::<&gtk::gio::Cancellable>,
+                move |result| {
+                    let result = result
+                        .map_err(|error| error.to_string())
+                        .and_then(|surface| {
+                            write_snapshot_surface(
+                                &surface,
+                                &path,
+                                allocation.width(),
+                                allocation.height(),
+                            )
+                        });
+                    complete(result);
+                },
+            );
+        }
+        Ok(None) => complete(crate::embedded_browser::capture_screenshot(&path)),
+    }
+}
+
+fn write_snapshot_surface(
+    surface: &gtk::cairo::Surface,
+    path: &Path,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
+    if width <= 0 || height <= 0 {
+        return Err("Studio WebView has no drawable area".to_owned());
+    }
+    let pixbuf = gtk::gdk::pixbuf_get_from_surface(surface, 0, 0, width, height)
+        .ok_or("Studio WebView snapshot could not be converted")?;
+    pixbuf
+        .savev(path, "png", &[])
+        .map_err(|error| error.to_string())?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())
 }
 
 fn socket_path() -> Result<PathBuf, String> {

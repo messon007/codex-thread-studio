@@ -20,7 +20,7 @@
       button, input { font: inherit; }
       button { cursor: pointer; }
       .tabs-row { display: flex; min-width: 0; align-items: end; gap: 4px; padding: 4px 8px 0; background: #f1f3f6; border-bottom: 1px solid var(--line); }
-      .tabs { display: flex; min-width: 0; flex: 1; align-items: end; gap: 3px; overflow: hidden; }
+      .tabs { display: flex; min-width: 0; max-width: calc(100% - 68px); flex: 0 1 auto; align-items: end; gap: 3px; overflow: hidden; }
       .tab { display: flex; min-width: 78px; max-width: 190px; height: 29px; flex: 0 1 190px; align-items: center; gap: 6px; padding: 0 7px 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); cursor: pointer; }
       .tab:hover { background: rgb(255 255 255 / 68%); color: var(--text); }
       .tab.active { background: var(--active); border-color: var(--line); color: var(--text); }
@@ -29,6 +29,8 @@
       .tab-close:hover { background: #e4e7ec; color: #283246; }
       .new-tab { width: 27px; height: 27px; flex: 0 0 auto; margin-bottom: 1px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 18px; }
       .new-tab:hover { background: #e1e5eb; color: var(--text); }
+      .workspace-close { width: 27px; height: 27px; flex: 0 0 auto; margin: 0 0 1px auto; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 18px; line-height: 25px; }
+      .workspace-close:hover { background: #e1e5eb; color: var(--text); }
       .toolbar { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; align-items: center; gap: 7px; padding: 0 10px; background: #fff; }
       .nav, .tools { display: flex; align-items: center; gap: 2px; }
       .icon { width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 17px; }
@@ -51,6 +53,7 @@
     <div class="tabs-row">
       <div id="tabs" class="tabs" role="tablist" aria-label="浏览器标签"></div>
       <button class="new-tab" data-action="new-tab" title="新建标签 (Ctrl+T)" aria-label="新建标签">+</button>
+      <button class="workspace-close" data-action="toggle-browser" title="关闭浏览器" aria-label="关闭浏览器">×</button>
     </div>
     <div class="toolbar">
       <div class="nav">

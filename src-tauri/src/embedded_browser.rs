@@ -94,6 +94,69 @@ pub fn is_supported() -> bool {
         .is_some()
 }
 
+#[cfg(debug_assertions)]
+pub fn capture_screenshot(path: &std::path::Path) -> Result<(), String> {
+    WORKSPACE.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio window is busy".to_owned())?;
+        let workspace = slot.as_ref().ok_or("Studio window is not initialized")?;
+        let window = workspace
+            ._window
+            .gtk_window()
+            .map_err(|error| error.to_string())?;
+        if !window.is_mapped() || !window.is_visible() {
+            return Err("Studio window is not visible".to_owned());
+        }
+        let allocation = window.allocation();
+        if allocation.width() <= 0 || allocation.height() <= 0 {
+            return Err("Studio window has no drawable area".to_owned());
+        }
+        let surface = window
+            .window()
+            .ok_or("Studio window surface is unavailable")?;
+        use gtk::gdk::prelude::WindowExtManual;
+        let pixbuf = surface
+            .pixbuf(0, 0, allocation.width(), allocation.height())
+            .ok_or("Studio window surface could not be captured")?;
+        pixbuf
+            .savev(path, "png", &[])
+            .map_err(|error| error.to_string())?;
+        fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+}
+
+#[cfg(debug_assertions)]
+pub fn show_for_debug(url: Option<String>) -> Result<(), String> {
+    if let Some(raw) = url.as_deref() {
+        WORKSPACE.with(|slot| {
+            let slot = slot
+                .try_borrow()
+                .map_err(|_| "Studio browser is busy".to_owned())?;
+            let workspace = slot.as_ref().ok_or("Studio browser is not initialized")?;
+            validate_browser_url(raw, &workspace.preferences)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })?;
+    }
+
+    let visible = WORKSPACE.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|workspace| workspace.visible))
+            .ok_or("Studio browser is not initialized")
+    })?;
+    if !visible {
+        toggle_workspace();
+    }
+    if let Some(url) = url {
+        dispatch_action(BrowserAction::Navigate(url));
+    }
+    Ok(())
+}
+
 pub fn build(
     app: &tauri::App,
     studio_url: Url,

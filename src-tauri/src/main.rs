@@ -23,6 +23,8 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 mod backend_runtime;
 mod browser_runtime;
 mod codex_app_server;
+#[cfg(all(target_os = "linux", debug_assertions))]
+mod dev_capture;
 #[cfg(target_os = "linux")]
 mod embedded_browser;
 mod favorites;
@@ -323,6 +325,29 @@ struct ReviewFileResponse {
 }
 
 fn main() {
+    let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(all(target_os = "linux", debug_assertions))]
+    if dev_capture::requested(&arguments) {
+        match dev_capture::run_cli(&arguments) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("Developer command failed: {error}");
+                std::process::exit(2);
+            }
+        }
+    }
+    #[cfg(not(all(target_os = "linux", debug_assertions)))]
+    if arguments.first().is_some_and(|argument| {
+        matches!(
+            argument.to_str(),
+            Some("--dev-screenshot" | "--dev-show-browser" | "--dev-open-browser")
+        )
+    }) {
+        eprintln!("Developer controls are available only in Linux debug builds");
+        std::process::exit(2);
+    }
+
     let cli_path = augmented_cli_path();
     let preferences_path = studio_preferences_path();
     let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
@@ -403,6 +428,10 @@ fn main() {
                     &initialization_script,
                     embedded_browser_preferences.clone(),
                 )?;
+                #[cfg(debug_assertions)]
+                if let Err(error) = dev_capture::start_server() {
+                    eprintln!("Codex Thread Studio developer capture is unavailable: {error}");
+                }
             } else {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                     .initialization_script(&initialization_script)

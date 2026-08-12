@@ -20,6 +20,25 @@ npm run version:check
 cargo run -p codex-thread-studio
 ```
 
+### Capturing the running Studio window
+
+Linux debug builds expose a user-private Unix socket for capturing Studio's own window. This does
+not request global GNOME screenshot access and cannot capture any other application. Start Studio
+normally, then run:
+
+```bash
+target/debug/codex-thread-studio --dev-screenshot
+target/debug/codex-thread-studio --dev-show-browser
+target/debug/codex-thread-studio --dev-open-browser https://example.com
+```
+
+The command prints the PNG path beneath `$XDG_RUNTIME_DIR/codex-thread-studio-dev-captures/`.
+The socket and generated files are accessible only to the current user and are cleared with the
+runtime directory. Release builds reject all three developer-control commands.
+`--dev-show-browser` is idempotent, and `--dev-open-browser` both shows the embedded browser and
+navigates its active tab after applying the normal URL policy. These controls let automated
+development checks open the browser before capturing Studio without desktop-wide input access.
+
 The Markdown and Mermaid stack is pinned in `package-lock.json` and copied into `ui/vendor`, which Rust embeds at compile time. To deliberately update it:
 
 ```bash

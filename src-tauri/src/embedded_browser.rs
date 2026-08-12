@@ -72,7 +72,7 @@ struct BrowserTab {
 struct EmbeddedBrowserWorkspace {
     _window: tauri::Window,
     split: gtk::Paned,
-    browser_column: gtk::Box,
+    browser_column: gtk::Fixed,
     browser_stack: gtk::Stack,
     studio_webview: WebView,
     toolbar_webview: WebView,
@@ -117,7 +117,11 @@ pub fn build(
 
     let studio_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     studio_host.set_size_request(MIN_STUDIO_WIDTH, -1);
-    let browser_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // WebKitGTK reports a large natural height for a WebView. A GtkBox uses that
+    // natural height even when the toolbar host has an 82px size request, which
+    // can leave the page stack with only half of the available height. GtkFixed
+    // lets this split pane own the geometry explicitly: toolbar=82px, page=rest.
+    let browser_column = gtk::Fixed::new();
     browser_column.set_size_request(MIN_BROWSER_WIDTH, -1);
     let toolbar_host = gtk::Fixed::new();
     toolbar_host.set_size_request(-1, TOOLBAR_HEIGHT);
@@ -126,8 +130,23 @@ pub fn build(
     browser_stack.set_hexpand(true);
     browser_stack.set_vexpand(true);
 
-    browser_column.pack_start(&toolbar_host, false, false, 0);
-    browser_column.pack_start(&browser_stack, true, true, 0);
+    browser_column.put(&toolbar_host, 0, 0);
+    browser_column.put(&browser_stack, 0, TOOLBAR_HEIGHT);
+    let toolbar_layout_host = toolbar_host.clone();
+    let browser_layout_stack = browser_stack.clone();
+    browser_column.connect_size_allocate(move |column, allocation| {
+        let width = allocation.width().max(1);
+        let page_height = browser_page_height(allocation.height());
+        column.move_(&toolbar_layout_host, 0, 0);
+        toolbar_layout_host.size_allocate(&gtk::Allocation::new(0, 0, width, TOOLBAR_HEIGHT));
+        column.move_(&browser_layout_stack, 0, TOOLBAR_HEIGHT);
+        browser_layout_stack.size_allocate(&gtk::Allocation::new(
+            0,
+            TOOLBAR_HEIGHT,
+            width,
+            page_height,
+        ));
+    });
     split.pack1(&studio_host, true, false);
     // The browser keeps its width while the window resizes; extra space belongs to Studio.
     split.pack2(&browser_column, false, false);
@@ -757,6 +776,10 @@ fn round_zoom(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
+fn browser_page_height(column_height: i32) -> i32 {
+    (column_height - TOOLBAR_HEIGHT).max(1)
+}
+
 fn open_comment(selection: Option<BrowserSelection>) {
     WORKSPACE.with(|slot| {
         let Ok(slot) = slot.try_borrow() else {
@@ -937,5 +960,12 @@ mod tests {
         assert_eq!(fit_zoom(720.0, 720.0), Some(1.0));
         assert_eq!(fit_zoom(320.0, 1000.0), Some(MIN_ZOOM));
         assert_eq!(fit_zoom(0.0, 1000.0), None);
+    }
+
+    #[test]
+    fn browser_page_always_uses_height_below_the_toolbar() {
+        assert_eq!(browser_page_height(853), 771);
+        assert_eq!(browser_page_height(TOOLBAR_HEIGHT), 1);
+        assert_eq!(browser_page_height(1), 1);
     }
 }

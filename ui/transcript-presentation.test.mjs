@@ -6,6 +6,7 @@ import {
   commandKind,
   presentTurn,
   reasoningStage,
+  shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
 
 test('groups work items into one activity and keeps the final answer prominent', () => {
@@ -49,6 +50,18 @@ test('merges consecutive reasoning into the activity instead of separate blocks'
   assert.equal(presentation.blocks[0].displayEntries[0].itemId, 'r2')
   assert.equal(presentation.blocks[0].latestStage, 'Checking tests')
   assert.equal(presentation.blocks[0].active, true)
+})
+
+test('keeps the working placeholder beside an optimistic user message', () => {
+  const presentation = presentTurn({
+    id: 'pending-turn',
+    status: 'inProgress',
+    items: [{ id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Hello' }] }],
+  })
+  assert.equal(shouldShowTurnPlaceholder(presentation), true)
+
+  presentation.blocks.push({ type: 'activity' })
+  assert.equal(shouldShowTurnPlaceholder(presentation), false)
 })
 
 test('keeps a progress message inside activity until a trailing final answer exists', () => {

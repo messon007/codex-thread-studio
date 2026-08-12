@@ -21,6 +21,52 @@ export function hydrateCodexThread(model, thread) {
   return model
 }
 
+export function beginOptimisticCodexTurn(model, { clientUserMessageId, input }) {
+  const clientId = String(clientUserMessageId || '')
+  const turnId = `studio-pending-${clientId}`
+  model.turns.push({
+    id: turnId,
+    status: 'inProgress',
+    items: [{
+      id: `studio-user-${clientId}`,
+      type: 'userMessage',
+      clientId,
+      content: structuredCloneSafe(input || []),
+      studioOptimistic: true,
+    }],
+    studioOptimistic: true,
+  })
+  model.activeTurnId = turnId
+  model.status = 'running'
+  model.error = null
+  return turnId
+}
+
+export function reconcileOptimisticCodexTurn(model, optimisticTurnId, incomingTurn) {
+  const optimisticIndex = model.turns.findIndex((turn) => turn.id === optimisticTurnId)
+  const optimistic = optimisticIndex >= 0 ? model.turns[optimisticIndex] : null
+  if (optimisticIndex >= 0) model.turns.splice(optimisticIndex, 1)
+
+  const existing = model.turns.find((candidate) => candidate.id === incomingTurn?.id)
+  const terminalStatus = ['completed', 'failed', 'cancelled', 'interrupted'].includes(existing?.status)
+    ? existing.status
+    : null
+  const turn = upsertTurn(model, terminalStatus ? { ...(incomingTurn || {}), status: terminalStatus } : incomingTurn || {})
+  const user = optimistic?.items?.find((item) => item.type === 'userMessage')
+  if (user && !turn.items.some((item) => sameUserMessage(item, user))) turn.items.unshift(user)
+  model.activeTurnId = terminalStatus ? null : turn.id
+  model.status = terminalStatus === 'failed' ? 'failed' : terminalStatus ? 'idle' : 'running'
+  return turn
+}
+
+export function rollbackOptimisticCodexTurn(model, optimisticTurnId) {
+  const index = model.turns.findIndex((turn) => turn.id === optimisticTurnId)
+  if (index >= 0) model.turns.splice(index, 1)
+  const active = [...model.turns].reverse().find((turn) => turn?.status === 'inProgress')
+  model.activeTurnId = active?.id || null
+  model.status = active ? 'running' : 'idle'
+}
+
 export function applyCodexNotification(model, message) {
   const method = message?.method
   const params = message?.params || {}
@@ -174,13 +220,25 @@ function ensureTurn(model, turnId) {
 
 function upsertItem(turn, incoming) {
   const id = incoming?.id || `anonymous-${turn.items.length}`
-  const index = turn.items.findIndex((item) => item.id === id)
+  let index = turn.items.findIndex((item) => item.id === id)
+  if (index < 0 && incoming?.type === 'userMessage') {
+    index = turn.items.findIndex((item) => sameUserMessage(item, incoming))
+  }
   if (index < 0) {
     turn.items.push({ ...structuredCloneSafe(incoming), id })
     return turn.items.at(-1)
   }
-  turn.items[index] = { ...turn.items[index], ...structuredCloneSafe(incoming), id }
+  const next = { ...turn.items[index], ...structuredCloneSafe(incoming), id }
+  delete next.studioOptimistic
+  turn.items[index] = next
   return turn.items[index]
+}
+
+function sameUserMessage(left, right) {
+  if (left?.type !== 'userMessage' || right?.type !== 'userMessage') return false
+  if (left.clientId && right.clientId) return left.clientId === right.clientId
+  return Boolean(left.studioOptimistic || right.studioOptimistic)
+    && textFromUserContent(left.content) === textFromUserContent(right.content)
 }
 
 function ensureItem(model, turnId, itemId, type) {

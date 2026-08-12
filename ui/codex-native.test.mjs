@@ -3,9 +3,12 @@ import test from 'node:test'
 
 import {
   applyCodexNotification,
+  beginOptimisticCodexTurn,
   createCodexViewModel,
   hydrateCodexThread,
+  reconcileOptimisticCodexTurn,
   resolveCodexApproval,
+  rollbackOptimisticCodexTurn,
   textFromUserContent,
 } from './codex-native.mjs'
 
@@ -58,6 +61,83 @@ test('turn completion never drops the original user message from a partial snaps
 
   assert.deepEqual(model.turns[0].items.map((item) => item.id), ['question', 'answer'])
   assert.equal(textFromUserContent(model.turns[0].items[0].content), 'Keep my question visible')
+})
+
+test('reconciles an optimistic user message with the authoritative turn', () => {
+  const model = createCodexViewModel()
+  const clientId = 'client-1'
+  const pendingId = beginOptimisticCodexTurn(model, {
+    clientUserMessageId: clientId,
+    input: [{ type: 'text', text: 'Show this immediately' }],
+  })
+  assert.equal(model.activeTurnId, pendingId)
+  assert.equal(textFromUserContent(model.turns[0].items[0].content), 'Show this immediately')
+
+  reconcileOptimisticCodexTurn(model, pendingId, { id: 'turn-1', status: 'inProgress', items: [] })
+  applyCodexNotification(model, {
+    method: 'item/started',
+    params: {
+      turnId: 'turn-1',
+      item: { id: 'server-user', type: 'userMessage', clientId, content: [{ type: 'text', text: 'Show this immediately' }] },
+    },
+  })
+
+  assert.equal(model.turns.length, 1)
+  assert.equal(model.turns[0].items.filter((item) => item.type === 'userMessage').length, 1)
+  assert.equal(model.turns[0].items[0].id, 'server-user')
+  assert.equal(model.turns[0].items[0].studioOptimistic, undefined)
+})
+
+test('rolls back an optimistic turn without disturbing a server turn', () => {
+  const model = createCodexViewModel()
+  const pendingId = beginOptimisticCodexTurn(model, {
+    clientUserMessageId: 'client-2',
+    input: [{ type: 'text', text: 'Temporary' }],
+  })
+  applyCodexNotification(model, { method: 'turn/started', params: { turn: { id: 'turn-live', status: 'inProgress', items: [] } } })
+  rollbackOptimisticCodexTurn(model, pendingId)
+  assert.deepEqual(model.turns.map((turn) => turn.id), ['turn-live'])
+  assert.equal(model.activeTurnId, 'turn-live')
+})
+
+test('reconciles when server notifications arrive before the turn start response', () => {
+  const model = createCodexViewModel()
+  const pendingId = beginOptimisticCodexTurn(model, {
+    clientUserMessageId: 'client-race',
+    input: [{ type: 'text', text: 'Race-safe message' }],
+  })
+  applyCodexNotification(model, {
+    method: 'turn/started',
+    params: { turn: { id: 'turn-race', status: 'inProgress', items: [] } },
+  })
+  applyCodexNotification(model, {
+    method: 'item/started',
+    params: {
+      turnId: 'turn-race',
+      item: { id: 'server-user', type: 'userMessage', content: [{ type: 'text', text: 'Race-safe message' }] },
+    },
+  })
+
+  reconcileOptimisticCodexTurn(model, pendingId, { id: 'turn-race', status: 'inProgress', items: [] })
+  assert.deepEqual(model.turns.map((turn) => turn.id), ['turn-race'])
+  assert.equal(model.turns[0].items.filter((item) => item.type === 'userMessage').length, 1)
+})
+
+test('does not revive a fast turn that completed before the start response', () => {
+  const model = createCodexViewModel()
+  const pendingId = beginOptimisticCodexTurn(model, {
+    clientUserMessageId: 'client-fast',
+    input: [{ type: 'text', text: 'Fast message' }],
+  })
+  applyCodexNotification(model, {
+    method: 'turn/completed',
+    params: { turn: { id: 'turn-fast', status: 'completed', items: [] } },
+  })
+
+  reconcileOptimisticCodexTurn(model, pendingId, { id: 'turn-fast', status: 'inProgress', items: [] })
+  assert.equal(model.turns[0].status, 'completed')
+  assert.equal(model.activeTurnId, null)
+  assert.equal(model.status, 'idle')
 })
 
 test('tracks approval requests and responses', () => {

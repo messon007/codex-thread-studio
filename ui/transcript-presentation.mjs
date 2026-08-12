@@ -110,6 +110,11 @@ export function presentTurn(turn) {
   }
 }
 
+export function shouldShowTurnPlaceholder(presentation) {
+  if (presentation?.status !== 'inProgress') return false
+  return !(presentation.blocks || []).some((block) => block.type === 'assistant' || block.type === 'activity')
+}
+
 export function activityOutputPreview(value, lineLimit = OUTPUT_PREVIEW_LINES) {
   const limit = Math.max(1, lineLimit)
   const headCount = Math.ceil(limit / 2)

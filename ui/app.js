@@ -1,8 +1,11 @@
 import {
   applyCodexNotification,
+  beginOptimisticCodexTurn,
   createCodexViewModel,
   hydrateCodexThread,
+  reconcileOptimisticCodexTurn,
   resolveCodexApproval,
+  rollbackOptimisticCodexTurn,
   textFromUserContent,
 } from './codex-native.mjs'
 import {
@@ -91,6 +94,7 @@ import {
   TranscriptPresentationCache,
   activityOutputPreview,
   reasoningStage,
+  shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
 
 import {
@@ -258,6 +262,7 @@ let preferencesWriteChain = Promise.resolve()
 let annotationPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
+const turnLatencyTraces = new Map()
 let composerSearchTimer = null
 let artifactSearchTimer = null
 let turnNavigatorFrame = null
@@ -933,6 +938,66 @@ function cleanupConnections() {
   state.socketGeneration += 1
 }
 
+function beginTurnLatencyTrace(clientId, threadId) {
+  const trace = {
+    clientId: String(clientId || ''),
+    threadId: String(threadId || ''),
+    turnId: '',
+    startedAt: performance.now(),
+    marks: new Set(),
+  }
+  turnLatencyTraces.set(`client:${trace.clientId}`, trace)
+  console.info('[Codex latency] send', { clientId: trace.clientId, threadId: trace.threadId })
+  return trace
+}
+
+function markTurnLatency(trace, phase) {
+  if (!trace || trace.marks.has(phase)) return
+  trace.marks.add(phase)
+  console.info(`[Codex latency] ${phase}`, {
+    elapsedMs: Math.round(performance.now() - trace.startedAt),
+    threadId: trace.threadId,
+    turnId: trace.turnId || undefined,
+  })
+}
+
+function bindTurnLatencyTrace(trace, turnId) {
+  if (!trace || !turnId) return trace
+  trace.turnId = String(turnId)
+  turnLatencyTraces.set(`turn:${trace.turnId}`, trace)
+  return trace
+}
+
+function pendingTurnLatencyTrace(threadId) {
+  const target = String(threadId || '')
+  return [...new Set(turnLatencyTraces.values())]
+    .find((trace) => !trace.turnId && trace.threadId === target) || null
+}
+
+function finishTurnLatencyTrace(trace, phase = 'complete') {
+  if (!trace) return
+  markTurnLatency(trace, phase)
+  turnLatencyTraces.delete(`client:${trace.clientId}`)
+  if (trace.turnId) turnLatencyTraces.delete(`turn:${trace.turnId}`)
+}
+
+function observeCodexTurnLatency(message) {
+  const params = message?.params || {}
+  const turnId = params.turnId || params.turn?.id
+  const threadId = params.threadId || params.thread?.id || state.selectedId
+  let trace = turnId ? turnLatencyTraces.get(`turn:${turnId}`) : null
+  if (!trace && message?.method === 'turn/started') {
+    trace = bindTurnLatencyTrace(pendingTurnLatencyTrace(threadId), turnId)
+  }
+  if (!trace) return
+  if (message.method === 'turn/started') markTurnLatency(trace, 'turn_started')
+  else if (message.method === 'turn/completed') finishTurnLatencyTrace(trace)
+  else if (message.method?.startsWith('item/') || message.method === 'turn/plan/updated') {
+    markTurnLatency(trace, 'first_activity')
+    requestAnimationFrame(() => markTurnLatency(trace, 'first_ui_paint'))
+  }
+}
+
 function handleAppServerMessage(message) {
   if (message.method === 'studio/appServer/status') {
     const status = message.params?.state
@@ -1037,6 +1102,7 @@ function handleAppServerMessage(message) {
   }
 
   updateCodexReplyTime(message)
+  observeCodexTurnLatency(message)
 
   if (message.id != null && message.method) {
     if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
@@ -2714,10 +2780,10 @@ function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
 function renderTurn(presentation, index, { openActivity = false } = {}) {
   if (!presentation) return ''
   const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, { openActivity })).join('')
-  const placeholder = presentation.status === 'inProgress'
+  const placeholder = shouldShowTurnPlaceholder(presentation)
     ? `<div class="work-placeholder"><span class="activity-spinner"></span>${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`
     : ''
-  return `<section class="turn" data-turn-id="${escapeHtml(presentation.id)}" data-turn-index="${index}">${content || placeholder}</section>`
+  return `<section class="turn" data-turn-id="${escapeHtml(presentation.id)}" data-turn-index="${index}">${content}${placeholder}</section>`
 }
 
 function renderPresentationBlock(block, turnId, options = {}) {
@@ -3756,42 +3822,84 @@ async function sendComposer(event) {
     finally { button.disabled = false }
     return
   }
-  const skillInputs = state.pendingSkills[selectedStateKey()] || []
-  const turnInput = [{ type: 'text', text }, ...skillInputs, ...(state.pendingFiles[selectedStateKey()] || [])]
+  const backend = state.backend
+  const threadId = state.selectedId
+  const targetModel = state.model
+  const stateKey = selectedStateKey(threadId, backend)
+  const skillInputs = [...(state.pendingSkills[stateKey] || [])]
+  const fileInputs = [...(state.pendingFiles[stateKey] || [])]
+  const turnInput = [{ type: 'text', text }, ...skillInputs, ...fileInputs]
+  const turnOptions = { ...currentTurnOptions() }
   const button = $('#send-message')
   button.disabled = true
   transcriptScrollFollower.reset()
+  let optimisticTurnId = null
+  let latencyTrace = null
+  let composerCleared = false
   try {
     if (state.model.activeTurnId) {
       await rpc('turn/steer', {
-        threadId: state.selectedId,
+        threadId,
         expectedTurnId: state.model.activeTurnId,
         clientUserMessageId: randomId(),
         input: turnInput,
       })
       toast('意见已加入当前 Turn')
     } else {
+      const clientUserMessageId = randomId()
+      if (backend === 'codex') {
+        optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
+        latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
+        input.value = ''
+        state.pendingSkills[stateKey] = []
+        state.pendingFiles[stateKey] = []
+        composerCleared = true
+        hideComposerMenu()
+        renderComposerState()
+        renderTranscript()
+      }
       await prepareSessionMapTurn().catch((error) => {
         console.warn('Unable to attach Session Map context', error)
         setSessionMapSyncState('error', error.message)
       })
       const result = await rpc('turn/start', {
-        threadId: state.selectedId,
-        clientUserMessageId: randomId(),
+        threadId,
+        clientUserMessageId,
         input: turnInput,
-        ...currentTurnOptions(),
+        ...turnOptions,
       })
       if (result?.turn) {
-        applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
-        renderTranscript()
+        if (backend === 'codex' && optimisticTurnId) {
+          reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)
+          bindTurnLatencyTrace(latencyTrace, result.turn.id)
+          markTurnLatency(latencyTrace, 'turn_start_ack')
+        } else {
+          applyCodexNotification(targetModel, { method: 'turn/started', params: { turn: result.turn } })
+        }
+        if (targetModel === state.model) renderTranscript()
       }
     }
-    input.value = ''
-    state.pendingSkills[selectedStateKey()] = []
-    state.pendingFiles[selectedStateKey()] = []
+    if (!composerCleared) {
+      input.value = ''
+      state.pendingSkills[stateKey] = []
+      state.pendingFiles[stateKey] = []
+    }
     hideComposerMenu()
     renderComposerState()
-  } catch (error) { showError(error) }
+  } catch (error) {
+    if (optimisticTurnId) {
+      rollbackOptimisticCodexTurn(targetModel, optimisticTurnId)
+      finishTurnLatencyTrace(latencyTrace, 'failed')
+      if (targetModel === state.model) renderTranscript()
+    }
+    if (composerCleared && state.backend === backend && state.selectedId === threadId) {
+      if (!input.value.trim()) input.value = text
+      if (!(state.pendingSkills[stateKey] || []).length) state.pendingSkills[stateKey] = skillInputs
+      if (!(state.pendingFiles[stateKey] || []).length) state.pendingFiles[stateKey] = fileInputs
+      renderComposerState()
+    }
+    showError(error)
+  }
   finally { button.disabled = false }
 }
 

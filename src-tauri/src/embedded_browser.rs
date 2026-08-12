@@ -216,6 +216,22 @@ pub fn capture_screenshot(path: &std::path::Path) -> Result<(), String> {
 }
 
 #[cfg(debug_assertions)]
+pub fn evaluate_studio_for_debug(script: &str) -> Result<(), String> {
+    WORKSPACE.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "embedded Studio workspace is busy".to_owned())?;
+        let workspace = slot
+            .as_ref()
+            .ok_or("embedded Studio workspace is not initialized")?;
+        workspace
+            .studio_webview
+            .evaluate_script(script)
+            .map_err(|error| error.to_string())
+    })
+}
+
+#[cfg(debug_assertions)]
 fn composite_widget_surface<W: IsA<gtk::Widget>>(
     widget: &W,
     main_surface: &gtk::gdk::Window,

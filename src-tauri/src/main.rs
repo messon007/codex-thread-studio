@@ -26,6 +26,7 @@ mod codex_app_server;
 mod dev_capture;
 #[cfg(target_os = "linux")]
 mod embedded_browser;
+mod epub_reader;
 mod favorites;
 mod gateway_security;
 mod opencode_server;
@@ -59,6 +60,8 @@ struct GatewayState {
     favorites_lock: Arc<Mutex<()>>,
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
+    epub_reading_path: Arc<PathBuf>,
+    epub_reading_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
     embedded_browser: bool,
 }
@@ -293,6 +296,14 @@ struct ReviewFileRequest {
     path: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewFileRequestWithHash {
+    root: String,
+    path: String,
+    book_hash: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReviewFileResponse {
@@ -386,6 +397,7 @@ fn main() {
                     | "--dev-show-browser-downloads"
                     | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
+                    | "--dev-open-artifact"
             )
         )
     }) {
@@ -397,6 +409,7 @@ fn main() {
     let preferences_path = studio_preferences_path();
     let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
     let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
+    let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
@@ -419,6 +432,9 @@ fn main() {
     }
     if let Err(error) = session_map::initialize(&session_maps_path) {
         eprintln!("Codex Thread Studio could not initialize session maps: {error}");
+    }
+    if let Err(error) = epub_reader::initialize(&epub_reading_path) {
+        eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
     }
     let gateway_listener = TcpListener::bind("127.0.0.1:0")
         .expect("failed to reserve a local Codex Thread Studio gateway port");
@@ -445,6 +461,8 @@ fn main() {
         favorites_lock: Arc::new(Mutex::new(())),
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
+        epub_reading_path: Arc::new(epub_reading_path),
+        epub_reading_lock: Arc::new(Mutex::new(())),
         security,
         embedded_browser,
     };
@@ -522,6 +540,11 @@ fn gateway_router(state: GatewayState) -> Router {
             "/studio/review-image",
             axum::routing::post(read_review_image),
         )
+        .route("/studio/review-epub", axum::routing::post(read_review_epub))
+        .route(
+            "/studio/epub/state",
+            axum::routing::post(get_epub_reading_state).put(put_epub_reading_state),
+        )
         .route(
             "/studio/favorites",
             get(list_favorites).post(create_favorite),
@@ -567,6 +590,8 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
+        .route("/epub-reader.mjs", get(epub_reader_js))
+        .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
         .route("/workspace-tools.mjs", get(workspace_tools_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
@@ -591,6 +616,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/mermaid.min.js", get(mermaid_js))
+        .route("/vendor/epub.mjs", get(epub_vendor_js))
         .route(
             "/vendor/workspace-editor.mjs",
             get(workspace_editor_vendor_js),
@@ -644,7 +670,13 @@ async fn require_gateway_auth(
 
 async fn index() -> impl IntoResponse {
     (
-        [(header::CACHE_CONTROL, "no-store")],
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
+            ),
+        ],
         Html(include_str!("../../ui/index.html")),
     )
 }
@@ -697,6 +729,97 @@ async fn read_review_file(
     match load_review_file(&request) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
+    }
+}
+
+async fn read_review_epub(
+    State(_state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if _state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "opening EPUB files from WSL workspaces is not available yet",
+        );
+    }
+    let (_, path, _) = match resolve_epub_path(&request) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let loaded = match tokio::task::spawn_blocking(move || epub_reader::load(&path)).await {
+        Ok(result) => result,
+        Err(error) => return gateway_error(&format!("EPUB validation task failed: {error}")),
+    };
+    match loaded {
+        Ok(asset) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/epub+zip")
+            .header(header::CACHE_CONTROL, "no-store")
+            .header("x-studio-epub-hash", asset.hash)
+            .header(header::CONTENT_LENGTH, asset.size)
+            .body(Body::from(asset.bytes))
+            .unwrap_or_else(|error| gateway_error(&error.to_string())),
+        Err(message) => json_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, &message),
+    }
+}
+
+async fn get_epub_reading_state(
+    State(state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequestWithHash>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "EPUB reading state for WSL workspaces is not available yet",
+        );
+    }
+    let review = ReviewFileRequest {
+        root: request.root,
+        path: request.path,
+    };
+    let (_, path, _) = match resolve_epub_path(&review) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.epub_reading_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("EPUB reading state lock is unavailable"),
+    };
+    match epub_reader::find_state(&state.epub_reading_path, &path, &request.book_hash) {
+        Ok(Some(value)) => json_response(StatusCode::OK, &value),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
+    }
+}
+
+async fn put_epub_reading_state(
+    State(state): State<GatewayState>,
+    Json(reading): Json<epub_reader::ReadingState>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "EPUB reading state for WSL workspaces is not available yet",
+        );
+    }
+    let request = ReviewFileRequest {
+        root: reading.root.clone(),
+        path: reading.path.clone(),
+    };
+    let (_, path, _) = match resolve_epub_path(&request) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let _guard = match state.epub_reading_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("EPUB reading state lock is unavailable"),
+    };
+    match epub_reader::save_state(&state.epub_reading_path, &path, reading) {
+        Ok(value) => json_response(StatusCode::OK, &value),
+        Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
     }
 }
 
@@ -812,6 +935,18 @@ fn persist_workspace_file(
 
     load_review_file(&review_request)
         .map_err(|(status, message)| WorkspaceSaveError::Http(status, message))
+}
+
+fn resolve_epub_path(
+    request: &ReviewFileRequest,
+) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
+    if !request.path.to_ascii_lowercase().ends_with(".epub") {
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "only .epub publications can be opened by the EPUB reader".to_owned(),
+        ));
+    }
+    resolve_review_path(request, epub_reader::MAX_EPUB_BYTES, "128 MiB EPUB")
 }
 
 fn load_workspace_directory(
@@ -1152,6 +1287,14 @@ async fn document_review_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/document-review.mjs"))
 }
 
+async fn epub_reader_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/epub-reader.mjs"))
+}
+
+async fn epub_comment_provider_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/epub-comment-provider.mjs"))
+}
+
 async fn workspace_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/workspace-tools.mjs"))
 }
@@ -1206,6 +1349,10 @@ async fn dompurify_js() -> impl IntoResponse {
 
 async fn mermaid_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/mermaid.min.js"))
+}
+
+async fn epub_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/epub.mjs"))
 }
 
 async fn workspace_editor_vendor_js() -> impl IntoResponse {
@@ -2095,6 +2242,10 @@ mod tests {
                 "codex-thread-studio-security-maps-{suffix}.sqlite3"
             ))),
             session_maps_lock: Arc::new(Mutex::new(())),
+            epub_reading_path: Arc::new(env::temp_dir().join(format!(
+                "codex-thread-studio-security-epub-{suffix}.sqlite3"
+            ))),
+            epub_reading_lock: Arc::new(Mutex::new(())),
             security,
             embedded_browser: false,
         }
@@ -2114,6 +2265,7 @@ mod tests {
                 "/studio/preferences",
                 "/studio/favorites",
                 "/studio/session-map/codex/thread-1",
+                "/studio/epub/state",
             ] {
                 let response = router
                     .clone()
@@ -2200,6 +2352,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                epub_reading_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-route-epub-test.sqlite3"),
+                ),
+                epub_reading_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2214,6 +2370,8 @@ mod tests {
                 "/thread-workset.mjs",
                 "/composer-tools.mjs",
                 "/document-review.mjs",
+                "/epub-reader.mjs",
+                "/epub-comment-provider.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
                 "/mermaid-config.mjs",
@@ -2221,6 +2379,7 @@ mod tests {
                 "/transcript-scroll.mjs",
                 "/transcript-presentation.mjs",
                 "/vendor/mermaid.min.js",
+                "/vendor/epub.mjs",
                 "/styles.css",
             ] {
                 let response = router
@@ -2267,6 +2426,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                epub_reading_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-version-epub-test.sqlite3"),
+                ),
+                epub_reading_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2320,6 +2483,10 @@ mod tests {
                 favorites_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                epub_reading_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-map-api-epub-test.sqlite3"),
+                ),
+                epub_reading_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2445,6 +2612,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                epub_reading_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-favorites-api-epub-test.sqlite3"),
+                ),
+                epub_reading_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };

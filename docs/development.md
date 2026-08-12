@@ -39,6 +39,7 @@ target/debug/codex-thread-studio --dev-show-browser-info
 target/debug/codex-thread-studio --dev-show-browser-downloads
 target/debug/codex-thread-studio --dev-crash-browser-tab
 target/debug/codex-thread-studio --dev-open-browser https://example.com
+target/debug/codex-thread-studio --dev-open-artifact /absolute/project/root relative/file.epub
 ```
 
 The command prints the PNG path beneath `$XDG_RUNTIME_DIR/codex-thread-studio-dev-captures/`.
@@ -75,6 +76,15 @@ npm ci
 npm audit --audit-level=moderate
 npm run vendor:workspace
 git diff -- package-lock.json ui/vendor/workspace-editor.mjs ui/vendor/workspace-terminal.mjs ui/vendor/xterm.css
+```
+
+EPUB.js is similarly pinned, audited, and loaded only after an EPUB is opened:
+
+```bash
+npm ci
+npm audit --audit-level=moderate
+npm run vendor:epub
+git diff -- package-lock.json ui/vendor/epub.mjs ui/vendor/licenses THIRD_PARTY_NOTICES.md
 ```
 
 ## Versioning and releases

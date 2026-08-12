@@ -36,6 +36,7 @@ enum DeveloperRequest {
     ShowBrowserDownloads,
     CrashBrowserTab,
     OpenBrowser { url: String },
+    OpenArtifact { root: String, path: String },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -62,6 +63,7 @@ pub fn requested(arguments: &[OsString]) -> bool {
                     | "--dev-show-browser-downloads"
                     | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
+                    | "--dev-open-artifact"
             )
         )
     })
@@ -146,6 +148,18 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
                 url: url.to_owned(),
             }))
         }
+        "--dev-open-artifact" if arguments.len() == 3 => {
+            let root = arguments[1]
+                .to_str()
+                .ok_or("developer artifact root must be valid UTF-8")?;
+            let path = arguments[2]
+                .to_str()
+                .ok_or("developer artifact path must be valid UTF-8")?;
+            Ok(Some(DeveloperRequest::OpenArtifact {
+                root: root.to_owned(),
+                path: path.to_owned(),
+            }))
+        }
         "--dev-screenshot"
         | "--dev-show-browser"
         | "--dev-hide-browser"
@@ -159,6 +173,9 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         "--dev-open-browser" | "--dev-new-browser-tab" => {
             Err(format!("{command} requires exactly one URL"))
         }
+        "--dev-open-artifact" => Err(format!(
+            "{command} requires a project root and project-relative file path"
+        )),
         _ => Ok(None),
     }
 }
@@ -276,12 +293,38 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             DeveloperRequest::OpenBrowser { url } => {
                 crate::embedded_browser::show_for_debug(Some(url)).map(|_| None)
             }
+            DeveloperRequest::OpenArtifact { root, path } => {
+                open_artifact_for_debug(root, path).map(|_| None)
+            }
         };
         let _ = sender.send(result);
     });
     receiver
         .recv_timeout(RESPONSE_TIMEOUT)
         .map_err(|_| "Studio did not complete the developer command in time".to_owned())?
+}
+
+fn open_artifact_for_debug(root: String, path: String) -> Result<(), String> {
+    let payload = serde_json::to_string(&serde_json::json!({ "root": root, "path": path }))
+        .map_err(|error| error.to_string())?;
+    let script = format!("window.__studioDeveloper?.openArtifact?.({payload})");
+    let handled = TAURI_WEBVIEW.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio window is busy".to_owned())?;
+        let Some(webview) = slot.as_ref() else {
+            return Ok::<bool, String>(false);
+        };
+        use webkit2gtk::WebViewExt;
+        #[allow(deprecated)]
+        webview.run_javascript(&script, None::<&gtk::gio::Cancellable>, |_| {});
+        Ok::<bool, String>(true)
+    })?;
+    if handled {
+        Ok(())
+    } else {
+        crate::embedded_browser::evaluate_studio_for_debug(&script)
+    }
 }
 
 fn capture_studio_screenshot(path: PathBuf, complete: impl FnOnce(Result<(), String>) + 'static) {
@@ -445,6 +488,10 @@ mod tests {
             parse_cli_request(&arguments(&["--dev-open-browser", "https://example.com"])).unwrap(),
             Some(DeveloperRequest::OpenBrowser { url }) if url == "https://example.com"
         ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-open-artifact", "/books", "guide.epub"])).unwrap(),
+            Some(DeveloperRequest::OpenArtifact { root, path }) if root == "/books" && path == "guide.epub"
+        ));
         assert!(parse_cli_request(&arguments(&["--dev-open-browser"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-screenshot", "extra"])).is_err());
         assert!(parse_cli_request(&arguments(&["--normal-option"]))
@@ -464,6 +511,7 @@ mod tests {
         assert!(requested(&arguments(&["--dev-show-browser-downloads"])));
         assert!(requested(&arguments(&["--dev-crash-browser-tab"])));
         assert!(requested(&arguments(&["--dev-open-browser"])));
+        assert!(requested(&arguments(&["--dev-open-artifact"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));
     }

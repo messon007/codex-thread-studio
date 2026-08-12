@@ -52,6 +52,7 @@ import {
   relocateDocumentComment,
 } from './comment-source-providers.mjs'
 import { browserCommentSource, createBrowserCommentProvider } from './browser-comment-provider.mjs'
+import { createEpubCommentProvider, epubCommentSource } from './epub-comment-provider.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -135,6 +136,7 @@ import DOMPurify from './vendor/purify.es.mjs'
 const commentSources = new CommentSourceRegistry()
   .register(createChatCommentProvider())
   .register(createDocumentCommentProvider())
+  .register(createEpubCommentProvider())
   .register(createBrowserCommentProvider())
 
 marked.setOptions({
@@ -285,6 +287,10 @@ let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
 let artifactEditor = null
+let epubReader = null
+let epubReaderModule = null
+let epubReaderGeneration = 0
+let epubReadingStateTimer = null
 let workspaceEditorModule = null
 let embeddedBrowserWidthTimer = null
 
@@ -702,6 +708,12 @@ window.__studioEmbeddedBrowser = Object.freeze({
   },
   notify(message) {
     toast(t(String(message || '')), 'error')
+  },
+})
+
+window.__studioDeveloper = Object.freeze({
+  openArtifact(file) {
+    openArtifact(file).catch(showError)
   },
 })
 
@@ -4203,7 +4215,17 @@ async function openArtifact(file) {
   if (!thread?.cwd) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
   const root = String(file.root || thread.cwd)
   const path = fuzzyFileLabel(file)
+  const requestedEpubCfi = String(file.epubCfi || '')
   if (!path) throw new Error(t('文件路径为空。'))
+  if (requestedEpubCfi && state.artifact?.kind === 'epub' && state.artifact.root === root && state.artifact.path === path) {
+    activateRightWorkspace('document')
+    if (epubReader) await epubReader.display(requestedEpubCfi)
+    else {
+      state.artifact.readingState = { ...(state.artifact.readingState || {}), cfi: requestedEpubCfi }
+      renderArtifact()
+    }
+    return
+  }
   if (state.artifact?.dirty && state.artifact.root === root && state.artifact.path === path) {
     activateRightWorkspace('document')
     return
@@ -4221,9 +4243,14 @@ async function openArtifact(file) {
   $('#artifact-search-toolbar').classList.add('hidden')
   $('#artifact-error').classList.add('hidden')
   $('#artifact-loading').classList.remove('hidden')
+  disposeArtifactEditor()
+  disposeEpubReader()
   const requestId = randomId()
   state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), loading: true }
-  const response = await gatewayFetch(kind === 'image' ? '/studio/review-image' : '/studio/review-file', {
+  const endpoint = kind === 'image'
+    ? '/studio/review-image'
+    : kind === 'epub' ? '/studio/review-epub' : '/studio/review-file'
+  const response = await gatewayFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root, path }),
@@ -4259,6 +4286,31 @@ async function openArtifact(file) {
       size: blob.size,
     }
     state.artifactView = 'image'
+  } else if (kind === 'epub') {
+    const bookHash = response.headers.get('x-studio-epub-hash') || ''
+    const bytes = await response.arrayBuffer()
+    if (!bookHash || !bytes.byteLength) {
+      const message = t('EPUB 响应格式无效')
+      if (state.artifact?.requestId === requestId) {
+        state.artifact = { ...state.artifact, loading: false, error: message }
+        renderArtifact()
+      }
+      throw new Error(message)
+    }
+    const readingState = await loadEpubReadingState(root, path, bookHash)
+    if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+    state.artifact = {
+      ...state.artifact,
+      kind: 'epub',
+      loading: false,
+      bytes,
+      hash: bookHash,
+      relativePath: path,
+      size: bytes.byteLength,
+      readingState,
+    }
+    state.artifactView = 'epub'
   } else {
     const result = await response.json()
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
@@ -4300,6 +4352,7 @@ function closeArtifactRail({ restoreMap = true } = {}) {
   if (state.artifact?.dirty && !confirm(t('当前文档有尚未保存的修改，是否关闭？'))) return
   $('#artifact-rail').classList.add('hidden')
   disposeArtifactEditor()
+  disposeEpubReader()
   state.artifact = null
   resetArtifactSearch()
   hideSelectionPopover()
@@ -4362,6 +4415,7 @@ function renderArtifact() {
     return
   }
   disposeArtifactEditor()
+  disposeEpubReader()
   applyArtifactWidth()
   rail.classList.remove('hidden')
   $('#artifact-title').textContent = fileDisplayName(file.path)
@@ -4371,13 +4425,15 @@ function renderArtifact() {
   $('#artifact-error-message').textContent = file.error || ''
   const textReady = !file.loading && !file.error && file.kind === 'text' && typeof file.content === 'string'
   const imageReady = !file.loading && !file.error && file.kind === 'image' && Boolean(file.imageUrl)
-  const ready = textReady || imageReady
+  const epubReady = !file.loading && !file.error && file.kind === 'epub' && file.bytes instanceof ArrayBuffer
+  const ready = textReady || imageReady || epubReady
   const content = $('#artifact-content')
   content.classList.toggle('hidden', !ready)
   $('#artifact-meta').textContent = textReady
     ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
-    : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : '选择文字即可批注')
+    : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
+      : epubReady ? `EPUB · ${formatFileSize(file.size)}` : ''
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : file.kind === 'epub' ? '选择书中文字，添加问题后交给 AI' : '选择文字即可批注')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
   const editable = textReady
@@ -4414,6 +4470,17 @@ function renderArtifact() {
     renderArtifactSearchStatus()
     return
   }
+  if (epubReady) {
+    content.className = 'artifact-content artifact-epub-preview'
+    content.innerHTML = '<div class="artifact-epub-host" data-no-i18n></div>'
+    mountEpubReader(file, content.firstElementChild).catch((error) => {
+      if (state.artifact?.requestId !== file.requestId) return
+      state.artifact = { ...state.artifact, error: error.message || String(error) }
+      renderArtifact()
+    })
+    renderArtifactSearchStatus()
+    return
+  }
   if (state.artifactView === 'edit') {
     content.className = 'artifact-content editing'
     content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
@@ -4435,6 +4502,117 @@ function renderArtifact() {
 function disposeArtifactEditor() {
   artifactEditor?.destroy()
   artifactEditor = null
+}
+
+function disposeEpubReader() {
+  epubReaderGeneration += 1
+  clearTimeout(epubReadingStateTimer)
+  epubReadingStateTimer = null
+  if (state.artifact?.kind === 'epub' && state.artifact.readingState) {
+    persistEpubReadingState(state.artifact).catch(() => {})
+  }
+  epubReader?.destroy()
+  epubReader = null
+}
+
+async function loadEpubReadingState(root, path, bookHash) {
+  const response = await gatewayFetch('/studio/epub/state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root, path, bookHash }),
+  })
+  if (response.status === 204) return {}
+  if (!response.ok) {
+    const result = await response.json().catch(() => null)
+    throw new Error(result?.error?.message || `HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
+async function mountEpubReader(file, parent) {
+  const generation = ++epubReaderGeneration
+  epubReaderModule ||= import('./epub-reader.mjs')
+  const { createEpubReader } = await epubReaderModule
+  if (generation !== epubReaderGeneration || state.artifact !== file || !parent.isConnected) return
+  const reader = await createEpubReader({
+    container: parent,
+    bytes: file.bytes,
+    initialState: file.readingState,
+    translate: t,
+    onSelection: (selection) => captureEpubSelection(file, selection),
+    onRelocate: (readingState) => {
+      if (state.artifact !== file) return
+      file.readingState = readingState
+      scheduleEpubReadingState(file)
+    },
+    onExternalLink: (url) => openBrowserUrl(url).catch(showError),
+  })
+  if (generation !== epubReaderGeneration || state.artifact !== file || !parent.isConnected) {
+    reader.destroy()
+    return
+  }
+  epubReader = reader
+  file.bookTitle = reader.title
+  if (file.bookTitle) $('#artifact-title').textContent = file.bookTitle
+}
+
+function scheduleEpubReadingState(file) {
+  clearTimeout(epubReadingStateTimer)
+  epubReadingStateTimer = setTimeout(() => {
+    epubReadingStateTimer = null
+    persistEpubReadingState(file).catch((error) => reportClientError(new Error(`EPUB reading state: ${error?.message || error}`)))
+  }, 450)
+}
+
+async function persistEpubReadingState(file) {
+  if (!file?.readingState || !file.hash) return
+  const reading = file.readingState
+  const response = await gatewayFetch('/studio/epub/state', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      root: file.root,
+      path: file.path,
+      bookHash: file.hash,
+      cfi: reading.cfi || '',
+      chapterLabel: reading.chapterLabel || '',
+      progress: Number(reading.progress) || 0,
+      fontScale: Number(reading.fontScale) || 1,
+      theme: reading.theme || 'light',
+      flow: reading.flow || 'paginated',
+      tocOpen: Boolean(reading.tocOpen),
+    }),
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => null)
+    throw new Error(result?.error?.message || `HTTP ${response.status}`)
+  }
+}
+
+function captureEpubSelection(file, selection) {
+  if (state.artifact !== file || !selection?.quote) return
+  state.pendingSelection = {
+    quote: selection.quote,
+    itemId: null,
+    turnId: null,
+    source: epubCommentSource({
+      root: file.root,
+      filePath: file.path,
+      bookHash: file.hash,
+      cfiRange: selection.cfiRange,
+      href: selection.href,
+      chapterLabel: selection.chapterLabel,
+    }),
+  }
+  positionSelectionPopover(selection.rect, { allowFavorite: false })
+}
+
+async function reopenEpubComment(anchor) {
+  await openArtifact({
+    root: anchor.root || selectedThread()?.cwd,
+    path: anchor.filePath,
+    epubCfi: anchor.cfiRange,
+  })
 }
 
 async function mountArtifactEditor(file, parent, content) {
@@ -4695,7 +4873,8 @@ function captureArtifactSelection() {
 }
 
 function positionSelectionPopover(range, { allowFavorite }) {
-  const rect = range.getBoundingClientRect()
+  const rect = typeof range?.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : range
+  if (!rect) return hideSelectionPopover()
   const popover = $('#selection-popover')
   popover.style.left = `${Math.min(window.innerWidth - 150, Math.max(8, rect.left + rect.width / 2 - 55))}px`
   popover.style.top = `${Math.max(8, rect.top - 39)}px`
@@ -4713,6 +4892,9 @@ function openAnnotationFromSelection() {
   $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
   $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
   $('#annotation-comment').value = ''
+  $('#annotation-comment').placeholder = state.pendingAnnotation.source?.provider === 'epub'
+    ? t('例如：解释这段内容的核心含义、上下文和关键概念。')
+    : t('说明问题和期望调整，也可以直接将选中内容加入草稿。')
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
   $('#annotation-dialog').showModal()
@@ -4913,6 +5095,7 @@ function commentProviderContext(index = 0) {
     unknownLabel: t('已保存批注'),
     contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
     openDocument: reopenDocumentComment,
+    openEpubSource: reopenEpubComment,
     openWebSource: openBrowserUrl,
   }
 }

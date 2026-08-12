@@ -48,7 +48,7 @@ import {
   legacyCommentSource,
   relocateDocumentComment,
 } from './comment-source-providers.mjs'
-import { createBrowserCommentProvider } from './browser-comment-provider.mjs'
+import { browserCommentSource, createBrowserCommentProvider } from './browser-comment-provider.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -209,6 +209,7 @@ const state = {
   browserInfo: null,
   browserStatus: null,
   browserLaunching: false,
+  embeddedBrowserVisible: false,
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -279,6 +280,7 @@ let mermaidInitializedConfig = ''
 let activityLogContext = null
 let artifactResize = null
 let browserEventStream = null
+let embeddedBrowserWidthTimer = null
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
@@ -368,8 +370,8 @@ async function init() {
   applyAppearance()
   startMermaidRendering()
   applyBackendCopy()
-  loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
-  connectBrowserEvents()
+  await loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
+  if (!usesEmbeddedBrowser()) connectBrowserEvents()
   await loadFavorites().catch(showError)
   // Catalog discovery is independent of the active backend connection. A
   // transient failure in one backend must not leave the whole sidebar empty
@@ -387,7 +389,7 @@ function bindUI() {
   $('#studio-menu-button').addEventListener('click', () => {
     const opening = $('#studio-menu').classList.contains('hidden')
     toggleActionMenu('studio-menu', 'studio-menu-button')
-    if (opening) refreshGlobalBrowserStatus().catch(reportClientError)
+    if (opening && !usesEmbeddedBrowser()) refreshGlobalBrowserStatus().catch(reportClientError)
   })
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
@@ -643,11 +645,12 @@ function connectBrowserEvents() {
 function renderBrowserMenuStatus() {
   const element = $('#browser-menu-status')
   if (!element) return
-  const running = Boolean(state.browserStatus?.running)
+  const embedded = usesEmbeddedBrowser()
+  const running = embedded ? state.embeddedBrowserVisible : Boolean(state.browserStatus?.running)
   const error = Boolean(state.browserStatus?.lastError) && !running
   element.className = `browser-menu-status ${state.browserLaunching ? 'starting' : running ? 'online' : error ? 'error' : 'offline'}`
-  element.querySelector('small').textContent = 'default'
-  const label = t(state.browserLaunching ? '正在启动' : running ? '已连接' : error ? '异常' : '未启动')
+  element.querySelector('small').textContent = embedded ? 'embedded' : 'default'
+  const label = t(state.browserLaunching ? '正在启动' : running ? (embedded ? '已显示' : '已连接') : error ? '异常' : (embedded ? '已隐藏' : '未启动'))
   const button = $('#open-browser-workspace')
   button.title = `${t('浏览器')} · ${label} · default`
   button.setAttribute('aria-label', button.title)
@@ -655,6 +658,10 @@ function renderBrowserMenuStatus() {
 
 async function openGlobalBrowser() {
   closeActionMenus()
+  if (usesEmbeddedBrowser()) {
+    window.location.href = 'studio-action://toggle-browser'
+    return
+  }
   // CDP lifecycle events normally keep this current. An explicit click still
   // takes one authoritative snapshot so a just-closed tab/window cannot leave
   // us activating a stale target ID during the event-delivery race.
@@ -681,6 +688,46 @@ async function openGlobalBrowser() {
     toast('Wayland 可能阻止应用抢占焦点；可从任务栏选择 Chromium')
   }
 }
+
+function usesEmbeddedBrowser() {
+  return state.browserInfo?.presentation === 'embedded-webview'
+}
+
+function openEmbeddedBrowserComment(selection) {
+  const excerpt = String(selection?.text || '').trim().slice(0, 16000)
+  if (!excerpt) return toast(t('请先在网页中选择文本'), 'error')
+  if (!state.selectedId) return toast(t('请先选择一个会话'), 'error')
+  state.pendingSelection = {
+    quote: excerpt,
+    itemId: null,
+    turnId: null,
+    source: browserCommentSource({
+      url: selection.url,
+      title: selection.title,
+    }),
+  }
+  openAnnotationFromSelection()
+}
+
+window.__studioEmbeddedBrowser = Object.freeze({
+  setVisible(visible) {
+    state.embeddedBrowserVisible = Boolean(visible)
+    renderBrowserMenuStatus()
+  },
+  setWidth(width) {
+    const value = Math.round(Number(width))
+    if (!Number.isFinite(value) || value < 480 || value > 2400 || state.browser?.embeddedWidth === value) return
+    state.browser.embeddedWidth = value
+    clearTimeout(embeddedBrowserWidthTimer)
+    embeddedBrowserWidthTimer = setTimeout(persistPreferences, 250)
+  },
+  openComment(selection) {
+    openEmbeddedBrowserComment(selection)
+  },
+  notify(message) {
+    toast(t(String(message || '')), 'error')
+  },
+})
 
 async function launchGlobalBrowser(url = null) {
   if (state.browserLaunching) return
@@ -5089,7 +5136,7 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
-  state.browser = saved.browser || {
+  state.browser = {
     enabled: false,
     restoreTabs: true,
     allowHttp: true,
@@ -5097,7 +5144,9 @@ async function loadPreferences() {
     allowLocalhost: true,
     previewJavaScript: true,
     externalOpenFallback: true,
+    embeddedWidth: 720,
     agent: { enabled: false, provider: 'playwright-mcp', profile: 'persistent', approval: 'interactive', allowedOrigins: [] },
+    ...(saved.browser || {}),
   }
   state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
   state.selectedByBackend = {

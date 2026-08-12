@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light;
+        --text: #172033;
+        --muted: #657086;
+        --line: #dfe4ec;
+        --soft: #f3f5f8;
+        --active: #ffffff;
+        --brand: #176b5d;
+        font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #fff; }
+      body { display: grid; grid-template-rows: 34px 48px; border-bottom: 1px solid var(--line); }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      .tabs-row { display: flex; min-width: 0; align-items: end; gap: 4px; padding: 4px 8px 0; background: #f1f3f6; border-bottom: 1px solid var(--line); }
+      .tabs { display: flex; min-width: 0; flex: 1; align-items: end; gap: 3px; overflow: hidden; }
+      .tab { display: flex; min-width: 78px; max-width: 190px; height: 29px; flex: 0 1 190px; align-items: center; gap: 6px; padding: 0 7px 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); cursor: pointer; }
+      .tab:hover { background: rgb(255 255 255 / 68%); color: var(--text); }
+      .tab.active { background: var(--active); border-color: var(--line); color: var(--text); }
+      .tab-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12px; }
+      .tab-close { width: 17px; height: 17px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #8992a3; line-height: 15px; }
+      .tab-close:hover { background: #e4e7ec; color: #283246; }
+      .new-tab { width: 27px; height: 27px; flex: 0 0 auto; margin-bottom: 1px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 18px; }
+      .new-tab:hover { background: #e1e5eb; color: var(--text); }
+      .toolbar { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; align-items: center; gap: 7px; padding: 0 10px; background: #fff; }
+      .nav, .tools { display: flex; align-items: center; gap: 2px; }
+      .icon { width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 17px; }
+      .icon:hover { background: var(--soft); color: var(--text); }
+      .address { width: 100%; height: 34px; border: 1px solid #d4dae4; border-radius: 9px; outline: 0; background: #f7f8fa; color: var(--text); padding: 0 11px; }
+      .address:focus { border-color: #7aa99f; box-shadow: 0 0 0 3px rgb(23 107 93 / 11%); background: white; }
+      .zoom { min-width: 45px; width: auto; padding: 0 5px; font-size: 11px; }
+      .fit.active { background: #e8f3f0; color: var(--brand); }
+      .comment { height: 31px; border: 1px solid #ccd4e0; border-radius: 8px; background: white; color: #3d4960; padding: 0 9px; white-space: nowrap; font-size: 12px; }
+      .comment:hover { border-color: #8eb7ad; color: var(--brand); background: #f4f9f7; }
+      @media (max-width: 620px) {
+        .toolbar { gap: 4px; padding-inline: 6px; }
+        .nav .icon:nth-child(2), .zoom-control { display: none; }
+        .comment { width: 31px; padding: 0; font-size: 0; }
+        .comment::before { content: "✎"; font-size: 15px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tabs-row">
+      <div id="tabs" class="tabs" role="tablist" aria-label="浏览器标签"></div>
+      <button class="new-tab" data-action="new-tab" title="新建标签 (Ctrl+T)" aria-label="新建标签">+</button>
+    </div>
+    <div class="toolbar">
+      <div class="nav">
+        <button class="icon" data-action="back" title="后退" aria-label="后退">‹</button>
+        <button class="icon" data-action="forward" title="前进" aria-label="前进">›</button>
+        <button class="icon" data-action="reload" title="刷新" aria-label="刷新">↻</button>
+      </div>
+      <input id="address" class="address" value="https://example.com" spellcheck="false" aria-label="网址" />
+      <div class="tools">
+        <button class="icon zoom-control" data-action="zoom-out" title="缩小" aria-label="缩小">−</button>
+        <button id="zoom" class="icon zoom" data-action="zoom-reset" title="恢复 100%">100%</button>
+        <button class="icon zoom-control" data-action="zoom-in" title="放大" aria-label="放大">+</button>
+        <button id="fit" class="icon fit" data-action="fit-width" title="适应宽度" aria-label="适应宽度">↔</button>
+        <button id="comment" class="comment" type="button">批注</button>
+      </div>
+    </div>
+    <script>
+      const address = document.querySelector('#address')
+      const tabs = document.querySelector('#tabs')
+      const zoom = document.querySelector('#zoom')
+      const fit = document.querySelector('#fit')
+
+      const action = (name, params = {}) => {
+        const query = new URLSearchParams(params).toString()
+        location.href = `studio-action://${name}${query ? `?${query}` : ''}`
+      }
+      const normalizeAddress = (value) => {
+        const trimmed = value.trim()
+        if (!trimmed) return 'https://example.com'
+        return /^https?:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`
+      }
+      const renderTabs = (items = []) => {
+        tabs.replaceChildren(...items.map((item) => {
+          const tab = document.createElement('div')
+          tab.className = `tab${item.active ? ' active' : ''}`
+          tab.role = 'tab'
+          tab.tabIndex = 0
+          tab.setAttribute('aria-selected', String(Boolean(item.active)))
+          tab.title = `${item.title}\n${item.url}`
+          tab.addEventListener('click', () => action('activate-tab', { id: item.id }))
+          tab.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') action('activate-tab', { id: item.id })
+          })
+
+          const title = document.createElement('span')
+          title.className = 'tab-title'
+          title.textContent = item.title || 'New Tab'
+          const close = document.createElement('button')
+          close.className = 'tab-close'
+          close.type = 'button'
+          close.textContent = '×'
+          close.title = '关闭标签 (Ctrl+W)'
+          close.addEventListener('click', (event) => {
+            event.stopPropagation()
+            action('close-tab', { id: item.id })
+          })
+          tab.append(title, close)
+          return tab
+        }))
+        tabs.querySelector('.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }
+
+      address.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        address.value = normalizeAddress(address.value)
+        action('navigate', { url: address.value })
+      })
+      document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => action(button.dataset.action)))
+      document.querySelector('#comment').addEventListener('click', () => action('comment-selection'))
+      document.addEventListener('keydown', (event) => {
+        if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+        const key = event.key.toLowerCase()
+        if (key === 't' && !event.shiftKey) action('new-tab')
+        else if (key === 'w' && !event.shiftKey) document.querySelector('.tab.active .tab-close')?.click()
+        else if (key === 'tab') action(event.shiftKey ? 'previous-tab' : 'next-tab')
+        else return
+        event.preventDefault()
+      })
+      window.__embeddedBrowserToolbar = {
+        setState(value) {
+          renderTabs(value?.tabs)
+          if (value?.url && document.activeElement !== address) address.value = value.url
+          zoom.textContent = `${value?.zoomPercent || 100}%`
+          fit.classList.toggle('active', Boolean(value?.fitWidth))
+          document.title = value?.title || 'Browser'
+        },
+      }
+    </script>
+  </body>
+</html>

@@ -51,6 +51,7 @@ pub struct BrowserPreferences {
     pub allow_localhost: bool,
     pub preview_javascript: bool,
     pub external_open_fallback: bool,
+    pub embedded_width: u32,
     #[serde(default)]
     pub agent: BrowserAgentPreferences,
 }
@@ -65,6 +66,7 @@ impl Default for BrowserPreferences {
             allow_localhost: true,
             preview_javascript: true,
             external_open_fallback: true,
+            embedded_width: 720,
             agent: BrowserAgentPreferences::default(),
         }
     }
@@ -72,6 +74,9 @@ impl Default for BrowserPreferences {
 
 impl BrowserPreferences {
     pub fn validate(&self) -> Result<(), String> {
+        if !(480..=2400).contains(&self.embedded_width) {
+            return Err("embedded browser width must be between 480 and 2400".to_string());
+        }
         if self.agent.provider != "playwright-mcp" {
             return Err("browser agent provider must be playwright-mcp".to_string());
         }

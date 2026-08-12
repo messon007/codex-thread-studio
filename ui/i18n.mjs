@@ -2,6 +2,8 @@ export const supportedLanguages = ['system', 'zh-CN', 'en-US']
 
 const english = {
   '未启动': 'Not started',
+  '已显示': 'Visible',
+  '已隐藏': 'Hidden',
   '正在启动': 'Starting',
   '显示浏览器': 'Show browser',
   '正在连接 Chromium…': 'Connecting to Chromium…',
@@ -47,6 +49,8 @@ const english = {
   '后端按会话选择，并使用各自运行环境中的凭证。': 'Each session selects its backend and uses credentials from that backend environment.',
   '全局收藏': 'Global favorites',
   '浏览器': 'Browser',
+  '请先在网页中选择文本': 'Select text on the web page first',
+  '请先选择一个会话': 'Select a session first',
   '启动或显示浏览器': 'Start or show browser',
   '导出': 'Export',
   '收藏已导出': 'Favorites exported',

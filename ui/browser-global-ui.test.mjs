@@ -19,13 +19,23 @@ test('Browser status is driven by the protected event stream without polling', (
   assert.doesNotMatch(source, /browserWorkspacePoll/)
 })
 
-test('A global Browser click validates live state before activating a tab', () => {
-  const action = source.match(/async function openGlobalBrowser\(\) \{([\s\S]*?)\n\}/)?.[1] || ''
-  assert.match(action, /browserRequest\('\/studio\/browser\/workspace'\)/)
-  assert.match(action, /activateFirstBrowserPage/)
+test('A global Browser click toggles embedded presentation or validates external live state', () => {
+  assert.match(source, /usesEmbeddedBrowser\(\)/)
+  assert.match(source, /studio-action:\/\/toggle-browser/)
+  assert.match(source, /browserRequest\('\/studio\/browser\/workspace'\)/)
+  assert.match(source, /activateFirstBrowserPage/)
 })
 
 test('Opening Local workspace refreshes the visible Browser status', () => {
-  assert.match(source, /if \(opening\) refreshGlobalBrowserStatus\(\)/)
+  assert.match(source, /if \(opening && !usesEmbeddedBrowser\(\)\) refreshGlobalBrowserStatus\(\)/)
   assert.match(source, /async function refreshGlobalBrowserStatus\(\)/)
+})
+
+test('Embedded Browser selection enters the shared Comment Core flow', () => {
+  assert.match(source, /browserCommentSource\(\{/)
+  assert.match(source, /openEmbeddedBrowserComment\(selection\)/)
+  assert.match(source, /openAnnotationFromSelection\(\)/)
+  assert.match(source, /window\.__studioEmbeddedBrowser = Object\.freeze/)
+  assert.match(source, /setWidth\(width\)/)
+  assert.match(source, /embeddedBrowserWidthTimer = setTimeout\(persistPreferences, 250\)/)
 })

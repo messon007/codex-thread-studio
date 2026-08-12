@@ -1,6 +1,6 @@
 # Browser Workspace 特性规格
 
-状态：Phase 0、Phase 1 已实现；Phase 2A Wayland 内嵌 WRY 原型开发中
+状态：Phase 0、Phase 1、Phase 2A 已完成；Phase 2B Wayland 内嵌 Browser Workspace 开发中
 适用产品：Codex Thread Studio
 最后更新：2026-08-11
 
@@ -328,6 +328,8 @@ Phase 0 实现记录（2026-08-11）：
 范围暂定为统一 BrowserController 下的另一种呈现后端。Windows 使用 WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK；Wayland 必须在 GTK 原生容器/Runtime 层实现，而不是在应用层重新挂载已有 WebView。详细布局、Profile、弹窗、下载、权限、输入法及跨平台验收标准在 Phase 2 开始前另立规格。
 
 Phase 2A 先只验证 Linux Wayland 下的共享 GTK 原生容器方案，不考虑 X11，也不直接替换生产入口。原型边界、运行方式与验收标准见 [phase-2a-wayland-prototype.md](phase-2a-wayland-prototype.md)。
+
+Phase 2B 在同一原生容器中实现共享 Profile 的多 Tab、窄栏原生缩放、全局入口和 Comment Core 接入。实现约束与验收标准见 [phase-2b-embedded-browser.md](phase-2b-embedded-browser.md)。
 
 ### Phase 3：Playwright AI Browser
 

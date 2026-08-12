@@ -23,6 +23,8 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 mod backend_runtime;
 mod browser_runtime;
 mod codex_app_server;
+#[cfg(target_os = "linux")]
+mod embedded_browser;
 mod favorites;
 mod gateway_security;
 mod opencode_server;
@@ -59,6 +61,7 @@ struct GatewayState {
     session_maps_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
     browser: BrowserController,
+    embedded_browser: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -358,6 +361,11 @@ fn main() {
     let gateway_origin = format!("http://{gateway_addr}");
     let security = GatewaySecurity::new(gateway_origin);
     let initialization_script = security.initialization_script();
+    #[cfg(target_os = "linux")]
+    let embedded_browser = embedded_browser::is_supported();
+    #[cfg(not(target_os = "linux"))]
+    let embedded_browser = false;
+    let embedded_browser_preferences = startup_preferences.browser.clone();
     let state = GatewayState {
         codex: CodexAppServer::new(codex_binary, runtime.clone()),
         opencode: OpenCodeServer::new(opencode_binary, runtime),
@@ -369,6 +377,7 @@ fn main() {
         session_maps_lock: Arc::new(Mutex::new(())),
         security,
         browser: BrowserController::new(startup_preferences.browser.clone()),
+        embedded_browser,
     };
 
     tauri::Builder::default()
@@ -386,6 +395,23 @@ fn main() {
             });
 
             let url = format!("http://{gateway_addr}/").parse()?;
+            #[cfg(target_os = "linux")]
+            if embedded_browser {
+                embedded_browser::build(
+                    app,
+                    url,
+                    &initialization_script,
+                    embedded_browser_preferences.clone(),
+                )?;
+            } else {
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                    .initialization_script(&initialization_script)
+                    .title("Codex Thread Studio")
+                    .inner_size(1400.0, 900.0)
+                    .min_inner_size(980.0, 660.0)
+                    .build()?;
+            }
+            #[cfg(not(target_os = "linux"))]
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .initialization_script(&initialization_script)
                 .title("Codex Thread Studio")
@@ -962,9 +988,13 @@ async fn opencode_info(State(state): State<GatewayState>) -> impl IntoResponse {
 async fn browser_info(State(state): State<GatewayState>) -> Json<BrowserInfo> {
     Json(BrowserInfo {
         enabled: state.browser.is_enabled(),
-        available: state.browser.browser_available(),
-        phase: 1,
-        presentation: "external-chromium",
+        available: state.embedded_browser || state.browser.browser_available(),
+        phase: if state.embedded_browser { 2 } else { 1 },
+        presentation: if state.embedded_browser {
+            "embedded-webview"
+        } else {
+            "external-chromium"
+        },
     })
 }
 
@@ -1864,6 +1894,7 @@ mod tests {
             session_maps_lock: Arc::new(Mutex::new(())),
             security,
             browser: BrowserController::new(BrowserPreferences::default()),
+            embedded_browser: false,
         }
     }
 
@@ -1969,6 +2000,7 @@ mod tests {
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 browser: BrowserController::new(BrowserPreferences::default()),
+                embedded_browser: false,
             };
             let router = gateway_router(state);
             for path in [
@@ -2036,6 +2068,7 @@ mod tests {
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 browser: BrowserController::new(BrowserPreferences::default()),
+                embedded_browser: false,
             };
             let response = gateway_router(state)
                 .oneshot(
@@ -2089,6 +2122,7 @@ mod tests {
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 browser: BrowserController::new(BrowserPreferences::default()),
+                embedded_browser: false,
             };
             let router = gateway_router(state);
             let missing = router
@@ -2214,6 +2248,7 @@ mod tests {
                 session_maps_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 browser: BrowserController::new(BrowserPreferences::default()),
+                embedded_browser: false,
             };
             let router = gateway_router(state);
             let favorite = json!({

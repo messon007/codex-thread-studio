@@ -23,6 +23,8 @@ const MAX_MESSAGE_BYTES: u64 = 16 * 1024;
 enum DeveloperRequest {
     Screenshot,
     ShowBrowser,
+    ShowBrowserMenu,
+    ShowBrowserInfo,
     OpenBrowser { url: String },
 }
 
@@ -39,7 +41,13 @@ pub fn requested(arguments: &[OsString]) -> bool {
     arguments.first().is_some_and(|argument| {
         matches!(
             argument.to_str(),
-            Some("--dev-screenshot" | "--dev-show-browser" | "--dev-open-browser")
+            Some(
+                "--dev-screenshot"
+                    | "--dev-show-browser"
+                    | "--dev-show-browser-menu"
+                    | "--dev-show-browser-info"
+                    | "--dev-open-browser"
+            )
         )
     })
 }
@@ -85,6 +93,12 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
     match command {
         "--dev-screenshot" if arguments.len() == 1 => Ok(Some(DeveloperRequest::Screenshot)),
         "--dev-show-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::ShowBrowser)),
+        "--dev-show-browser-menu" if arguments.len() == 1 => {
+            Ok(Some(DeveloperRequest::ShowBrowserMenu))
+        }
+        "--dev-show-browser-info" if arguments.len() == 1 => {
+            Ok(Some(DeveloperRequest::ShowBrowserInfo))
+        }
         "--dev-open-browser" if arguments.len() == 2 => {
             let url = arguments[1]
                 .to_str()
@@ -93,7 +107,10 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
                 url: url.to_owned(),
             }))
         }
-        "--dev-screenshot" | "--dev-show-browser" => {
+        "--dev-screenshot"
+        | "--dev-show-browser"
+        | "--dev-show-browser-menu"
+        | "--dev-show-browser-info" => {
             Err(format!("{command} does not accept additional arguments"))
         }
         "--dev-open-browser" => Err("--dev-open-browser requires exactly one URL".to_owned()),
@@ -173,6 +190,12 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             }),
             DeveloperRequest::ShowBrowser => {
                 crate::embedded_browser::show_for_debug(None).map(|_| None)
+            }
+            DeveloperRequest::ShowBrowserMenu => {
+                crate::embedded_browser::show_menu_for_debug().map(|_| None)
+            }
+            DeveloperRequest::ShowBrowserInfo => {
+                crate::embedded_browser::show_info_for_debug().map(|_| None)
             }
             DeveloperRequest::OpenBrowser { url } => {
                 crate::embedded_browser::show_for_debug(Some(url)).map(|_| None)
@@ -258,6 +281,14 @@ mod tests {
             Some(DeveloperRequest::ShowBrowser)
         ));
         assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-show-browser-menu"])).unwrap(),
+            Some(DeveloperRequest::ShowBrowserMenu)
+        ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-show-browser-info"])).unwrap(),
+            Some(DeveloperRequest::ShowBrowserInfo)
+        ));
+        assert!(matches!(
             parse_cli_request(&arguments(&["--dev-open-browser", "https://example.com"])).unwrap(),
             Some(DeveloperRequest::OpenBrowser { url }) if url == "https://example.com"
         ));
@@ -272,6 +303,8 @@ mod tests {
     fn only_known_developer_commands_claim_the_process() {
         assert!(requested(&arguments(&["--dev-screenshot"])));
         assert!(requested(&arguments(&["--dev-show-browser"])));
+        assert!(requested(&arguments(&["--dev-show-browser-menu"])));
+        assert!(requested(&arguments(&["--dev-show-browser-info"])));
         assert!(requested(&arguments(&["--dev-open-browser"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));

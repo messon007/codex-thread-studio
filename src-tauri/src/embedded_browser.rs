@@ -42,6 +42,9 @@ enum BrowserAction {
     ZoomReset,
     FitWidth,
     CommentSelection,
+    CopyUrl,
+    ShowMenu,
+    ShowInfo,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -86,6 +89,11 @@ struct EmbeddedBrowserWorkspace {
     _studio_context: WebContext,
     _toolbar_context: WebContext,
     browser_context: WebContext,
+    browser_profile_directory: PathBuf,
+    browser_cache_directory: PathBuf,
+    webkit_version: String,
+    overflow_menu: Option<gtk::Menu>,
+    info_dialog: Option<gtk::Dialog>,
 }
 
 pub fn is_supported() -> bool {
@@ -119,6 +127,20 @@ pub fn capture_screenshot(path: &std::path::Path) -> Result<(), String> {
         let pixbuf = surface
             .pixbuf(0, 0, allocation.width(), allocation.height())
             .ok_or("Studio window surface could not be captured")?;
+        if let Some(dialog) = workspace
+            .info_dialog
+            .as_ref()
+            .filter(|dialog| dialog.is_visible())
+        {
+            composite_widget_surface(dialog, &surface, &pixbuf);
+        }
+        if let Some(menu) = workspace
+            .overflow_menu
+            .as_ref()
+            .filter(|menu| menu.is_visible())
+        {
+            composite_widget_surface(menu, &surface, &pixbuf);
+        }
         pixbuf
             .savev(path, "png", &[])
             .map_err(|error| error.to_string())?;
@@ -126,6 +148,47 @@ pub fn capture_screenshot(path: &std::path::Path) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         Ok(())
     })
+}
+
+#[cfg(debug_assertions)]
+fn composite_widget_surface<W: IsA<gtk::Widget>>(
+    widget: &W,
+    main_surface: &gtk::gdk::Window,
+    target: &gtk::gdk_pixbuf::Pixbuf,
+) {
+    use gtk::gdk::prelude::WindowExtManual;
+    let Some(widget_surface) = widget.window() else {
+        return;
+    };
+    let allocation = widget.allocation();
+    let Some(source) = widget_surface.pixbuf(0, 0, allocation.width(), allocation.height()) else {
+        return;
+    };
+    let (main_valid, main_x, main_y) = main_surface.origin();
+    let (widget_valid, widget_x, widget_y) = widget_surface.origin();
+    if main_valid == 0 || widget_valid == 0 {
+        return;
+    }
+    let destination_x = widget_x - main_x;
+    let destination_y = widget_y - main_y;
+    let destination_width = source.width().min(target.width() - destination_x.max(0));
+    let destination_height = source.height().min(target.height() - destination_y.max(0));
+    if destination_x < 0 || destination_y < 0 || destination_width <= 0 || destination_height <= 0 {
+        return;
+    }
+    source.composite(
+        target,
+        destination_x,
+        destination_y,
+        destination_width,
+        destination_height,
+        destination_x as f64,
+        destination_y as f64,
+        1.0,
+        1.0,
+        gtk::gdk_pixbuf::InterpType::Bilinear,
+        255,
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -155,6 +218,32 @@ pub fn show_for_debug(url: Option<String>) -> Result<(), String> {
         dispatch_action(BrowserAction::Navigate(url));
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub fn show_info_for_debug() -> Result<(), String> {
+    show_for_debug(None)?;
+    WORKSPACE.with(|slot| {
+        let mut slot = slot
+            .try_borrow_mut()
+            .map_err(|_| "Studio browser is busy".to_owned())?;
+        let workspace = slot.as_mut().ok_or("Studio browser is not initialized")?;
+        show_browser_info(workspace);
+        Ok(())
+    })
+}
+
+#[cfg(debug_assertions)]
+pub fn show_menu_for_debug() -> Result<(), String> {
+    show_for_debug(None)?;
+    WORKSPACE.with(|slot| {
+        let mut slot = slot
+            .try_borrow_mut()
+            .map_err(|_| "Studio browser is busy".to_owned())?;
+        let workspace = slot.as_mut().ok_or("Studio browser is not initialized")?;
+        show_browser_menu(workspace);
+        Ok(())
+    })
 }
 
 pub fn build(
@@ -224,7 +313,9 @@ pub fn build(
     fs::create_dir_all(&browser_profile)?;
     let mut studio_context = WebContext::new(Some(studio_profile));
     let mut toolbar_context = WebContext::new(Some(toolbar_profile));
-    let mut browser_context = WebContext::new(Some(browser_profile));
+    let mut browser_context = WebContext::new(Some(browser_profile.clone()));
+    let browser_cache = browser_cache_directory();
+    let webkit_version = wry::webview_version().unwrap_or_else(|_| "Unknown".to_owned());
 
     let studio_webview = WebViewBuilder::with_web_context(&mut studio_context)
         .with_url(studio_url.as_str())
@@ -275,6 +366,11 @@ pub fn build(
             _studio_context: studio_context,
             _toolbar_context: toolbar_context,
             browser_context,
+            browser_profile_directory: browser_profile,
+            browser_cache_directory: browser_cache,
+            webkit_version,
+            overflow_menu: None,
+            info_dialog: None,
         });
     });
     split_signal.connect_position_notify(|split| {
@@ -405,6 +501,11 @@ fn dispatch_action(action: BrowserAction) {
         let Some(workspace) = slot.as_mut() else {
             return;
         };
+        if !matches!(&action, BrowserAction::ShowMenu) {
+            if let Some(menu) = workspace.overflow_menu.take() {
+                menu.popdown();
+            }
+        }
         match action {
             BrowserAction::Toggle => unreachable!("toggle is handled without a nested borrow"),
             BrowserAction::Navigate(raw) => {
@@ -504,6 +605,13 @@ fn dispatch_action(action: BrowserAction) {
                     }
                 }
             }
+            BrowserAction::CopyUrl => {
+                if let Some(tab) = active_tab(workspace) {
+                    copy_to_clipboard(&tab.url);
+                }
+            }
+            BrowserAction::ShowMenu => show_browser_menu(workspace),
+            BrowserAction::ShowInfo => show_browser_info(workspace),
         }
     });
     sync_toolbar();
@@ -562,6 +670,400 @@ fn adjust_zoom(workspace: &mut EmbeddedBrowserWorkspace, delta: f64) {
     }
 }
 
+fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
+    if let Some(menu) = workspace.overflow_menu.take() {
+        let was_visible = menu.is_visible();
+        menu.popdown();
+        if was_visible {
+            return;
+        }
+    }
+    install_browser_menu_styles();
+    let menu = gtk::Menu::new();
+    menu.set_size_request(292, -1);
+    menu.style_context().add_class("browser-overflow-menu");
+    menu.append(&browser_native_menu_item(
+        "新建标签页",
+        Some("Ctrl+T"),
+        || queue_action(BrowserAction::NewTab(None)),
+    ));
+    menu.append(&browser_native_menu_item(
+        "重新加载",
+        Some("Ctrl+R"),
+        || queue_action(BrowserAction::Reload),
+    ));
+    menu.append(&browser_native_menu_item(
+        "复制当前链接",
+        None,
+        || queue_action(BrowserAction::CopyUrl),
+    ));
+    menu.append(&gtk::SeparatorMenuItem::new());
+    menu.append(&browser_native_zoom_item(workspace));
+    menu.append(&browser_native_menu_item(
+        "适应页面宽度",
+        None,
+        || queue_action(BrowserAction::FitWidth),
+    ));
+    menu.append(&browser_native_menu_item(
+        "批注选中内容",
+        None,
+        || queue_action(BrowserAction::CommentSelection),
+    ));
+    menu.append(&gtk::SeparatorMenuItem::new());
+    menu.append(&browser_native_menu_item(
+        "浏览器信息",
+        Some("›"),
+        || queue_action(BrowserAction::ShowInfo),
+    ));
+    menu.show_all();
+    menu.popup_at_widget(
+        &workspace.toolbar_webview.webview(),
+        gtk::gdk::Gravity::SouthEast,
+        gtk::gdk::Gravity::NorthEast,
+        None::<&gtk::gdk::Event>,
+    );
+    workspace.overflow_menu = Some(menu);
+}
+
+fn browser_native_menu_item(
+    label: &str,
+    trailing: Option<&str>,
+    action: impl Fn() + 'static,
+) -> gtk::MenuItem {
+    let item = gtk::MenuItem::new();
+    item.style_context().add_class("browser-native-menu-item");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.set_margin_start(9);
+    row.set_margin_end(9);
+    let label = gtk::Label::new(Some(label));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    row.pack_start(&label, true, true, 0);
+    if let Some(trailing) = trailing {
+        let trailing = gtk::Label::new(Some(trailing));
+        trailing.style_context().add_class("browser-menu-shortcut");
+        row.pack_end(&trailing, false, false, 0);
+    }
+    item.add(&row);
+    item.connect_activate(move |_| action());
+    item
+}
+
+fn browser_native_zoom_item(workspace: &EmbeddedBrowserWorkspace) -> gtk::MenuItem {
+    let item = gtk::MenuItem::new();
+    item.style_context().add_class("browser-native-zoom-item");
+    item.add(&browser_zoom_row(workspace));
+    item
+}
+
+fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
+    if let Some(dialog) = workspace.info_dialog.take() {
+        if dialog.is_visible() {
+            dialog.present();
+            workspace.info_dialog = Some(dialog);
+            return;
+        }
+        dialog.close();
+    }
+
+    let parent = match workspace._window.gtk_window() {
+        Ok(parent) => parent,
+        Err(error) => {
+            notify(
+                &workspace.studio_webview,
+                &format!("Unable to open browser information: {error}"),
+            );
+            return;
+        }
+    };
+    let dialog = gtk::Dialog::new();
+    dialog.set_title("浏览器信息");
+    dialog.set_transient_for(Some(&parent));
+    dialog.set_destroy_with_parent(true);
+    dialog.set_modal(false);
+    dialog.set_resizable(false);
+    dialog.set_default_size(520, -1);
+    dialog.set_position(gtk::WindowPosition::CenterOnParent);
+    install_browser_menu_styles();
+    dialog.style_context().add_class("browser-info-dialog");
+
+    let info = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    info.set_margin_start(18);
+    info.set_margin_end(18);
+    info.set_margin_top(14);
+    info.set_margin_bottom(14);
+
+    let summary = gtk::Label::new(Some(&format!(
+        "WebKitGTK {}  ·  {} 个标签页",
+        workspace.webkit_version,
+        workspace.tabs.len()
+    )));
+    summary.set_xalign(0.0);
+    summary.style_context().add_class("dim-label");
+    info.pack_start(&summary, false, false, 0);
+    info.pack_start(
+        &gtk::Separator::new(gtk::Orientation::Horizontal),
+        false,
+        false,
+        1,
+    );
+
+    let profile = workspace.browser_profile_directory.display().to_string();
+    let cookies = workspace
+        .browser_profile_directory
+        .join("cookies")
+        .display()
+        .to_string();
+    let local_storage = workspace
+        .browser_profile_directory
+        .join("localstorage")
+        .display()
+        .to_string();
+    let cache = workspace.browser_cache_directory.display().to_string();
+    for (label, value) in [
+        ("Profile", profile.as_str()),
+        ("Cookies", cookies.as_str()),
+        ("Local Storage", local_storage.as_str()),
+        ("WebKit Cache", cache.as_str()),
+    ] {
+        info.pack_start(&browser_info_value_row(label, value), false, false, 0);
+    }
+
+    info.pack_start(
+        &gtk::Separator::new(gtk::Orientation::Horizontal),
+        false,
+        false,
+        1,
+    );
+    let storage_title = gtk::Label::new(Some("存储与清理"));
+    storage_title.set_xalign(0.0);
+    storage_title
+        .style_context()
+        .add_class("browser-menu-subheading");
+    info.pack_start(&storage_title, false, false, 0);
+    let storage = gtk::Label::new(Some(
+        "缓存、Cookies、Local Storage 等站点数据会保存在磁盘。标签页的前进/后退记录只存在于内存，退出 Studio 后自动消失。",
+    ));
+    storage.set_xalign(0.0);
+    storage.set_line_wrap(true);
+    storage.set_max_width_chars(62);
+    storage.style_context().add_class("dim-label");
+    info.pack_start(&storage, false, false, 0);
+
+    let clear_status = gtk::Label::new(None);
+    clear_status.set_xalign(0.0);
+    clear_status.set_line_wrap(true);
+    clear_status.style_context().add_class("dim-label");
+    let clear_data = gtk::Button::with_label("清除浏览数据…");
+    clear_data.set_halign(gtk::Align::Start);
+    clear_data.style_context().add_class("browser-clear-data");
+    let dialog_for_confirmation = dialog.clone();
+    let clear_status_for_confirmation = clear_status.clone();
+    clear_data.connect_clicked(move |_| {
+        confirm_clear_browser_data(
+            &dialog_for_confirmation,
+            clear_status_for_confirmation.clone(),
+        );
+    });
+    info.pack_start(&clear_data, false, false, 0);
+    info.pack_start(&clear_status, false, false, 0);
+
+    dialog.content_area().add(&info);
+    dialog.show_all();
+    dialog.present();
+    workspace.info_dialog = Some(dialog);
+}
+
+fn confirm_clear_browser_data(parent: &gtk::Dialog, status: gtk::Label) {
+    let confirmation = gtk::MessageDialog::new(
+        Some(parent),
+        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+        gtk::MessageType::Warning,
+        gtk::ButtonsType::None,
+        "清除所有内嵌浏览器数据？",
+    );
+    confirmation.set_secondary_text(Some(
+        "将清除缓存、Cookies、Local Storage、IndexedDB 和服务工作线程等共享站点数据。网站登录状态可能失效，此操作无法撤销。",
+    ));
+    confirmation.add_button("取消", gtk::ResponseType::Cancel);
+    let clear = confirmation.add_button("清除", gtk::ResponseType::Accept);
+    clear.style_context().add_class("browser-clear-data");
+    confirmation.connect_response(move |confirmation, response| {
+        if response == gtk::ResponseType::Accept {
+            let result = WORKSPACE.with(|slot| {
+                let slot = slot
+                    .try_borrow()
+                    .map_err(|_| "浏览器正忙，请稍后重试".to_owned())?;
+                let workspace = slot.as_ref().ok_or("浏览器工作区尚未初始化")?;
+                let tab = active_tab(workspace).ok_or("没有可用的浏览器标签页")?;
+                tab.webview
+                    .clear_all_browsing_data()
+                    .map_err(|error| error.to_string())
+            });
+            status.set_text(match result {
+                Ok(()) => "清理请求已提交。当前页面可能需要重新加载，网站登录状态可能失效。",
+                Err(ref error) => error,
+            });
+        }
+        confirmation.close();
+    });
+    confirmation.show_all();
+}
+
+fn browser_zoom_row(workspace: &EmbeddedBrowserWorkspace) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    row.style_context().add_class("browser-zoom-row");
+    let label = gtk::Label::new(Some("缩放"));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    let zoom = active_tab(workspace)
+        .map(|tab| format!("{}%", (tab.zoom * 100.0).round() as u32))
+        .unwrap_or_else(|| "100%".to_owned());
+    let minus =
+        browser_menu_square_button("−", "缩小", || queue_action(BrowserAction::ZoomOut));
+    let reset = browser_menu_square_button(&zoom, "恢复 100%", || {
+        queue_action(BrowserAction::ZoomReset)
+    });
+    reset.style_context().add_class("browser-zoom-value");
+    let plus = browser_menu_square_button("+", "放大", || queue_action(BrowserAction::ZoomIn));
+    row.pack_start(&label, true, true, 0);
+    row.pack_end(&plus, false, false, 0);
+    row.pack_end(&reset, false, false, 0);
+    row.pack_end(&minus, false, false, 0);
+    row
+}
+
+fn browser_menu_square_button(
+    label: &str,
+    tooltip: &str,
+    action: impl Fn() + 'static,
+) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.set_tooltip_text(Some(tooltip));
+    button.set_relief(gtk::ReliefStyle::None);
+    button.style_context().add_class("browser-menu-square");
+    button.connect_clicked(move |_| action());
+    button
+}
+
+fn install_browser_menu_styles() {
+    let Some(screen) = gtk::gdk::Screen::default() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    if provider
+        .load_from_data(
+            br#"
+            dialog.browser-info-dialog {
+              background: #ffffff;
+              color: #172033;
+              font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+              font-size: 11px;
+            }
+            menu.browser-overflow-menu {
+              padding: 6px;
+              border: 1px solid #d7dde6;
+              border-radius: 10px;
+              background: #ffffff;
+              color: #172033;
+              font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+              font-size: 11px;
+            }
+            menu.browser-overflow-menu menuitem {
+              min-height: 34px;
+              padding: 0;
+              border: 0;
+              border-radius: 7px;
+              background: transparent;
+              color: #172033;
+            }
+            menu.browser-overflow-menu menuitem:hover { background: #f3f5f8; color: #176b5d; }
+            menu.browser-overflow-menu separator { margin: 4px 0; background: #dfe4ec; }
+            .browser-menu-shortcut { color: #7a8496; }
+            .browser-zoom-row { min-height: 36px; padding: 3px 9px; color: #172033; }
+            .browser-menu-square, .browser-info-copy {
+              min-height: 28px;
+              padding: 3px 8px;
+              border: 1px solid #d7dde6;
+              border-radius: 7px;
+              background: #ffffff;
+              color: #58647a;
+            }
+            .browser-menu-square:hover, .browser-info-copy:hover {
+              background: #f3f5f8;
+              color: #176b5d;
+            }
+            .browser-zoom-value { min-width: 50px; font-size: 10px; }
+            .browser-menu-subheading { color: #172033; font-weight: 700; }
+            .browser-info-copy { font-size: 10px; }
+            .browser-clear-data {
+              min-height: 30px;
+              padding: 4px 10px;
+              border: 1px solid #e2a9ae;
+              border-radius: 7px;
+              background: #fff7f7;
+              color: #b4232f;
+              font-weight: 600;
+            }
+            .browser-clear-data:hover { background: #fdebec; color: #9e1c27; }
+            "#,
+        )
+        .is_ok()
+    {
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+fn browser_info_value_row(label: &str, value: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let heading = gtk::Label::new(Some(label));
+    heading.set_xalign(0.0);
+    heading.style_context().add_class("dim-label");
+    row.pack_start(&heading, false, false, 0);
+
+    let value_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let path = gtk::Label::new(Some(value));
+    path.set_xalign(0.0);
+    path.set_selectable(true);
+    path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    path.set_tooltip_text(Some(value));
+    path.set_hexpand(true);
+    let copy = gtk::Button::with_label("复制");
+    copy.style_context().add_class("browser-info-copy");
+    connect_copy_button(&copy, value.to_owned());
+    value_row.pack_start(&path, true, true, 0);
+    value_row.pack_end(&copy, false, false, 0);
+    row.pack_start(&value_row, false, false, 0);
+    row
+}
+
+fn connect_copy_button(button: &gtk::Button, value: String) {
+    button.connect_clicked(move |button| {
+        if copy_to_clipboard(&value) {
+            button.set_label("已复制");
+            let button = button.clone();
+            gtk::glib::timeout_add_local_once(Duration::from_millis(900), move || {
+                button.set_label("复制");
+            });
+        }
+    });
+}
+
+fn copy_to_clipboard(value: &str) -> bool {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return false;
+    };
+    let Some(clipboard) = gtk::Clipboard::default(&display) else {
+        return false;
+    };
+    clipboard.set_text(value);
+    true
+}
+
 fn toggle_workspace() {
     let handles = WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
@@ -569,6 +1071,14 @@ fn toggle_workspace() {
         };
         let workspace = slot.as_mut()?;
         workspace.visible = !workspace.visible;
+        if !workspace.visible {
+            if let Some(menu) = workspace.overflow_menu.take() {
+                menu.popdown();
+            }
+            if let Some(dialog) = workspace.info_dialog.take() {
+                dialog.close();
+            }
+        }
         Some((
             workspace.visible,
             workspace.browser_width,
@@ -894,6 +1404,7 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
         "zoom-reset" => Some(BrowserAction::ZoomReset),
         "fit-width" => Some(BrowserAction::FitWidth),
         "comment-selection" => Some(BrowserAction::CommentSelection),
+        "browser-menu" => Some(BrowserAction::ShowMenu),
         _ => None,
     }
 }
@@ -955,6 +1466,16 @@ fn profile_directory(name: &str) -> PathBuf {
     env::temp_dir().join("codex-thread-studio").join(name)
 }
 
+fn browser_cache_directory() -> PathBuf {
+    if let Some(path) = env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(path).join("codex-thread-studio/WebKitCache");
+    }
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        return PathBuf::from(home).join(".cache/codex-thread-studio/WebKitCache");
+    }
+    env::temp_dir().join("codex-thread-studio/WebKitCache")
+}
+
 const READ_SELECTION_SCRIPT: &str = r#"
 (() => ({
   text: (window.getSelection()?.toString() || '').trim().slice(0, 16384),
@@ -991,6 +1512,10 @@ mod tests {
         assert!(matches!(
             parse_action("studio-action://new-tab"),
             Some(BrowserAction::NewTab(None))
+        ));
+        assert!(matches!(
+            parse_action("studio-action://browser-menu"),
+            Some(BrowserAction::ShowMenu)
         ));
         assert!(parse_action("https://example.com").is_none());
         assert!(parse_action("studio-action://run-shell").is_none());

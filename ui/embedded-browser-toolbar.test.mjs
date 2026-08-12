@@ -17,3 +17,14 @@ test('embedded browser tab strip follows normal browser control order', () => {
   assert.match(source, /\.tabs \{[^}]*flex: 0 1 auto;/u)
   assert.match(source, /\.workspace-close \{[^}]*margin: 0 0 1px auto;/u)
 })
+
+test('browser menu is the rightmost address-toolbar action', () => {
+  const tools = source.match(/<div class="tools">([\s\S]*?)<\/div>/u)?.[1] || ''
+  const comment = tools.indexOf('id="comment"')
+  const browserMenu = tools.indexOf('data-action="browser-menu"')
+
+  assert.ok(comment >= 0)
+  assert.ok(browserMenu > comment)
+  assert.equal(browserMenu, tools.lastIndexOf('data-action='))
+  assert.match(tools, /aria-label="更多浏览器操作"/u)
+})

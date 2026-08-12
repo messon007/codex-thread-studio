@@ -341,7 +341,13 @@ fn main() {
     if arguments.first().is_some_and(|argument| {
         matches!(
             argument.to_str(),
-            Some("--dev-screenshot" | "--dev-show-browser" | "--dev-open-browser")
+            Some(
+                "--dev-screenshot"
+                    | "--dev-show-browser"
+                    | "--dev-show-browser-menu"
+                    | "--dev-show-browser-info"
+                    | "--dev-open-browser"
+            )
         )
     }) {
         eprintln!("Developer controls are available only in Linux debug builds");

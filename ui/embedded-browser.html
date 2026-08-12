@@ -35,6 +35,8 @@
       .nav, .tools { display: flex; align-items: center; gap: 2px; }
       .icon { width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 17px; }
       .icon:hover { background: var(--soft); color: var(--text); }
+      .browser-menu { min-width: 35px; width: 35px; border: 1px solid #ccd4e0; background: #fff; font-size: 12px; font-weight: 750; letter-spacing: -1px; }
+      .browser-menu:hover { border-color: #aeb8c6; }
       .address { width: 100%; height: 34px; border: 1px solid #d4dae4; border-radius: 9px; outline: 0; background: #f7f8fa; color: var(--text); padding: 0 11px; }
       .address:focus { border-color: #7aa99f; box-shadow: 0 0 0 3px rgb(23 107 93 / 11%); background: white; }
       .zoom { min-width: 45px; width: auto; padding: 0 5px; font-size: 11px; }
@@ -68,6 +70,7 @@
         <button class="icon zoom-control" data-action="zoom-in" title="放大" aria-label="放大">+</button>
         <button id="fit" class="icon fit" data-action="fit-width" title="适应宽度" aria-label="适应宽度">↔</button>
         <button id="comment" class="comment" type="button">批注</button>
+        <button class="icon browser-menu" data-action="browser-menu" title="更多浏览器操作" aria-label="更多浏览器操作">•••</button>
       </div>
     </div>
     <script>

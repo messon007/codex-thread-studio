@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light; font-family: Inter, "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #fff; }
+    body { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #dfe4ec; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .nav { display: flex; gap: 3px; }
+    .icon { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: #536078; font-size: 18px; }
+    .icon:hover { background: #f3f5f8; }
+    .address { width: 100%; height: 34px; border: 1px solid #d4dae4; border-radius: 9px; background: #f7f8fa; color: #172033; padding: 0 11px; outline: none; }
+    .address:focus { border-color: #8baded; box-shadow: 0 0 0 3px rgba(47,105,217,.11); background: white; }
+    .comment { border: 1px solid #ccd4e0; border-radius: 8px; background: white; color: #3d4960; padding: 7px 10px; white-space: nowrap; }
+    .comment:disabled { cursor: default; opacity: .48; }
+    .comment.ready { border-color: #8aaceb; color: #2f69d9; background: #f3f7ff; opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <button class="icon" data-command="back" title="后退">‹</button>
+    <button class="icon" data-command="forward" title="前进">›</button>
+    <button class="icon" data-command="reload" title="刷新">↻</button>
+  </div>
+  <input class="address" id="address" value="https://example.com" spellcheck="false" aria-label="网址">
+  <button class="comment" id="commentSelection">批注选区</button>
+  <script>
+    const action = (name, params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      location.href = `studio-action://${name}${query ? `?${query}` : ''}`;
+    };
+    const address = document.querySelector('#address');
+    const commentSelection = document.querySelector('#commentSelection');
+
+    const normalizeAddress = (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return 'https://example.com';
+      if (/^https?:\/\//i.test(trimmed)) return trimmed;
+      return `https://${trimmed}`;
+    };
+
+    address.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      address.value = normalizeAddress(address.value);
+      action('navigate', { url: address.value });
+    });
+    document.querySelectorAll('[data-command]').forEach((button) => {
+      button.addEventListener('click', () => action(button.dataset.command));
+    });
+    commentSelection.addEventListener('click', () => action('open-selection-comment'));
+
+    window.prototype = {
+      setNavigation({ url }) { if (url) address.value = url; },
+    };
+  </script>
+</body>
+</html>

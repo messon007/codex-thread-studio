@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Thread Studio · Wayland Browser Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #657086;
+      --line: #dfe4ec;
+      --panel: rgba(255, 255, 255, .96);
+      --soft: #f3f5f8;
+      --accent: #2f69d9;
+      font-family: Inter, "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #eef1f5; color: var(--ink); }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+
+    .app { display: grid; grid-template-columns: 224px minmax(360px, 1fr); height: 100%; }
+    .sidebar { border-right: 1px solid var(--line); background: #f8f9fb; padding: 18px 14px; }
+    .brand { font-size: 15px; font-weight: 750; letter-spacing: -.01em; margin: 3px 8px 20px; }
+    .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: .12em; margin-top: 4px; text-transform: uppercase; }
+    .new { width: 100%; border: 1px solid #cfd6e2; border-radius: 10px; background: white; color: var(--ink); padding: 9px 12px; text-align: left; }
+    .session { margin-top: 18px; border: 1px solid #d9dfe8; border-radius: 12px; background: white; padding: 12px; }
+    .session strong { display: block; font-size: 13px; }
+    .session span { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; }
+
+    .chat { min-width: 0; display: grid; grid-template-rows: 58px 1fr auto; background: white; }
+    .chat-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 20px; }
+    .chat-header strong { font-size: 14px; }
+    .pill { border: 0; border-radius: 8px; background: var(--soft); color: #445069; padding: 7px 10px; }
+    .messages { overflow: auto; padding: 28px clamp(22px, 4vw, 58px); }
+    .message { max-width: 690px; margin: 0 auto 22px; font-size: 14px; line-height: 1.65; }
+    .message.user { border-radius: 14px; background: #f0f3f8; padding: 12px 15px; }
+    .message .role { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .05em; margin-bottom: 7px; text-transform: uppercase; }
+    .composer { border-top: 1px solid var(--line); padding: 14px 20px 18px; }
+    .composer-box { max-width: 760px; margin: auto; border: 1px solid #cdd5e2; border-radius: 14px; padding: 12px 14px; color: var(--muted); box-shadow: 0 2px 12px rgba(22,32,51,.06); }
+
+    .icon { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: #536078; font-size: 18px; }
+    .icon:hover { background: var(--soft); }
+    .drawer { position: fixed; right: 18px; top: 72px; width: min(360px, calc(100vw - 260px)); max-height: calc(100vh - 92px); border: 1px solid #d7dde6; border-radius: 14px; background: rgba(255,255,255,.98); box-shadow: 0 18px 45px rgba(28,39,59,.18); padding: 16px; z-index: 10; display: none; }
+    .drawer.open { display: block; }
+    .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; }
+    .drawer-head strong { font-size: 13px; }
+    .source { border-left: 3px solid #99b5e8; background: #f5f7fb; border-radius: 6px; padding: 10px 11px; color: #46526a; font-size: 12px; line-height: 1.5; max-height: 150px; overflow: auto; white-space: pre-wrap; }
+    .meta { color: var(--muted); font-size: 10px; margin: 8px 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    textarea { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #ccd4e0; border-radius: 9px; padding: 9px 10px; outline: none; }
+    textarea:focus { border-color: #8baded; }
+    .drawer-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+    .secondary, .primary { border-radius: 8px; padding: 7px 11px; }
+    .secondary { border: 1px solid #cfd6e1; background: white; color: #48546b; }
+    .primary { border: 1px solid var(--accent); background: var(--accent); color: white; }
+    .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); border-radius: 9px; background: #20293a; color: white; padding: 9px 13px; font-size: 12px; opacity: 0; transition: opacity .18s; z-index: 20; pointer-events: none; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand">Codex Thread Studio<div class="eyebrow">Wayland prototype</div></div>
+      <button class="new">＋ New Session</button>
+      <div class="session"><strong>Browser Workspace</strong><span>experiment/embedded-wry-runtime</span></div>
+    </aside>
+
+    <section class="chat">
+      <header class="chat-header">
+        <strong>Wayland Browser Prototype</strong>
+        <div><button class="pill" id="browserToggle">浏览器</button> <button class="pill" id="toggleDrawer">批注</button></div>
+      </header>
+      <div class="messages">
+        <article class="message user"><div class="role">You</div>在同一个 Studio 窗口里查看网页，并把网页选区加入批注。</article>
+        <article class="message"><div class="role">Codex</div>浏览器内容由独立的原生 WebView 渲染；工具栏、会话和批注仍由 Studio WebView 管理。拖动中间分隔线可以验证 Wayland 下两个原生视图能否稳定重排。</article>
+      </div>
+      <footer class="composer"><div class="composer-box">Ask Codex…</div></footer>
+    </section>
+
+  </main>
+
+  <section class="drawer" id="drawer" aria-label="批注草稿">
+    <div class="drawer-head"><strong>网页批注</strong><button class="icon" id="closeDrawer">×</button></div>
+    <div class="source" id="selectedText">请先在网页中选择文本。</div>
+    <div class="meta" id="selectedMeta">尚无网页选区</div>
+    <textarea id="commentText" placeholder="写下针对这段内容的意见…"></textarea>
+    <div class="drawer-actions"><button class="secondary" id="clearDraft">清除</button><button class="primary" id="saveDraft">加入草稿</button></div>
+  </section>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const action = (name) => { location.href = `studio-action://${name}`; };
+    const drawer = document.querySelector('#drawer');
+    let currentSelection = null;
+
+    document.querySelector('#toggleDrawer').addEventListener('click', () => drawer.classList.toggle('open'));
+    document.querySelector('#browserToggle').addEventListener('click', () => action('toggle-browser'));
+    document.querySelector('#closeDrawer').addEventListener('click', () => drawer.classList.remove('open'));
+    document.querySelector('#clearDraft').addEventListener('click', () => {
+      document.querySelector('#commentText').value = '';
+      drawer.classList.remove('open');
+    });
+    document.querySelector('#saveDraft').addEventListener('click', () => {
+      if (!currentSelection || !document.querySelector('#commentText').value.trim()) {
+        showToast('选区和批注意见不能为空');
+        return;
+      }
+      showToast('已加入批注草稿');
+      drawer.classList.remove('open');
+    });
+
+    function showToast(message) {
+      const toast = document.querySelector('#toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    window.prototype = {
+      setBrowserVisible(visible) {
+        document.querySelector('#browserToggle').textContent = visible ? '隐藏浏览器' : '浏览器';
+      },
+      openSelectionComment(selection) {
+        currentSelection = selection;
+        document.querySelector('#selectedText').textContent = selection.text;
+        document.querySelector('#selectedMeta').textContent = `${selection.title || 'Untitled'} · ${selection.url}`;
+        drawer.classList.add('open');
+        document.querySelector('#commentText').focus();
+      },
+      notify(message) { showToast(message); }
+    };
+  </script>
+</body>
+</html>

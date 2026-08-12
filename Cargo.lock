@@ -402,10 +402,12 @@ version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
+ "gtk",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "tao",
  "tauri",
  "tauri-build",
  "tokio",
@@ -413,6 +415,7 @@ dependencies = [
  "tower",
  "url",
  "uuid",
+ "wry",
 ]
 
 [[package]]

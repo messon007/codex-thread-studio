@@ -3,6 +3,11 @@ name = "codex-thread-studio"
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
+default-run = "codex-thread-studio"
+
+[[bin]]
+name = "wayland-webview-prototype"
+path = "src/bin/wayland-webview_prototype.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
@@ -10,15 +15,18 @@ tauri-build = { version = "2.0.0", features = [] }
 [dependencies]
 axum = { version = "0.8.4", features = ["ws"] }
 futures-util = "0.3.31"
+gtk = "0.18.2"
 reqwest = { version = "0.12.22", default-features = false, features = ["json", "stream"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "=1.0.115"
+tao = "0.30.8"
 tauri = { version = "2.0.0", features = [] }
 tokio = { version = "1.46.1", features = ["io-util", "net", "process", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = "0.29.0"
 uuid = { version = "1.23.5", features = ["v4"] }
 url = "2.5.8"
+wry = "0.46.3"
 
 [dev-dependencies]
 tower = { version = "0.5.2", features = ["util"] }

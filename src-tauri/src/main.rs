@@ -329,6 +329,7 @@ fn main() {
                     | "--dev-show-browser-menu"
                     | "--dev-show-browser-info"
                     | "--dev-show-browser-downloads"
+                    | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
             )
         )

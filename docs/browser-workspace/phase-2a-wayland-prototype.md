@@ -2,11 +2,15 @@
 
 状态：实验实现，可独立运行；不替换 Codex Thread Studio 主程序。
 
+> 本文记录已经完成的历史原型。原型中的单页、外部 BrowserController 等限制已由
+> [Phase 2B 正式实现](phase-2b-embedded-browser.md)取代，不代表当前产品行为。
+
 ## 1. 要验证的问题
 
 Phase 2A 只回答一个架构问题：Ubuntu Wayland 下，能否在一个 GTK 顶层窗口内稳定承载 Studio WebView 与 Browser WebView，并由同一个原生容器完成布局。
 
-本阶段不考虑 X11，也不承诺完整浏览器产品能力。原型验证通过后，才把这种呈现后端接入 Phase 1 已有的 `BrowserController`。
+本阶段不考虑 X11，也不承诺完整浏览器产品能力。原型已经验证 GTK 原生容器方案；产品实现
+不再接入已废弃的外部 BrowserController，而是直接使用 Phase 2B 的内嵌运行时。
 
 ## 2. 原型边界
 

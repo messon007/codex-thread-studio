@@ -29,6 +29,7 @@ enum DeveloperRequest {
     ShowBrowserMenu,
     ShowBrowserInfo,
     ShowBrowserDownloads,
+    CrashBrowserTab,
     OpenBrowser { url: String },
 }
 
@@ -54,6 +55,7 @@ pub fn requested(arguments: &[OsString]) -> bool {
                     | "--dev-show-browser-menu"
                     | "--dev-show-browser-info"
                     | "--dev-show-browser-downloads"
+                    | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
             )
         )
@@ -120,6 +122,9 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         "--dev-show-browser-downloads" if arguments.len() == 1 => {
             Ok(Some(DeveloperRequest::ShowBrowserDownloads))
         }
+        "--dev-crash-browser-tab" if arguments.len() == 1 => {
+            Ok(Some(DeveloperRequest::CrashBrowserTab))
+        }
         "--dev-open-browser" if arguments.len() == 2 => {
             let url = arguments[1]
                 .to_str()
@@ -134,7 +139,8 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         | "--dev-exit-browser"
         | "--dev-show-browser-menu"
         | "--dev-show-browser-info"
-        | "--dev-show-browser-downloads" => {
+        | "--dev-show-browser-downloads"
+        | "--dev-crash-browser-tab" => {
             Err(format!("{command} does not accept additional arguments"))
         }
         "--dev-open-browser" | "--dev-new-browser-tab" => {
@@ -234,6 +240,9 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             }
             DeveloperRequest::ShowBrowserDownloads => {
                 crate::embedded_browser::show_downloads_for_debug().map(|_| None)
+            }
+            DeveloperRequest::CrashBrowserTab => {
+                crate::embedded_browser::crash_active_tab_for_debug().map(|_| None)
             }
             DeveloperRequest::OpenBrowser { url } => {
                 crate::embedded_browser::show_for_debug(Some(url)).map(|_| None)
@@ -347,6 +356,10 @@ mod tests {
             Some(DeveloperRequest::ShowBrowserDownloads)
         ));
         assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-crash-browser-tab"])).unwrap(),
+            Some(DeveloperRequest::CrashBrowserTab)
+        ));
+        assert!(matches!(
             parse_cli_request(&arguments(&["--dev-open-browser", "https://example.com"])).unwrap(),
             Some(DeveloperRequest::OpenBrowser { url }) if url == "https://example.com"
         ));
@@ -367,6 +380,7 @@ mod tests {
         assert!(requested(&arguments(&["--dev-show-browser-menu"])));
         assert!(requested(&arguments(&["--dev-show-browser-info"])));
         assert!(requested(&arguments(&["--dev-show-browser-downloads"])));
+        assert!(requested(&arguments(&["--dev-crash-browser-tab"])));
         assert!(requested(&arguments(&["--dev-open-browser"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));

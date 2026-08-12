@@ -79,6 +79,15 @@ enum BrowserAction {
         success: bool,
     },
     DownloadRejected(String),
+    NavigationRejected {
+        url: String,
+        reason: String,
+    },
+    TlsError {
+        id: u64,
+        url: String,
+        details: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -105,6 +114,7 @@ struct BrowserTab {
     zoom: f64,
     fit_width: bool,
     crashed: bool,
+    internal_navigation: Rc<Cell<bool>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -373,6 +383,28 @@ pub fn show_downloads_for_debug() -> Result<(), String> {
 }
 
 #[cfg(debug_assertions)]
+pub fn crash_active_tab_for_debug() -> Result<(), String> {
+    show_for_debug(None)?;
+    WORKSPACE.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio browser is busy".to_owned())?;
+        let workspace = slot.as_ref().ok_or("Studio browser is not initialized")?;
+        let tab = active_tab(workspace).ok_or("Studio browser has no active tab")?;
+        let id = tab.id;
+        tab.webview.webview().terminate_web_process();
+        // API termination is normally ignored because destroying a WebView also emits it. The
+        // debug command is the intentional exception: enqueue exactly one synthetic failure so
+        // the same recovery and circuit-breaker path used for real renderer crashes is exercised.
+        queue_action(BrowserAction::PageTerminated {
+            id,
+            reason: WebProcessTerminationReason::TerminatedByApi,
+        });
+        Ok(())
+    })
+}
+
+#[cfg(debug_assertions)]
 pub fn show_menu_for_debug() -> Result<(), String> {
     show_for_debug(None)?;
     WORKSPACE.with(|slot| {
@@ -617,7 +649,13 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
         .browser_context
         .as_mut()
         .expect("browser context was initialized");
-    let initial_tab = match build_browser_tab(browser_context, &browser_stack, 1, DEFAULT_URL) {
+    let initial_tab = match build_browser_tab(
+        browser_context,
+        &browser_stack,
+        1,
+        DEFAULT_URL,
+        &workspace.preferences,
+    ) {
         Ok(tab) => tab,
         Err(error) => {
             drop(toolbar_webview);
@@ -647,20 +685,51 @@ fn build_browser_tab(
     stack: &gtk::Stack,
     id: u64,
     url: &str,
+    preferences: &BrowserPreferences,
 ) -> Result<BrowserTab, wry::Error> {
     let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     host.set_hexpand(true);
     host.set_vexpand(true);
     stack.add_named(&host, &format!("tab-{id}"));
 
+    let navigation_preferences = preferences.clone();
+    let internal_navigation = Rc::new(Cell::new(false));
+    let internal_navigation_for_policy = internal_navigation.clone();
+    let internal_navigation_for_title = internal_navigation.clone();
+    let internal_navigation_for_load = internal_navigation.clone();
     let builder = WebViewBuilder::with_web_context(context)
         .with_url(url)
         .with_clipboard(true)
+        .with_navigation_handler(move |url| {
+            if internal_navigation_for_policy.get()
+                && matches!(url.as_str(), "about:blank" | "about:srcdoc")
+            {
+                return true;
+            }
+            match validate_browser_url(&url, &navigation_preferences) {
+                Ok(_) => true,
+                Err(error) => {
+                    queue_action(BrowserAction::NavigationRejected {
+                        url,
+                        reason: error.to_string(),
+                    });
+                    false
+                }
+            }
+        })
         .with_document_title_changed_handler(move |title| {
-            update_tab_navigation(id, None, Some(title), false)
+            if !internal_navigation_for_title.get() {
+                update_tab_navigation(id, None, Some(title), false);
+            }
         })
         .with_on_page_load_handler(move |event, url| {
             let finished = matches!(event, PageLoadEvent::Finished);
+            if internal_navigation_for_load.get() {
+                if finished {
+                    internal_navigation_for_load.set(false);
+                }
+                return;
+            }
             update_tab_navigation(id, Some(url), None, finished);
         })
         .with_new_window_req_handler(move |url| {
@@ -707,6 +776,7 @@ fn build_browser_tab(
         zoom: 1.0,
         fit_width: true,
         crashed: false,
+        internal_navigation,
     })
 }
 
@@ -769,6 +839,16 @@ fn install_page_guards(webview: &WebView, id: u64) {
             if reason != WebProcessTerminationReason::TerminatedByApi {
                 queue_action(BrowserAction::PageTerminated { id, reason });
             }
+        });
+    webview
+        .webview()
+        .connect_load_failed_with_tls_errors(move |_, url, _, errors| {
+            queue_action(BrowserAction::TlsError {
+                id,
+                url: url.to_owned(),
+                details: format!("{errors:?}"),
+            });
+            true
         });
     webview.webview().connect_permission_request(|_, request| {
         let sensitive = request.is::<webkit2gtk::UserMediaPermissionRequest>()
@@ -869,6 +949,7 @@ fn dispatch_action(action: BrowserAction) {
                             &workspace.browser_stack,
                             id,
                             url.as_str(),
+                            &workspace.preferences,
                         ) {
                             Ok(tab) => {
                                 workspace.browser_stack.set_visible_child(&tab.host);
@@ -977,6 +1058,15 @@ fn dispatch_action(action: BrowserAction) {
             BrowserAction::DownloadRejected(error) => {
                 notify(&workspace.studio_webview, &error);
             }
+            BrowserAction::NavigationRejected { url, reason } => {
+                notify(
+                    &workspace.studio_webview,
+                    &format!("已阻止不安全导航：{reason}（{url}）"),
+                );
+            }
+            BrowserAction::TlsError { id, url, details } => {
+                show_tls_error(workspace, id, &url, &details);
+            }
         }
     });
     sync_toolbar();
@@ -1077,7 +1167,13 @@ fn recover_tab(workspace: &mut EmbeddedBrowserWorkspace, id: u64, automatic: boo
     let Some(context) = workspace.browser_context.as_mut() else {
         return;
     };
-    match build_browser_tab(context, &workspace.browser_stack, id, &url) {
+    match build_browser_tab(
+        context,
+        &workspace.browser_stack,
+        id,
+        &url,
+        &workspace.preferences,
+    ) {
         Ok(mut tab) => {
             tab.zoom = zoom;
             tab.fit_width = fit_width;
@@ -1130,6 +1226,54 @@ fn handle_toolbar_termination(
             queue_action(BrowserAction::Exit);
         }
     }
+}
+
+fn show_tls_error(workspace: &mut EmbeddedBrowserWorkspace, id: u64, url: &str, details: &str) {
+    let Some(tab) = workspace.tabs.iter_mut().find(|tab| tab.id == id) else {
+        return;
+    };
+    tab.url = url.to_owned();
+    tab.title = "证书错误".to_owned();
+    tab.crashed = false;
+    tab.internal_navigation.set(true);
+    let html = tls_error_html(url, details);
+    if let Err(error) = tab.webview.load_html(&html) {
+        tab.internal_navigation.set(false);
+        notify(
+            &workspace.studio_webview,
+            &format!(
+                "TLS certificate error for {url}: {details}; unable to show error page: {error}"
+            ),
+        );
+    } else {
+        notify(
+            &workspace.studio_webview,
+            &format!("已阻止证书无效的页面：{url}"),
+        );
+    }
+}
+
+fn tls_error_html(url: &str, details: &str) -> String {
+    format!(
+        r#"<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark">
+<title>证书错误</title><style>
+html,body{{height:100%;margin:0}}body{{display:grid;place-items:center;background:#f6f8fa;color:#172033;font:15px/1.6 system-ui,sans-serif}}
+main{{width:min(620px,calc(100% - 48px));padding:30px;border:1px solid #d8e0e6;border-radius:14px;background:#fff;box-shadow:0 12px 32px #17203312}}
+h1{{margin:0 0 10px;font-size:22px}}p{{margin:8px 0;color:#4d5968}}code{{display:block;margin-top:18px;padding:12px;overflow-wrap:anywhere;border-radius:8px;background:#f0f3f5;color:#263241}}
+@media(prefers-color-scheme:dark){{body{{background:#101719;color:#edf3f4}}main{{background:#182124;border-color:#344246}}p{{color:#b7c2c5}}code{{background:#11191c;color:#dbe6e8}}}}
+</style><main><h1>无法建立安全连接</h1><p>Studio 已阻止加载证书无效的页面。请检查系统时间、网址或网站证书后重新加载。</p><code>{}</code><p>{}</p></main>"#,
+        escape_html(url),
+        escape_html(details)
+    )
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
@@ -2476,5 +2620,18 @@ mod tests {
             directory.join("report (1).pdf")
         );
         fs::remove_dir_all(directory).expect("remove test download directory");
+    }
+
+    #[test]
+    fn tls_error_page_escapes_untrusted_error_details() {
+        let html = tls_error_html(
+            "https://example.com/?value=<script>alert(1)</script>",
+            "<img src=x onerror=alert(2)>",
+        );
+
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(html.contains("&lt;img src=x onerror=alert(2)&gt;"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(!html.contains("<img src=x onerror=alert(2)>"));
     }
 }

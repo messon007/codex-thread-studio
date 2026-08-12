@@ -35,6 +35,7 @@ target/debug/codex-thread-studio --dev-new-browser-tab https://example.org
 target/debug/codex-thread-studio --dev-show-browser-menu
 target/debug/codex-thread-studio --dev-show-browser-info
 target/debug/codex-thread-studio --dev-show-browser-downloads
+target/debug/codex-thread-studio --dev-crash-browser-tab
 target/debug/codex-thread-studio --dev-open-browser https://example.com
 ```
 
@@ -46,6 +47,12 @@ runtime directory. Release builds reject all developer-control commands.
 and `--dev-open-browser` both shows the embedded browser and
 navigates its active tab after applying the normal URL policy. These controls let automated
 development checks open the browser before capturing Studio without desktop-wide input access.
+
+`--dev-crash-browser-tab` deliberately terminates the active page renderer and then enters the
+same recovery path used by an unexpected WebKit failure. The first failure in a 30-second window
+must replace the page renderer; a second failure must stop automatic recovery and show the crashed
+Tab state. Use an isolated `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
+`XDG_RUNTIME_DIR` when running this test so it cannot attach to a normal Studio instance.
 
 The Markdown and Mermaid stack is pinned in `package-lock.json` and copied into `ui/vendor`, which Rust embeds at compile time. To deliberately update it:
 

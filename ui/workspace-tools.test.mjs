@@ -43,7 +43,17 @@ test('session management actions live in More while right areas stay compact', (
   for (const id of ['open-thread-comments', 'open-thread-favorites', 'open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
     assert.match(html, new RegExp(`id="${id}"[^>]*workspace-tool-launcher[^>]*icon-only`, 'u'))
   }
+  assert.doesNotMatch(html, /thread-action-divider/u)
   assert.doesNotMatch(html.slice(0, html.indexOf('id="thread-more-menu"')), /id="(?:rename|fork|archive|delete)-thread"/u)
+})
+
+test('CodeMirror stays constrained to the document rail when long lines are present', () => {
+  const editor = readFileSync(new URL('./workspace-editor.mjs', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+
+  assert.match(styles, /\.artifact-editor-shell \{[^}]*min-width: 0;[^}]*overflow: hidden;/u)
+  assert.match(editor, /'&': \{[\s\S]{0,180}width: '100%'[\s\S]{0,120}minWidth: '0'[\s\S]{0,120}maxWidth: '100%'[\s\S]{0,120}flex: '1 1 auto'/u)
+  assert.match(editor, /'\.cm-scroller': \{ width: '100%', minWidth: '0', overflow: 'auto'/u)
 })
 
 test('session and every right-area header share one exact divider height', () => {

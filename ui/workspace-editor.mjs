@@ -10,13 +10,17 @@ import {
 const editorTheme = EditorView.theme({
   '&': {
     height: '100%',
+    width: '100%',
+    minWidth: '0',
+    maxWidth: '100%',
+    flex: '1 1 auto',
     backgroundColor: 'var(--panel)',
     color: 'var(--text)',
     fontFamily: 'var(--code-font-family)',
     fontSize: 'var(--code-font-size)',
     fontWeight: 'var(--code-font-weight)',
   },
-  '.cm-scroller': { overflow: 'auto', lineHeight: '1.62' },
+  '.cm-scroller': { width: '100%', minWidth: '0', overflow: 'auto', lineHeight: '1.62' },
   '.cm-content': { padding: '18px 0 52px', caretColor: 'var(--brand)' },
   '.cm-line': { padding: '0 20px' },
   '.cm-gutters': {

@@ -329,6 +329,7 @@ fn json_error(status: StatusCode, message: &str) -> Response<Body> {
         .expect("valid OpenCode proxy error")
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 pub fn find_opencode_binary(path: &std::ffi::OsStr) -> String {
     if let Ok(value) = std::env::var("CODEX_THREAD_STUDIO_OPENCODE_BIN") {
         if !value.trim().is_empty() {
@@ -341,6 +342,7 @@ pub fn find_opencode_binary(path: &std::ffi::OsStr) -> String {
         .into_owned()
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn find_on_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     std::env::split_paths(path)
         .map(|directory| directory.join(name))
@@ -356,6 +358,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(windows, allow(dead_code))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
 }

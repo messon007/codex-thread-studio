@@ -4,11 +4,11 @@
 
 适用产品：Codex Thread Studio
 
-当前平台：Ubuntu Linux + Wayland
+当前平台：Ubuntu Linux + Wayland；Windows 11 x64 原生 WebView2（合并候选，正式 WRY 路径尚待原生复验）
 
-当前渲染引擎：WRY + WebKitGTK
+当前渲染引擎：Linux 为 WRY + WebKitGTK；Windows 为 WRY child WebView + 系统 WebView2
 
-最后更新：2026-08-12
+最后更新：2026-08-13
 
 ## 1. 当前产品决策
 
@@ -42,7 +42,7 @@ Browser Workspace 是 Studio 级全局能力，不属于某个会话。它默认
 
 ### 2.2 尚未实现
 
-- Windows WebView2 和 macOS WKWebView 容器；X11 不在当前范围；
+- macOS WKWebView 容器；X11 不在当前范围；
 - 重启后的 Tab 恢复、历史记录 UI、收藏夹或浏览器扩展；
 - 标签溢出菜单、完整键盘无障碍和深色网页工具栏主题；
 - HTML 项目 Preview Server、文件上传策略和下载前确认策略；
@@ -68,26 +68,25 @@ Server，不能直接使用 Studio Gateway Origin，也不能使用不受控 `fi
 ## 4. 原生架构
 
 ```text
-Tauri / GTK top-level window
-└─ GtkPaned
-   ├─ Studio host
-   │  └─ Main WebView
-   └─ Browser column（按需创建）
-      ├─ Toolbar host
-      │  └─ trusted local Toolbar WebView
-      └─ GtkStack
-         ├─ remote page WebView / Tab 1
-         ├─ remote page WebView / Tab 2
-         └─ ...
+Linux: Tauri / GTK top-level window → GtkPaned → Studio + Browser column
+Windows: Tauri top-level window → WRY/WebView2 child HWND rectangles
+
+Browser column（按需创建）
+├─ trusted local Toolbar WebView
+├─ native/event-driven splitter child
+└─ remote page WebView / Tab 1..N
 
 Persistent WebContext
-├─ browser profile: cookies / local storage / IndexedDB
+├─ browser profile directory: cookies / local storage / IndexedDB
+├─ published WRY crate; no project-local WebView2 implementation patch
 └─ browser cache
 ```
 
-`GtkPaned` 是横向尺寸的唯一所有者。Toolbar 和页面位于不同 GTK host 中，页面无法覆盖
-菜单、Tab 或分隔线。所有页面 WebView 共用一个持久 WebContext；Toolbar 使用独立的
-trusted WebContext。布局、加载、标题、下载、崩溃和 Tab 更新均由事件驱动，不轮询页面。
+Linux 的 `GtkPaned` 与 Windows 的 child HWND bounds 都是横向尺寸的唯一所有者。Toolbar
+和页面处于不同原生 WebView/host，页面无法覆盖菜单、Tab 或分隔线。所有页面 WebView
+共用一个持久 WebContext 和 Profile 目录；Toolbar 使用独立的 trusted WebContext。项目只用
+WRY 公开 API，不修改或承诺其内部 WebView2 Environment 复用方式。布局、加载、标题、下载、
+崩溃和 Tab 更新均由事件驱动，不轮询页面。
 
 ### 4.1 生命周期与资源
 
@@ -98,8 +97,9 @@ trusted WebContext。布局、加载、标题、下载、崩溃和 Tab 更新均
 | 退出 Browser | 已创建 | 销毁 | 全部销毁 | 文件保留 |
 | Studio 退出 | 销毁 | 销毁 | 销毁 | 文件保留 |
 
-退出 Browser 后保留 WebContext 对象到 Studio 生命周期结束，是为了避免 WebKitGTK 反复
-建立 NetworkProcess；页面 renderer 仍会被释放。持久 Profile 与缓存位于：
+Linux 退出 Browser 后保留 WebContext 对象到 Studio 生命周期结束，是为了避免 WebKitGTK
+反复建立 NetworkProcess；Windows 退出 Browser 则释放 Toolbar、页面 WebView 和对应
+WebContext，保留磁盘 Profile。持久 Profile 与缓存位于：
 
 ```text
 $XDG_DATA_HOME/codex-thread-studio/<profile-name>
@@ -107,6 +107,9 @@ $XDG_DATA_HOME/codex-thread-studio/<profile-name>
 
 $XDG_CACHE_HOME/codex-thread-studio/WebKitCache
 # fallback: ~/.cache/codex-thread-studio/WebKitCache
+
+%LOCALAPPDATA%/codex-thread-studio/embedded-browser-webview2
+# WebView2 data directory; Cache 位于其 EBWebView/Cache 子目录
 ```
 
 下载目标为系统识别的 Downloads 目录。浏览器信息对话框展示实际路径；清除历史/缓存属于
@@ -130,7 +133,9 @@ $XDG_CACHE_HOME/codex-thread-studio/WebKitCache
 
 ### 5.2 TLS 与网络错误
 
-证书校验由 WebKitGTK 完成。TLS 失败后：
+Linux 的证书校验由 WebKitGTK 完成。Windows WebView2 使用 Windows 系统 TLS 验证，当前
+WRY API 不提供 Linux 同等的自定义 TLS 错误页回调；两端都不提供继续访问或关闭验证的选项。
+TLS 失败后（Linux）：
 
 1. 终止失败导航；
 2. 在该 Tab 中显示经过 HTML 转义的本地错误页；

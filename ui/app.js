@@ -193,7 +193,7 @@ const state = {
   ready: false,
   backendInfo: null,
   backendInfos: { codex: null, opencode: null },
-  hostPlatform: null,
+  hostPlatform: window.__CODEX_THREAD_STUDIO_GATEWAY__?.hostPlatform || null,
   wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
   backendStates: {
     codex: { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' },
@@ -676,19 +676,27 @@ async function openGlobalBrowser() {
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
-  window.location.href = `studio-action://show-browser?width=${width}`
+  dispatchEmbeddedBrowserAction(`studio-action://show-browser?width=${width}`)
 }
 
 async function openBrowserUrl(url) {
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
-  window.location.href = `studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`
+  dispatchEmbeddedBrowserAction(`studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`)
 }
 
 function currentRightRailPixelWidth() {
   const bounds = appRightRailWidthBounds()
   return Math.round(Math.max(480, Math.min(bounds.max, bounds.available * state.rightRailWidthRatio)))
+}
+
+function dispatchEmbeddedBrowserAction(url) {
+  if (window.__studioEmbeddedBrowserIpc && window.ipc?.postMessage) {
+    window.ipc.postMessage(JSON.stringify({ type: 'studio-browser-action', url }))
+    return
+  }
+  window.location.href = url
 }
 
 function usesEmbeddedBrowser() {
@@ -6191,6 +6199,7 @@ function renderLocalizedUI() {
 
 function applyAppearance() {
   const root = document.documentElement
+  root.dataset.hostPlatform = state.hostPlatform || 'unknown'
   root.dataset.theme = state.theme
   root.dataset.contentWidth = state.contentWidth
   root.dataset.highContrast = String(state.typography.highContrast)

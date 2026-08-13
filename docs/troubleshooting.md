@@ -1,5 +1,43 @@
 # Troubleshooting
 
+## Windows Rust build says `link.exe not found`
+
+Install Visual Studio 2022 Build Tools with the C++ desktop workload and Windows SDK, then open a
+new PowerShell so the Visual Studio environment can be discovered:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-package-agreements --accept-source-agreements --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+For slow Cargo downloads, use a temporary local Cargo mirror configuration rather than committing
+a source replacement to this repository. `rsproxy.cn` and Tsinghua's sparse registry are common
+options. Delete the temporary `CARGO_HOME` configuration after diagnosing the network issue.
+
+## Windows Browser Workspace does not open
+
+Confirm that Microsoft Edge WebView2 Runtime is installed and up to date. Studio must still open
+its main WebView before Browser can be selected; an unavailable Codex/OpenCode WSL backend must
+show its own backend error and must not prevent Browser Workspace from opening. Browser is hidden
+on cold start, while **Exit Browser** deliberately releases Toolbar and page renderers.
+
+The repository intentionally uses the published crates.io WRY release and does not carry a local
+WRY fork. Browser actions leave IPC and other WebView2 callbacks before allocating child
+controllers. If the first Browser click still appears to do nothing, collect stderr and confirm
+the CPU architecture. Native Windows x64 is the currently reviewed target; Windows ARM64 has an
+unresolved upstream WRY/WebView2 second-controller deadlock and is not claimed as supported yet.
+
+## Windows installer tool download is slow
+
+`npm run tauri build` produces both MSI and NSIS installers. Tauri verifies downloaded tool hashes,
+but a slow GitHub route can still time out before verification. For a local build, configure a
+temporary mirror template and clear it afterwards:
+
+```powershell
+$env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE = 'https://ghproxy.net/https://github.com/<owner>/<repo>/releases/download/<version>/<asset>'
+npm run tauri build
+Remove-Item Env:\TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE
+```
+
 ## Windows client cannot start a WSL backend
 
 Studio does not launch Windows Codex/OpenCode installations. Confirm WSL2 and the selected distribution from PowerShell:

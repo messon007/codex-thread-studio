@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./embedded-browser.html', import.meta.url), 'utf8')
+const panelSource = readFileSync(new URL('./embedded-browser-panel.html', import.meta.url), 'utf8')
+const windowsSource = readFileSync(new URL('../src-tauri/src/embedded_browser_windows.rs', import.meta.url), 'utf8')
 
 test('embedded browser tab strip follows normal browser control order', () => {
   const tabs = source.indexOf('id="tabs"')
@@ -30,4 +32,36 @@ test('browser menu is the rightmost address-toolbar action', () => {
   assert.ok(browserMenu > comment)
   assert.equal(browserMenu, tools.lastIndexOf('data-action='))
   assert.match(tools, /aria-label="更多浏览器操作"/u)
+})
+
+test('Windows native browser menu follows the Linux GTK menu protocol', () => {
+  assert.match(windowsSource, /const BROWSER_MENU_WIDTH: i32 = 292;/u)
+  assert.match(windowsSource, /WS_EX_TOOLWINDOW \| WS_EX_NOACTIVATE/u)
+  assert.match(windowsSource, /WS_POPUP/u)
+  const paintStart = windowsSource.indexOf('fn paint_native_browser_menu')
+  const paintEnd = windowsSource.indexOf('unsafe fn draw_native_menu_item', paintStart)
+  const paintSource = windowsSource.slice(paintStart, paintEnd)
+  const labels = [
+    '新建标签页', '重新加载', '复制当前链接', 'draw_native_zoom_row', '适应页面宽度',
+    '批注选中内容', '浏览器信息', '下载内容', '退出浏览器',
+  ]
+  let previous = -1
+  for (const label of labels) {
+    const needle = label === 'draw_native_zoom_row' ? label : `"${label}"`
+    const index = paintSource.indexOf(needle, previous + 1)
+    assert.ok(index > previous, `${label} follows the Linux menu order`)
+    previous = index
+  }
+  assert.match(windowsSource, /"新建标签页",\s*Some\("Ctrl\+T"\)/u)
+  assert.match(windowsSource, /"重新加载",\s*Some\("Ctrl\+R"\)/u)
+  assert.match(windowsSource, /"浏览器信息",\s*Some\("›"\)/u)
+  assert.match(windowsSource, /"下载内容",\s*Some\("›"\)/u)
+  assert.match(windowsSource, /draw_native_square[\s\S]*"−"[\s\S]*zoom_percent[\s\S]*"\+"/u)
+  assert.doesNotMatch(windowsSource, /关闭菜单|close-browser-menu/u)
+  assert.doesNotMatch(panelSource, /关闭菜单|close-browser-menu|overflow:\s*auto/u)
+  assert.match(source, /window\.__embeddedBrowserToolbar/u)
+  assert.match(panelSource, /type: 'browser-panel-action'/u)
+  assert.match(panelSource, /type: 'browser-panel-size'/u)
+  assert.match(panelSource, /activeView\.scrollHeight/u)
+  assert.match(panelSource, /window\.__embeddedBrowserPanel/u)
 })

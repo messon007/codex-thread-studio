@@ -25,6 +25,10 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Provides persistent Chinese/English/system-language selection, light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and language-specific annotation prompt templates.
 - Switches between isolated Codex and OpenCode session lists, remembers the selected session for each backend, and namespaces comment drafts per backend.
 - Uses installed CLIs and their existing authentication; Studio stores no model credential. The Rust layer starts OpenCode with an ephemeral password that never enters browser storage.
+- Includes a global Embedded Browser Workspace. Linux uses its native GTK/WebKitGTK container and
+  Windows uses same-window WRY/WebView2 child views; remote pages are isolated from the Studio
+  gateway and Tauri capabilities. It is lazy by default and does not depend on either AI backend.
+  See the [Windows native implementation boundary](docs/windows-native.md).
 
 ## Architecture
 

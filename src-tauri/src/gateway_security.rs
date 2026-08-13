@@ -114,10 +114,12 @@ impl GatewaySecurity {
     pub fn initialization_script(&self) -> String {
         let origin = serde_json::to_string(&self.expected_origin).expect("origin is JSON text");
         let token = serde_json::to_string(&self.token).expect("gateway token is JSON text");
+        let host_platform =
+            serde_json::to_string(std::env::consts::OS).expect("host platform is JSON text");
         format!(
             r#"if (window.location.origin === {origin}) {{
   Object.defineProperty(window, '__CODEX_THREAD_STUDIO_GATEWAY__', {{
-    value: Object.freeze({{ token: {token} }}),
+    value: Object.freeze({{ token: {token}, hostPlatform: {host_platform} }}),
     configurable: false,
     enumerable: false,
     writable: false
@@ -217,6 +219,7 @@ mod tests {
         let script = security.initialization_script();
         assert!(script.contains("window.location.origin === \"http://127.0.0.1:41721\""));
         assert!(script.contains(TOKEN));
+        assert!(script.contains(&format!("hostPlatform: {:?}", std::env::consts::OS)));
         assert!(!script.contains("console"));
     }
 }

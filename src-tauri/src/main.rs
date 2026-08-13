@@ -26,6 +26,8 @@ mod codex_app_server;
 mod dev_capture;
 #[cfg(target_os = "linux")]
 mod embedded_browser;
+#[cfg(windows)]
+mod embedded_browser_windows;
 mod environment_config;
 mod epub_reader;
 mod favorites;
@@ -478,7 +480,9 @@ fn main() {
     let initialization_script = security.initialization_script();
     #[cfg(target_os = "linux")]
     let embedded_browser = embedded_browser::is_supported();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    let embedded_browser = embedded_browser_windows::is_supported();
+    #[cfg(not(any(target_os = "linux", windows)))]
     let embedded_browser = false;
     let embedded_browser_preferences = startup_preferences.browser.clone();
     let state = GatewayState {
@@ -513,9 +517,17 @@ fn main() {
             });
 
             let url = format!("http://{gateway_addr}/").parse()?;
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             if embedded_browser {
+                #[cfg(target_os = "linux")]
                 embedded_browser::build(
+                    app,
+                    url,
+                    &initialization_script,
+                    embedded_browser_preferences.clone(),
+                )?;
+                #[cfg(windows)]
+                embedded_browser_windows::build(
                     app,
                     url,
                     &initialization_script,
@@ -528,14 +540,14 @@ fn main() {
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(980.0, 660.0)
                     .build()?;
-                #[cfg(debug_assertions)]
+                #[cfg(all(target_os = "linux", debug_assertions))]
                 dev_capture::register_tauri_window(&_window)?;
             }
             #[cfg(all(target_os = "linux", debug_assertions))]
             if let Err(error) = dev_capture::start_server() {
                 eprintln!("Codex Thread Studio developer capture is unavailable: {error}");
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", windows)))]
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .initialization_script(&initialization_script)
                 .title("Codex Thread Studio")
@@ -1546,7 +1558,7 @@ fn load_review_file(
         .strip_prefix(&root)
         .unwrap_or(&path)
         .to_string_lossy()
-        .into_owned();
+        .replace('\\', "/");
     Ok(ReviewFileResponse {
         root: root.to_string_lossy().into_owned(),
         path: path.to_string_lossy().into_owned(),

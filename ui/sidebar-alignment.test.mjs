@@ -37,6 +37,32 @@ test('application actions live in an extensible footer menu instead of the brand
   assert.match(rule('.action-menu.studio-menu'), /bottom:\s*calc\(100% \+ 7px\)/)
 })
 
+test('settings dialog scrolls its body inside the native viewport', () => {
+  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+
+  assert.match(styles, /\.settings-dialog \{[^}]*width: min\(650px, calc\(100vw - 48px\)\)[^}]*max-height: min\(820px, calc\(100vh - 32px\)\)/u)
+  assert.match(styles, /\.settings-dialog \.dialog-body \{[^}]*overflow: auto/u)
+  assert.match(styles, /\.settings-dialog form \{[^}]*display: flex; flex-direction: column/u)
+})
+
+test('Windows WSL backend settings use a full-width grouped layout', () => {
+  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+
+  assert.match(html, /id="wsl-settings" class="settings-section wsl-settings-card full hidden"/u)
+  assert.match(html, /class="wsl-restart-badge">重启后生效/u)
+  assert.match(html, /class="wsl-environment-card"/u)
+  assert.equal((html.match(/class="field wsl-command-field"/gu) || []).length, 2)
+  assert.match(styles, /\.settings-section\.full \{ grid-column: 1 \/ -1;/u)
+  assert.match(styles, /html\[data-host-platform="windows"\] \.settings-dialog \{[^}]*width: min\(720px, calc\(100vw - 48px\)\)/u)
+  assert.match(styles, /html\[data-host-platform="windows"\] \.settings-dialog \.dialog-body \{[^}]*grid-auto-rows: max-content[^}]*align-content: start/u)
+  assert.doesNotMatch(rule('.wsl-settings-card'), /overflow:\s*hidden/u)
+  assert.match(styles, /\.wsl-settings-layout \{[^}]*grid-template-columns: minmax\(0, \.9fr\) minmax\(0, 1\.1fr\)/u)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wsl-settings-layout \{ grid-template-columns: 1fr;/u)
+  assert.match(app, /hostPlatform: window\.__CODEX_THREAD_STUDIO_GATEWAY__\?\.hostPlatform \|\| null/u)
+  assert.match(app, /root\.dataset\.hostPlatform = state\.hostPlatform \|\| 'unknown'/u)
+})
+
 test('filters use the same flat label-and-number structure as Agent Deck Studio', () => {
   assert.match(html, /class="filters thread-filters"/)
   assert.match(html, />全部 <span id="count-all">0<\/span><\/button>/)

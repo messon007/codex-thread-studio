@@ -9,6 +9,30 @@
 - A current OpenCode CLI with `opencode serve` when testing OpenCode mode
 - WebKitGTK on Linux, WKWebView on macOS, or WebView2 on Windows 11
 
+Windows native builds additionally require Visual Studio 2022 Build Tools with the **Desktop
+development with C++** workload and a Windows 10/11 SDK. If Cargo reports `link.exe not found`,
+install it from an elevated PowerShell:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-package-agreements --accept-source-agreements --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+The Windows Browser Workspace uses the system WebView2 Runtime. Windows 11 normally includes it;
+if native Studio cannot create a WebView, repair/install Evergreen WebView2 Runtime before retrying.
+Its platform boundary and current x64/ARM64 support policy are documented in
+[`windows-native.md`](windows-native.md). Keep WRY on a published crates.io release: do not add a
+workspace-wide `[patch.crates-io]`, a vendored WRY source tree, or an unreviewed fork revision.
+
+Windows packages include both MSI and NSIS by default. If GitHub release downloads are slow, use
+Tauri's temporary tools-mirror template for the build only; Tauri still verifies the downloaded
+tool hashes before extraction:
+
+```powershell
+$env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE = 'https://ghproxy.net/https://github.com/<owner>/<repo>/releases/download/<version>/<asset>'
+npm run tauri build
+Remove-Item Env:\TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE
+```
+
 ## Commands
 
 ```bash

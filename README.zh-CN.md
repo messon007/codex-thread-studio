@@ -24,6 +24,10 @@
 - 持久化简体中文/English/跟随系统语言、浅色/深色主题、字体、对比度、舒适/宽屏/全宽内容宽度、当前 Thread、批注草稿和分语言批注模板。
 - 可在 Codex 与 OpenCode 间切换；两种后端的会话选择和批注草稿彼此隔离。
 - 复用本机 CLI 和已有登录状态，不保存模型凭据。Rust 会用仅存在于内存中的随机密码保护 OpenCode 子进程。
+- 提供全局 Embedded Browser Workspace：Linux 使用 GTK/WebKitGTK 原生容器，Windows 使用同一
+  顶层窗口中的 WRY/WebView2 child view；远端网页与 Studio 网关和 Tauri capability 隔离。浏览器
+  默认懒加载，不依赖 Codex/OpenCode 后端可用。参见
+  [Windows 原生实现边界](docs/windows-native.md)。
 
 ## 架构
 

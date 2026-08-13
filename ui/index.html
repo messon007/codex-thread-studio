@@ -488,13 +488,23 @@
           <label class="field"><span>代码、Diff 与终端字号</span><input id="code-font-size" type="number" min="11" max="20" /></label>
           <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>增强文字对比度</strong><small>加深次要文字和代码输出</small></span></label>
           <label class="check-field"><input id="desktop-notifications" type="checkbox" /><span><strong>桌面通知</strong><small>窗口不活跃时通知任务完成和等待输入</small></span></label>
-          <section id="wsl-settings" class="settings-section full hidden">
-            <header><strong>WSL 后端</strong><small>Windows 客户端通过 WSL2 运行 Codex 和 OpenCode；保存后重启 Studio 生效。</small></header>
-            <div class="settings-section-grid">
-              <label class="field"><span>Distribution（可选）</span><input id="wsl-distribution" maxlength="128" placeholder="默认 WSL Distribution" /></label>
-              <label class="field"><span>Linux 用户（可选）</span><input id="wsl-user" maxlength="128" placeholder="使用 Distribution 默认用户" /></label>
-              <label class="field full"><span>Codex 命令</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>可填写 WSL 内的命令名或绝对路径。</small></label>
-              <label class="field full"><span>OpenCode 命令</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>可填写 WSL 内的命令名或绝对路径。</small></label>
+          <section id="wsl-settings" class="settings-section wsl-settings-card full hidden">
+            <header class="wsl-settings-header">
+              <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>在 WSL2 中运行 Codex 与 OpenCode，并使用 Linux 环境中的配置和凭证。</small></div></div>
+              <span class="wsl-restart-badge">重启后生效</span>
+            </header>
+            <div class="wsl-settings-layout">
+              <section class="wsl-environment-card">
+                <header><strong>Linux 运行环境</strong><small>留空时使用系统默认 Distribution 和用户。</small></header>
+                <div class="wsl-identity-grid">
+                  <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="默认 WSL Distribution" /></label>
+                  <label class="field"><span>Linux 用户</span><input id="wsl-user" maxlength="128" placeholder="Distribution 默认用户" /></label>
+                </div>
+              </section>
+              <section class="wsl-command-list">
+                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex 命令</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>WSL 内的命令名或绝对路径</small></label>
+                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode 命令</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>WSL 内的命令名或绝对路径</small></label>
+              </section>
             </div>
           </section>
           <section id="environment-settings" class="settings-section full">

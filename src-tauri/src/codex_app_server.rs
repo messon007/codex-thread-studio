@@ -457,6 +457,7 @@ fn client_error(message: &str) -> String {
     .to_string()
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 pub fn find_codex_binary(path: &std::ffi::OsStr) -> String {
     if let Ok(value) = std::env::var("CODEX_THREAD_STUDIO_CODEX_BIN") {
         if !value.trim().is_empty() {
@@ -469,6 +470,7 @@ pub fn find_codex_binary(path: &std::ffi::OsStr) -> String {
         .into_owned()
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn find_on_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     std::env::split_paths(path)
         .map(|directory| directory.join(name))
@@ -484,6 +486,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(windows, allow(dead_code))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
 }

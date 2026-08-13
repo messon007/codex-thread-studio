@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root { color-scheme: light; font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; color: #172033; }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+      main { width: 100%; height: 100%; overflow: hidden; padding: 7px; border: 1px solid #d7dde6; border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgb(23 32 51 / 18%); font-size: 12px; }
+      [hidden] { display: none !important; }
+      button { width: 100%; min-height: 31px; padding: 5px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      button:hover { background: #f3f5f8; color: #176b5d; }
+      .menu-item { display: table; width: 100%; table-layout: fixed; }
+      .menu-label, .menu-trailing { display: table-cell; vertical-align: middle; white-space: nowrap; }
+      .menu-label { overflow: hidden; text-overflow: ellipsis; }
+      .menu-trailing { width: 64px; color: #7a8496; text-align: right; }
+      .zoom-row { display: table; width: 100%; min-height: 36px; table-layout: fixed; padding: 3px 8px; }
+      .zoom-label, .zoom-controls { display: table-cell; vertical-align: middle; }
+      .zoom-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .zoom-controls { width: 126px; text-align: right; white-space: nowrap; }
+      .zoom-button { display: inline-block; width: 28px; min-width: 28px; min-height: 28px; margin-left: 5px; padding: 3px; border: 1px solid #d7dde6; color: #58647a; text-align: center; }
+      .zoom-button:first-child { margin-left: 0; }
+      .zoom-value { width: 50px; min-width: 50px; font-size: 10px; }
+      hr { border: 0; border-top: 1px solid #dfe4ec; margin: 4px 0; }
+      h2 { margin: 4px 7px 7px; font-size: 12px; }
+      p { margin: 5px 7px; color: #6a7485; overflow-wrap: anywhere; }
+      .download-item { padding: 7px; border-top: 1px solid #d7dde6; }
+      .download-item:first-child { border-top: 0; }
+      .download-item strong, .download-item span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .download-item span { margin-top: 2px; color: #6a7485; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <main id="panel" aria-live="polite">
+      <section id="menu-view">
+        <button class="menu-item" type="button" data-action="new-tab">
+          <span class="menu-label">新建标签页</span><span class="menu-trailing">Ctrl+T</span>
+        </button>
+        <button class="menu-item" type="button" data-action="reload">
+          <span class="menu-label">重新加载</span><span class="menu-trailing">Ctrl+R</span>
+        </button>
+        <button class="menu-item" type="button" data-action="copy-url">
+          <span class="menu-label">复制当前链接</span><span class="menu-trailing"></span>
+        </button>
+        <hr>
+        <div class="zoom-row">
+          <span class="zoom-label">缩放</span>
+          <span class="zoom-controls">
+            <button class="zoom-button" type="button" title="缩小" data-action="zoom-out">−</button>
+            <button id="zoom-value" class="zoom-button zoom-value" type="button" title="恢复 100%" data-action="zoom-reset">100%</button>
+            <button class="zoom-button" type="button" title="放大" data-action="zoom-in">+</button>
+          </span>
+        </div>
+        <button class="menu-item" type="button" data-action="fit-width">
+          <span class="menu-label">适应页面宽度</span><span class="menu-trailing"></span>
+        </button>
+        <button class="menu-item" type="button" data-action="comment-selection">
+          <span class="menu-label">批注选中内容</span><span class="menu-trailing"></span>
+        </button>
+        <hr>
+        <button class="menu-item" type="button" data-action="browser-info">
+          <span class="menu-label">浏览器信息</span><span class="menu-trailing">›</span>
+        </button>
+        <button class="menu-item" type="button" data-action="browser-downloads">
+          <span class="menu-label">下载内容</span><span class="menu-trailing">›</span>
+        </button>
+        <hr>
+        <button class="menu-item" type="button" data-action="exit-browser">
+          <span class="menu-label">退出浏览器</span><span class="menu-trailing"></span>
+        </button>
+      </section>
+      <section id="info-view" hidden>
+        <h2>浏览器信息</h2>
+        <div id="info-body"></div>
+      </section>
+      <section id="downloads-view" hidden>
+        <h2>下载内容</h2>
+        <div id="downloads-body"></div>
+        <hr>
+        <button class="menu-item" type="button" data-action="open-downloads-directory">
+          <span class="menu-label">打开下载目录</span><span class="menu-trailing"></span>
+        </button>
+      </section>
+    </main>
+    <script>
+      const panel = document.querySelector('#panel')
+      const menuView = document.querySelector('#menu-view')
+      const infoView = document.querySelector('#info-view')
+      const infoBody = document.querySelector('#info-body')
+      const downloadsView = document.querySelector('#downloads-view')
+      const downloadsBody = document.querySelector('#downloads-body')
+      const zoomValue = document.querySelector('#zoom-value')
+      let state = { zoomPercent: 100 }
+      let view = 'menu'
+      const action = (name) => {
+        const url = `studio-action://${name}`
+        if (window.__embeddedBrowserPanelIpc && window.ipc?.postMessage) {
+          window.ipc.postMessage(JSON.stringify({ type: 'browser-panel-action', url }))
+          return
+        }
+        location.href = url
+      }
+      const reportHeight = () => requestAnimationFrame(() => {
+        if (!window.__embeddedBrowserPanelIpc || !window.ipc?.postMessage) return
+        const activeView = view === 'info' ? infoView : view === 'downloads' ? downloadsView : menuView
+        const style = getComputedStyle(panel)
+        const chrome = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth']
+          .reduce((total, property) => total + (Number.parseFloat(style[property]) || 0), 0)
+        const content = Math.max(activeView.scrollHeight, activeView.getBoundingClientRect().height)
+        window.ipc.postMessage(JSON.stringify({
+          type: 'browser-panel-size',
+          height: Math.ceil(content + chrome + 2),
+        }))
+      })
+      const showMenu = () => {
+        view = 'menu'
+        menuView.hidden = false
+        infoView.hidden = true
+        downloadsView.hidden = true
+        zoomValue.textContent = `${state.zoomPercent || 100}%`
+        reportHeight()
+      }
+      for (const button of document.querySelectorAll('[data-action]')) {
+        button.addEventListener('click', () => action(button.dataset.action))
+      }
+      window.__embeddedBrowserPanel = {
+        setState(value) {
+          state = { ...state, ...value }
+          zoomValue.textContent = `${state.zoomPercent || 100}%`
+        },
+        showMenu,
+        showInfo(value) {
+          view = 'info'
+          menuView.hidden = true
+          infoView.hidden = false
+          downloadsView.hidden = true
+          const rows = [
+            ['WebView2 Profile', value?.profile], ['Cache', value?.cache], ['Downloads', value?.downloads],
+            ['Engine', value?.engine], ['TLS', value?.tls],
+          ]
+          infoBody.replaceChildren()
+          for (const [label, content] of rows) {
+            const line = document.createElement('p')
+            line.textContent = `${label}: ${content || '—'}`
+            infoBody.append(line)
+          }
+          reportHeight()
+        },
+        showDownloads(items) {
+          view = 'downloads'
+          menuView.hidden = true
+          infoView.hidden = true
+          downloadsView.hidden = false
+          downloadsBody.replaceChildren()
+          if (!items?.length) {
+            const empty = document.createElement('p')
+            empty.textContent = '暂无下载记录'
+            downloadsBody.append(empty)
+          } else for (const item of items.slice(0, 4)) {
+            const row = document.createElement('div')
+            row.className = 'download-item'
+            const name = document.createElement('strong')
+            name.textContent = item.name || 'download'
+            const detail = document.createElement('span')
+            detail.textContent = `${item.state || ''} · ${item.path || ''}`
+            row.append(name, detail)
+            downloadsBody.append(row)
+          }
+          reportHeight()
+        },
+      }
+      showMenu()
+    </script>
+  </body>
+</html>

@@ -100,6 +100,11 @@ import {
   reasoningStage,
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
+import {
+  isTurnForkable,
+  openCodeForkBody,
+  threadForkParams,
+} from './thread-fork.mjs'
 
 import {
   formatDate as formatLocalizedDate,
@@ -128,12 +133,15 @@ import {
 } from './thread-workset.mjs'
 import {
   finalAgentText,
+  managedRouterThread,
   normalizeThreadRouter,
   parseRouterDecision,
+  recoverManagedRouterCatalog,
   routerCandidates,
   routerDecisionForTurn,
   routerDecisionSchema,
   routerDeveloperInstructions,
+  shouldCreateManagedRouter,
 } from './thread-router.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
@@ -285,6 +293,7 @@ let composerSearchTimer = null
 let artifactSearchTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
+const openCodeStatusReconcileTimers = new Map()
 let threadCatalogRetryTimer = null
 let threadCatalogRetryAttempt = 0
 let threadCatalogErrorMessage = null
@@ -1037,6 +1046,8 @@ function cleanupSocket() {
 function cleanupConnections() {
   clearTimeout(state.reconnectTimer)
   clearTimeout(threadCatalogRetryTimer)
+  for (const timer of openCodeStatusReconcileTimers.values()) clearTimeout(timer)
+  openCodeStatusReconcileTimers.clear()
   threadCatalogRetryTimer = null
   threadCatalogRetryAttempt = 0
   threadCatalogErrorMessage = null
@@ -1381,6 +1392,7 @@ function handleOpenCodeServerEvent(event) {
     return
   }
   const eventThreadId = openCodeEventThreadId(payload)
+  if (eventThreadId && openCodeCompletionSignal(payload)) scheduleOpenCodeStatusReconciliation(eventThreadId)
   updateOpenCodeReplyTime(payload, eventThreadId)
   const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
   const targetModel = eventThreadId === state.selectedId
@@ -1396,6 +1408,33 @@ function handleOpenCodeServerEvent(event) {
     renderComposerState()
   } else if (!update.turnId || !replaceRenderedTurn(update.turnId, { preserveActivity: payload.type !== 'session.idle' })) renderTranscript()
   renderComposerState()
+}
+
+function openCodeCompletionSignal(payload) {
+  if (payload?.type === 'message.part.updated') return payload.properties?.part?.type === 'step-finish'
+  if (payload?.type !== 'message.updated') return false
+  const info = payload.properties?.info
+  return info?.role === 'assistant' && Boolean(info.time?.completed)
+}
+
+function scheduleOpenCodeStatusReconciliation(threadId) {
+  clearTimeout(openCodeStatusReconcileTimers.get(threadId))
+  const timer = setTimeout(async () => {
+    openCodeStatusReconcileTimers.delete(threadId)
+    if (state.backend !== 'opencode' || !state.ready) return
+    const thread = state.threadsByBackend.opencode.find((candidate) => candidate.id === threadId)
+    if (!thread) return
+    try {
+      const statuses = await openCodeFetch(withDirectory('/session/status', thread.cwd), { timeoutMs: 10_000 })
+      handleOpenCodeServerEvent({
+        type: 'session.status',
+        properties: { sessionID: threadId, status: statuses?.[threadId] || { type: 'idle' } },
+      })
+    } catch (error) {
+      console.debug('Unable to reconcile OpenCode session status', error)
+    }
+  }, 250)
+  openCodeStatusReconcileTimers.set(threadId, timer)
 }
 
 function scheduleOpenCodeListRefresh() {
@@ -1469,13 +1508,15 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {})
   return normalizeOpenCodeSessions(sessions, Object.assign({}, ...statusMaps))
 }
 
-function fetchCodexCatalog(limit = 100) {
+function fetchCodexCatalog(limit = 100, { routerId = null, routerWorkspace = '' } = {}) {
   return new Promise((resolve, reject) => {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
+    const routerReadId = id - 1
     const timer = setTimeout(() => finish(new Error('Codex 会话目录请求超时')), 15_000)
     let requested = false
+    let catalog = []
     const finish = (error, value) => {
       clearTimeout(timer)
       socket.onclose = null
@@ -1496,8 +1537,21 @@ function fetchCodexCatalog(limit = 100) {
         return
       }
       if (message.id === id) {
-        if (message.error) finish(new Error(message.error.message || 'Codex 会话目录请求失败'))
-        else finish(null, message.result)
+        if (message.error) {
+          finish(new Error(message.error.message || 'Codex 会话目录请求失败'))
+          return
+        }
+        catalog = Array.isArray(message.result?.data) ? message.result.data : []
+        if (!routerId || managedRouterThread(catalog, routerId, routerWorkspace)) {
+          finish(null, { data: catalog })
+          return
+        }
+        socket.send(JSON.stringify({ id: routerReadId, method: 'thread/read', params: { threadId: routerId, includeTurns: false } }))
+        return
+      }
+      if (message.id === routerReadId) {
+        const recovered = message.error ? null : message.result?.thread
+        finish(null, { data: recoverManagedRouterCatalog(catalog, routerId, routerWorkspace, recovered) })
       }
     }
     socket.onerror = () => finish(new Error('无法读取 Codex 会话目录'))
@@ -1507,9 +1561,13 @@ function fetchCodexCatalog(limit = 100) {
 async function refreshInactiveCatalog() {
   const backend = state.backend === 'codex' ? 'opencode' : 'codex'
   try {
+    const codexInfo = backend === 'codex' ? await loadBackendInfo('codex') : null
     const threads = backend === 'opencode'
       ? await fetchOpenCodeCatalog(100, { allowInactive: true })
-      : await fetchCodexCatalog(100)
+      : await fetchCodexCatalog(100, {
+          routerId: state.router.threadId,
+          routerWorkspace: codexInfo?.routerWorkspace || '',
+        })
     state.threadsByBackend[backend] = threads
     renderThreadList()
   } catch (error) {
@@ -1579,7 +1637,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
     return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'PATCH', body: { title: params.name }, timeoutMs })
   }
   if (method === 'thread/fork') {
-    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/fork`, directory), { method: 'POST', body: {}, timeoutMs })
+    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/fork`, directory), { method: 'POST', body: openCodeForkBody(params), timeoutMs })
     return { thread: normalizeOpenCodeSessions([session], {})[0] }
   }
   if (method === 'thread/delete') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'DELETE', timeoutMs })
@@ -2934,16 +2992,19 @@ function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
 
 function renderTurn(presentation, index, { openActivity = false } = {}) {
   if (!presentation) return ''
-  const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, { openActivity })).join('')
+  const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, {
+    openActivity,
+    forkable: isTurnForkable(presentation.source),
+  })).join('')
   const placeholder = shouldShowTurnPlaceholder(presentation)
-    ? `<div class="work-placeholder"><span class="activity-spinner"></span>${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</div>`
+    ? `<div class="work-placeholder"><span class="message-track-mark" aria-hidden="true">${conversationTrackIcon('working')}</span><span>${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</span></div>`
     : ''
   return `<section class="turn" data-turn-id="${escapeHtml(presentation.id)}" data-turn-index="${index}">${content}${placeholder}</section>`
 }
 
 function renderPresentationBlock(block, turnId, options = {}) {
   if (block.type === 'user') return renderItem(block.item, turnId)
-  if (block.type === 'assistant') return renderItem(block.item, turnId)
+  if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
   if (block.type === 'error') return `<div class="turn-error" role="alert"><strong>${t('执行失败')}</strong><span>${escapeHtml(block.message)}</span></div>`
   return ''
@@ -3086,7 +3147,7 @@ function renderRouterTurn(turn, index) {
   return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
 }
 
-function renderItem(item, turnId) {
+function renderItem(item, turnId, { forkable = false } = {}) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
@@ -3095,10 +3156,13 @@ function renderItem(item, turnId) {
   if (type === 'agentMessage' || type === 'plan') {
     const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
     const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    const forkAction = forkable
+      ? `<button class="message-fork-button" type="button" data-fork-turn="${escapeHtml(turnId || '')}" title="${t('从这里 Fork')}" aria-label="${t('从这里 Fork')}"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="4.25" cy="4" r="1.65"></circle><circle cx="4.25" cy="14" r="1.65"></circle><circle cx="13.75" cy="9" r="1.65"></circle><path d="M4.25 5.65v6.7M5.9 4h2.15a4.05 4.05 0 0 1 4.05 4.05V9"></path></svg><b>${t('从这里 Fork')}</b></button>`
+      : ''
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
       <span class="message-track-mark agent-track-mark" aria-hidden="true">${conversationTrackIcon('response')}</span>
       <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
-      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('复制内容')}" aria-label="${t('复制内容')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('复制')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? '已收藏' : '收藏'}</b></button></div></div>
+      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('复制内容')}" aria-label="${t('复制内容')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('复制')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? '已收藏' : '收藏'}</b></button>${forkAction}</div></div>
     </div>`
   }
   if (type === 'reasoning') {
@@ -3362,6 +3426,11 @@ async function handleTranscriptClick(event) {
   const routerTarget = event.target.closest('[data-router-target]')
   if (routerTarget) {
     await selectThread(routerTarget.dataset.routerTarget, { backend: 'codex' })
+    return
+  }
+  const forkButton = event.target.closest('[data-fork-turn]')
+  if (forkButton) {
+    await forkThread(forkButton.dataset.forkTurn, forkButton)
     return
   }
   const favoriteButton = event.target.closest('[data-favorite-message]')
@@ -4415,14 +4484,30 @@ async function createThread(event) {
   } finally { button.disabled = false }
 }
 
-async function forkSelectedThread() {
-  if (!state.selectedId) return
+async function forkThread(lastTurnId = null, trigger = null) {
+  const sourceThreadId = state.selectedId
+  const sourceBackend = state.backend
+  if (!sourceThreadId) return
+  if (trigger) {
+    trigger.disabled = true
+    trigger.classList.add('busy')
+  }
   try {
-    const result = await rpc('thread/fork', { threadId: state.selectedId })
+    const result = await rpc('thread/fork', threadForkParams(sourceThreadId, lastTurnId))
     await loadThreads()
-    await selectThread(result.thread.id, { force: true })
-    toast(t('已创建 {backend} 会话分支', { backend: currentBackend().name }))
-  } catch (error) { showError(error) }
+    await selectThread(result.thread.id, { force: true, backend: sourceBackend })
+    toast(t(lastTurnId ? '已从此 Turn 创建 {backend} 会话分支' : '已创建 {backend} 会话分支', { backend: currentBackend().name }))
+  } catch (error) {
+    showError(error)
+    if (trigger?.isConnected) {
+      trigger.disabled = false
+      trigger.classList.remove('busy')
+    }
+  }
+}
+
+async function forkSelectedThread() {
+  await forkThread()
 }
 
 async function archiveSelectedThread() {
@@ -5996,8 +6081,24 @@ async function saveRouterSettings(event) {
 async function ensureManagedRouterThread() {
   const cwd = state.backendInfo?.routerWorkspace
   if (!cwd) throw new Error(t('无法确定 Studio Router 的工作目录。'))
-  const existing = state.threadsByBackend.codex.find((thread) => thread.id === state.router.threadId)
-  if (existing?.cwd === cwd) return existing.id
+  const routerId = state.router.threadId
+  const existing = managedRouterThread(state.threadsByBackend.codex, routerId, cwd)
+  if (existing) return existing.id
+  if (routerId) {
+    try {
+      const result = await rpc('thread/read', { threadId: routerId, includeTurns: false })
+      const recoveredCatalog = recoverManagedRouterCatalog(state.threadsByBackend.codex, routerId, cwd, result?.thread)
+      const recovered = managedRouterThread(recoveredCatalog, routerId, cwd)
+      if (recovered) {
+        setActiveThreads(recoveredCatalog)
+        return recovered.id
+      }
+    } catch (error) {
+      throw new Error(t('无法读取已配置的 Router 会话；为避免重复创建，Studio 将保留现有 Router ID。{message}', { message: error.message }))
+    }
+    throw new Error(t('已配置的 Router 会话与专用工作目录不匹配；Studio 不会自动创建替代会话。'))
+  }
+  if (!shouldCreateManagedRouter(routerId)) throw new Error(t('Router ID 已存在；Studio 不会自动创建替代会话。'))
   const result = await rpc('thread/start', {
     cwd,
     approvalPolicy: 'never',

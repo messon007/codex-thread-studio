@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 
 function rule(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -74,4 +75,11 @@ test('filters use the same flat label-and-number structure as Agent Deck Studio'
   assert.match(rule('.filter'), /font-size:\s*12px/)
   assert.match(rule('.filter span'), /font-variant-numeric:\s*tabular-nums/)
   assert.match(rule('.filter.active'), /background:\s*var\(--brand-soft\)/)
+})
+
+test('the preparing spinner shares the conversation-track center with message icons', () => {
+  assert.match(app, /class="work-placeholder"><span class="message-track-mark"[^>]*>\$\{conversationTrackIcon\('working'\)\}/u)
+  assert.match(rule('.work-placeholder'), /padding:\s*0 3px/u)
+  assert.match(rule('.work-placeholder'), /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  assert.match(rule('.work-placeholder'), /gap:\s*9px/u)
 })

@@ -17,6 +17,26 @@ export function normalizeThreadRouter(value) {
   return { threadId, responsibilities }
 }
 
+export function managedRouterThread(threads, routerId, routerWorkspace) {
+  const id = cleanText(routerId, 256)
+  const cwd = cleanText(routerWorkspace, 4096)
+  if (!id || !cwd) return null
+  return (Array.isArray(threads) ? threads : []).find((thread) =>
+    String(thread?.id || '') === id && String(thread?.cwd || '') === cwd,
+  ) || null
+}
+
+export function recoverManagedRouterCatalog(threads, routerId, routerWorkspace, recovered) {
+  const catalog = Array.isArray(threads) ? threads : []
+  if (managedRouterThread(catalog, routerId, routerWorkspace)) return catalog
+  if (!managedRouterThread([recovered], routerId, routerWorkspace)) return catalog
+  return [recovered, ...catalog.filter((thread) => String(thread?.id || '') !== String(routerId || ''))]
+}
+
+export function shouldCreateManagedRouter(routerId) {
+  return !cleanText(routerId, 256)
+}
+
 export function routerDecisionSchema() {
   return {
     type: 'object',

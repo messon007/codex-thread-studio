@@ -647,6 +647,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
+        .route("/thread-fork.mjs", get(thread_fork_js))
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
@@ -1675,6 +1676,10 @@ async fn transcript_presentation_js() -> impl IntoResponse {
 
 async fn thread_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-catalog.mjs"))
+}
+
+async fn thread_fork_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-fork.mjs"))
 }
 
 async fn thread_workset_js() -> impl IntoResponse {
@@ -2891,6 +2896,7 @@ mod tests {
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
                 "/thread-catalog.mjs",
+                "/thread-fork.mjs",
                 "/thread-workset.mjs",
                 "/composer-tools.mjs",
                 "/document-review.mjs",

@@ -79,9 +79,15 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
 
   if (type === 'session.status') {
     model.status = normalizeOpenCodeStatus(properties.status)
-    if (model.status !== 'running') model.activeTurnId = null
-    else model.activeTurnId ||= model.turns.at(-1)?.id || null
-    return { handled: true, kind: 'metadata', sessionId, type }
+    if (model.status === 'running') {
+      model.activeTurnId ||= model.turns.at(-1)?.id || null
+      return { handled: true, kind: 'metadata', sessionId, type }
+    }
+    const active = model.turns.find((turn) => turn.id === model.activeTurnId) || model.turns.at(-1)
+    const turnId = model.activeTurnId || active?.id || null
+    model.activeTurnId = null
+    if (active?.status === 'inProgress') active.status = model.status === 'failed' ? 'failed' : 'completed'
+    return { handled: true, kind: turnId ? 'full' : 'metadata', sessionId, type, turnId }
   }
   if (type === 'session.idle') {
     model.status = 'idle'
@@ -204,7 +210,7 @@ function openCodePartToItem(part, role) {
   }
   if (part?.type === 'patch') return { id, type: 'fileChange', changes: [{ kind: 'patch', path: (part.files || []).join(', '), diff: part.hash || '' }], status: 'completed' }
   if (part?.type === 'compaction') return { id, type: 'contextCompaction' }
-  if (part?.type === 'step-finish') return { id, type: 'stepFinish', tokens: part.tokens, cost: part.cost, reason: part.reason }
+  if (part?.type === 'step-start' || part?.type === 'step-finish') return null
   return { ...part, id, type: part?.type || 'unknown' }
 }
 

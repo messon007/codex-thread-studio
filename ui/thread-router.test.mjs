@@ -2,12 +2,36 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   finalAgentText,
+  managedRouterThread,
   normalizeThreadRouter,
   parseRouterDecision,
+  recoverManagedRouterCatalog,
   routerCandidates,
   routerDecisionForTurn,
   routerDecisionSchema,
+  shouldCreateManagedRouter,
 } from './thread-router.mjs'
+
+test('recovers a managed router omitted from the bounded catalog', () => {
+  const catalog = [{ id: 'regular', cwd: '/work/project' }]
+  const recovered = { id: 'router', name: 'Thread Router', cwd: '/studio/router' }
+
+  assert.equal(managedRouterThread(catalog, 'router', '/studio/router'), null)
+  assert.deepEqual(
+    recoverManagedRouterCatalog(catalog, 'router', '/studio/router', recovered),
+    [recovered, ...catalog],
+  )
+  assert.equal(
+    recoverManagedRouterCatalog(catalog, 'router', '/studio/router', { ...recovered, cwd: '/wrong' }),
+    catalog,
+  )
+})
+
+test('creates a managed router only when no Router identity is configured', () => {
+  assert.equal(shouldCreateManagedRouter(null), true)
+  assert.equal(shouldCreateManagedRouter(''), true)
+  assert.equal(shouldCreateManagedRouter('router-id'), false)
+})
 
 test('normalizes router configuration and excludes the router itself', () => {
   assert.deepEqual(normalizeThreadRouter({

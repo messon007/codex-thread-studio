@@ -36,6 +36,20 @@ test('groups assistant parts under their user interaction', () => {
   assert.equal(thread.messageTurns['msg-agent'], 'msg-user')
 })
 
+test('omits OpenCode step lifecycle markers from the visible transcript', () => {
+  const thread = openCodeThreadFromHistory({ id: 'ses-1', directory: '/tmp/demo' }, [
+    { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'p1', type: 'text', text: 'hello' }] },
+    { info: { id: 'msg-agent', parentID: 'msg-user', role: 'assistant' }, parts: [
+      { id: 'step-1', messageID: 'msg-agent', type: 'step-start' },
+      { id: 'p2', messageID: 'msg-agent', type: 'reasoning', text: 'thinking' },
+      { id: 'p3', messageID: 'msg-agent', type: 'text', text: 'world' },
+      { id: 'step-2', messageID: 'msg-agent', type: 'step-finish', reason: 'stop' },
+    ] },
+  ], { type: 'idle' })
+
+  assert.deepEqual(thread.turns[0].items.map((item) => item.type), ['userMessage', 'reasoning', 'agentMessage'])
+})
+
 test('applies streamed OpenCode deltas and status', () => {
   const model = { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }], activeTurnId: 'turn-1', status: 'running', approvals: [], messageTurns: { 'msg-a': 'turn-1' } }
   const result = applyOpenCodeEvent(model, { type: 'message.part.delta', properties: { sessionID: 'ses-1', messageID: 'msg-a', partID: 'part-1', field: 'text', delta: 'hello' } }, 'ses-1')
@@ -43,6 +57,15 @@ test('applies streamed OpenCode deltas and status', () => {
   assert.equal(model.turns[0].items[0].text, 'hello')
   applyOpenCodeEvent(model, { type: 'session.status', properties: { sessionID: 'ses-1', status: { type: 'idle' } } }, 'ses-1')
   assert.equal(model.status, 'idle')
+  assert.equal(model.activeTurnId, null)
+  assert.equal(model.turns[0].status, 'completed')
+})
+
+test('does not add streamed OpenCode step lifecycle markers to a turn', () => {
+  const model = { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }], activeTurnId: 'turn-1', status: 'running', approvals: [], messageTurns: { 'msg-a': 'turn-1' }, messageRoles: { 'msg-a': 'assistant' } }
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'step-1', sessionID: 'ses-1', messageID: 'msg-a', type: 'step-start' } } }, 'ses-1')
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'step-2', sessionID: 'ses-1', messageID: 'msg-a', type: 'step-finish', reason: 'stop' } } }, 'ses-1')
+  assert.deepEqual(model.turns[0].items, [])
 })
 
 test('keeps streamed user parts as user messages', () => {

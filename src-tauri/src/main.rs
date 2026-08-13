@@ -1414,7 +1414,7 @@ fn load_workspace_directory(
                 .strip_prefix(&root)
                 .ok()?
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             Some(WorkspaceEntry {
                 name,
                 path,
@@ -1435,7 +1435,7 @@ fn load_workspace_directory(
             .strip_prefix(&root)
             .unwrap_or(&directory)
             .to_string_lossy()
-            .into_owned(),
+            .replace('\\', "/"),
         entries,
         truncated,
     })

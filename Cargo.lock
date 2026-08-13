@@ -409,6 +409,7 @@ dependencies = [
  "axum",
  "futures-util",
  "gtk",
+ "libc",
  "portable-pty",
  "reqwest",
  "rusqlite",

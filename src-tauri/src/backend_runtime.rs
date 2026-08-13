@@ -201,6 +201,7 @@ impl BackendRuntime {
             for (key, value) in environment {
                 command.env(key, value);
             }
+            configure_native_command(&mut command);
             RuntimeCommand {
                 command,
                 cleanup: None,
@@ -268,9 +269,13 @@ impl RuntimeCommand {
     pub fn spawn(mut self) -> io::Result<RuntimeChild> {
         self.command.kill_on_drop(true);
         let child = self.command.spawn()?;
+        #[cfg(unix)]
+        let native_process_group = child.id();
         Ok(RuntimeChild {
             child,
             cleanup: self.cleanup,
+            #[cfg(unix)]
+            native_process_group,
         })
     }
 
@@ -289,9 +294,16 @@ impl RuntimeCommand {
 pub struct RuntimeChild {
     child: Child,
     cleanup: Option<WslCleanup>,
+    #[cfg(unix)]
+    native_process_group: Option<u32>,
 }
 
 impl RuntimeChild {
+    #[cfg(test)]
+    pub fn id(&self) -> Option<u32> {
+        self.child.id()
+    }
+
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
         self.child.stdin.take()
     }
@@ -307,6 +319,8 @@ impl RuntimeChild {
     pub async fn wait(&mut self) -> io::Result<ExitStatus> {
         let result = self.child.wait().await;
         if result.is_ok() {
+            #[cfg(unix)]
+            self.terminate_native_process_group();
             if let Some(cleanup) = self.cleanup.as_mut() {
                 let _ = cleanup.terminate().await;
             }
@@ -314,14 +328,83 @@ impl RuntimeChild {
         result
     }
 
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let result = self.child.try_wait();
+        if result.as_ref().is_ok_and(Option::is_some) {
+            #[cfg(unix)]
+            self.terminate_native_process_group();
+        }
+        result
+    }
+
+    #[cfg(unix)]
+    fn terminate_native_process_group(&mut self) {
+        if let Some(process_group) = self.native_process_group.take() {
+            let _ = terminate_native_process_group(process_group);
+        }
+    }
+
     pub async fn kill_tree(&mut self) -> io::Result<()> {
         let cleanup_result = match self.cleanup.as_mut() {
             Some(cleanup) => cleanup.terminate().await,
             None => Ok(()),
         };
+        #[cfg(unix)]
+        let group_result = self
+            .native_process_group
+            .take()
+            .map_or(Ok(()), terminate_native_process_group);
+        #[cfg(not(unix))]
+        let group_result = Ok(());
         let kill_result = self.child.start_kill();
         let wait_result = self.child.wait().await.map(|_| ());
-        cleanup_result.and(kill_result).and(wait_result)
+        cleanup_result
+            .and(group_result)
+            .and(kill_result)
+            .and(wait_result)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RuntimeChild {
+    fn drop(&mut self) {
+        let _ = self.child.try_wait();
+        self.terminate_native_process_group();
+    }
+}
+
+#[cfg(unix)]
+fn configure_native_command(command: &mut Command) {
+    command.process_group(0);
+    #[cfg(target_os = "linux")]
+    {
+        let expected_parent = unsafe { libc::getpid() };
+        // SAFETY: this closure only invokes async-signal-safe libc calls before exec.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::getppid() != expected_parent {
+                    libc::_exit(1);
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_native_process_group(process_group: u32) -> io::Result<()> {
+    let result = unsafe { libc::kill(-(process_group as i32), libc::SIGKILL) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
     }
 }
 
@@ -454,6 +537,9 @@ fn wsl_cleanup_args(distribution: Option<&str>, user: Option<&str>, pid_file: &s
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    const PARENT_DEATH_PID_FILE: &str = "CODEX_THREAD_STUDIO_PARENT_DEATH_PID_FILE";
+
     #[test]
     fn wsl_launch_keeps_user_values_as_arguments() {
         let args = wsl_launch_args(
@@ -482,6 +568,189 @@ mod tests {
         assert_eq!(&args[..2], ["--distribution", "Ubuntu"]);
         assert_eq!(args.last().map(String::as_str), Some("/tmp/runtime.pid"));
         assert!(args.iter().any(|value| value.contains("kill -TERM")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "test helper launched by native_parent_death_signal_terminates_the_backend"]
+    fn native_parent_death_helper() {
+        let Some(pid_file) = std::env::var_os(PARENT_DEATH_PID_FILE) else {
+            return;
+        };
+        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build helper runtime");
+        let _runtime_guard = tokio_runtime.enter();
+        let runtime = BackendRuntime::new(
+            std::env::var_os("PATH").unwrap_or_default(),
+            WslSettings::default(),
+        );
+        let child = runtime
+            .command("/bin/sleep", &["30"], &[])
+            .spawn()
+            .expect("spawn backend child");
+        std::fs::write(pid_file, child.id().expect("backend child pid").to_string())
+            .expect("write backend child pid");
+        std::process::exit(0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_parent_death_signal_terminates_the_backend() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "codex-thread-studio-parent-death-{}.pid",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "backend_runtime::tests::native_parent_death_helper",
+            ])
+            .env(PARENT_DEATH_PID_FILE, &pid_file)
+            .status()
+            .expect("run parent-death helper");
+        assert!(status.success());
+        let pid = std::fs::read_to_string(&pid_file)
+            .expect("read backend child pid")
+            .parse::<i32>()
+            .expect("numeric backend child pid");
+        let terminated = (0..100).any(|_| {
+            if !native_process_is_running(pid) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            false
+        });
+        let _ = std::fs::remove_file(pid_file);
+        assert!(
+            terminated,
+            "backend process {pid} survived its Studio parent"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dropping_a_backend_terminates_its_process_group() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "codex-thread-studio-process-group-{}.pid",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let _runtime_guard = tokio_runtime.enter();
+        let runtime = BackendRuntime::new(
+            std::env::var_os("PATH").unwrap_or_default(),
+            WslSettings::default(),
+        );
+        let child = runtime
+            .command(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "sleep 30 & printf '%s' \"$!\" > \"$1\"; wait",
+                    "codex-thread-studio-test",
+                    pid_file.to_str().expect("UTF-8 pid path"),
+                ],
+                &[],
+            )
+            .spawn()
+            .expect("spawn backend process group");
+        let descendant_pid = (0..100)
+            .find_map(|_| {
+                let pid = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|value| value.parse::<i32>().ok());
+                if pid.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                pid
+            })
+            .expect("backend descendant pid");
+        drop(child);
+        let terminated = (0..100).any(|_| {
+            if !native_process_is_running(descendant_pid) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            false
+        });
+        let _ = std::fs::remove_file(pid_file);
+        assert!(
+            terminated,
+            "backend descendant {descendant_pid} survived RuntimeChild drop"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reaping_an_exited_backend_terminates_remaining_descendants() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "codex-thread-studio-reaped-process-group-{}.pid",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let _runtime_guard = tokio_runtime.enter();
+        let runtime = BackendRuntime::new(
+            std::env::var_os("PATH").unwrap_or_default(),
+            WslSettings::default(),
+        );
+        let mut child = runtime
+            .command(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "sleep 30 & printf '%s' \"$!\" > \"$1\"",
+                    "codex-thread-studio-test",
+                    pid_file.to_str().expect("UTF-8 pid path"),
+                ],
+                &[],
+            )
+            .spawn()
+            .expect("spawn short-lived backend process group");
+        let descendant_pid = (0..100)
+            .find_map(|_| {
+                let pid = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|value| value.parse::<i32>().ok());
+                if pid.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                pid
+            })
+            .expect("backend descendant pid");
+        tokio_runtime
+            .block_on(child.wait())
+            .expect("reap backend process");
+        let terminated = (0..100).any(|_| {
+            if !native_process_is_running(descendant_pid) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            false
+        });
+        let _ = std::fs::remove_file(pid_file);
+        assert!(
+            terminated,
+            "backend descendant {descendant_pid} survived parent reaping"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn native_process_is_running(pid: i32) -> bool {
+        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat,
+            Err(_) => return false,
+        };
+        stat.rsplit_once(')')
+            .and_then(|(_, fields)| fields.split_whitespace().next())
+            != Some("Z")
     }
 
     // WSL is Linux, and the launch contract intentionally relies on Linux's setsid.

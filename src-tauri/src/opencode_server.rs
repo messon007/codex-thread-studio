@@ -12,10 +12,11 @@ use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
-use crate::backend_runtime::BackendRuntime;
+use crate::backend_runtime::{BackendRuntime, RuntimeChild};
 
 const MAX_PROXY_BODY_BYTES: usize = 4 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub struct OpenCodeServer {
@@ -31,6 +32,7 @@ struct ProcessConnection {
     generation: u64,
     base_url: String,
     password: String,
+    child: Arc<Mutex<RuntimeChild>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,11 +122,14 @@ impl OpenCodeServer {
 
     async fn ensure_started(&self) -> Result<ProcessConnection, String> {
         let mut process = self.process.lock().await;
-        if let Some(connection) = process.as_ref() {
-            if self.health_is_ready(connection).await {
-                return Ok(connection.clone());
+        if let Some(connection) = process.as_ref().cloned() {
+            if self.health_is_ready(&connection).await {
+                return Ok(connection);
             }
             *process = None;
+            if let Err(error) = connection.child.lock().await.kill_tree().await {
+                eprintln!("Unable to stop the unhealthy OpenCode Server: {error}");
+            }
         }
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -163,34 +168,26 @@ impl OpenCodeServer {
             tokio::spawn(log_lines(stderr, "stderr"));
         }
 
+        let child = Arc::new(Mutex::new(child));
         let base_url = format!("http://127.0.0.1:{port}");
         let connection = ProcessConnection {
             generation,
             base_url: base_url.clone(),
             password,
+            child: child.clone(),
         };
         *process = Some(connection.clone());
         drop(process);
 
         for _ in 0..START_ATTEMPTS {
             if self.health_is_ready(&connection).await {
-                let waiter = self.clone();
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                    let mut process = waiter.process.lock().await;
-                    if process
-                        .as_ref()
-                        .is_some_and(|connection| connection.generation == generation)
-                    {
-                        *process = None;
-                    }
-                });
+                self.monitor_process(connection.clone());
                 return Ok(connection);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let _ = child.kill_tree().await;
+        let _ = child.lock().await.kill_tree().await;
         let mut process = self.process.lock().await;
         if process
             .as_ref()
@@ -203,6 +200,30 @@ impl OpenCodeServer {
             "`{}` did not become ready within 5 seconds",
             self.binary
         ))
+    }
+
+    fn monitor_process(&self, connection: ProcessConnection) {
+        let server = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PROCESS_POLL_INTERVAL).await;
+                match connection.child.lock().await.try_wait() {
+                    Ok(None) => continue,
+                    Ok(Some(_)) => break,
+                    Err(error) => {
+                        eprintln!("Unable to monitor the OpenCode Server: {error}");
+                        break;
+                    }
+                }
+            }
+            let mut process = server.process.lock().await;
+            if process
+                .as_ref()
+                .is_some_and(|active| active.generation == connection.generation)
+            {
+                *process = None;
+            }
+        });
     }
 
     async fn health_is_ready(&self, connection: &ProcessConnection) -> bool {

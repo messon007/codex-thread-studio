@@ -13,6 +13,7 @@ function rule(selector) {
 test('brand geometry matches the Agent Deck Studio sidebar contract', () => {
   assert.match(html, /<strong>Codex Thread Studio<\/strong>\s*<span>Codex Desktop<\/span>/)
   assert.match(rule('.brand-row'), /height:\s*74px/)
+  assert.doesNotMatch(rule('.brand-row'), /border-bottom/)
   assert.match(rule('.brand-row'), /padding:\s*16px 18px/)
   assert.match(rule('.brand-mark'), /width:\s*38px/)
   assert.match(rule('.brand-mark'), /height:\s*38px/)

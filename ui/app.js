@@ -487,13 +487,25 @@ function bindUI() {
   $('#session-map-item-form').addEventListener('submit', saveSessionMapItem)
   $('#close-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
   $('#cancel-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
-  $('#rename-thread').addEventListener('click', openRenameThreadDialog)
+  $('#rename-thread').addEventListener('click', () => {
+    closeActionMenus()
+    openRenameThreadDialog()
+  })
   $('#rename-thread-form').addEventListener('submit', renameSelectedThread)
   $('#close-rename-thread').addEventListener('click', closeRenameThreadDialog)
   $('#cancel-rename-thread').addEventListener('click', closeRenameThreadDialog)
-  $('#fork-thread').addEventListener('click', forkSelectedThread)
-  $('#archive-thread').addEventListener('click', archiveSelectedThread)
-  $('#delete-thread').addEventListener('click', deleteSelectedThread)
+  $('#fork-thread').addEventListener('click', () => {
+    closeActionMenus()
+    forkSelectedThread()
+  })
+  $('#archive-thread').addEventListener('click', () => {
+    closeActionMenus()
+    archiveSelectedThread()
+  })
+  $('#delete-thread').addEventListener('click', () => {
+    closeActionMenus()
+    deleteSelectedThread()
+  })
   $('#retry-native').addEventListener('click', connectBackend)
   $('#composer-form').addEventListener('submit', sendComposer)
   $('#composer-input').addEventListener('input', handleComposerInput)
@@ -529,33 +541,16 @@ function bindUI() {
   }
   $('#transcript').addEventListener('click', handleTranscriptClick)
   document.addEventListener('click', (event) => handleMarkdownActionClick(event).catch(reportClientError))
-  $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
-  $('#favorite-menu-button').addEventListener('click', () => toggleActionMenu('favorite-menu', 'favorite-menu-button'))
-  $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
+  $('#open-thread-comments').addEventListener('click', openAnnotationRail)
+  $('#open-thread-favorites').addEventListener('click', () => openFavoritesRail('session'))
   window.addEventListener('resize', () => {
     scheduleTurnNavigatorSync()
     applyRightRailWidth()
     workspaceTools.resize()
   })
-  $('#comment-selection').addEventListener('click', () => {
-    closeActionMenus()
-    openAnnotationFromSelection()
-  })
   $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
   $('#selection-comment').addEventListener('click', openAnnotationFromSelection)
   $('#selection-favorite').addEventListener('click', openFavoriteFromSelection)
-  $('#favorite-selection').addEventListener('click', () => {
-    closeActionMenus()
-    openFavoriteFromSelection()
-  })
-  $('#open-annotation-rail').addEventListener('click', () => {
-    closeActionMenus()
-    openAnnotationRail()
-  })
-  $('#open-session-favorites').addEventListener('click', () => {
-    closeActionMenus()
-    openFavoritesRail('session')
-  })
   $('#close-annotation-rail').addEventListener('click', closeAnnotationRail)
   $('#annotation-form').addEventListener('submit', addAnnotation)
   $('#close-annotation-dialog').addEventListener('click', closeAnnotationDialog)
@@ -938,7 +933,6 @@ function applyBackendCopy() {
   $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
   $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
   $('#new-thread-label').textContent = t('新建会话')
-  $('#native-label').textContent = descriptor.nativeLabel
   $('#native-error-title').textContent = t('{backend} Server 无法使用', { backend: descriptor.name })
   $('#empty-title').textContent = t('结构化 {backend} 工作台', { backend: descriptor.name })
   $('#empty-description').textContent = descriptor.id === 'codex'
@@ -1267,7 +1261,6 @@ function handleAppServerMessage(message) {
       const preserveActivity = message.method !== 'turn/completed'
       if (!turnId || !replaceRenderedTurn(turnId, { preserveActivity })) renderTranscript()
     }
-    if (updateKind === 'metadata') renderUsage()
     renderComposerState()
     updateSelectedThreadStatus(message)
     if (message.method === 'turn/completed') {
@@ -1392,7 +1385,6 @@ function handleOpenCodeServerEvent(event) {
   if (targetModel !== state.model) return
   if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
   else if (update.kind === 'metadata') {
-    renderUsage()
     renderComposerState()
   } else if (!update.turnId || !replaceRenderedTurn(update.turnId, { preserveActivity: payload.type !== 'session.idle' })) renderTranscript()
   renderComposerState()
@@ -2046,9 +2038,6 @@ function renderWorkspace() {
   }
   $('#thread-title').textContent = threadTitle(thread)
   $('#thread-path').textContent = thread.cwd || thread.id
-  const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
-  $('#thread-status').textContent = statusLabel(status)
-  $('#thread-status').className = `status-badge ${status}`
   $('#archive-thread').disabled = state.backend === 'opencode'
   $('#archive-thread').title = t(state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : '归档会话')
   $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
@@ -2176,7 +2165,7 @@ function renderSessionMap() {
   const key = selectedStateKey()
   const map = key ? state.sessionMaps.get(key) : null
   const hasMap = Boolean(map)
-  $('#session-map-action').textContent = hasMap ? '打开 Map' : '创建 Map'
+  $('#session-map-action span').textContent = t(hasMap ? '打开 Map' : '创建 Map')
   const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
     || !$('#annotation-rail').classList.contains('hidden')
     || !$('#favorites-rail').classList.contains('hidden')
@@ -2759,7 +2748,6 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   renderTurnNavigator()
   if (preserveScroll) container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
   else followTranscriptOutput()
-  renderUsage()
   captureOpeningMessage()
 }
 
@@ -4054,8 +4042,6 @@ function renderComposerState() {
       : '将通过 turn/start 开始新 Turn'
   $('#composer-hint').textContent = `${baseHint}${!shellMode && details.length ? ` · ${details.join(' · ')}` : ''}`
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
-  $('#thread-status').textContent = statusLabel(state.model.status)
-  $('#thread-status').className = `status-badge ${state.model.status}`
   renderComposerReviewContext()
 }
 
@@ -4614,6 +4600,12 @@ function activateRightWorkspace(tool) {
   }
   closeActionMenus()
   hideSelectionPopover()
+  syncRightWorkspaceLaunchers()
+}
+
+function syncRightWorkspaceLaunchers() {
+  $('#open-thread-comments')?.setAttribute('aria-pressed', String(!$('#annotation-rail').classList.contains('hidden')))
+  $('#open-thread-favorites')?.setAttribute('aria-pressed', String(!$('#favorites-rail').classList.contains('hidden')))
 }
 
 async function refreshArtifact() {
@@ -5320,6 +5312,8 @@ function openAnnotationRail() {
 }
 function closeAnnotationRail() {
   $('#annotation-rail').classList.add('hidden')
+  if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
+  syncRightWorkspaceLaunchers()
   if ($('#favorites-rail').classList.contains('hidden')) {
     if (state.artifact) renderArtifact()
     else renderSessionMap()
@@ -5329,7 +5323,10 @@ function closeAnnotationRail() {
 function renderAnnotationRail() {
   const drafts = currentAnnotations()
   $('#annotation-count').textContent = drafts.length
-  $('#draft-count').textContent = drafts.length
+  const commentsButton = $('#open-thread-comments')
+  const commentsLabel = drafts.length ? `${t('批注')} · ${drafts.length}` : t('批注')
+  commentsButton.title = commentsLabel
+  commentsButton.setAttribute('aria-label', commentsLabel)
   $('#annotation-empty').classList.toggle('hidden', drafts.length > 0)
   $('#annotation-list').classList.toggle('hidden', drafts.length === 0)
   $('#clear-annotations').disabled = !drafts.length && !state.annotationAdditional[selectedStateKey()]
@@ -5508,6 +5505,8 @@ function openFavoritesRail(scope = 'global') {
 
 function closeFavoritesRail() {
   $('#favorites-rail').classList.add('hidden')
+  if (state.activeRightWorkspace === 'favorites') state.activeRightWorkspace = null
+  syncRightWorkspaceLaunchers()
   if ($('#annotation-rail').classList.contains('hidden')) {
     if (state.artifact) renderArtifact()
     else renderSessionMap()
@@ -5579,9 +5578,10 @@ function renderSessionFavoriteCount() {
   const count = state.selectedId
     ? state.favoriteIndex.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId).length
     : 0
-  const element = $('#session-favorite-count')
-  if (element) element.textContent = count > 99 ? '99+' : count
-  $('#favorite-menu-button')?.classList.toggle('has-items', count > 0)
+  const favoritesButton = $('#open-thread-favorites')
+  const favoritesLabel = count ? `${t('收藏')} · ${count}` : t('收藏')
+  favoritesButton.title = favoritesLabel
+  favoritesButton.setAttribute('aria-label', favoritesLabel)
 }
 
 function handleFavoriteListClick(event) {
@@ -6275,6 +6275,12 @@ function refreshBackendInformation() {
 
 function setBackendState(kind, label, caption) {
   state.backendStates[state.backend] = { kind, label, caption }
+  const connection = $('#thread-connection')
+  if (connection) {
+    connection.className = `thread-connection ${kind}`
+    const copy = kind === 'online' ? '已连接' : kind === 'checking' ? '正在连接…' : '未连接'
+    $('#native-connection').textContent = t(copy)
+  }
   if ($('#connections-dialog').open) renderConnectionsDialog()
   if ($('#backend-dialog').open) renderBackendDialog()
 }
@@ -6289,13 +6295,6 @@ function updateSelectedThreadStatus(message) {
   if (!thread) return
   if (message.method === 'thread/status/changed' && message.params?.threadId === thread.id) thread.status = message.params.status
   renderWorkspace()
-}
-
-function renderUsage() {
-  const usage = state.model.usage
-  if (!usage) return ($('#token-usage').textContent = '')
-  const total = usage.totalTokens ?? usage.total_tokens ?? usage.total?.totalTokens
-  $('#token-usage').textContent = Number.isFinite(total) ? `${Number(total).toLocaleString()} tokens` : ''
 }
 
 function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex 会话') }

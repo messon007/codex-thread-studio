@@ -120,13 +120,14 @@ test('saving settings closes the dialog before rerendering dynamic UI', () => {
   assert.ok(body.indexOf("$('#settings-dialog').close()") < body.indexOf('renderLocalizedUI()'))
 })
 
-test('the session favorites button is styled only by its favorite count', () => {
+test('comments and favorites use compact right-area launchers without add menus', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
-  assert.match(html, /id="favorite-menu-button" class="text-button content-menu-button favorite-menu-button"/)
-  assert.match(source, /classList\.toggle\('has-items', count > 0\)/)
-  assert.doesNotMatch(source, /favorite-menu-button'\)\.classList\.(?:add|toggle)\('ready'/)
-  assert.match(styles, /\.favorite-menu-button\.has-items/)
-  assert.doesNotMatch(styles, /\.favorite-(?:trigger|menu-button)\.ready/)
+  assert.match(html, /id="open-thread-comments"[^>]*workspace-tool-launcher[^>]*icon-only/)
+  assert.match(html, /id="open-thread-favorites"[^>]*workspace-tool-launcher[^>]*icon-only/)
+  assert.doesNotMatch(html, /id="(?:annotation|favorite)-menu-button"/)
+  assert.doesNotMatch(html, /id="(?:open-annotation-rail|open-session-favorites)"/)
+  assert.doesNotMatch(source, /(?:annotation|favorite)-menu-button/)
+  assert.match(html, /id="selection-comment"/)
+  assert.match(html, /id="selection-favorite"/)
 })

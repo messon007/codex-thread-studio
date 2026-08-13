@@ -34,13 +34,28 @@ test('workspace tool launchers remain visible in narrow windows', () => {
   assert.match(styles, /\.workspace-tool-launchers\s*\{[^}]*flex:\s*0 0 auto/u)
 })
 
-test('session actions use the same compact icon-button geometry as workspace tools', () => {
+test('session management actions live in More while right areas stay compact', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  const menu = html.match(/id="thread-more-menu"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/header>/u)?.[0] || ''
+  for (const id of ['rename-thread', 'fork-thread', 'archive-thread', 'delete-thread']) {
+    assert.match(menu, new RegExp(`id="${id}"[\\s\\S]{0,240}<svg`, 'u'))
+  }
+  for (const id of ['open-thread-comments', 'open-thread-favorites', 'open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*workspace-tool-launcher[^>]*icon-only`, 'u'))
+  }
+  assert.doesNotMatch(html.slice(0, html.indexOf('id="thread-more-menu"')), /id="(?:rename|fork|archive|delete)-thread"/u)
+})
+
+test('session and every right-area header share one exact divider height', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
-  for (const id of ['rename-thread', 'fork-thread', 'archive-thread', 'delete-thread']) {
-    assert.match(html, new RegExp(`id="${id}"[^>]*thread-action-icon[^>]*icon-only[^>]*>[\\s\\S]{0,240}<svg`, 'u'))
+  assert.match(styles, /--app-header-height:\s*75px/u)
+  for (const selector of ['\\.thread-toolbar', '\\.annotation-rail > header', '\\.artifact-header', '\\.workspace-tools-header', '\\.favorites-rail > header', '\\.session-map-header']) {
+    assert.match(styles, new RegExp(`${selector} \\{[^}]*height: var\\(--app-header-height\\);[^}]*min-height: var\\(--app-header-height\\);[^}]*border-bottom: 1px solid var\\(--border\\)`, 'u'))
   }
-  assert.match(styles, /\.workspace-tool-launcher, \.thread-action-icon \{[^}]*place-items: center/u)
+  assert.doesNotMatch(html, /class="native-chrome"/u)
+  assert.match(styles, /\.native-workspace \{[^}]*overflow: hidden;[^}]*background: var\(--panel\);/u)
+  assert.doesNotMatch(styles.match(/\.native-workspace \{[^}]*\}/u)?.[0] || '', /margin:|border:|border-radius:|box-shadow:/u)
 })
 
 test('workspace tools use one right-side slot without nested tool tabs', () => {

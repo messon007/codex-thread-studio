@@ -40,6 +40,12 @@ The Rust gateway resolves `opencode`, starts `opencode serve` lazily on a random
 
 The adapter uses `/experimental/session` for the cross-project list, `/session/*` for CRUD/history/prompt/abort, and `/global/event` for live events. Every project-scoped request carries the session `directory`. SSE reconnects trigger history reconciliation because OpenCode does not expose an SSE replay cursor.
 
+Studio declares experimental structured-interaction and MCP form capabilities during the Codex `initialize` handshake, retains the returned platform metadata, and exposes its effective client capability set in connection state. On every Codex WebSocket reconnect it reloads the selected Thread; a broadcast lag signal performs the same reconciliation immediately. The compatibility fixture generates JSON Schema from the installed Codex and asserts the interaction methods Studio implements.
+
+Artifact binaries and project environment profiles stay behind authenticated gateway routes. PDF/XLSX bytes are bounded and signature-checked before entering local parsers. Environment GET responses redact Secret values; the Rust layer injects them into PTYs or applies them to Codex through `thread/resume.config.shell_environment_policy` without sending stored values back to the WebView.
+
+Git Review also stays behind the authenticated loopback gateway. Rust invokes `git` with explicit argument arrays and literal pathspecs in the selected session root, parses NUL-delimited porcelain status, caps status/diff output, and validates mutations against the current changed-path set. The WebView receives structured status plus bounded unified text; it can stage or unstage but has no discard endpoint.
+
 ## UI state model
 
 ```text

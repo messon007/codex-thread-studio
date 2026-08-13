@@ -5,6 +5,7 @@ import {
   hydrateCodexThread,
   reconcileOptimisticCodexTurn,
   resolveCodexApproval,
+  resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
   textFromUserContent,
 } from './codex-native.mjs'
@@ -53,6 +54,8 @@ import {
 } from './comment-source-providers.mjs'
 import { browserCommentSource, createBrowserCommentProvider } from './browser-comment-provider.mjs'
 import { createEpubCommentProvider, epubCommentSource } from './epub-comment-provider.mjs'
+import { createPdfCommentProvider, pdfCommentSource } from './pdf-comment-provider.mjs'
+import { createTableCommentProvider, tableCommentSource } from './table-comment-provider.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -109,6 +112,7 @@ import {
 } from './i18n.mjs'
 import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
 import { createWorkspaceTools } from './workspace-tools.mjs'
+import { rightRailWidthBounds } from './right-rail-layout.mjs'
 import {
   catalogCountsWithAttention,
   catalogTimestamp,
@@ -132,11 +136,14 @@ import {
   routerDeveloperInstructions,
 } from './thread-router.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
+import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 
 const commentSources = new CommentSourceRegistry()
   .register(createChatCommentProvider())
   .register(createDocumentCommentProvider())
   .register(createEpubCommentProvider())
+  .register(createPdfCommentProvider())
+  .register(createTableCommentProvider())
   .register(createBrowserCommentProvider())
 
 marked.setOptions({
@@ -151,6 +158,8 @@ const $$ = (selector) => [...document.querySelectorAll(selector)]
 const typographyDefaults = Object.freeze({
   uiFontFamily: 'Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
   uiFontWeight: 500,
+  workspaceFontFamily: 'Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
+  workspaceFontSize: 14,
   codeFontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
   codeFontSize: 14,
   codeFontWeight: 500,
@@ -208,14 +217,20 @@ const state = {
   hiddenSessionDirectories: [],
   sessionDirectoryIgnore: [],
   sidebarCollapsed: false,
-  artifactWidthRatio: 0.44,
+  rightRailWidthRatio: 0.44,
   typography: { ...typographyDefaults },
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
   markdown: { mode: 'technical' },
+  desktopNotifications: false,
+  appServerCapabilities: {},
+  appServerInitialization: null,
+  lastAppServerGeneration: null,
+  environmentProfile: null,
   browser: null,
   browserInfo: null,
   embeddedBrowserVisible: false,
   embeddedBrowserLoaded: false,
+  activeRightWorkspace: null,
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
@@ -285,21 +300,25 @@ let mermaidRenderSequence = 0
 let mermaidGeneration = 0
 let mermaidInitializedConfig = ''
 let activityLogContext = null
-let artifactResize = null
+let rightRailResize = null
 let artifactEditor = null
 let epubReader = null
 let epubReaderModule = null
 let epubReaderGeneration = 0
 let epubReadingStateTimer = null
+let richArtifactReader = null
+let pdfReaderModule = null
+let tableReaderModule = null
 let workspaceEditorModule = null
 let embeddedBrowserWidthTimer = null
+let developerEnvironmentRoot = ''
 
 const workspaceTools = createWorkspaceTools({
   gatewayFetch,
   gatewayWebSocket,
   getThread: selectedThread,
   getBackend: () => state.backend,
-  openFile: openArtifact,
+  openFile: (file, context = {}) => openArtifact(file, { returnTool: context.returnTool }),
   canOpenFile: (file) => Boolean(previewableFileKind(file)),
   closePeerRails: closeWorkspacePeerRails,
   translate: t,
@@ -500,12 +519,14 @@ function bindUI() {
   $('#artifact-search-input').addEventListener('keydown', handleArtifactSearchKeydown)
   $('#artifact-search-prev').addEventListener('click', () => navigateArtifactSearch(-1))
   $('#artifact-search-next').addEventListener('click', () => navigateArtifactSearch(1))
-  $('#artifact-resizer').addEventListener('pointerdown', beginArtifactResize)
-  $('#artifact-resizer').addEventListener('pointermove', continueArtifactResize)
-  $('#artifact-resizer').addEventListener('pointerup', finishArtifactResize)
-  $('#artifact-resizer').addEventListener('pointercancel', finishArtifactResize)
-  $('#artifact-resizer').addEventListener('dblclick', resetArtifactWidth)
-  $('#artifact-resizer').addEventListener('keydown', handleArtifactResizeKey)
+  for (const resizer of $$('.app-right-rail-resizer')) {
+    resizer.addEventListener('pointerdown', beginRightRailResize)
+    resizer.addEventListener('pointermove', continueRightRailResize)
+    resizer.addEventListener('pointerup', finishRightRailResize)
+    resizer.addEventListener('pointercancel', finishRightRailResize)
+    resizer.addEventListener('dblclick', resetRightRailWidth)
+    resizer.addEventListener('keydown', handleRightRailResizeKey)
+  }
   $('#transcript').addEventListener('click', handleTranscriptClick)
   document.addEventListener('click', (event) => handleMarkdownActionClick(event).catch(reportClientError))
   $('#annotation-menu-button').addEventListener('click', () => toggleActionMenu('annotation-menu', 'annotation-menu-button'))
@@ -513,7 +534,8 @@ function bindUI() {
   $('#comment-selection').addEventListener('mousedown', (event) => event.preventDefault())
   window.addEventListener('resize', () => {
     scheduleTurnNavigatorSync()
-    applyArtifactWidth()
+    applyRightRailWidth()
+    workspaceTools.resize()
   })
   $('#comment-selection').addEventListener('click', () => {
     closeActionMenus()
@@ -599,7 +621,7 @@ function bindUI() {
       closeAnnotationRail()
       closeFavoritesRail()
       closeSessionMapItemMenu()
-      if (artifactWasOpen) closeArtifactRail()
+      if (artifactWasOpen) closeArtifactRail({ restoreWorkspace: false })
       workspaceTools.close()
     }
   })
@@ -618,7 +640,7 @@ function applySidebarState() {
   button.title = t(state.sidebarCollapsed ? '展开会话栏 (Ctrl+B)' : '收起会话栏 (Ctrl+B)')
   button.setAttribute('aria-label', t(state.sidebarCollapsed ? '展开会话栏' : '收起会话栏'))
   button.querySelector('span').textContent = state.sidebarCollapsed ? '›' : '‹'
-  setTimeout(applyArtifactWidth, 220)
+  setTimeout(applyRightRailWidth, 220)
 }
 
 async function browserRequest(path, { method = 'GET', body } = {}) {
@@ -657,14 +679,21 @@ function renderBrowserMenuStatus() {
 async function openGlobalBrowser() {
   closeActionMenus()
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
-  window.location.href = 'studio-action://show-browser'
+  window.location.href = `studio-action://show-browser?width=${width}`
 }
 
 async function openBrowserUrl(url) {
   if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
-  window.location.href = `studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}`
+  window.location.href = `studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`
+}
+
+function currentRightRailPixelWidth() {
+  const bounds = appRightRailWidthBounds()
+  return Math.round(Math.max(480, Math.min(bounds.max, bounds.available * state.rightRailWidthRatio)))
 }
 
 function usesEmbeddedBrowser() {
@@ -689,17 +718,37 @@ function openEmbeddedBrowserComment(selection) {
 
 window.__studioEmbeddedBrowser = Object.freeze({
   setVisible(visible) {
-    state.embeddedBrowserVisible = Boolean(visible)
+    const requestedVisible = Boolean(visible)
+    state.embeddedBrowserVisible = requestedVisible && state.activeRightWorkspace === 'browser'
+    if (requestedVisible && state.activeRightWorkspace !== 'browser') {
+      window.location.href = 'studio-action://hide-browser'
+    }
     renderBrowserMenuStatus()
   },
   setRuntimeLoaded(loaded) {
     state.embeddedBrowserLoaded = Boolean(loaded)
     renderBrowserMenuStatus()
   },
-  setWidth(width) {
-    const value = Math.round(Number(width))
-    if (!Number.isFinite(value) || value < 480 || value > 2400 || state.browser?.embeddedWidth === value) return
-    state.browser.embeddedWidth = value
+  setWidth(metrics) {
+    const value = Math.round(Number(typeof metrics === 'object' ? metrics?.width : metrics))
+    const totalWidth = Math.round(Number(typeof metrics === 'object' ? metrics?.totalWidth : 0))
+    if (!Number.isFinite(value) || value < 480 || value > 2400) return
+    const shellWidth = $('.app-shell')?.clientWidth || window.innerWidth
+    const sidebarWidth = state.sidebarCollapsed ? 0 : $('#sidebar')?.getBoundingClientRect().width || 0
+    const dividerWidth = $('#sidebar-divider')?.offsetWidth || 0
+    const bounds = rightRailWidthBounds({
+      containerWidth: totalWidth > 0 ? totalWidth : shellWidth + value,
+      sidebarWidth,
+      dividerWidth,
+      nominalMinWidth: 480,
+    })
+    const sharedWidth = Math.round(Math.max(bounds.min, Math.min(bounds.max, value)))
+    state.rightRailWidthRatio = normalizeRightRailWidthRatio(sharedWidth / bounds.available)
+    document.documentElement.style.setProperty('--right-rail-width', `${sharedWidth}px`)
+    state.browser.embeddedWidth = sharedWidth
+    if (sharedWidth !== value && state.activeRightWorkspace === 'browser') {
+      window.location.href = `studio-action://resize-browser?width=${sharedWidth}`
+    }
     clearTimeout(embeddedBrowserWidthTimer)
     embeddedBrowserWidthTimer = setTimeout(persistPreferences, 250)
   },
@@ -713,76 +762,102 @@ window.__studioEmbeddedBrowser = Object.freeze({
 
 window.__studioDeveloper = Object.freeze({
   openArtifact(file) {
-    openArtifact(file).catch(showError)
+    if ($('#settings-dialog').open) $('#settings-dialog').close()
+    openArtifact(file, { allowDetachedRoot: true }).catch(showError)
+  },
+  openWorkspace(root, tool) {
+    workspaceTools.openForDebug(root, tool).catch(showError)
+  },
+  openEnvironmentSettings(root = '') {
+    developerEnvironmentRoot = String(root || '')
+    openSettings()
+    setTimeout(() => {
+      $('#environment-settings').scrollIntoView({ block: 'start' })
+    }, 80)
+  },
+  click(selector) {
+    document.querySelector(String(selector || ''))?.click()
+  },
+  input(selector, value) {
+    const target = document.querySelector(String(selector || ''))
+    if (!target || !('value' in target)) return
+    target.value = String(value ?? '')
+    target.dispatchEvent(new Event('input', { bubbles: true }))
   },
 })
 
-function normalizeArtifactWidthRatio(value) {
+function normalizeRightRailWidthRatio(value) {
   return Math.min(0.65, Math.max(0.2, Number(value) || 0.44))
 }
 
-function artifactWidthBounds() {
+function appRightRailWidthBounds() {
   const shell = $('.app-shell')
   const sidebarWidth = state.sidebarCollapsed ? 0 : $('#sidebar').getBoundingClientRect().width
-  const available = Math.max(1, shell.clientWidth - sidebarWidth - $('#sidebar-divider').offsetWidth)
-  const nominalSidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 310
-  const min = nominalSidebarWidth
-  const max = Math.max(min, available * 0.65)
-  return { available, min, max }
+  const nominalSidebarWidth = Math.max(480, Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 310)
+  return rightRailWidthBounds({
+    containerWidth: shell.clientWidth,
+    sidebarWidth,
+    dividerWidth: $('#sidebar-divider').offsetWidth,
+    nominalMinWidth: nominalSidebarWidth,
+  })
 }
 
-function applyArtifactWidth(ratio = state.artifactWidthRatio, { updateState = false } = {}) {
-  const preferredRatio = normalizeArtifactWidthRatio(ratio)
-  const { available, min, max } = artifactWidthBounds()
+function applyRightRailWidth(ratio = state.rightRailWidthRatio, { updateState = false } = {}) {
+  const preferredRatio = normalizeRightRailWidthRatio(ratio)
+  const { available, min, max } = appRightRailWidthBounds()
   const actual = Math.min(max, Math.max(min, available * preferredRatio))
-  document.documentElement.style.setProperty('--artifact-width', `${actual}px`)
-  $('#artifact-resizer').setAttribute('aria-valuemin', String(min))
-  $('#artifact-resizer').setAttribute('aria-valuemax', String(Math.round(max)))
-  $('#artifact-resizer').setAttribute('aria-valuenow', String(Math.round(actual)))
-  if (updateState) state.artifactWidthRatio = normalizeArtifactWidthRatio(actual / available)
+  document.documentElement.style.setProperty('--right-rail-width', `${actual}px`)
+  for (const resizer of $$('.app-right-rail-resizer')) {
+    resizer.setAttribute('aria-valuemin', String(min))
+    resizer.setAttribute('aria-valuemax', String(Math.round(max)))
+    resizer.setAttribute('aria-valuenow', String(Math.round(actual)))
+  }
+  if (updateState) state.rightRailWidthRatio = normalizeRightRailWidthRatio(actual / available)
+  workspaceTools.resize()
   return actual
 }
 
-function beginArtifactResize(event) {
+function beginRightRailResize(event) {
   if (event.button !== 0) return
   event.preventDefault()
-  artifactResize = { pointerId: event.pointerId }
+  window.getSelection?.()?.removeAllRanges()
+  rightRailResize = { pointerId: event.pointerId, rail: event.currentTarget.parentElement }
   event.currentTarget.setPointerCapture(event.pointerId)
-  document.body.classList.add('resizing-artifact')
-  continueArtifactResize(event)
+  document.body.classList.add('resizing-right-rail')
+  continueRightRailResize(event)
 }
 
-function continueArtifactResize(event) {
-  if (!artifactResize || artifactResize.pointerId !== event.pointerId) return
-  const right = $('#artifact-rail').getBoundingClientRect().right
-  const { available } = artifactWidthBounds()
-  applyArtifactWidth((right - event.clientX) / available, { updateState: true })
+function continueRightRailResize(event) {
+  if (!rightRailResize || rightRailResize.pointerId !== event.pointerId) return
+  const right = rightRailResize.rail?.getBoundingClientRect().right || window.innerWidth
+  const { available } = appRightRailWidthBounds()
+  applyRightRailWidth((right - event.clientX) / available, { updateState: true })
 }
 
-function finishArtifactResize(event) {
-  if (!artifactResize || artifactResize.pointerId !== event.pointerId) return
-  artifactResize = null
-  document.body.classList.remove('resizing-artifact')
+function finishRightRailResize(event) {
+  if (!rightRailResize || rightRailResize.pointerId !== event.pointerId) return
+  rightRailResize = null
+  document.body.classList.remove('resizing-right-rail')
   if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   persistPreferences()
 }
 
-function resetArtifactWidth() {
-  state.artifactWidthRatio = 0.44
-  applyArtifactWidth()
+function resetRightRailWidth() {
+  state.rightRailWidthRatio = 0.44
+  applyRightRailWidth()
   persistPreferences()
 }
 
-function handleArtifactResizeKey(event) {
+function handleRightRailResizeKey(event) {
   const step = event.shiftKey ? 64 : 24
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
-  const { available, min, max } = artifactWidthBounds()
-  const current = $('#artifact-rail').getBoundingClientRect().width
+  const { available, min, max } = appRightRailWidthBounds()
+  const current = event.currentTarget.parentElement?.getBoundingClientRect().width || min
   const next = event.key === 'Home' ? min
     : event.key === 'End' ? max
       : current + (event.key === 'ArrowLeft' ? step : -step)
-  applyArtifactWidth(next / available, { updateState: true })
+  applyRightRailWidth(next / available, { updateState: true })
   persistPreferences()
 }
 
@@ -1036,11 +1111,19 @@ function handleAppServerMessage(message) {
     const status = message.params?.state
     if (status === 'ready') {
       const firstReady = !state.ready
+      const reconnecting = state.lastAppServerGeneration != null
+      state.lastAppServerGeneration = message.params?.generation ?? state.lastAppServerGeneration
+      state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
+      state.appServerInitialization = message.params?.initialization || null
       state.ready = true
       setBackendState('online', 'Codex App Server', '原生结构化连接')
       $('#native-connection').textContent = '已连接'
       setNativeError(null)
-      if (firstReady) loadThreads().catch((error) => handleThreadCatalogFailure('codex', state.socketGeneration, error))
+      if (firstReady) {
+        loadThreads().then(async () => {
+          if (reconnecting && state.selectedId) await refreshSelectedThread({ quiet: true })
+        }).catch((error) => handleThreadCatalogFailure('codex', state.socketGeneration, error))
+      }
     } else if (status === 'starting') {
       setBackendState('checking', '正在启动 Codex', message.params?.binary || 'App Server')
     } else if (status === 'error' || status === 'stopped') {
@@ -1143,11 +1226,19 @@ function handleAppServerMessage(message) {
       return
     }
     const targetModel = codexNotificationModel(message)
-    if (!targetModel) return
+    if (!targetModel) {
+      if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
+        captureOffscreenInteraction(message).catch((error) => reportClientError(error))
+      }
+      return
+    }
     if (!applyCodexNotification(targetModel, message)) {
       sendRaw({ id: message.id, error: { code: -32601, message: `Studio does not support ${message.method}` } })
       toast(t('Codex 请求了尚未支持的交互：{method}', { method: message.method }), 'error')
       return
+    }
+    if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
+      notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || selectedThread()?.name || '')
     }
     markCachedModelValidated('codex', targetModel)
     if (targetModel !== state.model) return
@@ -1160,6 +1251,8 @@ function handleAppServerMessage(message) {
   if (applyCodexNotification(targetModel, message)) {
     markCachedModelValidated('codex', targetModel)
     if (message.method === 'turn/completed') {
+      const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
+      notifyDesktop(t('任务已完成'), threadTitle(completedThread || { name: t('未命名会话') }))
       completeRouterTurn(message, targetModel).catch((error) => console.error('Thread Router dispatch failed', error))
     }
     if (targetModel !== state.model) {
@@ -1183,6 +1276,37 @@ function handleAppServerMessage(message) {
         console.warn('Session Map inline update failed', error)
       })
     }
+  }
+}
+
+async function captureOffscreenInteraction(message) {
+  const threadId = String(message.params?.threadId || '')
+  if (!threadId) return
+  const result = await rpc('thread/read', { threadId, includeTurns: true })
+  const model = createCodexViewModel()
+  hydrateCodexThread(model, result.thread)
+  applyCodexNotification(model, message)
+  cacheThreadModel('codex', threadId, model)
+  state.attentionThreads.add(threadCatalogKey('codex', threadId))
+  persistPreferences()
+  renderThreadList()
+  notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
+}
+
+function notifyDesktop(title, body = '') {
+  if (!state.desktopNotifications || (!document.hidden && document.hasFocus())) return
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  try {
+    const notification = new Notification(String(title || 'Codex Thread Studio'), {
+      body: String(body || '').slice(0, 240),
+      tag: `codex-thread-studio:${state.backend}:${state.selectedId || 'workspace'}`,
+    })
+    notification.onclick = () => {
+      window.focus()
+      notification.close()
+    }
+  } catch (error) {
+    console.warn('Desktop notification failed', error)
   }
 }
 
@@ -1663,11 +1787,13 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   if (cached) {
     $('#native-connection').textContent = t('已从缓存恢复')
     await mapLoad
+    await activateSelectedEnvironment().catch((error) => reportClientError(error))
     maybeBootstrapSessionMap(key, state.model)
     return
   }
   await resumeThread(id)
   await mapLoad
+  await activateSelectedEnvironment().catch((error) => reportClientError(error))
   maybeBootstrapSessionMap(key, state.model)
 }
 
@@ -1924,7 +2050,7 @@ function renderWorkspace() {
   $('#thread-status').textContent = statusLabel(status)
   $('#thread-status').className = `status-badge ${status}`
   $('#archive-thread').disabled = state.backend === 'opencode'
-  $('#archive-thread').title = state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : ''
+  $('#archive-thread').title = t(state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : '归档会话')
   $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
   renderComposerState()
   renderAnnotationRail()
@@ -3337,7 +3463,7 @@ function truncateForDisplay(value, max = 100) {
 }
 
 function renderApprovals() {
-  return state.model.approvals.map((approval) => {
+  const approvals = state.model.approvals.map((approval) => {
     const params = approval.params || {}
     const command = Array.isArray(params.command) ? params.command.join(' ') : params.command || params.reason || [params.permission, ...(params.patterns || [])].filter(Boolean).join(' · ') || approval.method
     const permission = approval.method === 'item/permissions/requestApproval' || approval.method === 'opencode/permission'
@@ -3351,6 +3477,7 @@ function renderApprovals() {
       </div>
     </article></section>`
   }).join('')
+  return approvals + renderUserInteractions()
 }
 
 function bindApprovalButtons() {
@@ -3359,6 +3486,116 @@ function bindApprovalButtons() {
     card.querySelector('.approval-session').addEventListener('click', () => answerApproval(card.dataset.approvalId, 'acceptForSession'))
     card.querySelector('.approval-accept').addEventListener('click', () => answerApproval(card.dataset.approvalId, 'accept'))
   })
+  $$('.interaction-card').forEach((card) => {
+    card.querySelector('.interaction-submit')?.addEventListener('click', () => answerUserInteraction(card, 'accept'))
+    card.querySelector('.interaction-decline')?.addEventListener('click', () => answerUserInteraction(card, 'decline'))
+    card.querySelector('.interaction-cancel')?.addEventListener('click', () => answerUserInteraction(card, 'cancel'))
+    card.querySelector('.interaction-open-url')?.addEventListener('click', () => {
+      const url = card.dataset.url
+      if (url) openBrowserUrl(url).catch(showError)
+    })
+  })
+}
+
+function renderUserInteractions() {
+  return (state.model.interactions || []).map((interaction) => {
+    const params = interaction.params || {}
+    if (interaction.method === 'item/tool/requestUserInput') {
+      const questions = (params.questions || []).map((question) => renderUserInputQuestion(question)).join('')
+      return `<section class="turn"><article class="approval-card interaction-card" data-interaction-id="${escapeHtml(String(interaction.id))}" data-interaction-method="${escapeHtml(interaction.method)}">
+        <strong>${t('Codex 正在等待你的输入')}</strong>
+        <div class="interaction-fields">${questions}</div>
+        <div class="approval-actions"><button class="subtle-button interaction-cancel" type="button">${t('取消')}</button><button class="primary-button interaction-submit" type="button">${t('提交')}</button></div>
+      </article></section>`
+    }
+    const mode = params.mode || 'form'
+    const schema = params.requestedSchema || {}
+    const fields = mode === 'url' ? '' : renderElicitationSchema(schema)
+    return `<section class="turn"><article class="approval-card interaction-card" data-interaction-id="${escapeHtml(String(interaction.id))}" data-interaction-method="${escapeHtml(interaction.method)}" data-url="${escapeHtml(params.url || '')}">
+      <strong>${escapeHtml(params.serverName || 'MCP')} ${t('正在等待你的输入')}</strong>
+      <p>${escapeHtml(params.message || '')}</p>
+      <div class="interaction-fields">${fields}</div>
+      <div class="approval-actions"><button class="subtle-button interaction-decline" type="button">${t('拒绝')}</button>${mode === 'url' ? `<button class="subtle-button interaction-open-url" type="button">${t('打开链接')}</button>` : ''}<button class="primary-button interaction-submit" type="button">${t(mode === 'url' ? '已完成' : '提交')}</button></div>
+    </article></section>`
+  }).join('')
+}
+
+function renderUserInputQuestion(question = {}) {
+  const name = `interaction-${String(question.id || randomId()).replace(/[^a-z0-9_-]/giu, '-')}`
+  const options = Array.isArray(question.options) ? question.options : []
+  const inputType = question.isSecret ? 'password' : 'text'
+  const choices = options.map((option, index) => `<label class="interaction-option"><input type="radio" name="${escapeHtml(name)}" value="${escapeHtml(option.label || '')}" ${index === 0 ? 'checked' : ''}/><span><strong>${escapeHtml(option.label || '')}</strong><small>${escapeHtml(option.description || '')}</small></span></label>`).join('')
+  const freeform = !options.length || question.isOther
+    ? `<input class="interaction-freeform" data-question-id="${escapeHtml(question.id || '')}" type="${inputType}" placeholder="${escapeHtml(question.isOther ? t('其他…') : t('请输入…'))}" autocomplete="${question.isSecret ? 'off' : 'on'}" />`
+    : ''
+  return `<fieldset class="interaction-field" data-question-id="${escapeHtml(question.id || '')}" data-choice-name="${escapeHtml(name)}"><legend><span>${escapeHtml(question.header || '')}</span>${escapeHtml(question.question || '')}</legend>${choices}${freeform}</fieldset>`
+}
+
+function renderElicitationSchema(schema = {}) {
+  const required = new Set(Array.isArray(schema.required) ? schema.required : [])
+  return Object.entries(schema.properties || {}).map(([name, property]) => {
+    const title = property.title || name
+    const description = property.description ? `<small>${escapeHtml(property.description)}</small>` : ''
+    const needed = required.has(name) ? ' required' : ''
+    const values = property.enum || property.oneOf?.map((option) => option.const).filter((value) => value != null)
+    const labels = property.enumNames || property.oneOf?.map((option) => option.title || option.const)
+    if (Array.isArray(values)) {
+      return `<label class="interaction-schema-field"><span>${escapeHtml(title)}</span><select data-field-name="${escapeHtml(name)}"${needed}>${values.map((value, index) => `<option value="${escapeHtml(String(value))}">${escapeHtml(String(labels?.[index] ?? value))}</option>`).join('')}</select>${description}</label>`
+    }
+    if (property.type === 'array') {
+      const itemValues = property.items?.enum || property.items?.oneOf?.map((option) => option.const).filter((value) => value != null) || []
+      const itemLabels = property.items?.enumNames || property.items?.oneOf?.map((option) => option.title || option.const)
+      return `<label class="interaction-schema-field"><span>${escapeHtml(title)}</span><select data-field-name="${escapeHtml(name)}" data-field-array multiple${needed}>${itemValues.map((value, index) => `<option value="${escapeHtml(String(value))}">${escapeHtml(String(itemLabels?.[index] ?? value))}</option>`).join('')}</select>${description}</label>`
+    }
+    if (property.type === 'boolean') {
+      return `<label class="interaction-schema-field interaction-checkbox"><input data-field-name="${escapeHtml(name)}" type="checkbox" ${property.default ? 'checked' : ''}/><span>${escapeHtml(title)}</span>${description}</label>`
+    }
+    const type = property.type === 'number' || property.type === 'integer' ? 'number' : property.format === 'password' ? 'password' : ['date', 'email', 'url'].includes(property.format) ? property.format : 'text'
+    const step = property.type === 'integer' ? ' step="1"' : property.type === 'number' ? ' step="any"' : ''
+    return `<label class="interaction-schema-field"><span>${escapeHtml(title)}</span><input data-field-name="${escapeHtml(name)}" type="${type}" value="${escapeHtml(property.default ?? '')}"${step}${needed}/>${description}</label>`
+  }).join('') || `<p>${t('此请求不需要填写额外字段。')}</p>`
+}
+
+function answerUserInteraction(card, action) {
+  const id = card.dataset.interactionId
+  const interaction = (state.model.interactions || []).find((candidate) => String(candidate.id) === String(id))
+  if (!interaction) return
+  if (interaction.method === 'item/tool/requestUserInput') {
+    if (action !== 'accept') {
+      sendRaw({ id: interaction.id, error: { code: -32001, message: 'User cancelled input' } })
+    } else {
+      const answers = {}
+      for (const field of card.querySelectorAll('.interaction-field')) {
+        const questionId = field.dataset.questionId
+        const selected = field.querySelector(`input[name="${CSS.escape(field.dataset.choiceName)}"]:checked`)?.value
+        const freeform = field.querySelector('.interaction-freeform')?.value.trim()
+        const values = [freeform || selected].filter(Boolean)
+        if (!values.length) {
+          toast(t('请回答所有问题'), 'error')
+          return
+        }
+        answers[questionId] = { answers: values }
+      }
+      sendRaw({ id: interaction.id, result: { answers } })
+    }
+  } else {
+    if (action !== 'accept') sendRaw({ id: interaction.id, result: { action } })
+    else {
+      const content = {}
+      for (const input of card.querySelectorAll('[data-field-name]')) {
+        if (!input.checkValidity()) {
+          input.reportValidity()
+          return
+        }
+        content[input.dataset.fieldName] = input.dataset.fieldArray != null
+          ? [...input.selectedOptions].map((option) => option.value)
+          : input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value
+      }
+      sendRaw({ id: interaction.id, result: { action: 'accept', content } })
+    }
+  }
+  resolveCodexInteraction(state.model, interaction.id)
+  renderTranscript()
 }
 
 async function answerApproval(id, decision) {
@@ -3612,6 +3849,23 @@ function currentTurnOptions() {
   return state.turnOptions[key]
 }
 
+function configuredTurnOptions(options = currentTurnOptions()) {
+  const result = { ...options }
+  const profile = state.environmentProfile
+  if (state.backend !== 'codex' || !profile?.configured || profile.root !== selectedThread()?.cwd) return result
+  const current = result.sandboxPolicy
+  if (!current || current.type === 'workspaceWrite') {
+    result.sandboxPolicy = {
+      type: 'workspaceWrite',
+      writableRoots: current?.writableRoots || [profile.root],
+      networkAccess: profile.networkPolicy === 'enabled',
+    }
+  } else if (current.type === 'readOnly') {
+    result.sandboxPolicy = { ...current, networkAccess: profile.networkPolicy === 'enabled' }
+  }
+  return result
+}
+
 async function openModelCommand() {
   showCommandDialog('模型', '<div class="command-empty">正在从 App Server 读取模型…</div>')
   const result = await rpc('model/list', { limit: 100, includeHidden: false })
@@ -3862,7 +4116,7 @@ async function sendComposer(event) {
   const skillInputs = [...(state.pendingSkills[stateKey] || [])]
   const fileInputs = [...(state.pendingFiles[stateKey] || [])]
   const turnInput = [{ type: 'text', text }, ...skillInputs, ...fileInputs]
-  const turnOptions = { ...currentTurnOptions() }
+  const turnOptions = configuredTurnOptions()
   const button = $('#send-message')
   button.disabled = true
   transcriptScrollFollower.reset()
@@ -3977,7 +4231,7 @@ async function startRouterTurn(text) {
     clientUserMessageId: randomId(),
     input: [{ type: 'text', text }],
     outputSchema: routerDecisionSchema(),
-    ...currentTurnOptions(),
+    ...configuredTurnOptions(),
   })
   if (!result?.turn) throw new Error(t('Router 未能启动新的 Turn。'))
   const turnId = String(result.turn.id || '')
@@ -4210,10 +4464,11 @@ async function deleteSelectedThread() {
   } catch (error) { showError(error) }
 }
 
-async function openArtifact(file) {
+async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' } = {}) {
   const thread = selectedThread()
-  if (!thread?.cwd) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
-  const root = String(file.root || thread.cwd)
+  if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
+  const root = String(file.root || thread?.cwd || '')
+  if (!root) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
   const path = fuzzyFileLabel(file)
   const requestedEpubCfi = String(file.epubCfi || '')
   if (!path) throw new Error(t('文件路径为空。'))
@@ -4245,11 +4500,15 @@ async function openArtifact(file) {
   $('#artifact-loading').classList.remove('hidden')
   disposeArtifactEditor()
   disposeEpubReader()
+  disposeRichArtifactReader()
   const requestId = randomId()
-  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), loading: true }
+  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, loading: true }
   const endpoint = kind === 'image'
     ? '/studio/review-image'
-    : kind === 'epub' ? '/studio/review-epub' : '/studio/review-file'
+    : kind === 'epub' ? '/studio/review-epub'
+      : kind === 'pdf' ? '/studio/review-pdf'
+        : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
+          : '/studio/review-file'
   const response = await gatewayFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4311,11 +4570,21 @@ async function openArtifact(file) {
       readingState,
     }
     state.artifactView = 'epub'
+  } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
+    const bytes = await response.arrayBuffer()
+    if (!bytes.byteLength) throw new Error(t('文档响应格式无效'))
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+    state.artifact = {
+      ...state.artifact, kind, loading: false, bytes,
+      hash: response.headers.get('x-studio-content-hash') || '',
+      relativePath: path, size: bytes.byteLength,
+    }
+    state.artifactView = kind
   } else {
     const result = await response.json()
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...result, kind: 'text', requestId, threadKey: selectedStateKey(), loading: false }
-    state.artifactView = isMarkdownFile(result.path) || isHtmlFile(result.path) ? 'preview' : 'source'
+    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, loading: false }
+    state.artifactView = kind === 'table' ? 'table' : isMarkdownFile(result.path) || isHtmlFile(result.path) ? 'preview' : 'source'
   }
   renderArtifact()
 }
@@ -4325,6 +4594,8 @@ function closeWorkspacePeerRails() {
 }
 
 function activateRightWorkspace(tool) {
+  state.activeRightWorkspace = tool
+  if (tool !== 'browser' && !state.embeddedBrowserVisible) applyRightRailWidth()
   const rails = {
     map: 'session-map-rail',
     document: 'artifact-rail',
@@ -4335,8 +4606,11 @@ function activateRightWorkspace(tool) {
     $(`#${id}`).classList.toggle('hidden', candidate !== tool)
   }
   if (tool !== 'workspace') workspaceTools.close()
-  if (tool !== 'browser' && state.embeddedBrowserVisible) {
+  if (tool !== 'browser') {
+    state.embeddedBrowserVisible = false
+    renderBrowserMenuStatus()
     window.location.href = 'studio-action://hide-browser'
+    setTimeout(applyRightRailWidth, 80)
   }
   closeActionMenus()
   hideSelectionPopover()
@@ -4345,17 +4619,24 @@ function activateRightWorkspace(tool) {
 async function refreshArtifact() {
   if (!state.artifact) return
   if (state.artifact.dirty && !confirm(t('重新载入会丢失尚未保存的修改，是否继续？'))) return
-  await openArtifact({ root: state.artifact.root, path: state.artifact.path })
+  await openArtifact({ root: state.artifact.root, path: state.artifact.path }, { returnTool: state.artifact.returnTool })
 }
 
-function closeArtifactRail({ restoreMap = true } = {}) {
+function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
   if (state.artifact?.dirty && !confirm(t('当前文档有尚未保存的修改，是否关闭？'))) return
+  const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
+  const artifactThreadKey = state.artifact?.threadKey
   $('#artifact-rail').classList.add('hidden')
   disposeArtifactEditor()
   disposeEpubReader()
+  disposeRichArtifactReader()
   state.artifact = null
   resetArtifactSearch()
   hideSelectionPopover()
+  if (returnTool && artifactThreadKey === selectedStateKey()) {
+    workspaceTools.open(returnTool).catch(showError)
+    return
+  }
   if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()
 }
 
@@ -4397,6 +4678,7 @@ async function saveArtifact({ overwrite = false } = {}) {
     kind: 'text',
     requestId: file.requestId,
     threadKey: file.threadKey,
+    returnTool: file.returnTool,
     loading: false,
     dirty: false,
     editContent: result.content,
@@ -4416,24 +4698,33 @@ function renderArtifact() {
   }
   disposeArtifactEditor()
   disposeEpubReader()
-  applyArtifactWidth()
+  applyRightRailWidth()
   rail.classList.remove('hidden')
   $('#artifact-title').textContent = fileDisplayName(file.path)
   $('#artifact-path').textContent = file.relativePath || file.path
+  const closeButton = $('#close-artifact')
+  const returnLabel = file.returnTool === 'files' ? t('返回文件') : file.returnTool === 'review' ? t('返回 Git Review') : t('关闭文档')
+  closeButton.classList.toggle('returning', Boolean(file.returnTool))
+  closeButton.title = returnLabel
+  closeButton.setAttribute('aria-label', returnLabel)
   $('#artifact-loading').classList.toggle('hidden', !file.loading)
   $('#artifact-error').classList.toggle('hidden', !file.error)
   $('#artifact-error-message').textContent = file.error || ''
   const textReady = !file.loading && !file.error && file.kind === 'text' && typeof file.content === 'string'
   const imageReady = !file.loading && !file.error && file.kind === 'image' && Boolean(file.imageUrl)
   const epubReady = !file.loading && !file.error && file.kind === 'epub' && file.bytes instanceof ArrayBuffer
-  const ready = textReady || imageReady || epubReady
+  const pdfReady = !file.loading && !file.error && file.kind === 'pdf' && file.bytes instanceof ArrayBuffer
+  const tableReady = !file.loading && !file.error && file.kind === 'table' && (file.bytes instanceof ArrayBuffer || typeof file.content === 'string')
+  const ready = textReady || imageReady || epubReady || pdfReady || tableReady
   const content = $('#artifact-content')
   content.classList.toggle('hidden', !ready)
   $('#artifact-meta').textContent = textReady
     ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
     : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
-      : epubReady ? `EPUB · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : file.kind === 'epub' ? '选择书中文字，添加问题后交给 AI' : '选择文字即可批注')
+      : epubReady ? `EPUB · ${formatFileSize(file.size)}`
+        : pdfReady ? `PDF · ${formatFileSize(file.size)}`
+          : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : 'CSV'} · ${formatFileSize(file.size)}` : ''
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : file.kind === 'epub' ? '选择书中文字，添加问题后交给 AI' : file.kind === 'pdf' ? '选择 PDF 文字，或按住 Shift 拖拽区域即可批注' : file.kind === 'table' ? '选择单元格即可批注' : '选择文字即可批注')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
   const editable = textReady
@@ -4481,6 +4772,20 @@ function renderArtifact() {
     renderArtifactSearchStatus()
     return
   }
+  if (pdfReady) {
+    content.className = 'artifact-content artifact-pdf-preview'
+    content.innerHTML = '<div class="artifact-pdf-host" data-no-i18n></div>'
+    mountPdfReader(file, content.firstElementChild).catch(showError)
+    renderArtifactSearchStatus()
+    return
+  }
+  if (tableReady) {
+    content.className = 'artifact-content artifact-table-preview'
+    content.innerHTML = '<div class="artifact-table-host" data-no-i18n></div>'
+    mountTableReader(file, content.firstElementChild).catch(showError)
+    renderArtifactSearchStatus()
+    return
+  }
   if (state.artifactView === 'edit') {
     content.className = 'artifact-content editing'
     content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
@@ -4513,6 +4818,42 @@ function disposeEpubReader() {
   }
   epubReader?.destroy()
   epubReader = null
+}
+
+function disposeRichArtifactReader() {
+  richArtifactReader?.destroy?.()
+  richArtifactReader = null
+}
+
+async function mountPdfReader(file, parent) {
+  pdfReaderModule ||= import('./pdf-reader.mjs')
+  const { createPdfReader } = await pdfReaderModule
+  if (state.artifact !== file || !parent.isConnected) return
+  richArtifactReader = await createPdfReader({
+    container: parent, bytes: file.bytes, initialPage: file.page || 1, search: state.artifactSearch,
+    translate: t,
+    onPageChange: (page) => { file.page = page },
+    onSelection: (selection) => {
+      if (state.artifact !== file || !selection.quote) return
+      state.pendingSelection = { quote: selection.quote, itemId: null, turnId: null, source: pdfCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, page: selection.page, rects: selection.rects }) }
+      positionSelectionPopover(selection.rect, { allowFavorite: false })
+    },
+  })
+}
+
+async function mountTableReader(file, parent) {
+  tableReaderModule ||= import('./table-reader.mjs')
+  const { parseTabularArtifact, renderTableArtifact } = await tableReaderModule
+  if (!file.workbook) file.workbook = await parseTabularArtifact({ bytes: file.bytes, path: file.path, text: file.content })
+  if (state.artifact !== file || !parent.isConnected) return
+  richArtifactReader = renderTableArtifact({
+    container: parent, workbook: file.workbook, translate: t,
+    onSelection: (selection) => {
+      if (state.artifact !== file) return
+      state.pendingSelection = { quote: selection.quote || `[${selection.range}]`, itemId: null, turnId: null, source: tableCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, sheet: selection.sheet, range: selection.range }) }
+      positionSelectionPopover(selection.rect, { allowFavorite: false })
+    },
+  })
 }
 
 async function loadEpubReadingState(root, path, bookHash) {
@@ -5096,8 +5437,20 @@ function commentProviderContext(index = 0) {
     contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
     openDocument: reopenDocumentComment,
     openEpubSource: reopenEpubComment,
+    openPdfSource: reopenPdfComment,
+    openTableSource: reopenTableComment,
     openWebSource: openBrowserUrl,
   }
+}
+
+async function reopenPdfComment(anchor) {
+  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
+  state.artifact.page = anchor.page
+  await richArtifactReader?.goToPage?.(anchor.page)
+}
+
+async function reopenTableComment(anchor) {
+  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
 }
 
 function insertAnnotations() {
@@ -5456,10 +5809,11 @@ async function loadPreferences() {
     opencodeBinary: String(saved.wslOpencodeBinary || 'opencode').trim() || 'opencode',
   }
   state.sidebarCollapsed = Boolean(saved.sidebarCollapsed)
-  state.artifactWidthRatio = normalizeArtifactWidthRatio(saved.artifactWidthRatio)
+  state.rightRailWidthRatio = normalizeRightRailWidthRatio(saved.rightRailWidthRatio ?? saved.artifactWidthRatio)
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
+  state.desktopNotifications = Boolean(saved.desktopNotifications)
   state.browser = {
     enabled: true,
     restoreTabs: false,
@@ -5513,10 +5867,11 @@ function preferencesSnapshot() {
     wslCodexBinary: state.wsl.codexBinary || 'codex',
     wslOpencodeBinary: state.wsl.opencodeBinary || 'opencode',
     sidebarCollapsed: state.sidebarCollapsed,
-    artifactWidthRatio: state.artifactWidthRatio,
+    rightRailWidthRatio: state.rightRailWidthRatio,
     typography: state.typography,
     mermaid: state.mermaid,
     markdown: state.markdown,
+    desktopNotifications: state.desktopNotifications,
     browser: state.browser,
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
@@ -5651,6 +6006,10 @@ async function ensureManagedRouterThread() {
 function openSettings() {
   populateSettingsForm()
   $('#settings-dialog').showModal()
+  loadEnvironmentProfile().catch((error) => {
+    $('#settings-error').textContent = error.message
+    $('#settings-error').classList.remove('hidden')
+  })
 }
 
 function populateSettingsForm() {
@@ -5659,20 +6018,24 @@ function populateSettingsForm() {
   $('#content-width').value = state.contentWidth
   $('#ui-font-family').value = state.typography.uiFontFamily
   $('#ui-font-weight').value = String(state.typography.uiFontWeight)
+  $('#workspace-font-family').value = state.typography.workspaceFontFamily
+  $('#workspace-font-size').value = String(state.typography.workspaceFontSize)
   $('#code-font-family').value = state.typography.codeFontFamily
   $('#code-font-size').value = String(state.typography.codeFontSize)
   $('#code-font-weight').value = String(state.typography.codeFontWeight)
   $('#high-contrast').checked = state.typography.highContrast
+  $('#desktop-notifications').checked = state.desktopNotifications
   $('#wsl-settings').classList.toggle('hidden', state.hostPlatform !== 'windows')
   $('#wsl-distribution').value = state.wsl.distribution
   $('#wsl-user').value = state.wsl.user
   $('#wsl-codex-binary').value = state.wsl.codexBinary
   $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
   $('#annotation-template').value = state.annotationPromptTemplate
+  populateEnvironmentForm(state.environmentProfile)
   $('#settings-error').classList.add('hidden')
 }
 
-function saveSettings(event) {
+async function saveSettings(event) {
   event.preventDefault()
   const template = $('#annotation-template').value.trim()
   if (!template.includes('{{annotations}}')) {
@@ -5689,11 +6052,18 @@ function saveSettings(event) {
   state.typography = normalizeTypography({
     uiFontFamily: $('#ui-font-family').value.trim(),
     uiFontWeight: Number($('#ui-font-weight').value),
+    workspaceFontFamily: $('#workspace-font-family').value.trim(),
+    workspaceFontSize: Number($('#workspace-font-size').value),
     codeFontFamily: $('#code-font-family').value.trim(),
     codeFontSize: Number($('#code-font-size').value),
     codeFontWeight: Number($('#code-font-weight').value),
     highContrast: $('#high-contrast').checked,
   })
+  const wantsNotifications = $('#desktop-notifications').checked
+  if (wantsNotifications && 'Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission().catch(() => 'denied')
+  }
+  state.desktopNotifications = wantsNotifications && (!('Notification' in window) || Notification.permission !== 'denied')
   const previousWsl = JSON.stringify(state.wsl)
   if (state.hostPlatform === 'windows') {
     state.wsl = {
@@ -5708,6 +6078,13 @@ function saveSettings(event) {
     ? template.slice(0, 32000)
     : state.annotationPromptTemplates[nextLocale] || defaultAnnotationPrompt(nextLocale)
   state.annotationPromptTemplates[nextLocale] = state.annotationPromptTemplate
+  try {
+    await saveEnvironmentProfile()
+  } catch (error) {
+    $('#settings-error').textContent = error.message
+    $('#settings-error').classList.remove('hidden')
+    return
+  }
   applyAppearance()
   persistPreferences()
   $('#settings-dialog').close()
@@ -5717,12 +6094,83 @@ function saveSettings(event) {
   }
 }
 
+async function loadEnvironmentProfile() {
+  const root = developerEnvironmentRoot || selectedThread()?.cwd || ''
+  $('#environment-settings').classList.toggle('capability-disabled', !root)
+  $('#environment-settings-root').textContent = root || t('选择带项目目录的会话后配置。')
+  if (!root) { state.environmentProfile = null; populateEnvironmentForm(null); return }
+  const response = await gatewayFetch(`/studio/environment?root=${encodeURIComponent(root)}`, { cache: 'no-store' })
+  const result = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+  state.environmentProfile = result
+  populateEnvironmentForm(result)
+}
+
+function populateEnvironmentForm(profile) {
+  const disabled = !profile
+  for (const id of ['environment-variables', 'environment-secrets', 'environment-remove-secrets', 'environment-network-policy', 'environment-allowed-hosts', 'environment-cache-variables']) $(`#${id}`).disabled = disabled
+  $('#environment-variables').value = formatEnvironmentLines(profile?.variables)
+  $('#environment-secrets').value = ''
+  $('#environment-remove-secrets').value = ''
+  $('#environment-network-policy').value = profile?.networkPolicy || 'restricted'
+  $('#environment-allowed-hosts').value = (profile?.allowedHosts || []).join(', ')
+  $('#environment-cache-variables').value = formatEnvironmentLines(profile?.cacheVariables)
+  $('#environment-secret-names').textContent = profile?.secretNames?.length ? `${t('已保存 Secret')}: ${profile.secretNames.join(', ')}` : t('尚未保存 Secret')
+}
+
+async function saveEnvironmentProfile() {
+  const root = developerEnvironmentRoot || selectedThread()?.cwd || ''
+  if (!root || !state.environmentProfile) return
+  const secrets = parseEnvironmentLines($('#environment-secrets').value, { allowEmpty: false })
+  const removeSecrets = [...new Set($('#environment-remove-secrets').value.split(/[\s,]+/gu).map((name) => name.trim()).filter(Boolean))]
+  for (const name of removeSecrets) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(name)) throw new Error(`Invalid secret name: ${name}`)
+  }
+  const variables = parseEnvironmentLines($('#environment-variables').value, { allowEmpty: true })
+  const allowedHosts = parseHosts($('#environment-allowed-hosts').value)
+  const cacheVariables = parseEnvironmentLines($('#environment-cache-variables').value, { allowEmpty: false })
+  const networkPolicy = $('#environment-network-policy').value
+  if (!state.environmentProfile.configured && !Object.keys(variables).length && !Object.keys(secrets).length && !removeSecrets.length && !allowedHosts.length && !Object.keys(cacheVariables).length && networkPolicy === 'restricted') return
+  const response = await gatewayFetch('/studio/environment', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      root,
+      variables,
+      secrets, removeSecrets,
+      networkPolicy,
+      allowedHosts,
+      cacheVariables,
+    }),
+  })
+  const result = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+  state.environmentProfile = result
+  await applyEnvironmentToCodex(root)
+  populateEnvironmentForm(result)
+}
+
+async function activateSelectedEnvironment() {
+  await loadEnvironmentProfile()
+  if (state.environmentProfile?.configured) await applyEnvironmentToCodex(state.environmentProfile.root)
+}
+
+async function applyEnvironmentToCodex(root) {
+  if (state.backend !== 'codex' || !state.selectedId) return
+  const applied = await gatewayFetch('/studio/environment/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root, threadId: state.selectedId }),
+  })
+  const result = await applied.json().catch(() => null)
+  if (!applied.ok) throw new Error(result?.error?.message || `HTTP ${applied.status}`)
+}
+
 function resetSettings() {
   state.language = 'system'
   setLanguage(state.language)
   state.theme = 'light'
   state.contentWidth = 'comfortable'
   state.typography = { ...typographyDefaults }
+  state.desktopNotifications = false
   state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
   state.annotationPromptTemplate = defaultAnnotationPrompt()
@@ -5749,9 +6197,12 @@ function applyAppearance() {
   root.dataset.markdownMode = state.markdown.mode
   root.style.setProperty('--ui-font-family', state.typography.uiFontFamily)
   root.style.setProperty('--ui-font-weight', state.typography.uiFontWeight)
+  root.style.setProperty('--workspace-font-family', state.typography.workspaceFontFamily)
+  root.style.setProperty('--workspace-font-size', `${state.typography.workspaceFontSize}px`)
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
+  workspaceTools.refreshTypography()
   resetMermaidRendering()
 }
 
@@ -5879,6 +6330,8 @@ function normalizeTypography(value) {
   return {
     uiFontFamily: String(value.uiFontFamily || typographyDefaults.uiFontFamily).slice(0, 512),
     uiFontWeight: weights.includes(Number(value.uiFontWeight)) ? Number(value.uiFontWeight) : 400,
+    workspaceFontFamily: String(value.workspaceFontFamily || typographyDefaults.workspaceFontFamily).slice(0, 512),
+    workspaceFontSize: Math.min(20, Math.max(11, Number(value.workspaceFontSize) || 14)),
     codeFontFamily: String(value.codeFontFamily || typographyDefaults.codeFontFamily).slice(0, 512),
     codeFontSize: Math.min(20, Math.max(11, Number(value.codeFontSize) || 13)),
     codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : 400,

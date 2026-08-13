@@ -2,7 +2,7 @@
 
 An independent, unofficial Tauri desktop client for structured Codex and OpenCode sessions. It connects to [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) or a local [`opencode serve`](https://opencode.ai/docs/server/) process without scraping a terminal.
 
-It lists Codex Threads directly, renders structured Turns and Items, handles approvals, and sends messages through the App Server v2 API. It is not an Agent Deck frontend and does not embed a terminal or depend on tmux.
+It lists Codex Threads directly, renders structured Turns and Items, handles approvals, and sends messages through the App Server v2 API. It is not an Agent Deck frontend and does not depend on tmux. Its optional project Terminal is a user-controlled workspace tool, never a transport fallback for Agent events.
 
 [简体中文](README.zh-CN.md)
 
@@ -12,6 +12,10 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Renders user and agent messages, reasoning summaries, plans, commands, command output, file changes, tool calls, turn status, errors, and usage. Agent prose uses locally vendored, sanitized GitHub-flavored Markdown with readable code blocks, tables, configurable reading density, and fenced Mermaid diagrams. See [rendering configuration](docs/rendering-configuration.md).
 - Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals.
+- Renders structured `requestUserInput` questions and MCP elicitation forms, reconciles the selected Thread after reconnect, and can notify when work completes or needs input.
+- Opens project files in a local artifact rail: text/Markdown/HTML, images, EPUB, searchable PDF with text or region comments, and CSV/XLSX grids with a compact chart view.
+- Provides lazy project Files and a PTY Terminal. Per-project environment profiles support variables, redacted Secrets, Codex/Terminal environment injection, restricted/enabled network policy, allowed-host metadata, and configurable cache environment variables.
+- Adds a session-scoped Git Review rail for code, Markdown, CSV, and other text changes: filter all/staged/unstaged files, inspect line-numbered unified diffs, switch between index and working-tree changes, and safely stage or unstage one file without exposing a discard action.
 - Provides `@` project-file search, direct `$skill-name` discovery with structured App Server skill inputs, `!command` local shell mode, and a keyboard-first `/` command palette for models, reasoning effort, permissions, status, compact, review, diff, skills, MCP servers, and Thread operations.
 - Automatically creates and reuses one system-managed Codex Router Thread: it classifies a request against locally configured session responsibilities and starts the selected target Thread without switching the current window. It does not depend on Agent Deck, tmux, or a separate conductor daemon.
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
@@ -83,7 +87,7 @@ npm test
 npm run version:check
 ```
 
-The desktop runtime has no Node.js or network dependency. Markdown browser assets and their license texts are committed under `ui/vendor`; maintainers can refresh the lockfile-pinned copies with `npm ci && npm run vendor:markdown`.
+The desktop runtime has no Node.js or CDN dependency. Browser assets and license texts are committed under `ui/vendor`; maintainers can refresh lockfile-pinned copies with the `vendor:*` npm scripts.
 
 ## Versions and releases
 

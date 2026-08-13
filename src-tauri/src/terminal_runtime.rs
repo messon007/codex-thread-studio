@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 
 use axum::extract::ws::{Message, WebSocket};
@@ -22,7 +23,7 @@ enum TerminalControl {
     Stop,
 }
 
-pub async fn bridge(mut socket: WebSocket) {
+pub async fn bridge(mut socket: WebSocket, environment_path: Arc<PathBuf>) {
     let Some(Ok(Message::Text(message))) = socket.recv().await else {
         return;
     };
@@ -70,6 +71,9 @@ pub async fn bridge(mut socket: WebSocket) {
     command.cwd(&root);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    for (name, value) in crate::environment_config::process_environment(&environment_path, &root) {
+        command.env(name, value);
+    }
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {

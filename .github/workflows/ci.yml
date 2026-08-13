@@ -47,6 +47,9 @@ jobs:
       - name: Check vendored Markdown assets
         run: |
           npm run vendor:markdown
+          npm run vendor:workspace
+          npm run vendor:epub
+          npm run vendor:artifacts
           git diff --exit-code -- ui/vendor
 
       - name: Check browser JavaScript

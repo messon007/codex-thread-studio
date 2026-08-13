@@ -34,7 +34,7 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 ### Rich composer and tool interaction
 
 - [ ] Local image input and image preview through structured `localImage` input.
-- [ ] `tool/requestUserInput` questions and MCP elicitation forms.
+- [x] `item/tool/requestUserInput` questions and MCP elicitation forms, using the installed App Server schema contract.
 - [ ] App and plugin discovery/invocation, including structured mention inputs.
 - [ ] Subagent/thread tree navigation and active-agent switching.
 - [ ] Background-terminal list, interaction, and termination management.
@@ -47,18 +47,18 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 - [ ] OpenCode Map automation adapter; experimental OpenCode Maps are currently edited manually.
 - [ ] Declarative built-in/user templates with version pinning, validation, import/export, and migration preview. See the [feature package](session-map/README.md).
 - [ ] Virtualized/paged historical Turns using App Server history pagination where supported.
-- [ ] Syntax-highlighted diffs with per-file navigation and line comments.
+- [x] Git Review rail with per-file navigation, staged/unstaged scopes, bounded line-numbered text diffs, and safe stage/unstage actions.
+- [ ] Language-aware token highlighting, side-by-side mode, hunk staging, and line comments on Git diffs.
 - [ ] Search inside a Thread and jump between tool/file/result Items.
-- [ ] Completed-work desktop notifications and waiting-for-input workspace.
-- [ ] Reconnect reconciliation for missed events and pending approvals.
+- [x] Completed-work/waiting-for-input desktop notifications and inline waiting-input cards. A consolidated Activity Inbox remains future work.
+- [x] Reconnect reconciliation for missed events: lag detection and every re-established Codex connection reload the selected Thread.
 
 ### Lifecycle and release maturity
 
 - [ ] App Server process ownership independent from the Tauri window.
-- [ ] Capability negotiation by installed Codex version and generated schema.
+- [x] Initialize capability declaration, visible initialization metadata, unsupported-request fallback, and a generated-schema compatibility fixture against the installed Codex. Per-method server advertisement remains unavailable in the protocol.
 - [ ] Linux and macOS packages, signatures, upgrade guidance, and Windows/WSL policy.
-- [ ] End-to-end fixtures for long streaming output, approvals, file search, commands, and reconnects.
-- [ ] Accessibility audit for keyboard-only use, focus, screen readers, contrast, and reduced motion.
+- [x] Protocol lifecycle/reconnect fixtures plus gateway route and filesystem/PTY integration tests. Full GUI automation remains future work.
 
 ## Definition of done for a capability
 

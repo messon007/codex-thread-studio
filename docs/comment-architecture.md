@@ -14,7 +14,9 @@ Comment Core
        ├── Chat Provider
        ├── Document Provider
        ├── Browser Provider（可选）
-       └── EPUB Provider（未来、可选）
+       ├── EPUB Provider
+       ├── PDF Provider
+       └── Table Provider
 ```
 
 `ui/comment-core.mjs` 只能处理以下通用字段：
@@ -53,9 +55,9 @@ Browser Comment 必须位于独立模块，并且只通过一条 provider 注册
 
 已经保存的 Browser Comment 仍保留 `excerpt` 和 `note`。当对应 provider 不存在时，界面使用通用来源标签，允许阅读、删除和加入输入，只禁用“返回来源”。
 
-## EPUB 扩展
+## 阅读器扩展
 
-EPUB Provider 建议在 anchor 中保存书籍稳定 ID、spine href、EPUB CFI、章节名和文本 quote selector。Comment Core 只持久化该对象，不理解章节或 CFI。返回原文时优先使用 CFI，失败后由 EPUB Provider 使用文本快照和前后文重新定位。
+EPUB Provider 在 anchor 中保存书籍摘要、spine href、EPUB CFI 和章节名；PDF Provider 保存文档摘要、页码和归一化区域；Table Provider 保存工作表及单元格范围。Comment Core 只持久化这些对象，不理解其定位语义。
 
 ## 验收约束
 

@@ -8,7 +8,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 
 ## Scope
 
-- Codex App Server and OpenCode Server; no terminal, tmux, or xterm fallback.
+- Codex App Server and OpenCode Server; no terminal scraping, tmux, or xterm transport fallback. A user-controlled xterm/PTTY project tool is available independently of Agent events.
 - Local desktop operation on Linux first, with Tauri-compatible macOS support.
 - Existing CLI authentication and configuration; no API-key storage in Studio.
 
@@ -24,6 +24,10 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 8. Performance: high-frequency text, reasoning, plan, and command-output deltas update only their active Item at animation-frame cadence. Completed history is not reparsed for every delta.
 9. Backend switching: selecting Codex or OpenCode replaces the session list and transport without mixing IDs, drafts, selections, or transient event state.
 10. Session Map (experimental): after the user explicitly creates one, a compact goal row, current location, remaining scope, and progress remain visible during long conversations. Threads without a Map keep the original layout. Navigation actions never send a visible message automatically; safe Codex synchronization is revisioned and undoable. The complete target boundary is defined in the [Session Map specification](session-map/specification.md).
+11. Structured interaction: show `item/tool/requestUserInput` and MCP form/url elicitation requests inline, preserve secret input masking, and return typed response payloads without converting them to chat text.
+12. Artifact workspace: render PDF locally with search and text/region comments; render CSV/XLSX as bounded grids with local charting. Documents never load parsing code from a CDN.
+13. Project environments: ordinary variables and cache variables are visible; Secret values are stored separately with restricted permissions and never returned by read APIs. Profiles apply to Studio PTYs and Codex shell commands, while network access maps to the next Turn sandbox policy.
+14. Git Review: inspect the selected session repository without shell interpolation; filter all, staged, and unstaged code/Markdown/CSV/text changes; read bounded line-numbered unified diffs; and stage or unstage a selected file. Destructive discard is not exposed.
 
 ## Acceptance criteria
 
@@ -59,13 +63,18 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 28. Comment drafts and last-selected IDs are namespaced per backend. Switching back restores the previous backend selection without showing the other backend's sessions.
 29. Saving an agent message stores its exact backend/Thread/Turn/Item anchor and original Markdown; the same Turn's user question is included only when selected.
 30. Favorites survive restart in SQLite, search across title/content/question/note/tags/source metadata, render sanitized Markdown, can export the complete global library as Markdown, and can reopen and highlight an available source Item without losing the saved copy when the source is unavailable.
+31. `item/tool/requestUserInput` and MCP form/url elicitations remain visible until answered, return protocol-shaped results, and show unsupported request types as explicit errors.
+32. A re-established Codex WebSocket reloads the selected Thread before treating its cached state as current; lagged event broadcasts trigger the same reconciliation.
+33. PDF/XLSX requests are root-confined, size/signature checked, parsed locally, and never execute document scripts or macros. XLSX expanded size and entry counts are bounded.
+34. Reading an environment profile never returns Secret values. Saving it applies values to the selected Codex Thread, and a newly started Studio PTY receives the same project environment.
+35. Git status handles spaces, untracked files, staged/unstaged overlap, renames, and conflicts through NUL-delimited porcelain output. Diff and mutation requests accept only current root-relative changed paths, remain bounded, and never pass a command through a shell.
 
 ## Deferred
 
 - Custom user-defined groups and archived-Thread browsing/unarchive management. The current sidebar groups by `cwd`; `sessionId` represents Codex's native Thread tree rather than a user-defined group.
 - A literal Thread “restart.” Native Threads have no dedicated tmux or worker process; selecting resumes them and Reload re-reads persisted state.
 - App Server daemon/control-socket ownership so active Turns survive window close.
-- Full `requestUserInput`, MCP elicitation forms, authentication/login, app/plugin pickers, images, math/diagram rendering, and diff syntax highlighting.
+- Authentication/login, app/plugin pickers, local image input, math rendering, and diff syntax highlighting.
 - Notifications for completed background work while Studio is closed.
 - Package signing and native Windows process management.
 - Cross-Thread Session Map knowledge graphs and executable third-party Map renderers. The proposed per-Thread, declarative design is documented in [Session Map templates](session-map/template-system.md).

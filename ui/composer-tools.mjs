@@ -96,6 +96,9 @@ export function isPreviewableImageFile(file) {
 
 export function previewableFileKind(file) {
   if (/\.epub$/iu.test(fuzzyFileLabel(file))) return 'epub'
+  if (/\.pdf$/iu.test(fuzzyFileLabel(file))) return 'pdf'
+  if (/\.xlsx$/iu.test(fuzzyFileLabel(file))) return 'table'
+  if (/\.(csv|tsv)$/iu.test(fuzzyFileLabel(file))) return 'table'
   if (isPreviewableImageFile(file)) return 'image'
   if (isPreviewableTextFile(file)) return 'text'
   return null

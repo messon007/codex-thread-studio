@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::io;
-use std::process::{ExitStatus, Stdio};
+use std::process::{ExitStatus, Output, Stdio};
 
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
@@ -272,6 +272,17 @@ impl RuntimeCommand {
             child,
             cleanup: self.cleanup,
         })
+    }
+
+    pub async fn output(mut self) -> io::Result<Output> {
+        self.command.kill_on_drop(true);
+        let result = self.command.output().await;
+        if result.is_ok() {
+            if let Some(cleanup) = self.cleanup.as_mut() {
+                let _ = cleanup.terminate().await;
+            }
+        }
+        result
     }
 }
 

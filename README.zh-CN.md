@@ -2,7 +2,7 @@
 
 这是一个独立、非官方、使用 Tauri 开发的 Codex/OpenCode 结构化桌面客户端，直接连接 [`codex app-server`](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md) 或本机 [`opencode serve`](https://opencode.ai/docs/server/)，不解析终端字符。
 
-它不是 Agent Deck 前端，不嵌入终端，也不依赖 tmux；Thread、Turn、Item 和审批都直接来自 Codex App Server v2。
+它不是 Agent Deck 前端，也不依赖 tmux；Thread、Turn、Item 和审批都直接来自 Codex App Server v2。可选的项目终端只是用户主动打开的工作区工具，不承担 Agent 事件传输。
 
 [English](README.md)
 
@@ -12,6 +12,10 @@
 - 结构化显示用户/Agent 消息、推理摘要、执行计划、命令及输出、文件修改、工具调用、Turn 状态、错误和 Token 用量；Agent 正文使用完全本地、经过安全清洗的 GitHub 风格 Markdown，并支持可配置的阅读密度、代码块、表格和 Mermaid 图表。参见 [渲染配置](docs/rendering-configuration.zh-CN.md)。
 - 对 App Server 的高频增量事件进行批处理，只更新当前活动 Item；长响应不再反复解析整段历史记录。
 - 支持开始 Turn、向运行中的 Turn 追加意见、停止 Turn，以及处理命令、文件修改和权限审批。
+- 支持结构化 `requestUserInput` 问题和 MCP elicitation 表单；重连后校准当前 Thread，并可在任务完成或等待输入时发送桌面通知。
+- 文档工作区支持文本/Markdown/HTML、图片、EPUB、可搜索且可按文字或区域批注的 PDF，以及带网格和图表视图的 CSV/XLSX。
+- 提供按需 Files 与 PTY Terminal。项目环境配置支持普通变量、脱敏 Secret、向 Codex/Terminal 注入环境、Restricted/Enabled 网络策略、允许主机元数据和缓存环境变量。
+- 提供会话级 Git Review：面向代码、Markdown、CSV 等文本文件筛选全部/已暂存/未暂存变更，查看带行号的统一 Diff，在暂存区与工作区 Diff 间切换，并安全地暂存或取消暂存单个文件；界面不提供丢弃工作区修改操作。
 - 支持 `@` 搜索当前项目文件、直接输入 `$技能名` 发现并发送 App Server 结构化技能输入、以 `!命令` 运行本地 Shell，并提供键盘优先的 `/` 命令面板，用于选择模型、推理强度、权限、查看状态、压缩上下文、发起审查、查看 Diff、选择技能、查看 MCP 服务和执行 Thread 操作。
 - 提供紧凑的会话内 Turn 导航：高亮当前交互，悬停显示用户提示摘要，点击短线直接滚动到对应 Turn。
 - 可以选择结构化输出、输入意见并反复积累批注；每条批注保留来源 Turn/Item 锚点，最终提示词只插入输入框，不自动发送。
@@ -66,7 +70,7 @@ npm test
 npm run version:check
 ```
 
-桌面程序运行时不依赖 Node.js 或网络。Markdown 浏览器资源及许可证已经提交到 `ui/vendor`；维护者可运行 `npm ci && npm run vendor:markdown`，从锁定版本重新生成这些文件。
+桌面程序运行时不依赖 Node.js 或 CDN。浏览器资源及许可证已经提交到 `ui/vendor`；维护者可通过 `vendor:*` npm 脚本从锁定版本重新生成。
 
 ## 版本与发布
 

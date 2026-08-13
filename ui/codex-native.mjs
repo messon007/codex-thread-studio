@@ -8,6 +8,7 @@ export function createCodexViewModel() {
     diff: '',
     usage: null,
     approvals: [],
+    interactions: [],
   }
 }
 
@@ -154,8 +155,16 @@ export function applyCodexNotification(model, message) {
     else model.approvals.push(approval)
     return true
   }
+  if (message.id != null && (method === 'item/tool/requestUserInput' || method === 'mcpServer/elicitation/request')) {
+    const existing = model.interactions.findIndex((interaction) => String(interaction.id) === String(message.id))
+    const interaction = { id: message.id, method, params: structuredCloneSafe(params) }
+    if (existing >= 0) model.interactions[existing] = interaction
+    else model.interactions.push(interaction)
+    return true
+  }
   if (method === 'serverRequest/resolved') {
     model.approvals = model.approvals.filter((approval) => String(approval.id) !== String(params.requestId))
+    model.interactions = model.interactions.filter((interaction) => String(interaction.id) !== String(params.requestId))
     return true
   }
   return false
@@ -163,6 +172,10 @@ export function applyCodexNotification(model, message) {
 
 export function resolveCodexApproval(model, requestId) {
   model.approvals = model.approvals.filter((approval) => String(approval.id) !== String(requestId))
+}
+
+export function resolveCodexInteraction(model, requestId) {
+  model.interactions = model.interactions.filter((interaction) => String(interaction.id) !== String(requestId))
 }
 
 export function textFromUserContent(content) {

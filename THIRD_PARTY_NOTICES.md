@@ -1,14 +1,16 @@
 # Third-party notices
 
-Codex Thread Studio vendors the following browser assets so Markdown rendering works without a network connection:
+Codex Thread Studio vendors the following browser assets so rendering and artifact readers work without a network connection:
 
 - Marked 17.0.2 — MIT — `ui/vendor/marked.esm.js`
-- DOMPurify 3.4.12 — Apache-2.0 or MPL-2.0 — `ui/vendor/purify.es.mjs`
+- DOMPurify 3.4.13 — Apache-2.0 or MPL-2.0 — `ui/vendor/purify.es.mjs`
 - GitHub Markdown CSS 5.8.1 — MIT — `ui/vendor/github-markdown.css`
 - Mermaid 11.16.1 — MIT — `ui/vendor/mermaid.min.js`
 - CodeMirror 6 and its Lezer parser packages — MIT — `ui/vendor/workspace-editor.mjs`
 - xterm.js 6.0.0 and Fit addon 0.11.0 — MIT — `ui/vendor/workspace-terminal.mjs`
 - EPUB.js 0.3.93 — BSD-2-Clause — `ui/vendor/epub.mjs`
+- PDF.js 5.4.296 — Apache-2.0 — `ui/vendor/pdf.min.mjs` and worker bundle
+- ExcelJS 4.4.0 — MIT — `ui/vendor/artifact-table.mjs`
 
 The Mermaid standalone bundle retains the upstream license banners for its bundled transitive components.
 
@@ -22,4 +24,4 @@ beside the bundle. The vulnerable XML parser range requested by EPUB.js is repla
 
 The corresponding license texts are included in `ui/vendor/licenses/`. The files are copied from
 exact, lockfile-pinned npm packages by `npm run vendor:markdown` and
-`npm run vendor:workspace`, and `npm run vendor:epub`; they should not be edited by hand.
+`npm run vendor:workspace`, `npm run vendor:epub`, and `npm run vendor:artifacts`; they should not be edited by hand.

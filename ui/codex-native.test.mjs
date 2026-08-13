@@ -8,6 +8,7 @@ import {
   hydrateCodexThread,
   reconcileOptimisticCodexTurn,
   resolveCodexApproval,
+  resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
   textFromUserContent,
 } from './codex-native.mjs'
@@ -30,6 +31,26 @@ test('assembles streamed structured items and completion state', () => {
   assert.equal(model.turns[0].items[0].text, 'hello')
   assert.equal(model.activeTurnId, null)
   assert.equal(model.status, 'idle')
+})
+
+test('keeps structured user-input requests visible until they are answered', () => {
+  const model = createCodexViewModel()
+  const request = {
+    id: 42,
+    method: 'item/tool/requestUserInput',
+    params: {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      isBlocking: true,
+      questions: [{ id: 'scope', header: 'Scope', question: 'Which scope?', options: [{ label: 'Current', description: 'Current project' }] }],
+    },
+  }
+  assert.equal(applyCodexNotification(model, request), true)
+  assert.equal(model.interactions.length, 1)
+  assert.equal(model.interactions[0].params.questions[0].id, 'scope')
+  resolveCodexInteraction(model, 42)
+  assert.equal(model.interactions.length, 0)
 })
 
 test('turn completion never drops the original user message from a partial snapshot', () => {

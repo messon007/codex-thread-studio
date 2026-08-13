@@ -9,6 +9,7 @@
     "vendor:markdown": "node scripts/vendor-markdown.mjs",
     "vendor:workspace": "node scripts/vendor-workspace-tools.mjs",
     "vendor:epub": "node scripts/vendor-epub.mjs",
+    "vendor:artifacts": "node scripts/vendor-artifacts.mjs",
     "test": "node --test ui/*.test.mjs scripts/*.test.mjs docs/session-map/demo/*.test.mjs"
   },
   "dependencies": {
@@ -18,15 +19,20 @@
     "codemirror": "6.0.2",
     "dompurify": "3.4.13",
     "epubjs": "0.3.93",
+    "exceljs": "4.4.0",
     "github-markdown-css": "5.8.1",
     "marked": "17.0.2",
-    "mermaid": "11.16.1"
+    "mermaid": "11.16.1",
+    "pdfjs-dist": "5.4.296"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
     "esbuild": "0.28.2"
   },
   "overrides": {
-    "@xmldom/xmldom": "0.8.13"
+    "@xmldom/xmldom": "0.8.13",
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   }
 }

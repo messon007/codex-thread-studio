@@ -68,6 +68,9 @@ test('enables static image previews without treating other binaries as documents
   }
   assert.equal(previewableFileKind({ path: 'docs/guide.md' }), 'text')
   assert.equal(previewableFileKind({ path: 'books/guide.epub' }), 'epub')
+  assert.equal(previewableFileKind({ path: 'papers/report.pdf' }), 'pdf')
+  assert.equal(previewableFileKind({ path: 'data/report.xlsx' }), 'table')
+  assert.equal(previewableFileKind({ path: 'data/report.csv' }), 'table')
   assert.equal(previewableFileKind({ path: 'archive.zip' }), null)
 })
 

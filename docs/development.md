@@ -24,9 +24,8 @@ cargo run -p codex-thread-studio
 
 Linux debug builds expose a user-private Unix socket for capturing Studio's own window. This does
 not request global GNOME screenshot access and cannot capture any other application. It works in
-both the ordinary Tauri WebView window and the native Wayland embedded-browser window. The ordinary
-window uses WebKit's visible-page snapshot API; the embedded composition captures the complete GTK
-window. Start Studio normally, then run:
+both the ordinary Tauri WebView window and the native Wayland embedded-browser window. Both paths
+use WebKit's visible-page snapshot API so Wayland child surfaces are captured reliably. Start Studio normally, then run:
 
 ```bash
 target/debug/codex-thread-studio --dev-screenshot
@@ -40,6 +39,10 @@ target/debug/codex-thread-studio --dev-show-browser-downloads
 target/debug/codex-thread-studio --dev-crash-browser-tab
 target/debug/codex-thread-studio --dev-open-browser https://example.com
 target/debug/codex-thread-studio --dev-open-artifact /absolute/project/root relative/file.epub
+target/debug/codex-thread-studio --dev-open-workspace /absolute/project/root review
+target/debug/codex-thread-studio --dev-open-environment-settings /absolute/project/root
+target/debug/codex-thread-studio --dev-click '[data-table-chart]'
+target/debug/codex-thread-studio --dev-input '[data-pdf-search]' Git
 ```
 
 The command prints the PNG path beneath `$XDG_RUNTIME_DIR/codex-thread-studio-dev-captures/`.
@@ -120,6 +123,8 @@ codex app-server generate-json-schema --out /tmp/codex-app-server-schema
 ```
 
 Stable APIs are used by default. Do not add experimental fields without setting `capabilities.experimentalApi` during initialization and documenting the compatibility cost.
+
+Run `npm test` with a locally installed Codex to regenerate its experimental App Server schema in a temporary directory and verify the structured-interaction contract. CI without Codex skips only that generated-schema assertion; checked-in protocol fixtures and the remaining UI tests still run. Refresh PDF.js/ExcelJS browser bundles with `npm run vendor:artifacts` and commit the generated assets and license files.
 
 For OpenCode protocol work, inspect the exact installed schema at the child server's `GET /doc`. Cross-project listing uses `/experimental/session`; all project-scoped requests must include `directory`. Never expose `OPENCODE_SERVER_PASSWORD` to the WebView.
 

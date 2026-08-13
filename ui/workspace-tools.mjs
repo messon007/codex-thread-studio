@@ -1,4 +1,4 @@
-const DEFAULT_WIDTH = 560
+import { createGitReview } from './git-review.mjs'
 
 export function workspaceRootName(value) {
   const root = String(value || '').replace(/[\\/]+$/u, '')
@@ -34,15 +34,25 @@ export function createWorkspaceTools({
   const states = new Map()
   let activeTool = null
   let visibleKey = ''
-  let resize = null
+  let developerThread = null
 
   const element = (id) => document.getElementById(id)
-  const currentThread = () => getThread?.() || null
+  const currentThread = () => developerThread || getThread?.() || null
   const currentKey = () => workspaceStateKey(currentThread(), getBackend?.() || 'codex')
   const currentSessionKey = () => {
     const thread = currentThread()
     return thread?.id ? `${getBackend?.() || 'codex'}:${thread.id}` : ''
   }
+  const gitReview = createGitReview({
+    gatewayFetch,
+    getContext: () => {
+      const state = stateForCurrent()
+      return state ? { key: state.key, root: state.root } : null
+    },
+    openFile,
+    translate,
+    notify,
+  })
 
   function stateForCurrent() {
     const thread = currentThread()
@@ -68,6 +78,7 @@ export function createWorkspaceTools({
   function bind() {
     element('open-workspace-files')?.addEventListener('click', () => open('files'))
     element('open-workspace-terminal')?.addEventListener('click', () => open('terminal'))
+    element('open-workspace-review')?.addEventListener('click', () => open('review'))
     element('close-workspace-tools')?.addEventListener('click', close)
     element('workspace-files-refresh')?.addEventListener('click', refreshFiles)
     element('workspace-file-filter')?.addEventListener('input', (event) => {
@@ -80,18 +91,12 @@ export function createWorkspaceTools({
     element('start-workspace-terminal')?.addEventListener('click', startTerminal)
     element('clear-workspace-terminal')?.addEventListener('click', clearTerminal)
     element('stop-workspace-terminal')?.addEventListener('click', stopTerminal)
-    const resizer = element('workspace-tools-resizer')
-    resizer?.addEventListener('pointerdown', beginResize)
-    resizer?.addEventListener('pointermove', continueResize)
-    resizer?.addEventListener('pointerup', finishResize)
-    resizer?.addEventListener('pointercancel', finishResize)
-    resizer?.addEventListener('dblclick', resetWidth)
-    resizer?.addEventListener('keydown', resizeWithKeyboard)
+    gitReview.bind()
   }
 
   function sync(thread = currentThread()) {
     const available = Boolean(thread?.cwd)
-    for (const id of ['open-workspace-files', 'open-workspace-terminal']) {
+    for (const id of ['open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
       const button = element(id)
       if (button) button.disabled = !available
     }
@@ -110,6 +115,7 @@ export function createWorkspaceTools({
     element('workspace-file-filter').value = state.filter
     if (activeTool === 'files') ensureDirectory(state, '').then(() => renderFileTree(state))
     if (activeTool === 'terminal') renderTerminal(state)
+    if (activeTool === 'review') gitReview.render()
     syncButtons()
   }
 
@@ -125,6 +131,7 @@ export function createWorkspaceTools({
     setTool(tool)
     sync()
     if (tool === 'files') await ensureDirectory(stateForCurrent(), '')
+    if (tool === 'review') await gitReview.open()
     render()
     if (tool === 'terminal' && stateForCurrent()?.terminalStarted) {
       setTimeout(() => fitTerminal(stateForCurrent(), { focus: true }), 30)
@@ -132,10 +139,12 @@ export function createWorkspaceTools({
   }
 
   function close() {
+    gitReview.close()
     activeTool = null
     visibleKey = ''
     element('workspace-tools-rail')?.classList.add('hidden')
     syncButtons()
+    developerThread = null
   }
 
   function isOpen() {
@@ -143,10 +152,12 @@ export function createWorkspaceTools({
   }
 
   function setTool(tool) {
-    if (!['files', 'terminal'].includes(tool)) return
+    if (!['files', 'terminal', 'review'].includes(tool)) return
+    if (tool !== 'review') gitReview.close()
     activeTool = tool
     element('workspace-files-pane').classList.toggle('hidden', tool !== 'files')
     element('workspace-terminal-pane').classList.toggle('hidden', tool !== 'terminal')
+    element('workspace-review-pane').classList.toggle('hidden', tool !== 'review')
     syncButtons()
     render()
   }
@@ -154,14 +165,16 @@ export function createWorkspaceTools({
   function syncButtons() {
     element('open-workspace-files')?.setAttribute('aria-pressed', String(activeTool === 'files'))
     element('open-workspace-terminal')?.setAttribute('aria-pressed', String(activeTool === 'terminal'))
+    element('open-workspace-review')?.setAttribute('aria-pressed', String(activeTool === 'review'))
   }
 
   function render() {
     const state = stateForCurrent()
     if (!state || !isOpen()) return
-    element('workspace-tools-title').textContent = activeTool === 'terminal' ? 'Terminal' : 'Files'
+    element('workspace-tools-title').textContent = activeTool === 'terminal' ? 'Terminal' : activeTool === 'review' ? 'Review' : 'Files'
     if (activeTool === 'files') renderFileTree(state)
-    else renderTerminal(state)
+    else if (activeTool === 'terminal') renderTerminal(state)
+    else gitReview.render()
   }
 
   async function ensureDirectory(state, relativePath) {
@@ -247,7 +260,7 @@ export function createWorkspaceTools({
     }
     renderFileTree(state)
     close()
-    await openFile?.({ root: state.root, path })
+    await openFile?.({ root: state.root, path }, { returnTool: 'files' })
   }
 
   function refreshFiles() {
@@ -284,13 +297,14 @@ export function createWorkspaceTools({
     }
     const host = document.createElement('div')
     host.className = 'workspace-terminal-xterm'
+    const codeFontSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--code-font-size')) || 14
     const view = new Terminal({
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: true,
       cursorStyle: 'bar',
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--code-font-family').trim() || 'monospace',
-      fontSize: 12,
+      fontSize: codeFontSize,
       fontWeight: '500',
       letterSpacing: 0,
       lineHeight: 1.2,
@@ -408,48 +422,26 @@ export function createWorkspaceTools({
     if (focus) terminal.view.focus()
   }
 
-  function beginResize(event) {
-    if (event.button !== 0) return
-    const rail = element('workspace-tools-rail')
-    resize = { pointerId: event.pointerId, startX: event.clientX, startWidth: rail.getBoundingClientRect().width }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    document.body.classList.add('resizing-workspace-tools')
+  function refreshTypography() {
+    const rootStyle = getComputedStyle(document.documentElement)
+    const fontFamily = rootStyle.getPropertyValue('--code-font-family').trim() || 'monospace'
+    const fontSize = Number.parseFloat(rootStyle.getPropertyValue('--code-font-size')) || 14
+    const fontWeight = rootStyle.getPropertyValue('--code-font-weight').trim() || '500'
+    for (const state of states.values()) {
+      if (!state.terminal?.view) continue
+      state.terminal.view.options.fontFamily = fontFamily
+      state.terminal.view.options.fontSize = fontSize
+      state.terminal.view.options.fontWeight = fontWeight
+      fitTerminal(state)
+    }
   }
 
-  function continueResize(event) {
-    if (!resize || resize.pointerId !== event.pointerId) return
-    setWidth(resize.startWidth + resize.startX - event.clientX)
+  async function openForDebug(root, tool = 'files') {
+    developerThread = { id: 'developer-preview', cwd: String(root || '') }
+    await open(tool)
   }
 
-  function finishResize(event) {
-    if (!resize || resize.pointerId !== event.pointerId) return
-    resize = null
-    document.body.classList.remove('resizing-workspace-tools')
-  }
-
-  function resizeWithKeyboard(event) {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-    event.preventDefault()
-    const current = element('workspace-tools-rail').getBoundingClientRect().width
-    if (event.key === 'Home') setWidth(420)
-    else if (event.key === 'End') setWidth(widthBounds().max)
-    else setWidth(current + (event.key === 'ArrowLeft' ? 28 : -28))
-  }
-
-  function widthBounds() {
-    const sidebar = document.getElementById('sidebar')?.getBoundingClientRect().width || 0
-    return { min: 420, max: Math.max(420, Math.min(780, window.innerWidth - sidebar - 570)) }
-  }
-
-  function setWidth(value) {
-    const { min, max } = widthBounds()
-    document.documentElement.style.setProperty('--workspace-tools-width', `${Math.round(Math.max(min, Math.min(max, value)))}px`)
-    if (activeTool === 'terminal') setTimeout(() => fitTerminal(stateForCurrent()), 0)
-  }
-
-  function resetWidth() { setWidth(DEFAULT_WIDTH) }
-
-  return { bind, sync, open, close, isOpen }
+  return { bind, sync, open, openForDebug, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
 }
 
 function fileIcon(name) {

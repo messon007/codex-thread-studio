@@ -37,6 +37,10 @@ enum DeveloperRequest {
     CrashBrowserTab,
     OpenBrowser { url: String },
     OpenArtifact { root: String, path: String },
+    OpenWorkspace { root: String, tool: String },
+    OpenEnvironmentSettings { root: Option<String> },
+    Click { selector: String },
+    Input { selector: String, value: String },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -64,6 +68,10 @@ pub fn requested(arguments: &[OsString]) -> bool {
                     | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
                     | "--dev-open-artifact"
+                    | "--dev-open-workspace"
+                    | "--dev-open-environment-settings"
+                    | "--dev-click"
+                    | "--dev-input"
             )
         )
     })
@@ -160,6 +168,67 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
                 path: path.to_owned(),
             }))
         }
+        "--dev-open-workspace" if arguments.len() == 3 => {
+            let root = arguments[1]
+                .to_str()
+                .ok_or("developer workspace root must be valid UTF-8")?;
+            let tool = arguments[2]
+                .to_str()
+                .ok_or("developer workspace tool must be valid UTF-8")?;
+            if !matches!(tool, "files" | "terminal" | "review") {
+                return Err(
+                    "developer workspace tool must be files, terminal, or review".to_owned(),
+                );
+            }
+            Ok(Some(DeveloperRequest::OpenWorkspace {
+                root: root.to_owned(),
+                tool: tool.to_owned(),
+            }))
+        }
+        "--dev-open-environment-settings" if arguments.len() <= 2 => {
+            let root = arguments
+                .get(1)
+                .map(|value| {
+                    value
+                        .to_str()
+                        .map(str::to_owned)
+                        .ok_or("developer environment root must be valid UTF-8")
+                })
+                .transpose()?;
+            Ok(Some(DeveloperRequest::OpenEnvironmentSettings { root }))
+        }
+        "--dev-click" if arguments.len() == 2 => {
+            let selector = arguments[1]
+                .to_str()
+                .ok_or("developer click selector must be valid UTF-8")?;
+            if selector.is_empty() || selector.len() > 512 || selector.contains(['\n', '\r', '\0'])
+            {
+                return Err("developer click selector is invalid".to_owned());
+            }
+            Ok(Some(DeveloperRequest::Click {
+                selector: selector.to_owned(),
+            }))
+        }
+        "--dev-input" if arguments.len() == 3 => {
+            let selector = arguments[1]
+                .to_str()
+                .ok_or("developer input selector must be valid UTF-8")?;
+            let value = arguments[2]
+                .to_str()
+                .ok_or("developer input value must be valid UTF-8")?;
+            if selector.is_empty()
+                || selector.len() > 512
+                || selector.contains(['\n', '\r', '\0'])
+                || value.len() > 16 * 1024
+                || value.contains('\0')
+            {
+                return Err("developer input is invalid".to_owned());
+            }
+            Ok(Some(DeveloperRequest::Input {
+                selector: selector.to_owned(),
+                value: value.to_owned(),
+            }))
+        }
         "--dev-screenshot"
         | "--dev-show-browser"
         | "--dev-hide-browser"
@@ -176,6 +245,14 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         "--dev-open-artifact" => Err(format!(
             "{command} requires a project root and project-relative file path"
         )),
+        "--dev-open-workspace" => Err(format!(
+            "{command} requires a project root and one of files, terminal, or review"
+        )),
+        "--dev-open-environment-settings" => {
+            Err(format!("{command} accepts at most one project root"))
+        }
+        "--dev-click" => Err(format!("{command} requires one CSS selector")),
+        "--dev-input" => Err(format!("{command} requires a CSS selector and value")),
         _ => Ok(None),
     }
 }
@@ -296,6 +373,22 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             DeveloperRequest::OpenArtifact { root, path } => {
                 open_artifact_for_debug(root, path).map(|_| None)
             }
+            DeveloperRequest::OpenWorkspace { root, tool } => {
+                evaluate_studio_developer_call("openWorkspace", serde_json::json!([root, tool]))
+                    .map(|_| None)
+            }
+            DeveloperRequest::OpenEnvironmentSettings { root } => evaluate_studio_developer_call(
+                "openEnvironmentSettings",
+                serde_json::json!([root.unwrap_or_default()]),
+            )
+            .map(|_| None),
+            DeveloperRequest::Click { selector } => {
+                evaluate_studio_developer_call("click", serde_json::json!([selector])).map(|_| None)
+            }
+            DeveloperRequest::Input { selector, value } => {
+                evaluate_studio_developer_call("input", serde_json::json!([selector, value]))
+                    .map(|_| None)
+            }
         };
         let _ = sender.send(result);
     });
@@ -308,6 +401,37 @@ fn open_artifact_for_debug(root: String, path: String) -> Result<(), String> {
     let payload = serde_json::to_string(&serde_json::json!({ "root": root, "path": path }))
         .map_err(|error| error.to_string())?;
     let script = format!("window.__studioDeveloper?.openArtifact?.({payload})");
+    let handled = TAURI_WEBVIEW.with(|slot| {
+        let slot = slot
+            .try_borrow()
+            .map_err(|_| "Studio window is busy".to_owned())?;
+        let Some(webview) = slot.as_ref() else {
+            return Ok::<bool, String>(false);
+        };
+        use webkit2gtk::WebViewExt;
+        #[allow(deprecated)]
+        webview.run_javascript(&script, None::<&gtk::gio::Cancellable>, |_| {});
+        Ok::<bool, String>(true)
+    })?;
+    if handled {
+        Ok(())
+    } else {
+        crate::embedded_browser::evaluate_studio_for_debug(&script)
+    }
+}
+
+fn evaluate_studio_developer_call(
+    method: &str,
+    arguments: serde_json::Value,
+) -> Result<(), String> {
+    let arguments = arguments
+        .as_array()
+        .ok_or("developer call arguments must be an array")?
+        .iter()
+        .map(|value| serde_json::to_string(value).map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(",");
+    let script = format!("window.__studioDeveloper?.{method}?.({arguments})");
     let handled = TAURI_WEBVIEW.with(|slot| {
         let slot = slot
             .try_borrow()
@@ -359,7 +483,7 @@ fn capture_studio_screenshot(path: PathBuf, complete: impl FnOnce(Result<(), Str
                 },
             );
         }
-        Ok(None) => complete(crate::embedded_browser::capture_screenshot(&path)),
+        Ok(None) => crate::embedded_browser::capture_studio_screenshot(path, complete),
     }
 }
 
@@ -381,14 +505,24 @@ fn write_snapshot_surface(
 }
 
 fn socket_path() -> Result<PathBuf, String> {
-    socket_path_from(env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from))
+    let name =
+        env::var("CODEX_THREAD_STUDIO_DEV_SOCKET").unwrap_or_else(|_| SOCKET_NAME.to_owned());
+    if name.is_empty()
+        || name.len() > 120
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err("CODEX_THREAD_STUDIO_DEV_SOCKET must be a safe socket filename".to_owned());
+    }
+    socket_path_from(env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from), &name)
 }
 
-fn socket_path_from(runtime_directory: Option<PathBuf>) -> Result<PathBuf, String> {
+fn socket_path_from(runtime_directory: Option<PathBuf>, name: &str) -> Result<PathBuf, String> {
     let runtime_directory = runtime_directory
         .filter(|path| path.is_absolute())
         .ok_or("XDG_RUNTIME_DIR is unavailable; developer control is disabled")?;
-    Ok(runtime_directory.join(SOCKET_NAME))
+    Ok(runtime_directory.join(name))
 }
 
 fn remove_stale_socket(path: &Path) -> Result<(), String> {
@@ -435,11 +569,11 @@ mod tests {
     #[test]
     fn runtime_socket_must_live_in_an_absolute_runtime_directory() {
         assert_eq!(
-            socket_path_from(Some(PathBuf::from("/run/user/1000"))).unwrap(),
+            socket_path_from(Some(PathBuf::from("/run/user/1000")), SOCKET_NAME).unwrap(),
             PathBuf::from("/run/user/1000").join(SOCKET_NAME)
         );
-        assert!(socket_path_from(Some(PathBuf::from("relative"))).is_err());
-        assert!(socket_path_from(None).is_err());
+        assert!(socket_path_from(Some(PathBuf::from("relative")), SOCKET_NAME).is_err());
+        assert!(socket_path_from(None, SOCKET_NAME).is_err());
     }
 
     #[test]
@@ -492,6 +626,16 @@ mod tests {
             parse_cli_request(&arguments(&["--dev-open-artifact", "/books", "guide.epub"])).unwrap(),
             Some(DeveloperRequest::OpenArtifact { root, path }) if root == "/books" && path == "guide.epub"
         ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-open-workspace", "/project", "review"])).unwrap(),
+            Some(DeveloperRequest::OpenWorkspace { root, tool }) if root == "/project" && tool == "review"
+        ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-input", "[data-pdf-search]", "Git"])).unwrap(),
+            Some(DeveloperRequest::Input { selector, value }) if selector == "[data-pdf-search]" && value == "Git"
+        ));
+        assert!(parse_cli_request(&arguments(&["--dev-input", "input"])).is_err());
+        assert!(parse_cli_request(&arguments(&["--dev-click", "bad\nselector"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-open-browser"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-screenshot", "extra"])).is_err());
         assert!(parse_cli_request(&arguments(&["--normal-option"]))
@@ -512,6 +656,10 @@ mod tests {
         assert!(requested(&arguments(&["--dev-crash-browser-tab"])));
         assert!(requested(&arguments(&["--dev-open-browser"])));
         assert!(requested(&arguments(&["--dev-open-artifact"])));
+        assert!(requested(&arguments(&["--dev-open-workspace"])));
+        assert!(requested(&arguments(&["--dev-open-environment-settings"])));
+        assert!(requested(&arguments(&["--dev-click"])));
+        assert!(requested(&arguments(&["--dev-input"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));
     }

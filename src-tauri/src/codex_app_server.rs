@@ -15,6 +15,7 @@ use crate::backend_runtime::RuntimeFile;
 
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
 const MAX_CLIENT_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+static INTERNAL_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct CodexAppServer {
@@ -30,6 +31,7 @@ struct ProcessConnection {
     generation: u64,
     input: mpsc::Sender<String>,
     ready: bool,
+    initialization: Option<Value>,
 }
 
 impl CodexAppServer {
@@ -54,6 +56,18 @@ impl CodexAppServer {
 
     pub fn wsl_distribution(&self) -> Option<&str> {
         self.runtime.wsl_distribution()
+    }
+
+    pub async fn run_workspace_command(
+        &self,
+        binary: &str,
+        args: &[&str],
+        environment: &[(&str, &str)],
+    ) -> std::io::Result<std::process::Output> {
+        self.runtime
+            .command(binary, args, environment)
+            .output()
+            .await
     }
 
     #[cfg(windows)]
@@ -103,6 +117,7 @@ impl CodexAppServer {
             generation,
             input: input.clone(),
             ready: false,
+            initialization: None,
         });
         self.emit(json!({
             "method": "studio/appServer/status",
@@ -153,7 +168,12 @@ impl CodexAppServer {
                             .await;
                         break;
                     }
-                    reader_server.mark_ready(generation).await;
+                    reader_server
+                        .mark_ready(
+                            generation,
+                            value.get("result").cloned().unwrap_or(Value::Null),
+                        )
+                        .await;
                     continue;
                 }
                 let _ = events.send(value.to_string());
@@ -190,7 +210,11 @@ impl CodexAppServer {
                     "id": INITIALIZE_REQUEST_ID,
                     "params": {
                         "capabilities": {
-                            "experimentalApi": true
+                            "experimentalApi": true,
+                            "mcpServerOpenaiFormElicitation": true,
+                            "extensions": {
+                                "openai/form": {}
+                            }
                         },
                         "clientInfo": {
                             "name": "codex_thread_studio",
@@ -205,7 +229,7 @@ impl CodexAppServer {
             .map_err(|_| "codex app-server stopped before initialization".to_string())
     }
 
-    async fn mark_ready(&self, generation: u64) {
+    async fn mark_ready(&self, generation: u64, initialization: Value) {
         let mut process = self.process.lock().await;
         let Some(connection) = process
             .as_mut()
@@ -214,10 +238,17 @@ impl CodexAppServer {
             return;
         };
         connection.ready = true;
+        connection.initialization = Some(initialization.clone());
         drop(process);
         self.emit(json!({
             "method": "studio/appServer/status",
-            "params": { "state": "ready", "binary": self.binary.as_ref(), "generation": generation }
+            "params": {
+                "state": "ready",
+                "binary": self.binary.as_ref(),
+                "generation": generation,
+                "initialization": initialization,
+                "clientCapabilities": studio_client_capabilities()
+            }
         }));
     }
 
@@ -240,14 +271,28 @@ impl CodexAppServer {
 
     async fn status_message(&self) -> String {
         let process = self.process.lock().await;
-        let (state, generation) = match process.as_ref() {
-            Some(connection) if connection.ready => ("ready", connection.generation),
-            Some(connection) => ("starting", connection.generation),
-            None => ("stopped", self.generation.load(Ordering::SeqCst)),
+        let (state, generation, initialization) = match process.as_ref() {
+            Some(connection) if connection.ready => (
+                "ready",
+                connection.generation,
+                connection.initialization.clone().unwrap_or(Value::Null),
+            ),
+            Some(connection) => ("starting", connection.generation, Value::Null),
+            None => (
+                "stopped",
+                self.generation.load(Ordering::SeqCst),
+                Value::Null,
+            ),
         };
         json!({
             "method": "studio/appServer/status",
-            "params": { "state": state, "binary": self.binary.as_ref(), "generation": generation }
+            "params": {
+                "state": state,
+                "binary": self.binary.as_ref(),
+                "generation": generation,
+                "initialization": initialization,
+                "clientCapabilities": studio_client_capabilities()
+            }
         })
         .to_string()
     }
@@ -265,6 +310,47 @@ impl CodexAppServer {
             .send(value.to_string())
             .await
             .map_err(|_| "codex app-server input is closed".to_string())
+    }
+
+    pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.ensure_started().await?;
+        let ready = self
+            .process
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|connection| connection.ready);
+        if !ready {
+            return Err("codex app-server is still initializing".to_string());
+        }
+        let id = format!(
+            "studio-internal-{}",
+            INTERNAL_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let mut events = self.events.subscribe();
+        self.send(json!({ "id": id, "method": method, "params": params }))
+            .await?;
+        let response = tokio::time::timeout(std::time::Duration::from_secs(15), async move {
+            loop {
+                let payload = events.recv().await.map_err(|error| error.to_string())?;
+                let value: Value =
+                    serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+                if value.get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    break Ok::<Value, String>(value);
+                }
+            }
+        })
+        .await
+        .map_err(|_| "codex app-server environment request timed out".to_string())??;
+        if let Some(error) = response.get("error") {
+            Err(error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("codex app-server rejected environment configuration")
+                .to_string())
+        } else {
+            Ok(response.get("result").cloned().unwrap_or(Value::Null))
+        }
     }
 
     fn emit(&self, value: Value) {
@@ -332,6 +418,16 @@ impl CodexAppServer {
             }
         }
     }
+}
+
+fn studio_client_capabilities() -> Value {
+    json!({
+        "experimentalApi": true,
+        "requestUserInput": true,
+        "mcpElicitation": true,
+        "reconnectReconciliation": true,
+        "desktopNotifications": true
+    })
 }
 
 fn validate_client_message(value: &Value) -> Result<(), String> {

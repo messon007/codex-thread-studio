@@ -17,6 +17,8 @@ use webkit2gtk::{
     DownloadExt, PermissionRequestExt, URIRequestExt, URIResponseExt, WebContextExt,
     WebProcessTerminationReason, WebViewExt as WebKitWebViewExt,
 };
+#[cfg(debug_assertions)]
+use webkit2gtk::{SnapshotOptions, SnapshotRegion};
 use wry::{
     PageLoadEvent, WebContext, WebView, WebViewBuilder, WebViewBuilderExtUnix, WebViewExtUnix,
 };
@@ -24,7 +26,7 @@ use wry::{
 use crate::browser_runtime::{validate_browser_url, BrowserPreferences};
 
 const DEFAULT_URL: &str = "https://example.com";
-const MIN_STUDIO_WIDTH: i32 = 520;
+const MIN_STUDIO_WIDTH: i32 = 480;
 const MIN_BROWSER_WIDTH: i32 = 480;
 // Keep the two-row browser chrome aligned with the 75px Studio thread toolbar.
 const TOOLBAR_HEIGHT: i32 = 75;
@@ -43,9 +45,10 @@ thread_local! {
 #[derive(Debug)]
 enum BrowserAction {
     Toggle,
-    Show,
+    Show(Option<i32>),
     Hide,
-    Open(String),
+    Open(String, Option<i32>),
+    Resize(i32),
     Exit,
     Navigate(String),
     NewTab(Option<String>),
@@ -104,6 +107,13 @@ struct BrowserSelection {
 struct ViewportMetrics {
     inner_width: f64,
     scroll_width: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserWidthMetrics {
+    width: i32,
+    total_width: i32,
 }
 
 struct BrowserTab {
@@ -168,51 +178,52 @@ pub fn is_supported() -> bool {
 }
 
 #[cfg(debug_assertions)]
-pub fn capture_screenshot(path: &std::path::Path) -> Result<(), String> {
-    WORKSPACE.with(|slot| {
+pub fn capture_studio_screenshot(
+    path: PathBuf,
+    complete: impl FnOnce(Result<(), String>) + 'static,
+) {
+    let webview = WORKSPACE.with(|slot| {
         let slot = slot
             .try_borrow()
             .map_err(|_| "Studio window is busy".to_owned())?;
-        let workspace = slot.as_ref().ok_or("Studio window is not initialized")?;
-        let window = workspace
-            ._window
-            .gtk_window()
-            .map_err(|error| error.to_string())?;
-        if !window.is_mapped() || !window.is_visible() {
-            return Err("Studio window is not visible".to_owned());
-        }
-        let allocation = window.allocation();
-        if allocation.width() <= 0 || allocation.height() <= 0 {
-            return Err("Studio window has no drawable area".to_owned());
-        }
-        let surface = window
-            .window()
-            .ok_or("Studio window surface is unavailable")?;
-        use gtk::gdk::prelude::WindowExtManual;
-        let pixbuf = surface
-            .pixbuf(0, 0, allocation.width(), allocation.height())
-            .ok_or("Studio window surface could not be captured")?;
-        if let Some(dialog) = workspace
-            .info_dialog
+        let workspace = slot
             .as_ref()
-            .filter(|dialog| dialog.is_visible())
-        {
-            composite_widget_surface(dialog, &surface, &pixbuf);
-        }
-        if let Some(menu) = workspace
-            .overflow_menu
-            .as_ref()
-            .filter(|menu| menu.is_visible())
-        {
-            composite_widget_surface(menu, &surface, &pixbuf);
-        }
-        pixbuf
-            .savev(path, "png", &[])
-            .map_err(|error| error.to_string())?;
-        fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })
+            .ok_or("embedded Studio workspace is not initialized")?;
+        Ok::<_, String>(workspace.studio_webview.webview().clone())
+    });
+    let webview = match webview {
+        Ok(webview) => webview,
+        Err(error) => return complete(Err(error)),
+    };
+    let allocation = webview.allocation();
+    webview.snapshot(
+        SnapshotRegion::Visible,
+        SnapshotOptions::NONE,
+        None::<&gtk::gio::Cancellable>,
+        move |result| {
+            let result = result
+                .map_err(|error| error.to_string())
+                .and_then(|surface| {
+                    if allocation.width() <= 0 || allocation.height() <= 0 {
+                        return Err("Studio WebView has no drawable area".to_owned());
+                    }
+                    let pixbuf = gtk::gdk::pixbuf_get_from_surface(
+                        &surface,
+                        0,
+                        0,
+                        allocation.width(),
+                        allocation.height(),
+                    )
+                    .ok_or("Studio WebView snapshot could not be converted")?;
+                    pixbuf
+                        .savev(&path, "png", &[])
+                        .map_err(|error| error.to_string())?;
+                    fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+                        .map_err(|error| error.to_string())
+                });
+            complete(result);
+        },
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -229,47 +240,6 @@ pub fn evaluate_studio_for_debug(script: &str) -> Result<(), String> {
             .evaluate_script(script)
             .map_err(|error| error.to_string())
     })
-}
-
-#[cfg(debug_assertions)]
-fn composite_widget_surface<W: IsA<gtk::Widget>>(
-    widget: &W,
-    main_surface: &gtk::gdk::Window,
-    target: &gtk::gdk_pixbuf::Pixbuf,
-) {
-    use gtk::gdk::prelude::WindowExtManual;
-    let Some(widget_surface) = widget.window() else {
-        return;
-    };
-    let allocation = widget.allocation();
-    let Some(source) = widget_surface.pixbuf(0, 0, allocation.width(), allocation.height()) else {
-        return;
-    };
-    let (main_valid, main_x, main_y) = main_surface.origin();
-    let (widget_valid, widget_x, widget_y) = widget_surface.origin();
-    if main_valid == 0 || widget_valid == 0 {
-        return;
-    }
-    let destination_x = widget_x - main_x;
-    let destination_y = widget_y - main_y;
-    let destination_width = source.width().min(target.width() - destination_x.max(0));
-    let destination_height = source.height().min(target.height() - destination_y.max(0));
-    if destination_x < 0 || destination_y < 0 || destination_width <= 0 || destination_height <= 0 {
-        return;
-    }
-    source.composite(
-        target,
-        destination_x,
-        destination_y,
-        destination_width,
-        destination_height,
-        destination_x as f64,
-        destination_y as f64,
-        1.0,
-        1.0,
-        gtk::gdk_pixbuf::InterpType::Bilinear,
-        255,
-    );
 }
 
 #[cfg(debug_assertions)]
@@ -562,13 +532,20 @@ pub fn build(
                 return None;
             };
             let workspace = slot.as_mut().filter(|workspace| workspace.visible)?;
-            let width = (split.allocation().width() - split.position()).max(MIN_BROWSER_WIDTH);
+            let width = workspace
+                .browser_column
+                .allocation()
+                .width()
+                .max(MIN_BROWSER_WIDTH);
             workspace.browser_width = width;
             workspace.resize_generation = workspace.resize_generation.wrapping_add(1);
             evaluate(
                 &workspace.studio_webview,
                 "window.__studioEmbeddedBrowser?.setWidth",
-                &width,
+                &BrowserWidthMetrics {
+                    width,
+                    total_width: split.allocation().width(),
+                },
             );
             Some(workspace.resize_generation)
         });
@@ -898,8 +875,9 @@ fn queue_action(action: BrowserAction) {
 }
 
 fn dispatch_action(action: BrowserAction) {
-    if let BrowserAction::Open(url) = &action {
+    if let BrowserAction::Open(url, width) = &action {
         let url = url.clone();
+        set_browser_width(*width);
         show_workspace();
         dispatch_action(BrowserAction::Navigate(url));
         return;
@@ -908,7 +886,8 @@ fn dispatch_action(action: BrowserAction) {
         exit_workspace();
         return;
     }
-    if matches!(action, BrowserAction::Show) {
+    if let BrowserAction::Show(width) = &action {
+        set_browser_width(*width);
         show_workspace();
         return;
     }
@@ -918,6 +897,10 @@ fn dispatch_action(action: BrowserAction) {
     }
     if matches!(action, BrowserAction::Toggle) {
         toggle_workspace();
+        return;
+    }
+    if let BrowserAction::Resize(width) = &action {
+        resize_browser(*width);
         return;
     }
 
@@ -935,9 +918,10 @@ fn dispatch_action(action: BrowserAction) {
         }
         match action {
             BrowserAction::Toggle
-            | BrowserAction::Show
+            | BrowserAction::Show(_)
             | BrowserAction::Hide
-            | BrowserAction::Open(_) => {
+            | BrowserAction::Open(_, _)
+            | BrowserAction::Resize(_) => {
                 unreachable!("workspace visibility actions are handled without a nested borrow")
             }
             BrowserAction::Exit => unreachable!("exit is handled without a nested borrow"),
@@ -1960,6 +1944,36 @@ fn toggle_workspace() {
     sync_toolbar();
 }
 
+fn set_browser_width(width: Option<i32>) {
+    let Some(width) = width.filter(|value| (MIN_BROWSER_WIDTH..=2400).contains(value)) else {
+        return;
+    };
+    WORKSPACE.with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut() {
+            if let Some(workspace) = slot.as_mut() {
+                workspace.browser_width = width;
+            }
+        }
+    });
+}
+
+fn resize_browser(width: i32) {
+    let handles = WORKSPACE.with(|slot| {
+        let Ok(mut slot) = slot.try_borrow_mut() else {
+            return None;
+        };
+        let workspace = slot.as_mut().filter(|workspace| workspace.visible)?;
+        if !(MIN_BROWSER_WIDTH..=2400).contains(&width) {
+            return None;
+        }
+        workspace.browser_width = width;
+        Some((workspace.split.clone(), width))
+    });
+    if let Some((split, width)) = handles {
+        position_browser_split(&split, width);
+    }
+}
+
 fn show_workspace() {
     let visible = WORKSPACE.with(|slot| {
         slot.try_borrow()
@@ -2334,9 +2348,11 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
     }
     match url.host_str()? {
         "toggle-browser" => Some(BrowserAction::Toggle),
-        "show-browser" => Some(BrowserAction::Show),
+        "show-browser" => Some(BrowserAction::Show(query_i32(&url, "width"))),
         "hide-browser" => Some(BrowserAction::Hide),
-        "open-browser" => query_value(&url, "url").map(BrowserAction::Open),
+        "open-browser" => query_value(&url, "url")
+            .map(|target| BrowserAction::Open(target, query_i32(&url, "width"))),
+        "resize-browser" => query_i32(&url, "width").map(BrowserAction::Resize),
         "navigate" => query_value(&url, "url").map(BrowserAction::Navigate),
         "new-tab" => Some(BrowserAction::NewTab(query_value(&url, "url"))),
         "activate-tab" => query_u64(&url, "id").map(BrowserAction::ActivateTab),
@@ -2359,6 +2375,10 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
 fn query_value(url: &Url, name: &str) -> Option<String> {
     url.query_pairs()
         .find_map(|(key, value)| (key == name).then(|| value.into_owned()))
+}
+
+fn query_i32(url: &Url, name: &str) -> Option<i32> {
+    query_value(url, name)?.parse().ok()
 }
 
 fn query_u64(url: &Url, name: &str) -> Option<u64> {
@@ -2560,7 +2580,15 @@ mod tests {
         ));
         assert!(matches!(
             parse_action("studio-action://show-browser"),
-            Some(BrowserAction::Show)
+            Some(BrowserAction::Show(None))
+        ));
+        assert!(matches!(
+            parse_action("studio-action://show-browser?width=712"),
+            Some(BrowserAction::Show(Some(712)))
+        ));
+        assert!(matches!(
+            parse_action("studio-action://resize-browser?width=680"),
+            Some(BrowserAction::Resize(680))
         ));
         assert!(matches!(
             parse_action("studio-action://hide-browser"),
@@ -2568,7 +2596,7 @@ mod tests {
         ));
         assert!(matches!(
             parse_action("studio-action://open-browser?url=https%3A%2F%2Fexample.com"),
-            Some(BrowserAction::Open(url)) if url == "https://example.com"
+            Some(BrowserAction::Open(url, None)) if url == "https://example.com"
         ));
         assert!(matches!(
             parse_action("studio-action://navigate?url=https%3A%2F%2Fexample.com"),

@@ -43,7 +43,8 @@ test('copy output includes only fields stored in the favorite', () => {
 test('global favorites expose Markdown export and hide it in session scope', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  assert.match(html, /id="export-favorites"[^>]*>导出<\/button>/)
+  assert.match(html, /id="export-favorites"[^>]*title="导出收藏"[^>]*>[\s\S]*?<svg[\s\S]*?<\/button>/)
+  assert.doesNotMatch(html, /id="export-favorites"[^>]*>导出<\/button>/)
   assert.match(source, /gatewayFetch\('\/studio\/favorites\/export'/)
   assert.match(source, /codex-thread-studio-favorites\.md/)
   assert.match(source, /export-favorites'\)\.classList\.toggle\('hidden', state\.favoriteScope !== 'global'\)/)

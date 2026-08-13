@@ -32,6 +32,14 @@ test('Embedded Browser selection enters the shared Comment Core flow', () => {
   assert.match(source, /openEmbeddedBrowserComment\(selection\)/)
   assert.match(source, /openAnnotationFromSelection\(\)/)
   assert.match(source, /window\.__studioEmbeddedBrowser = Object\.freeze/)
-  assert.match(source, /setWidth\(width\)/)
+  assert.match(source, /setWidth\(metrics\)/)
   assert.match(source, /embeddedBrowserWidthTimer = setTimeout\(persistPreferences, 250\)/)
+})
+
+test('Browser navigation controls use consistently aligned vector icons', () => {
+  const toolbar = readFileSync(new URL('./embedded-browser.html', import.meta.url), 'utf8')
+  assert.match(toolbar, /\.icon \{[^}]*display: grid; place-items: center;/)
+  assert.match(toolbar, /data-action="back"[^>]*aria-label="网页后退"[^>]*><svg/)
+  assert.match(toolbar, /data-action="forward"[^>]*><svg/)
+  assert.match(toolbar, /data-action="reload"[^>]*><svg/)
 })

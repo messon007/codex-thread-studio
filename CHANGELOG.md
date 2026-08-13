@@ -4,6 +4,14 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Add structured Codex user-input questions and MCP elicitation forms, reconnect reconciliation, declared client capabilities, desktop completion/input notifications, and generated-protocol compatibility fixtures.
+- Add searchable PDF reading with text and Shift-drag region comments, plus CSV/XLSX grids and local bar charts.
+- Add per-project environment profiles with redacted local Secrets, Codex and Terminal environment injection, network policy, allowed-host metadata, and cache variables.
+- Add local PDF.js and ExcelJS bundles with license files and dependency audit coverage.
+- Add a Git Review rail for code, Markdown, CSV, and other text changes with staged/unstaged filters, line-numbered unified diffs, and safe single-file stage/unstage actions.
+
 - Add switchable Codex App Server and OpenCode Server backends with structured session history, streaming events, native CRUD, file/skill discovery, permissions, and isolated UI state.
 - Add a native Windows client that runs Codex and OpenCode exclusively inside a configurable WSL2 distribution, including managed Linux process-group cleanup and WSL file review.
 - Render fenced Mermaid diagrams in chat messages, Markdown document previews, and favorites using a locally vendored, strict-mode renderer with configurable appearance and source fallback.
@@ -11,6 +19,9 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Fixed
 
+- Align Files, Terminal, Git Review, Document, Map, Comments, Favorites, and embedded Browser on one persisted rail width; centralize WebView rail dragging with a whole-window selection shield; add dedicated Workspace typography settings; and return to the originating workspace tool after closing an opened document.
+- Remove phantom CSV rows caused by trailing newlines, keep compact charts usable in the right rail, and make their action button reflect the active Grid/Chart view.
+- Keep the project-environment settings section reachable in shorter windows and capture the Studio WebView reliably during Linux screenshot acceptance.
 - Keep an active transcript pinned to the latest streaming output across Item completion and Markdown layout changes, while still respecting deliberate upward scrolling.
 - Restore cross-platform CI by accepting Windows line endings in version metadata, limiting the Linux-specific WSL script test to Linux, and updating DOMPurify.
 

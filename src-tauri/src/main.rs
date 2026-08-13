@@ -26,9 +26,11 @@ mod codex_app_server;
 mod dev_capture;
 #[cfg(target_os = "linux")]
 mod embedded_browser;
+mod environment_config;
 mod epub_reader;
 mod favorites;
 mod gateway_security;
+mod git_review;
 mod opencode_server;
 mod session_map;
 mod terminal_runtime;
@@ -40,6 +42,9 @@ use codex_app_server::find_codex_binary;
 use codex_app_server::CodexAppServer;
 use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
 use gateway_security::{AuthorizationError, GatewaySecurity};
+use git_review::{
+    GitDiffRequest, GitDiffResponse, GitPathsRequest, GitRootRequest, GitStatusResponse,
+};
 #[cfg(not(windows))]
 use opencode_server::find_opencode_binary;
 use opencode_server::OpenCodeServer;
@@ -49,6 +54,7 @@ const MAX_PREFERENCES_BODY: usize = 1024 * 1024;
 const MAX_EDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_REVIEW_FILE_BYTES: u64 = MAX_EDIT_FILE_BYTES as u64;
 const MAX_REVIEW_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_REVIEW_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Clone)]
 struct GatewayState {
@@ -62,6 +68,8 @@ struct GatewayState {
     session_maps_lock: Arc<Mutex<()>>,
     epub_reading_path: Arc<PathBuf>,
     epub_reading_lock: Arc<Mutex<()>>,
+    environment_path: Arc<PathBuf>,
+    environment_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
     embedded_browser: bool,
 }
@@ -71,10 +79,22 @@ struct GatewayState {
 struct TypographyPreferences {
     ui_font_family: String,
     ui_font_weight: u16,
+    #[serde(default = "default_workspace_font_family")]
+    workspace_font_family: String,
+    #[serde(default = "default_workspace_font_size")]
+    workspace_font_size: f64,
     code_font_family: String,
     code_font_size: f64,
     code_font_weight: u16,
     high_contrast: bool,
+}
+
+fn default_workspace_font_family() -> String {
+    "Ubuntu, \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif".to_string()
+}
+
+fn default_workspace_font_size() -> f64 {
+    14.0
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -205,6 +225,8 @@ impl Default for MarkdownPreferences {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudioPreferences {
+    #[serde(default)]
+    desktop_notifications: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,6 +279,8 @@ struct StudioPreferences {
     sidebar_collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     artifact_width_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    right_rail_width_ratio: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -398,6 +422,10 @@ fn main() {
                     | "--dev-crash-browser-tab"
                     | "--dev-open-browser"
                     | "--dev-open-artifact"
+                    | "--dev-open-workspace"
+                    | "--dev-open-environment-settings"
+                    | "--dev-click"
+                    | "--dev-input"
             )
         )
     }) {
@@ -410,6 +438,7 @@ fn main() {
     let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
     let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
     let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
+    let environment_path = preferences_path.with_file_name("environments.json");
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
@@ -463,6 +492,8 @@ fn main() {
         session_maps_lock: Arc::new(Mutex::new(())),
         epub_reading_path: Arc::new(epub_reading_path),
         epub_reading_lock: Arc::new(Mutex::new(())),
+        environment_path: Arc::new(environment_path),
+        environment_lock: Arc::new(Mutex::new(())),
         security,
         embedded_browser,
     };
@@ -491,14 +522,14 @@ fn main() {
                     embedded_browser_preferences.clone(),
                 )?;
             } else {
-                let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                     .initialization_script(&initialization_script)
                     .title("Codex Thread Studio")
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(980.0, 660.0)
                     .build()?;
                 #[cfg(debug_assertions)]
-                dev_capture::register_tauri_window(&window)?;
+                dev_capture::register_tauri_window(&_window)?;
             }
             #[cfg(all(target_os = "linux", debug_assertions))]
             if let Err(error) = dev_capture::start_server() {
@@ -526,6 +557,14 @@ fn gateway_router(state: GatewayState) -> Router {
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
         )
+        .route(
+            "/studio/environment",
+            get(get_environment_profile).put(put_environment_profile),
+        )
+        .route(
+            "/studio/environment/apply",
+            axum::routing::post(apply_environment_profile),
+        )
         .route("/studio/client-log", axum::routing::post(client_log))
         .route(
             "/studio/workspace/list",
@@ -535,12 +574,21 @@ fn gateway_router(state: GatewayState) -> Router {
             "/studio/workspace/save",
             axum::routing::post(save_workspace_file),
         )
+        .route("/studio/git/status", axum::routing::post(git_status))
+        .route("/studio/git/diff", axum::routing::post(git_diff))
+        .route("/studio/git/stage", axum::routing::post(git_stage))
+        .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
             "/studio/review-image",
             axum::routing::post(read_review_image),
         )
         .route("/studio/review-epub", axum::routing::post(read_review_epub))
+        .route("/studio/review-pdf", axum::routing::post(read_review_pdf))
+        .route(
+            "/studio/review-spreadsheet",
+            axum::routing::post(read_review_spreadsheet),
+        )
         .route(
             "/studio/epub/state",
             axum::routing::post(get_epub_reading_state).put(put_epub_reading_state),
@@ -590,9 +638,19 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
+        .route("/environment-profile.mjs", get(environment_profile_js))
         .route("/epub-reader.mjs", get(epub_reader_js))
         .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
+        .route("/pdf-reader.mjs", get(pdf_reader_js))
+        .route("/pdf-comment-provider.mjs", get(pdf_comment_provider_js))
+        .route("/table-reader.mjs", get(table_reader_js))
+        .route(
+            "/table-comment-provider.mjs",
+            get(table_comment_provider_js),
+        )
         .route("/workspace-tools.mjs", get(workspace_tools_js))
+        .route("/git-review.mjs", get(git_review_js))
+        .route("/right-rail-layout.mjs", get(right_rail_layout_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
         .route(
@@ -617,6 +675,9 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/mermaid.min.js", get(mermaid_js))
         .route("/vendor/epub.mjs", get(epub_vendor_js))
+        .route("/vendor/pdf.min.mjs", get(pdf_vendor_js))
+        .route("/vendor/pdf.worker.min.mjs", get(pdf_worker_vendor_js))
+        .route("/vendor/artifact-table.mjs", get(table_vendor_js))
         .route(
             "/vendor/workspace-editor.mjs",
             get(workspace_editor_vendor_js),
@@ -764,6 +825,129 @@ async fn read_review_epub(
     }
 }
 
+async fn read_review_pdf(
+    State(state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    read_review_binary(&state, request, "pdf").await
+}
+
+async fn read_review_spreadsheet(
+    State(state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    read_review_binary(&state, request, "xlsx").await
+}
+
+async fn read_review_binary(
+    _state: &GatewayState,
+    request: ReviewFileRequest,
+    expected: &'static str,
+) -> Response<Body> {
+    #[cfg(windows)]
+    let loaded = if _state.codex.execution_environment() == "wsl" {
+        _state
+            .codex
+            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_DOCUMENT_BYTES)
+            .await
+            .map(|file| (file.content, file.path))
+            .map_err(|error| error.to_string())
+    } else {
+        load_review_binary(&request).map_err(|(_, message)| message)
+    };
+    #[cfg(not(windows))]
+    let loaded = load_review_binary(&request).map_err(|(_, message)| message);
+
+    let (bytes, path) = match loaded {
+        Ok(value) => value,
+        Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
+    };
+    let extension = std::path::Path::new(&path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let valid = match expected {
+        "pdf" => extension == "pdf" && bytes.starts_with(b"%PDF-"),
+        "xlsx" => {
+            extension == "xlsx"
+                && bytes.starts_with(b"PK\x03\x04")
+                && validate_spreadsheet_archive(&bytes).is_ok()
+        }
+        _ => false,
+    };
+    if !valid {
+        return json_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            &format!("file is not a valid {expected} document"),
+        );
+    }
+    let mime = if expected == "pdf" {
+        "application/pdf"
+    } else {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header("x-studio-content-hash", stable_content_hash(&bytes))
+        .header(header::CONTENT_LENGTH, bytes.len())
+        .body(Body::from(bytes))
+        .unwrap_or_else(|error| gateway_error(&error.to_string()))
+}
+
+fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
+    const MAX_ENTRIES: usize = 10_000;
+    const MAX_UNCOMPRESSED_BYTES: u64 = 200 * 1024 * 1024;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|error| format!("invalid XLSX ZIP: {error}"))?;
+    if archive.len() > MAX_ENTRIES {
+        return Err("XLSX contains too many ZIP entries".into());
+    }
+    let mut total = 0_u64;
+    let mut content_types = false;
+    let mut workbook = false;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|error| format!("invalid XLSX entry: {error}"))?;
+        total = total
+            .checked_add(entry.size())
+            .ok_or_else(|| "XLSX expanded size overflow".to_string())?;
+        if total > MAX_UNCOMPRESSED_BYTES {
+            return Err("XLSX expanded content exceeds 200 MiB".into());
+        }
+        let name = entry.name().replace('\\', "/");
+        if name == "[Content_Types].xml" {
+            content_types = true;
+        }
+        if name == "xl/workbook.xml" {
+            workbook = true;
+        }
+    }
+    if !content_types || !workbook {
+        return Err("XLSX package metadata is missing".into());
+    }
+    Ok(())
+}
+
+fn load_review_binary(
+    request: &ReviewFileRequest,
+) -> Result<(Vec<u8>, String), (StatusCode, String)> {
+    let (_root, path, _metadata) =
+        resolve_review_path(request, MAX_REVIEW_DOCUMENT_BYTES, "50 MiB document")?;
+    let bytes = fs::read(&path).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unable to read document: {error}"),
+        )
+    })?;
+    Ok((bytes, path.to_string_lossy().into_owned()))
+}
+
 async fn get_epub_reading_state(
     State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequestWithHash>,
@@ -865,6 +1049,212 @@ async fn save_workspace_file(
         }
         Err(WorkspaceSaveError::Http(status, message)) => json_error(status, &message),
     }
+}
+
+async fn git_status(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitRootRequest>,
+) -> Response<Body> {
+    match load_git_status(&state, &request.root).await {
+        Ok(status) => json_response(StatusCode::OK, &status),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+async fn git_diff(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitDiffRequest>,
+) -> Response<Body> {
+    if let Err(message) = git_review::validate_relative_path(&request.path) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    let status = match load_git_status(&state, &request.root).await {
+        Ok(status) => status,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let Some(file) = status.files.iter().find(|file| file.path == request.path) else {
+        return json_error(StatusCode::NOT_FOUND, "file has no reviewable Git changes");
+    };
+    let scope_available = match request.scope {
+        git_review::GitDiffScope::Staged => file.staged,
+        git_review::GitDiffScope::Unstaged => file.unstaged,
+    };
+    if !scope_available {
+        return json_error(
+            StatusCode::NOT_FOUND,
+            "file has no changes in the requested Git scope",
+        );
+    }
+
+    let root = status.root.clone();
+    let untracked = file.untracked && request.scope == git_review::GitDiffScope::Unstaged;
+    let arguments = git_review::diff_arguments(&root, &request.path, request.scope, untracked);
+    let output = match run_git(&state, &arguments, true).await {
+        Ok(output) if output.status.success() || (untracked && output.status.code() == Some(1)) => {
+            output
+        }
+        Ok(output) => return git_command_error("read diff", output),
+        Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error),
+    };
+    let (content, truncated) = git_review::bounded_diff(output.stdout);
+    let response = GitDiffResponse {
+        root,
+        path: request.path,
+        scope: request.scope.into(),
+        binary: content.contains("Binary files ") || content.contains("GIT binary patch"),
+        content,
+        truncated,
+    };
+    json_response(StatusCode::OK, &response)
+}
+
+async fn git_stage(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitPathsRequest>,
+) -> Response<Body> {
+    mutate_git_paths(&state, request, true).await
+}
+
+async fn git_unstage(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitPathsRequest>,
+) -> Response<Body> {
+    mutate_git_paths(&state, request, false).await
+}
+
+async fn mutate_git_paths(
+    state: &GatewayState,
+    request: GitPathsRequest,
+    stage: bool,
+) -> Response<Body> {
+    if request.paths.is_empty() || request.paths.len() > 100 {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "select between 1 and 100 Git paths",
+        );
+    }
+    for path in &request.paths {
+        if let Err(message) = git_review::validate_relative_path(path) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
+        }
+    }
+    let status = match load_git_status(state, &request.root).await {
+        Ok(status) => status,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    if request
+        .paths
+        .iter()
+        .any(|path| !status.files.iter().any(|file| file.path == *path))
+    {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "Git path is not in the current change set",
+        );
+    }
+    let arguments =
+        git_review::mutation_arguments(&status.root, &request.paths, stage, status.has_head);
+    let output = match run_git(state, &arguments, false).await {
+        Ok(output) => output,
+        Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error),
+    };
+    if !output.status.success() {
+        return git_command_error(
+            if stage {
+                "stage files"
+            } else {
+                "unstage files"
+            },
+            output,
+        );
+    }
+    match load_git_status(state, &status.root).await {
+        Ok(status) => json_response(StatusCode::OK, &status),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+async fn load_git_status(
+    state: &GatewayState,
+    requested_root: &str,
+) -> Result<GitStatusResponse, (StatusCode, String)> {
+    if requested_root.is_empty()
+        || requested_root.contains('\0')
+        || requested_root.contains('\n')
+        || requested_root.contains('\r')
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "project directory is invalid".to_owned(),
+        ));
+    }
+    #[cfg(not(windows))]
+    let root = fs::canonicalize(requested_root)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "project directory is unavailable".to_owned(),
+            )
+        })?
+        .to_string_lossy()
+        .into_owned();
+    #[cfg(windows)]
+    let root = requested_root.to_owned();
+    let arguments = git_review::status_arguments(&root);
+    let output = run_git(state, &arguments, true)
+        .await
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
+    if !output.status.success() {
+        let message = bounded_command_stderr(&output.stderr);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            if message.is_empty() {
+                "project directory is not a Git repository".to_owned()
+            } else {
+                format!("unable to inspect Git repository: {message}")
+            },
+        ));
+    }
+    git_review::parse_status(root, &output.stdout)
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))
+}
+
+async fn run_git(
+    state: &GatewayState,
+    arguments: &[String],
+    read_only: bool,
+) -> Result<std::process::Output, String> {
+    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    let environment = if read_only {
+        vec![("GIT_OPTIONAL_LOCKS", "0"), ("GIT_CONFIG_NOSYSTEM", "1")]
+    } else {
+        vec![("GIT_CONFIG_NOSYSTEM", "1")]
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        state
+            .codex
+            .run_workspace_command("git", &arguments, &environment),
+    )
+    .await
+    .map_err(|_| "Git command timed out".to_owned())?
+    .map_err(|error| format!("unable to start Git: {error}"))
+}
+
+fn git_command_error(action: &str, output: std::process::Output) -> Response<Body> {
+    let detail = bounded_command_stderr(&output.stderr);
+    let message = if detail.is_empty() {
+        format!("unable to {action}")
+    } else {
+        format!("unable to {action}: {detail}")
+    };
+    json_error(StatusCode::BAD_REQUEST, &message)
+}
+
+fn bounded_command_stderr(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(&stderr[..stderr.len().min(8 * 1024)])
+        .trim()
+        .to_owned()
 }
 
 #[derive(Debug)]
@@ -1287,6 +1677,10 @@ async fn document_review_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/document-review.mjs"))
 }
 
+async fn environment_profile_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/environment-profile.mjs"))
+}
+
 async fn epub_reader_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/epub-reader.mjs"))
 }
@@ -1297,6 +1691,14 @@ async fn epub_comment_provider_js() -> impl IntoResponse {
 
 async fn workspace_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/workspace-tools.mjs"))
+}
+
+async fn git_review_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/git-review.mjs"))
+}
+
+async fn right_rail_layout_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/right-rail-layout.mjs"))
 }
 
 async fn workspace_editor_js() -> impl IntoResponse {
@@ -1353,6 +1755,34 @@ async fn mermaid_js() -> impl IntoResponse {
 
 async fn epub_vendor_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/epub.mjs"))
+}
+
+async fn pdf_reader_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/pdf-reader.mjs"))
+}
+
+async fn pdf_comment_provider_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/pdf-comment-provider.mjs"))
+}
+
+async fn table_reader_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/table-reader.mjs"))
+}
+
+async fn table_comment_provider_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/table-comment-provider.mjs"))
+}
+
+async fn pdf_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/pdf.min.mjs"))
+}
+
+async fn pdf_worker_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/pdf.worker.min.mjs"))
+}
+
+async fn table_vendor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/artifact-table.mjs"))
 }
 
 async fn workspace_editor_vendor_js() -> impl IntoResponse {
@@ -1472,7 +1902,77 @@ async fn codex_app_server_ws(
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
-        .on_upgrade(terminal_runtime::bridge)
+        .on_upgrade(move |socket| terminal_runtime::bridge(socket, state.environment_path))
+}
+
+#[derive(Deserialize)]
+struct EnvironmentQuery {
+    root: String,
+}
+
+async fn get_environment_profile(
+    State(state): State<GatewayState>,
+    Query(query): Query<EnvironmentQuery>,
+) -> Response<Body> {
+    let _guard = match state.environment_lock.lock() {
+        Ok(value) => value,
+        Err(_) => return gateway_error("environment lock is unavailable"),
+    };
+    match environment_config::read_public(&state.environment_path, &query.root) {
+        Ok(profile) => json_response(StatusCode::OK, &profile),
+        Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
+    }
+}
+
+async fn put_environment_profile(
+    State(state): State<GatewayState>,
+    Json(request): Json<environment_config::UpdateEnvironmentProfile>,
+) -> Response<Body> {
+    let _guard = match state.environment_lock.lock() {
+        Ok(value) => value,
+        Err(_) => return gateway_error("environment lock is unavailable"),
+    };
+    match environment_config::update(&state.environment_path, request) {
+        Ok(profile) => json_response(StatusCode::OK, &profile),
+        Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyEnvironmentRequest {
+    root: String,
+    thread_id: String,
+}
+
+async fn apply_environment_profile(
+    State(state): State<GatewayState>,
+    Json(request): Json<ApplyEnvironmentRequest>,
+) -> Response<Body> {
+    let environment = {
+        let _guard = match state.environment_lock.lock() {
+            Ok(value) => value,
+            Err(_) => return gateway_error("environment lock is unavailable"),
+        };
+        match environment_config::app_server_environment(&state.environment_path, &request.root) {
+            Ok(value) => value,
+            Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
+        }
+    };
+    match state
+        .codex
+        .request(
+            "thread/resume",
+            json!({
+                "threadId": request.thread_id,
+                "config": { "shell_environment_policy": { "inherit": "all", "set": environment } }
+            }),
+        )
+        .await
+    {
+        Ok(_) => json_response(StatusCode::OK, &json!({ "applied": true })),
+        Err(message) => json_error(StatusCode::BAD_GATEWAY, &message),
+    }
 }
 
 async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
@@ -1888,10 +2388,11 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         return Err("WSL backend settings are invalid".to_string());
     }
     if preferences
-        .artifact_width_ratio
+        .right_rail_width_ratio
+        .or(preferences.artifact_width_ratio)
         .is_some_and(|ratio| !(0.2..=0.65).contains(&ratio))
     {
-        return Err("artifact width ratio must be between 0.2 and 0.65".to_string());
+        return Err("right rail width ratio must be between 0.2 and 0.65".to_string());
     }
     if preferences
         .selected_thread
@@ -1936,8 +2437,11 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
             || typography.ui_font_family.len() > 512
             || typography.code_font_family.trim().is_empty()
             || typography.code_font_family.len() > 512
+            || typography.workspace_font_family.trim().is_empty()
+            || typography.workspace_font_family.len() > 512
             || ![400, 500, 600].contains(&typography.ui_font_weight)
             || ![400, 500, 600].contains(&typography.code_font_weight)
+            || !(11.0..=20.0).contains(&typography.workspace_font_size)
             || !(11.0..=20.0).contains(&typography.code_font_size)
         {
             return Err("typography settings are invalid".to_string());
@@ -2246,6 +2750,10 @@ mod tests {
                 "codex-thread-studio-security-epub-{suffix}.sqlite3"
             ))),
             epub_reading_lock: Arc::new(Mutex::new(())),
+            environment_path: Arc::new(env::temp_dir().join(format!(
+                "codex-thread-studio-security-environment-{suffix}.json"
+            ))),
+            environment_lock: Arc::new(Mutex::new(())),
             security,
             embedded_browser: false,
         }
@@ -2356,6 +2864,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-epub-test.sqlite3"),
                 ),
                 epub_reading_lock: Arc::new(Mutex::new(())),
+                environment_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-route-environment-test.json"),
+                ),
+                environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2430,6 +2942,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-epub-test.sqlite3"),
                 ),
                 epub_reading_lock: Arc::new(Mutex::new(())),
+                environment_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-version-environment-test.json"),
+                ),
+                environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2487,6 +3003,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-map-api-epub-test.sqlite3"),
                 ),
                 epub_reading_lock: Arc::new(Mutex::new(())),
+                environment_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-map-api-environment-test.json"),
+                ),
+                environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -2616,6 +3136,10 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-epub-test.sqlite3"),
                 ),
                 epub_reading_lock: Arc::new(Mutex::new(())),
+                environment_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-favorites-api-environment-test.json"),
+                ),
+                environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
             };
@@ -3147,6 +3671,24 @@ mod tests {
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&invalid).is_err());
+    }
+
+    #[test]
+    fn validates_bounded_xlsx_package_metadata() {
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+        let mut archive = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        archive
+            .start_file("[Content_Types].xml", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"<Types/>").unwrap();
+        archive
+            .start_file("xl/workbook.xml", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"<workbook/>").unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        assert!(validate_spreadsheet_archive(&bytes).is_ok());
+        assert!(validate_spreadsheet_archive(b"PK\x03\x04not-a-zip").is_err());
     }
 
     #[test]

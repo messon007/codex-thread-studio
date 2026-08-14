@@ -10,7 +10,7 @@
     "vendor:workspace": "node scripts/vendor-workspace-tools.mjs",
     "vendor:epub": "node scripts/vendor-epub.mjs",
     "vendor:artifacts": "node scripts/vendor-artifacts.mjs",
-    "test": "node --test --test-isolation=none --test-concurrency=1 ui/*.test.mjs scripts/*.test.mjs docs/session-map/demo/*.test.mjs"
+    "test": "node --test --experimental-test-isolation=none --test-concurrency=1 ui/*.test.mjs scripts/*.test.mjs docs/session-map/demo/*.test.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "6.5.2",

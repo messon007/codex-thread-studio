@@ -38,6 +38,7 @@ enum DeveloperRequest {
     OpenBrowser { url: String },
     OpenArtifact { root: String, path: String },
     OpenWorkspace { root: String, tool: String },
+    OpenResources { root: String },
     OpenEnvironmentSettings { root: Option<String> },
     Click { selector: String },
     Input { selector: String, value: String },
@@ -69,6 +70,7 @@ pub fn requested(arguments: &[OsString]) -> bool {
                     | "--dev-open-browser"
                     | "--dev-open-artifact"
                     | "--dev-open-workspace"
+                    | "--dev-open-resources"
                     | "--dev-open-environment-settings"
                     | "--dev-click"
                     | "--dev-input"
@@ -185,6 +187,14 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
                 tool: tool.to_owned(),
             }))
         }
+        "--dev-open-resources" if arguments.len() == 2 => {
+            let root = arguments[1]
+                .to_str()
+                .ok_or("developer resources root must be valid UTF-8")?;
+            Ok(Some(DeveloperRequest::OpenResources {
+                root: root.to_owned(),
+            }))
+        }
         "--dev-open-environment-settings" if arguments.len() <= 2 => {
             let root = arguments
                 .get(1)
@@ -248,6 +258,7 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         "--dev-open-workspace" => Err(format!(
             "{command} requires a project root and one of files, terminal, or review"
         )),
+        "--dev-open-resources" => Err(format!("{command} requires a project root")),
         "--dev-open-environment-settings" => {
             Err(format!("{command} accepts at most one project root"))
         }
@@ -375,6 +386,10 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             }
             DeveloperRequest::OpenWorkspace { root, tool } => {
                 evaluate_studio_developer_call("openWorkspace", serde_json::json!([root, tool]))
+                    .map(|_| None)
+            }
+            DeveloperRequest::OpenResources { root } => {
+                evaluate_studio_developer_call("openResources", serde_json::json!([root]))
                     .map(|_| None)
             }
             DeveloperRequest::OpenEnvironmentSettings { root } => evaluate_studio_developer_call(
@@ -631,6 +646,10 @@ mod tests {
             Some(DeveloperRequest::OpenWorkspace { root, tool }) if root == "/project" && tool == "review"
         ));
         assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-open-resources", "/project"])).unwrap(),
+            Some(DeveloperRequest::OpenResources { root }) if root == "/project"
+        ));
+        assert!(matches!(
             parse_cli_request(&arguments(&["--dev-input", "[data-pdf-search]", "Git"])).unwrap(),
             Some(DeveloperRequest::Input { selector, value }) if selector == "[data-pdf-search]" && value == "Git"
         ));
@@ -657,6 +676,7 @@ mod tests {
         assert!(requested(&arguments(&["--dev-open-browser"])));
         assert!(requested(&arguments(&["--dev-open-artifact"])));
         assert!(requested(&arguments(&["--dev-open-workspace"])));
+        assert!(requested(&arguments(&["--dev-open-resources"])));
         assert!(requested(&arguments(&["--dev-open-environment-settings"])));
         assert!(requested(&arguments(&["--dev-click"])));
         assert!(requested(&arguments(&["--dev-input"])));

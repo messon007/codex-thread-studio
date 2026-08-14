@@ -117,6 +117,7 @@ import {
 } from './i18n.mjs'
 import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
 import { createWorkspaceTools } from './workspace-tools.mjs'
+import { createSessionResourcesUI } from './session-resources-ui.mjs'
 import { rightRailWidthBounds } from './right-rail-layout.mjs'
 import {
   catalogCountsWithAttention,
@@ -383,6 +384,22 @@ const workspaceTools = createWorkspaceTools({
   notify: toast,
 })
 
+const sessionResources = createSessionResourcesUI({
+  getModel: () => state.model,
+  getThread: selectedThread,
+  getBackend: () => state.backend,
+  activate: activateRightWorkspace,
+  deactivate: (tool) => {
+    if (state.activeRightWorkspace === tool) state.activeRightWorkspace = null
+    syncRightWorkspaceLaunchers()
+    renderSessionMap()
+  },
+  openResource: openSessionResource,
+  openSource: openSessionResourceSource,
+  translate: t,
+  notify: toast,
+})
+
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
 window.addEventListener('unhandledrejection', (event) => reportClientError(event.reason))
@@ -486,6 +503,7 @@ async function init() {
 
 function bindUI() {
   workspaceTools.bind()
+  sessionResources.bind()
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#studio-menu-button').addEventListener('click', () => {
     toggleActionMenu('studio-menu', 'studio-menu-button')
@@ -675,6 +693,7 @@ function bindUI() {
       closeActionMenus()
       closeAnnotationRail()
       closeFavoritesRail()
+      sessionResources.close()
       closeSessionMapItemMenu()
       if (artifactWasOpen) closeArtifactRail({ restoreWorkspace: false })
       workspaceTools.close()
@@ -744,6 +763,70 @@ async function openBrowserUrl(url) {
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
   dispatchEmbeddedBrowserAction(`studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`)
+}
+
+async function openSessionResource(resource) {
+  if (!resource || resource.state === 'blocked') {
+    throw new Error(resource?.reason || t('安全策略阻止了此资源'))
+  }
+  if (resource.target?.url) {
+    await openBrowserUrl(resource.target.url)
+    return
+  }
+  const target = resource.target || {}
+  if (!target.path || !target.workspaceRoot) throw new Error(t('资源没有可打开的文件目标'))
+  if (resource.kind === 'directory') {
+    await workspaceTools.reveal(target.path)
+    return
+  }
+  if (!previewableFileKind({ path: target.path })) {
+    await workspaceTools.reveal(target.path)
+    toast(t('此文件类型暂不支持预览，已在文件中定位。'))
+    return
+  }
+  await openArtifact({ root: target.workspaceRoot, path: target.path }, { returnTool: 'resources' })
+  if (target.line) jumpArtifactToLine(target.line, target.column)
+}
+
+function openSessionResourceSource(occurrence) {
+  if (!occurrence?.turnId) return
+  transcriptScrollFollower.pause()
+  transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, occurrence.turnId)
+  renderTranscript()
+  requestAnimationFrame(() => {
+    const turn = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')]
+      .find((candidate) => candidate.dataset.turnId === String(occurrence.turnId))
+    const item = turn && [...turn.querySelectorAll('[data-item-id]')]
+      .find((candidate) => candidate.dataset.itemId === String(occurrence.itemId))
+    const target = item || turn
+    if (!target) return
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    target.classList.add('resource-source-highlight')
+    setTimeout(() => target.classList.remove('resource-source-highlight'), 1800)
+  })
+}
+
+function jumpArtifactToLine(line, column = 1) {
+  if (!state.artifact || !Number.isInteger(Number(line)) || Number(line) < 1) return
+  if (state.artifact.kind === 'text') setArtifactView('source')
+  requestAnimationFrame(() => {
+    const source = $('#artifact-content .artifact-source')
+    const node = source?.firstChild
+    if (!source || !node) return
+    const lines = String(node.textContent || '').split('\n')
+    const targetLine = Math.min(lines.length, Math.max(1, Number(line)))
+    const start = lines.slice(0, targetLine - 1).reduce((total, value) => total + value.length + 1, 0)
+    const offset = Math.min(start + Math.max(0, Number(column || 1) - 1), start + (lines[targetLine - 1]?.length || 0))
+    const lineEnd = start + (lines[targetLine - 1]?.length || 0)
+    const range = document.createRange()
+    range.setStart(node, Math.min(offset, node.length))
+    range.setEnd(node, Math.min(Math.max(offset, lineEnd), node.length))
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const rect = range.getBoundingClientRect()
+    $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
+  })
 }
 
 function currentRightRailPixelWidth() {
@@ -830,6 +913,9 @@ window.__studioDeveloper = Object.freeze({
   },
   openWorkspace(root, tool) {
     workspaceTools.openForDebug(root, tool).catch(showError)
+  },
+  openResources(root) {
+    sessionResources.openForDebug(String(root || ''))
   },
   openEnvironmentSettings(root = '') {
     openEnvironmentDialog(String(root || ''))
@@ -2374,6 +2460,7 @@ function renderWorkspace() {
   $('#empty-workspace').classList.toggle('hidden', hasThread)
   $('#native-workspace').classList.toggle('hidden', !hasThread)
   workspaceTools.sync(thread)
+  sessionResources.sync()
   if (!thread) {
     renderSessionMap()
     return
@@ -2512,6 +2599,7 @@ function renderSessionMap() {
   const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
     || !$('#annotation-rail').classList.contains('hidden')
     || !$('#favorites-rail').classList.contains('hidden')
+    || sessionResources.isOpen()
     || workspaceTools.isOpen()
   if (!hasMap || state.sessionMapDismissed.has(key) || anotherDockIsOpen) {
     rail.classList.add('hidden')
@@ -3092,6 +3180,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   if (preserveScroll) container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
   else followTranscriptOutput()
   captureOpeningMessage()
+  sessionResources.sync({ rebuild: true })
 }
 
 function handleTranscriptScroll() {
@@ -3239,6 +3328,7 @@ function replaceCompletedItem(params = {}) {
   dirtyStreamItems.delete(`${params.turnId || ''}:${itemId || ''}`)
   transcriptPresentationCache.invalidateTurn(presentationThreadKey(), params.turnId)
   if (!replaceRenderedTurn(params.turnId)) renderTranscript()
+  sessionResources.sync({ rebuild: true })
 }
 
 function renderedActivity(turnId) {
@@ -3492,7 +3582,8 @@ function renderMarkdown(value) {
   template.innerHTML = clean
 
   template.content.querySelectorAll('a').forEach((link) => {
-    link.target = '_blank'
+    link.dataset.resourceTarget = link.getAttribute('href') || ''
+    link.removeAttribute('target')
     link.rel = 'noopener noreferrer'
   })
   template.content.querySelectorAll('input').forEach((input) => {
@@ -3694,6 +3785,22 @@ async function handleMarkdownActionClick(event) {
 }
 
 async function handleTranscriptClick(event) {
+  const resourceLink = event.target.closest('.markdown-body a[data-resource-target]')
+  if (resourceLink) {
+    const target = resourceLink.dataset.resourceTarget || ''
+    if (!target || target.startsWith('#')) return
+    event.preventDefault()
+    if (/^https?:\/\//iu.test(target)) {
+      await openBrowserUrl(target)
+      return
+    }
+    let path = target
+    try { path = decodeURIComponent(path) } catch {}
+    path = path.replace(/[?#].*$/u, '').replace(/^\.\//u, '')
+    if (!path) return
+    await openArtifact({ root: selectedThread()?.cwd, path }, { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' })
+    return
+  }
   const earlier = event.target.closest('[data-load-earlier]')
   if (earlier) {
     const transcript = $('#transcript')
@@ -5031,6 +5138,7 @@ function activateRightWorkspace(tool) {
     document: 'artifact-rail',
     comments: 'annotation-rail',
     favorites: 'favorites-rail',
+    resources: 'resources-rail',
   }
   for (const [candidate, id] of Object.entries(rails)) {
     $(`#${id}`).classList.toggle('hidden', candidate !== tool)
@@ -5050,6 +5158,7 @@ function activateRightWorkspace(tool) {
 function syncRightWorkspaceLaunchers() {
   $('#open-thread-comments')?.setAttribute('aria-pressed', String(!$('#annotation-rail').classList.contains('hidden')))
   $('#open-thread-favorites')?.setAttribute('aria-pressed', String(!$('#favorites-rail').classList.contains('hidden')))
+  $('#open-thread-resources')?.setAttribute('aria-pressed', String(!$('#resources-rail').classList.contains('hidden')))
 }
 
 async function refreshArtifact() {
@@ -5070,6 +5179,10 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
   resetArtifactSearch()
   hideSelectionPopover()
   if (returnTool && artifactThreadKey === selectedStateKey()) {
+    if (returnTool === 'resources') {
+      sessionResources.open()
+      return
+    }
     workspaceTools.open(returnTool).catch(showError)
     return
   }
@@ -5139,7 +5252,7 @@ function renderArtifact() {
   $('#artifact-title').textContent = fileDisplayName(file.path)
   $('#artifact-path').textContent = file.relativePath || file.path
   const closeButton = $('#close-artifact')
-  const returnLabel = file.returnTool === 'files' ? t('返回文件') : file.returnTool === 'review' ? t('返回 Git Review') : t('关闭文档')
+  const returnLabel = file.returnTool === 'files' ? t('返回文件') : file.returnTool === 'review' ? t('返回 Git Review') : file.returnTool === 'resources' ? t('返回资源') : t('关闭文档')
   closeButton.classList.toggle('returning', Boolean(file.returnTool))
   closeButton.title = returnLabel
   closeButton.setAttribute('aria-label', returnLabel)
@@ -5767,6 +5880,7 @@ function closeAnnotationRail() {
 function renderAnnotationRail() {
   const drafts = currentAnnotations()
   $('#annotation-count').textContent = drafts.length
+  setWorkspaceToolCount($('#thread-comments-count'), drafts.length)
   const commentsButton = $('#open-thread-comments')
   const commentsLabel = drafts.length ? `${t('批注')} · ${drafts.length}` : t('批注')
   commentsButton.title = commentsLabel
@@ -6023,9 +6137,17 @@ function renderSessionFavoriteCount() {
     ? state.favoriteIndex.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId).length
     : 0
   const favoritesButton = $('#open-thread-favorites')
+  setWorkspaceToolCount($('#thread-favorites-count'), count)
   const favoritesLabel = count ? `${t('收藏')} · ${count}` : t('收藏')
   favoritesButton.title = favoritesLabel
   favoritesButton.setAttribute('aria-label', favoritesLabel)
+}
+
+function setWorkspaceToolCount(badge, count) {
+  if (!badge) return
+  const normalized = Math.max(0, Number(count) || 0)
+  badge.textContent = normalized > 99 ? '99+' : normalized
+  badge.classList.toggle('hidden', normalized === 0)
 }
 
 function handleFavoriteListClick(event) {
@@ -6209,8 +6331,8 @@ function syncFavoriteButtons() {
     button.setAttribute('aria-pressed', String(Boolean(favorite)))
     button.title = favorite ? '已收藏，点击查看' : '收藏这条回复'
     button.setAttribute('aria-label', button.title)
-    button.querySelector('span').textContent = favorite ? '★' : '☆'
-    button.querySelector('b').textContent = favorite ? '已收藏' : '收藏'
+    const accessibleLabel = button.querySelector('b')
+    if (accessibleLabel) accessibleLabel.textContent = favorite ? '已收藏' : '收藏'
     item?.classList.toggle('favorited', Boolean(favorite))
   })
 }

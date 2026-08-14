@@ -441,7 +441,29 @@ export function createWorkspaceTools({
     await open(tool)
   }
 
-  return { bind, sync, open, openForDebug, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
+  async function reveal(path) {
+    const relativePath = safeWorkspaceRelativePath(path)
+    if (relativePath == null) return false
+    await open('files')
+    const state = stateForCurrent()
+    if (!state) return false
+    state.filter = ''
+    element('workspace-file-filter').value = ''
+    const segments = relativePath.split('/').filter(Boolean)
+    let parent = ''
+    await ensureDirectory(state, '')
+    for (const segment of segments.slice(0, -1)) {
+      parent = parent ? `${parent}/${segment}` : segment
+      state.expanded.add(parent)
+      await ensureDirectory(state, parent)
+    }
+    state.selected = relativePath
+    renderFileTree(state)
+    requestAnimationFrame(() => element('workspace-file-tree')?.querySelector(`[data-path="${CSS.escape(relativePath)}"]`)?.scrollIntoView({ block: 'nearest' }))
+    return true
+  }
+
+  return { bind, sync, open, openForDebug, reveal, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
 }
 
 function fileIcon(name) {

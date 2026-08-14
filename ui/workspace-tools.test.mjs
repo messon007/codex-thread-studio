@@ -40,7 +40,7 @@ test('session management actions live in More while right areas stay compact', (
   for (const id of ['rename-thread', 'fork-thread', 'archive-thread', 'delete-thread']) {
     assert.match(menu, new RegExp(`id="${id}"[\\s\\S]{0,240}<svg`, 'u'))
   }
-  for (const id of ['open-thread-comments', 'open-thread-favorites', 'open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
+  for (const id of ['open-thread-comments', 'open-thread-favorites', 'open-thread-resources', 'open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
     assert.match(html, new RegExp(`id="${id}"[^>]*workspace-tool-launcher[^>]*icon-only`, 'u'))
   }
   assert.doesNotMatch(html, /thread-action-divider/u)
@@ -60,7 +60,7 @@ test('session and every right-area header share one exact divider height', () =>
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
   assert.match(styles, /--app-header-height:\s*75px/u)
-  for (const selector of ['\\.thread-toolbar', '\\.annotation-rail > header', '\\.artifact-header', '\\.workspace-tools-header', '\\.favorites-rail > header', '\\.session-map-header']) {
+  for (const selector of ['\\.thread-toolbar', '\\.annotation-rail > header', '\\.artifact-header', '\\.workspace-tools-header', '\\.favorites-rail > header', '\\.session-map-header', '\\.resources-header']) {
     assert.match(styles, new RegExp(`${selector} \\{[^}]*height: var\\(--app-header-height\\);[^}]*min-height: var\\(--app-header-height\\);[^}]*border-bottom: 1px solid var\\(--border\\)`, 'u'))
   }
   assert.doesNotMatch(html, /class="native-chrome"/u)
@@ -79,9 +79,11 @@ test('workspace tools use one right-side slot without nested tool tabs', () => {
 
 test('document actions use consistent SVG icon buttons', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
-  for (const id of ['artifact-save', 'refresh-artifact', 'close-artifact']) {
+  for (const id of ['artifact-save', 'refresh-artifact', 'close-artifact', 'refresh-resources', 'close-resources']) {
     assert.match(html, new RegExp(`id="${id}"[\\s\\S]{0,420}<svg`, 'u'))
   }
+  assert.match(html, /id="refresh-resources"[^>]*class="icon-button artifact-action-icon"/u)
+  assert.match(html, /id="close-resources"[^>]*class="icon-button artifact-action-icon"/u)
 })
 
 test('documents opened from Files and Review keep a return destination', () => {
@@ -99,10 +101,10 @@ test('workspace rails share the persisted document width and shield pointer resi
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
   assert.match(app, /state\.rightRailWidthRatio = normalizeRightRailWidthRatio/u)
   assert.match(app, /event\.preventDefault\(\)[\s\S]{0,180}removeAllRanges/u)
-  for (const id of ['session-map', 'artifact', 'workspace-tools', 'annotation', 'favorites']) {
+  for (const id of ['session-map', 'artifact', 'workspace-tools', 'annotation', 'favorites', 'resources']) {
     assert.match(html, new RegExp(`id="${id}-resizer"[\\s\\S]{0,180}app-right-rail-resizer`, 'u'))
   }
-  for (const rail of ['annotation', 'favorites', 'session-map', 'artifact', 'workspace-tools']) {
+  for (const rail of ['annotation', 'favorites', 'session-map', 'artifact', 'workspace-tools', 'resources']) {
     assert.match(styles, new RegExp(`\\.${rail}-rail \\{[^}]*var\\(--right-rail-width\\)`, 'u'))
   }
   assert.match(styles, /body\.resizing-right-rail::after/u)

@@ -68,9 +68,15 @@
             <div class="workspace-tool-launchers" role="group" aria-label="右侧区域">
               <button id="open-thread-comments" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="批注" aria-label="查看批注" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg>
+                <span id="thread-comments-count" class="workspace-tool-count hidden">0</span>
               </button>
               <button id="open-thread-favorites" class="toolbar-button workspace-tool-launcher favorite-tool-launcher icon-only" type="button" title="收藏" aria-label="查看本会话收藏" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.8 2.5 5.1 5.6.8-4.1 4 .9 5.6-4.9-2.6-4.9 2.6.9-5.6-4.1-4 5.6-.8z"/></svg>
+                <span id="thread-favorites-count" class="workspace-tool-count hidden">0</span>
+              </button>
+              <button id="open-thread-resources" class="toolbar-button workspace-tool-launcher resource-tool-launcher icon-only" type="button" title="资源" aria-label="查看会话资源" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 14.5-2 2a4 4 0 0 1-5.7-5.7l3-3a4 4 0 0 1 5.7 0"/><path d="m14.5 9.5 2-2a4 4 0 0 1 5.7 5.7l-3 3a4 4 0 0 1-5.7 0"/><path d="m8.5 15.5 7-7"/></svg>
+                <span id="thread-resources-count" class="workspace-tool-count hidden">0</span>
               </button>
               <button id="open-workspace-files" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="文件" aria-label="打开文件树" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 9h17"/></svg>
@@ -188,6 +194,38 @@
           <span id="session-map-progress">0 项</span>
           <span id="session-map-revision">rev 0</span>
         </footer>
+      </aside>
+
+      <aside id="resources-rail" class="resources-rail hidden" aria-label="会话资源">
+        <div id="resources-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+        <header class="resources-header">
+          <div class="resources-heading">
+            <span class="resources-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9.5 14.5-2 2a4 4 0 0 1-5.7-5.7l3-3a4 4 0 0 1 5.7 0"/><path d="m14.5 9.5 2-2a4 4 0 0 1 5.7 5.7l-3 3a4 4 0 0 1-5.7 0"/><path d="m8.5 15.5 7-7"/></svg></span>
+            <div><h2>资源 <span id="resources-count" class="annotation-count">0</span></h2><p id="resources-path" data-no-i18n></p></div>
+          </div>
+          <div class="resources-header-actions">
+            <button id="refresh-resources" class="icon-button artifact-action-icon" type="button" title="刷新资源" aria-label="刷新资源索引">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg>
+            </button>
+            <button id="close-resources" class="icon-button artifact-action-icon" type="button" title="关闭资源" aria-label="关闭资源">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+            </button>
+          </div>
+        </header>
+        <div class="resources-toolbar">
+          <label class="resources-search"><span aria-hidden="true">⌕</span><input id="resources-search" type="search" placeholder="搜索 URL、文件、代码位置…" autocomplete="off" /></label>
+          <div id="resources-filters" class="resources-filters" role="tablist" aria-label="资源类型">
+            <button class="active" type="button" role="tab" data-resource-filter="all" aria-selected="true">全部 <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="web" aria-selected="false">网页 <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="file" aria-selected="false">文件 <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="code" aria-selected="false">代码 <span>0</span></button>
+          </div>
+        </div>
+        <div class="resources-content">
+          <div id="resources-empty" class="resources-empty"><span class="resources-empty-mark" aria-hidden="true">⌁</span><strong>最后一个 Turn 中没有资源</strong><p>本轮正文中的网页、文件和代码位置会显示在这里。</p></div>
+          <div id="resources-list" class="resources-list hidden"></div>
+        </div>
+        <footer class="resources-footer"><span><i></i><b id="resources-local-state">仅索引最后一个 Turn</b></span><span id="resources-summary">0 个资源 · 0 次引用</span></footer>
       </aside>
 
       <aside id="artifact-rail" class="artifact-rail hidden" aria-label="文档审阅">

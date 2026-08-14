@@ -73,6 +73,8 @@ Codex Threads loaded during the current Studio process remain subscribed so thei
 
 Before a Router dispatch, Studio lazily reads the selected target Thread into that same cache. It then sends `turn/start` without changing the active Thread. Notifications are associated with the target model by `threadId`/`turnId`, so the target row changes state immediately and its transcript is ready when opened.
 
+Session Resources builds a disposable per-Thread index from only the latest Turn in the complete render model. A priority-ordered Extractor Registry handles Markdown targets, inline code paths, generic URLs, and plain workspace paths. Text extraction is deliberately conservative: it scans only user/Agent narrative content, excludes fenced code and Mermaid, and requires strong file syntax so slash-separated terminology, markup, file changes, command output, and tool payloads do not become false resources. Canonical Resources are stored separately from their Turn/Item Occurrences, so duplicate targets within that Turn merge without losing source navigation. Detection is local and runs only after completed Items or hydration; it never fetches a URL. A new Turn replaces the old index; Favorites are the explicit persistence boundary. The action layer sends HTTP(S) targets through the existing Browser policy, previewable root-confined files through Document Viewer, and directories or unsupported files through Files reveal. The complete contract is defined in the [Session Resources specification](session-resources/specification.md).
+
 ## Composer orchestration
 
 The composer is a structured App Server client rather than a terminal command parser:

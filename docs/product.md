@@ -28,6 +28,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 12. Artifact workspace: render PDF locally with search and text/region comments; render CSV/XLSX as bounded grids with local charting. Documents never load parsing code from a CDN.
 13. Project environments: ordinary variables and cache variables are visible; Secret values are stored separately with restricted permissions and never returned by read APIs. Profiles apply to Studio PTYs and Codex shell commands, while network access maps to the next Turn sandbox policy.
 14. Git Review: inspect the selected session repository without shell interpolation; filter all, staged, and unstaged code/Markdown/CSV/text changes; read bounded line-numbered unified diffs; and stage or unstage a selected file. Destructive discard is not exposed.
+15. Session Resources: deterministically extract HTTP(S) URLs, workspace paths, and code locations from user/Agent narrative Items in only the latest Turn; exclude historical Turns, file changes, fenced code, Mermaid, command/tool payloads, markup, and slash-separated terminology; merge identical targets without losing Item sources; search and filter them in the shared right workspace; and open them through Embedded Browser, Document Viewer, or Files. Resources are intentionally ephemeral; Favorites provide explicit long-term retention. See the [Session Resources specification](session-resources/specification.md).
 
 ## Acceptance criteria
 
@@ -68,6 +69,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 33. PDF/XLSX requests are root-confined, size/signature checked, parsed locally, and never execute document scripts or macros. XLSX expanded size and entry counts are bounded.
 34. Reading an environment profile never returns Secret values. Saving it applies values to the selected Codex Thread, and a newly started Studio PTY receives the same project environment.
 35. Git status handles spaces, untracked files, staged/unstaged overlap, renames, and conflicts through NUL-delimited porcelain output. Diff and mutation requests accept only current root-relative changed paths, remain bounded, and never pass a command through a shell.
+36. Session Resources scans completed narrative Items in only the latest Turn rather than streaming deltas, ignores file-change activity, never fetches a URL while detecting it, keeps paths confined to the selected session root, and restores the resource panel after a document opened from it is closed.
 
 ## Deferred
 

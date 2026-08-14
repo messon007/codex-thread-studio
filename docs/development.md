@@ -64,6 +64,7 @@ target/debug/codex-thread-studio --dev-crash-browser-tab
 target/debug/codex-thread-studio --dev-open-browser https://example.com
 target/debug/codex-thread-studio --dev-open-artifact /absolute/project/root relative/file.epub
 target/debug/codex-thread-studio --dev-open-workspace /absolute/project/root review
+target/debug/codex-thread-studio --dev-open-resources /absolute/project/root
 target/debug/codex-thread-studio --dev-open-environment-settings /absolute/project/root
 target/debug/codex-thread-studio --dev-click '[data-table-chart]'
 target/debug/codex-thread-studio --dev-input '[data-pdf-search]' Git

@@ -445,6 +445,7 @@ fn main() {
                     | "--dev-open-browser"
                     | "--dev-open-artifact"
                     | "--dev-open-workspace"
+                    | "--dev-open-resources"
                     | "--dev-open-environment-settings"
                     | "--dev-click"
                     | "--dev-input"
@@ -682,6 +683,8 @@ fn gateway_router(state: GatewayState) -> Router {
             get(table_comment_provider_js),
         )
         .route("/workspace-tools.mjs", get(workspace_tools_js))
+        .route("/session-resources.mjs", get(session_resources_js))
+        .route("/session-resources-ui.mjs", get(session_resources_ui_js))
         .route("/git-review.mjs", get(git_review_js))
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
@@ -1729,6 +1732,14 @@ async fn epub_comment_provider_js() -> impl IntoResponse {
 
 async fn workspace_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/workspace-tools.mjs"))
+}
+
+async fn session_resources_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-resources.mjs"))
+}
+
+async fn session_resources_ui_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-resources-ui.mjs"))
 }
 
 async fn git_review_js() -> impl IntoResponse {
@@ -2980,6 +2991,8 @@ mod tests {
                 "/document-review.mjs",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
+                "/session-resources.mjs",
+                "/session-resources-ui.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
                 "/mermaid-config.mjs",

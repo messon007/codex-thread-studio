@@ -36,6 +36,16 @@ test('groups assistant parts under their user interaction', () => {
   assert.equal(thread.messageTurns['msg-agent'], 'msg-user')
 })
 
+test('keeps structured OpenCode output readable in native history', () => {
+  const decision = { action: 'dispatch', targetSessionKey: 'codex:one' }
+  const thread = openCodeThreadFromHistory({ id: 'ses-1', directory: '/tmp/demo' }, [
+    { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'p1', type: 'text', text: 'route this' }] },
+    { info: { id: 'msg-agent', parentID: 'msg-user', role: 'assistant', structured: decision }, parts: [] },
+  ], { type: 'idle' })
+  assert.equal(thread.turns[0].items.at(-1).type, 'agentMessage')
+  assert.deepEqual(JSON.parse(thread.turns[0].items.at(-1).text), decision)
+})
+
 test('omits OpenCode step lifecycle markers from the visible transcript', () => {
   const thread = openCodeThreadFromHistory({ id: 'ses-1', directory: '/tmp/demo' }, [
     { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'p1', type: 'text', text: 'hello' }] },

@@ -132,17 +132,26 @@ import {
   updateLoadedCatalogTimestamp,
 } from './thread-workset.mjs'
 import {
+  catalogsWithSingleRouter,
+  DEFAULT_FALLBACK_CONDITION,
   finalAgentText,
+  isRouterSession,
   managedRouterThread,
+  migrateLegacyResponsibilities,
   normalizeThreadRouter,
   parseRouterDecision,
+  parseSessionRefKey,
   recoverManagedRouterCatalog,
+  routerApplicationContext,
   routerCandidates,
+  routerControllerRef,
   routerDecisionForTurn,
   routerDecisionSchema,
   routerDeveloperInstructions,
+  sessionRefKey,
   shouldCreateManagedRouter,
 } from './thread-router.mjs'
+import { SessionDispatchRegistry } from './session-dispatch.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 
@@ -153,6 +162,41 @@ const commentSources = new CommentSourceRegistry()
   .register(createPdfCommentProvider())
   .register(createTableCommentProvider())
   .register(createBrowserCommentProvider())
+
+const sessionDispatch = new SessionDispatchRegistry()
+  .register('codex', {
+    read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
+    prepareTurn: (ref) => dispatchBackendRpc(ref.backend, 'thread/resume', { threadId: ref.id }),
+    startTurn: (ref, input, options = {}) => dispatchBackendRpc(ref.backend, 'turn/start', {
+      threadId: ref.id,
+      clientUserMessageId: options.clientUserMessageId || randomId(),
+      input,
+      ...(options.additionalContext ? { additionalContext: options.additionalContext } : {}),
+      ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
+      ...(options.turnOptions || {}),
+    }, options.timeoutMs),
+  })
+  .register('opencode', {
+    read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
+    startTurn: async (ref, input, options = {}) => {
+      const clientUserMessageId = options.clientUserMessageId || randomId()
+      await dispatchBackendRpc(ref.backend, 'turn/start', {
+        threadId: ref.id,
+        clientUserMessageId,
+        input,
+        ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
+        ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
+        ...(options.turnOptions || {}),
+      }, options.timeoutMs)
+      return {
+        turn: {
+          id: clientUserMessageId,
+          status: 'inProgress',
+          items: [{ id: clientUserMessageId, type: 'userMessage', content: input }],
+        },
+      }
+    },
+  })
 
 marked.setOptions({
   async: false,
@@ -280,6 +324,7 @@ const state = {
   routerPending: new Map(),
   routerDispatches: new Map(),
   routerTargetTurns: new Map(),
+  routerMonitors: new Map(),
   routerEditor: null,
 }
 
@@ -320,7 +365,9 @@ let pdfReaderModule = null
 let tableReaderModule = null
 let workspaceEditorModule = null
 let embeddedBrowserWidthTimer = null
-let developerEnvironmentRoot = ''
+let environmentDialogRoot = ''
+let environmentDialogProfile = null
+const environmentSecretRemovals = new Set()
 
 const workspaceTools = createWorkspaceTools({
   gatewayFetch,
@@ -464,18 +511,20 @@ function bindUI() {
     closeActionMenus()
     openThreadInfo()
   })
+  $('#project-environment-action').addEventListener('click', () => openEnvironmentDialog())
+  $('#environment-form').addEventListener('submit', saveProjectEnvironment)
+  $('#close-environment-dialog').addEventListener('click', closeEnvironmentDialog)
+  $('#cancel-environment').addEventListener('click', closeEnvironmentDialog)
+  $('#environment-secret-names').addEventListener('click', toggleEnvironmentSecretRemoval)
+  $('#environment-variables').addEventListener('input', updateEnvironmentDraftSummary)
+  $('#environment-secrets').addEventListener('input', updateEnvironmentDraftSummary)
+  $('#environment-cache-variables').addEventListener('input', updateEnvironmentDraftSummary)
+  $$('input[name="environment-network-policy"]').forEach((input) => input.addEventListener('change', updateEnvironmentDraftSummary))
   $('#router-settings-action').addEventListener('click', openRouterDialog)
   $('#router-form').addEventListener('submit', saveRouterSettings)
   $('#close-router-dialog').addEventListener('click', closeRouterDialog)
   $('#cancel-router').addEventListener('click', closeRouterDialog)
-  $('#router-target-search').addEventListener('input', (event) => {
-    captureRouterVisibleEdits()
-    state.routerEditor.query = event.target.value.trim().toLowerCase()
-    state.routerEditor.page = 0
-    renderRouterResponsibilities({ capture: false })
-  })
-  $('#router-page-previous').addEventListener('click', () => changeRouterPage(-1))
-  $('#router-page-next').addEventListener('click', () => changeRouterPage(1))
+  $('#router-add-fallback').addEventListener('click', addRouterFallback)
   $('#session-map-action').addEventListener('click', handleSessionMapAction)
   $('#session-map-more').addEventListener('click', () => toggleActionMenu('session-map-menu', 'session-map-more'))
   $('#close-session-map').addEventListener('click', closeSessionMapRail)
@@ -599,7 +648,7 @@ function bindUI() {
   $('#close-activity-log').addEventListener('click', () => $('#activity-log-dialog').close())
   $('#done-activity-log').addEventListener('click', () => $('#activity-log-dialog').close())
   $('#close-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
-  $('#done-thread-info').addEventListener('click', () => $('#thread-info-dialog').close())
+  $('#done-thread-info').addEventListener('click', saveThreadInfo)
   $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
 
   document.addEventListener('mousedown', (event) => {
@@ -781,11 +830,7 @@ window.__studioDeveloper = Object.freeze({
     workspaceTools.openForDebug(root, tool).catch(showError)
   },
   openEnvironmentSettings(root = '') {
-    developerEnvironmentRoot = String(root || '')
-    openSettings()
-    setTimeout(() => {
-      $('#environment-settings').scrollIntoView({ block: 'start' })
-    }, 80)
+    openEnvironmentDialog(String(root || ''))
   },
   click(selector) {
     document.querySelector(String(selector || ''))?.click()
@@ -1203,11 +1248,13 @@ function handleAppServerMessage(message) {
       delete state.annotationAdditional[`codex:${threadId}`]
       delete state.openingMessages[`codex:${threadId}`]
     }
-    if (state.router.threadId === threadId) state.router = normalizeThreadRouter(null)
-    else if (state.router.responsibilities[threadId]) {
-      const responsibilities = { ...state.router.responsibilities }
-      delete responsibilities[threadId]
-      state.router = normalizeThreadRouter({ ...state.router, responsibilities })
+    const deletedKey = sessionRefKey('codex', threadId)
+    if (state.router.controllers.codex === threadId) {
+      const controllers = { ...state.router.controllers }
+      delete controllers.codex
+      state.router = normalizeThreadRouter({ ...state.router, controllers })
+    } else if (state.router.fallbacks.some((entry) => entry.sessionKey === deletedKey)) {
+      state.router = normalizeThreadRouter({ ...state.router, fallbacks: state.router.fallbacks.filter((entry) => entry.sessionKey !== deletedKey) })
     }
     invalidateThreadModel('codex', threadId)
     persistPreferences()
@@ -1266,7 +1313,12 @@ function handleAppServerMessage(message) {
     if (message.method === 'turn/completed') {
       const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
       notifyDesktop(t('任务已完成'), threadTitle(completedThread || { name: t('未命名会话') }))
-      completeRouterTurn(message, targetModel).catch((error) => console.error('Thread Router dispatch failed', error))
+      completeRouterTurn({
+        backend: 'codex',
+        turnId: message.params?.turn?.id || message.params?.turnId,
+        model: targetModel,
+        turn: message.params?.turn,
+      }).catch((error) => console.error('Thread Router dispatch failed', error))
     }
     if (targetModel !== state.model) {
       updateThreadStatusFromNotification(message)
@@ -1381,6 +1433,17 @@ function handleOpenCodeServerEvent(event) {
   if (payload.type.startsWith('session.')) scheduleOpenCodeListRefresh()
   if (payload.type === 'session.deleted') {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
+    const deletedKey = sessionRefKey('opencode', deletedId)
+    delete state.openingMessages[deletedKey]
+    if (state.router.controllers.opencode === deletedId) {
+      const controllers = { ...state.router.controllers }
+      delete controllers.opencode
+      state.router = normalizeThreadRouter({ ...state.router, controllers })
+      persistPreferences()
+    } else if (state.router.fallbacks.some((entry) => entry.sessionKey === deletedKey)) {
+      state.router = normalizeThreadRouter({ ...state.router, fallbacks: state.router.fallbacks.filter((entry) => entry.sessionKey !== deletedKey) })
+      persistPreferences()
+    }
     if (deletedId && state.selectedId === deletedId) {
       state.selectedId = null
       state.selectedByBackend.opencode = null
@@ -1465,6 +1528,58 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
     state.pending.set(String(id), { resolve, reject, timer, method })
     sendRaw({ id, method, params })
   })
+}
+
+async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000) {
+  if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs)
+  if (backend === 'codex') return codexBackgroundRpc(method, params, timeoutMs)
+  if (backend === 'opencode') {
+    await ensureOpenCodeAvailable()
+    return openCodeRpc(method, params, timeoutMs, { allowInactive: true })
+  }
+  throw new Error(`Unsupported session backend: ${backend}`)
+}
+
+function codexBackgroundRpc(method, params = {}, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
+    const id = -(Date.now() + Math.floor(Math.random() * 100_000))
+    let requested = false
+    let settled = false
+    const finish = (error, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      socket.onclose = null
+      socket.close()
+      if (error) reject(error)
+      else resolve(value)
+    }
+    const timer = setTimeout(() => finish(new Error(t('{method} 请求超时', { method }))), timeoutMs)
+    socket.onmessage = (event) => {
+      let message
+      try { message = JSON.parse(event.data) } catch { return }
+      if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
+        finish(new Error(message.params?.message || 'Codex App Server 不可用'))
+      } else if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
+        requested = true
+        socket.send(JSON.stringify({ id, method, params }))
+      } else if (message.id === id) {
+        if (message.error) finish(new Error(message.error.message || JSON.stringify(message.error)))
+        else finish(null, message.result)
+      }
+    }
+    socket.onerror = () => finish(new Error('无法连接 Codex App Server'))
+  })
+}
+
+async function ensureOpenCodeAvailable() {
+  const response = await gatewayFetch('/studio/opencode', { cache: 'no-store' })
+  if (!response.ok) {
+    const info = await response.json().catch(() => ({}))
+    throw new Error(info.error || `OpenCode Server HTTP ${response.status}`)
+  }
 }
 
 async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false } = {}) {
@@ -1565,10 +1680,11 @@ async function refreshInactiveCatalog() {
     const threads = backend === 'opencode'
       ? await fetchOpenCodeCatalog(100, { allowInactive: true })
       : await fetchCodexCatalog(100, {
-          routerId: state.router.threadId,
+          routerId: state.router.controllers.codex || null,
           routerWorkspace: codexInfo?.routerWorkspace || '',
         })
     state.threadsByBackend[backend] = threads
+    if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
     renderThreadList()
   } catch (error) {
     console.warn(`Unable to refresh ${backend} catalog`, error)
@@ -1615,22 +1731,24 @@ function withDirectory(path, directory, extra = '') {
   return `${path}?${[directoryQuery(directory), extra].filter(Boolean).join('&')}`
 }
 
-async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
-  const thread = state.threads.find((candidate) => candidate.id === (params.threadId || state.selectedId))
+async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInactive = false } = {}) {
+  const catalog = allowInactive ? state.threadsByBackend.opencode : state.threads
+  const thread = catalog.find((candidate) => candidate.id === (params.threadId || state.selectedId))
   const directory = params.cwd || thread?.cwd || ''
+  const fetchOptions = { timeoutMs, allowInactive }
   if (method === 'thread/list') {
-    return { data: await fetchOpenCodeCatalog(Number(params.limit || 100)) }
+    return { data: await fetchOpenCodeCatalog(Number(params.limit || 100), { allowInactive }) }
   }
   if (method === 'thread/unsubscribe') return {}
   if (method === 'thread/resume' || method === 'thread/read') {
-    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { timeoutMs })
-    const messages = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/message`, session.directory, 'limit=500'), { timeoutMs })
-    const statuses = await openCodeFetch(withDirectory('/session/status', session.directory), { timeoutMs }).catch(() => ({}))
+    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), fetchOptions)
+    const messages = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/message`, session.directory, 'limit=500'), fetchOptions)
+    const statuses = await openCodeFetch(withDirectory('/session/status', session.directory), fetchOptions).catch(() => ({}))
     return { thread: openCodeThreadFromHistory(session, messages, statuses?.[session.id] || 'idle') }
   }
   if (method === 'thread/start') {
     const model = splitOpenCodeModel(params.model)
-    const session = await openCodeFetch(withDirectory('/session', params.cwd), { method: 'POST', body: { ...(params.name ? { title: params.name } : {}), ...(model ? { model: { id: model.modelID, providerID: model.providerID } } : {}) }, timeoutMs })
+    const session = await openCodeFetch(withDirectory('/session', params.cwd), { method: 'POST', body: { ...(params.name ? { title: params.name } : {}), ...(model ? { model: { id: model.modelID, providerID: model.providerID } } : {}) }, timeoutMs, allowInactive })
     return { thread: normalizeOpenCodeSessions([session], {})[0] }
   }
   if (method === 'thread/name/set') {
@@ -1656,8 +1774,15 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000) {
     const parts = [{ type: 'text', text }, ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart)]
     await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/prompt_async`, directory), {
       method: 'POST',
-      body: { parts, ...(model ? { model } : {}) },
+      body: {
+        parts,
+        ...(params.clientUserMessageId ? { messageID: params.clientUserMessageId } : {}),
+        ...(model ? { model } : {}),
+        ...(params.developerInstructions ? { system: params.developerInstructions } : {}),
+        ...(params.outputSchema ? { format: { type: 'json_schema', schema: params.outputSchema, retryCount: 2 } } : {}),
+      },
       timeoutMs,
+      allowInactive,
     })
     return null
   }
@@ -1724,12 +1849,12 @@ async function loadThreads() {
   const result = await rpc('thread/list', { limit: 100 })
   setActiveThreads(Array.isArray(result?.data) ? result.data : [])
   markThreadCatalogLoaded()
-  if (state.backend === 'codex') {
-    await ensureManagedRouterThread().catch(showError)
+  if (state.backend === state.router.controllerBackend) {
+    await ensureManagedRouterSession(state.backend).catch(showError)
   }
   renderThreadList()
   refreshInactiveCatalog()
-  const visibleThreads = state.threads.filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
+  const visibleThreads = sidebarThreadsForBackend(state.backend).filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
   const preferred = state.selectedId
   const recent = [...visibleThreads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
   const nextId = visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
@@ -1742,8 +1867,16 @@ function setActiveThreads(threads) {
   state.threadsByBackend[state.backend] = threads
 }
 
+function sidebarThreadsForBackend(backend) {
+  return sidebarThreadCatalogs()[backend] || []
+}
+
+function sidebarThreadCatalogs() {
+  return catalogsWithSingleRouter(state.router, state.threadsByBackend)
+}
+
 function visibleThreadEntries() {
-  return filterCatalogEntries(state.threadsByBackend, {
+  return filterCatalogEntries(sidebarThreadCatalogs(), {
     filter: state.filter,
     search: state.search,
     attention: state.attentionThreads,
@@ -1754,7 +1887,7 @@ function visibleThreadEntries() {
 
 function renderThreadList() {
   const list = $('#thread-list')
-  const counts = catalogCountsWithAttention(state.threadsByBackend, state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
+  const counts = catalogCountsWithAttention(sidebarThreadCatalogs(), state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
   $('#count-all').textContent = counts.all
   $('#count-active').textContent = counts.active
   $('#count-attention').textContent = counts.attention
@@ -1779,7 +1912,7 @@ function renderThreadList() {
     const status = threadStatus(thread)
     const active = backend === state.backend && thread.id === state.selectedId
     const tag = backend === 'codex' ? 'CX' : 'OC'
-    const router = backend === 'codex' && thread.id === state.router.threadId
+    const router = backend === state.router.controllerBackend && isRouterSession(state.router, backend, thread.id)
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
       <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('未记录项目目录'))}">${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></span>
@@ -2045,11 +2178,12 @@ function selectedStateKey(id = state.selectedId, backend = state.backend) {
 
 function captureOpeningMessage() {
   const key = selectedStateKey()
-  if (!key || state.openingMessages[key]) return
+  if (!key || state.openingMessages[key]?.text) return
   const text = state.model.turns.map((turn) => questionForTurn(turn).trim()).find(Boolean)
   if (!text) return
   const normalized = truncateUtf8(text, 16 * 1024)
   state.openingMessages[key] = {
+    ...(state.openingMessages[key] || {}),
     text: normalized,
     source: 'history',
     capturedAt: new Date().toISOString(),
@@ -2065,11 +2199,16 @@ function openThreadInfo() {
   const opening = state.openingMessages[selectedStateKey()]
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   const source = threadSourceLabel(thread.source)
+  const routable = !isRouterThread()
   $('#thread-info-content').innerHTML = `
     <section class="opening-message-card">
       <header><strong>${t('起始问题')}</strong><span>${opening ? `${opening.source === 'history' ? t('从历史提取') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('已截断')}` : ''}` : t('尚未识别')}</span></header>
-      <p data-no-i18n>${escapeHtml(opening?.text || t('当前结构化历史中没有找到用户首条消息。'))}</p>
+      <textarea id="session-opening-question" rows="4" maxlength="16384" placeholder="${t('当前结构化历史中没有找到用户首条消息。')}">${escapeHtml(opening?.text || '')}</textarea>
     </section>
+    ${routable ? `<section class="session-responsibility-card">
+      <header><div><strong>${t('会话职责')}</strong><small>${t('供 Thread Router 判断哪些请求应派发到这个会话。')}</small></div><button id="generate-session-responsibility" class="subtle-button compact" type="button">${t('AI 生成')}</button></header>
+      <textarea id="session-responsibility" rows="4" maxlength="4096" placeholder="${t('概括这个会话负责的领域和适合处理的请求')}">${escapeHtml(opening?.responsibility || '')}</textarea>
+    </section>` : ''}
     <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
     <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
     <div class="detail-row"><span>会话 ID</span><strong data-no-i18n>${escapeHtml(thread.id)}</strong></div>
@@ -2080,7 +2219,81 @@ function openThreadInfo() {
     ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong data-no-i18n>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
     ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong data-no-i18n>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
   $('#copy-opening-message').disabled = !opening?.text
+  $('#generate-session-responsibility')?.addEventListener('click', () => generateSessionResponsibility().catch(showError))
   $('#thread-info-dialog').showModal()
+}
+
+function saveThreadInfo() {
+  const key = selectedStateKey()
+  if (!key) return
+  const existing = state.openingMessages[key] || {}
+  const text = truncateUtf8($('#session-opening-question')?.value.trim() || '', 16 * 1024)
+  const responsibility = ($('#session-responsibility')?.value || '').trim().slice(0, 4096)
+  if (!text && !responsibility) delete state.openingMessages[key]
+  else {
+    state.openingMessages[key] = {
+      ...existing,
+      text,
+      responsibility,
+      source: text === existing.text ? existing.source || 'history' : 'manual',
+      capturedAt: new Date().toISOString(),
+      truncated: false,
+    }
+  }
+  persistPreferences()
+  $('#thread-info-dialog').close()
+  toast(t('会话信息已保存'))
+}
+
+async function generateSessionResponsibility() {
+  if (!state.selectedId || isRouterThread()) return
+  if (state.model.activeTurnId) throw new Error(t('请等待当前 Turn 完成后再生成会话职责。'))
+  const ref = { backend: state.backend, id: state.selectedId }
+  const key = sessionRefKey(ref.backend, ref.id)
+  const button = $('#generate-session-responsibility')
+  button.disabled = true
+  button.textContent = t('正在生成…')
+  const opening = $('#session-opening-question')?.value.trim() || state.openingMessages[key]?.text || ''
+  const prompt = `Generate a concise session summary that can be used as this session's responsibility for routing future user queries. Describe the domain this session owns and the kinds of requests it should receive. Use the session conversation as primary context.${opening ? ` The opening question is:\n${opening}` : ''}\nReturn only the responsibility summary, with no preface or formatting.`
+  try {
+    const result = await sessionDispatch.startTurn(ref, [{ type: 'text', text: prompt }], {
+      turnOptions: configuredTurnOptions(),
+      timeoutMs: 60_000,
+    })
+    if (!result?.turn?.id) throw new Error(t('无法启动会话职责生成。'))
+    applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: ref.id, turn: result.turn } })
+    cacheThreadModel(ref.backend, ref.id, state.model)
+    renderTranscript()
+    renderComposerState()
+    const turn = await waitForSessionTurn(ref, result.turn.id, 300_000)
+    const responsibility = finalAgentText(turn).trim().slice(0, 4096)
+    if (!responsibility) throw new Error(t('AI 没有返回会话职责摘要。'))
+    if ($('#thread-info-dialog').open && selectedStateKey() === key) $('#session-responsibility').value = responsibility
+    toast(t('会话职责已生成，请确认后保存'))
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false
+      button.textContent = t('AI 生成')
+    }
+  }
+}
+
+async function waitForSessionTurn(ref, turnId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const model = await ensureSessionModel(ref)
+    const turn = model.turns?.find((candidate) => String(candidate.id) === String(turnId))
+    if (turn && turn.status !== 'inProgress' && model.status !== 'running') {
+      if (turn.status === 'failed') throw new Error(turn.error?.message || t('会话职责生成失败。'))
+      if (state.backend === ref.backend && state.selectedId === ref.id) {
+        renderTranscript()
+        renderComposerState()
+      }
+      return turn
+    }
+    await new Promise((resolve) => setTimeout(resolve, 900))
+  }
+  throw new Error(t('会话职责生成超时。'))
 }
 
 async function copyOpeningMessage() {
@@ -2107,6 +2320,7 @@ function renderWorkspace() {
   $('#archive-thread').disabled = state.backend === 'opencode'
   $('#archive-thread').title = t(state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : '归档会话')
   $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
+  renderProjectEnvironmentEntry()
   renderComposerState()
   renderAnnotationRail()
   captureOpeningMessage()
@@ -2806,7 +3020,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
     const turn = turnById.get(id)
     if (!turn) return ''
     const index = entry.orderedIds.indexOf(id)
-    if (isRouterThread() && state.backend === 'codex') return renderRouterTurn(turn, index)
+    if (isRouterThread()) return renderRouterTurn(turn, index)
     return renderTurn(entry.turns.get(id)?.presentation, index)
   }).join('') + renderApprovals()
   bindApprovalButtons()
@@ -3124,27 +3338,36 @@ function renderOutputPreview(preview) {
 function renderRouterTurn(turn, index) {
   const items = Array.isArray(turn.items) ? turn.items : []
   const userItems = items.filter((item) => item.type === 'userMessage').map((item) => renderItem(item, turn.id)).join('')
-  const runtime = state.routerDispatches.get(String(turn.id || ''))
-  const decision = runtime?.decision || routerDecisionForTurn(turn, currentRouterCandidates().map((candidate) => candidate.id))
+  const runtimeKey = routerRuntimeKey(state.backend, turn.id)
+  const runtime = state.routerDispatches.get(runtimeKey)
+  const decision = runtime?.decision || routerDecisionForTurn(turn, currentRouterCandidates().map((candidate) => candidate.key))
   let card = ''
   if (decision?.action === 'clarify') {
     card = `<article class="router-card clarify"><header><span class="router-card-mark">?</span><div><strong>${t('需要确认目标')}</strong><small>${escapeHtml(decision.reason || '')}</small></div></header><p>${escapeHtml(decision.message)}</p></article>`
   } else if (decision?.action === 'dispatch') {
-    const target = state.threadsByBackend.codex.find((thread) => thread.id === decision.targetThreadId)
+    const targetRef = parseSessionRefKey(decision.targetSessionKey)
+    const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
     const status = runtime?.status || 'routed'
     const labels = {
       dispatching: '正在派发', running: '目标执行中', completed: '目标已完成', failed: '派发失败', routed: '已路由',
     }
-    card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong>${escapeHtml(target ? threadTitle(target) : decision.targetThreadId)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${runtime?.error ? `<p class="router-card-error">${escapeHtml(runtime.error)}</p>` : ''}<footer><span>${t('请求已发送到目标会话')}</span><button type="button" data-router-target="${escapeHtml(decision.targetThreadId)}">${t('打开会话')}</button></footer></article>`
+    const targetLabel = target ? threadTitle(target) : decision.targetSessionKey
+    const footerLabel = status === 'completed' ? t('目标响应已完成') : t('请求已发送到目标会话')
+    const linkLabel = status === 'completed' ? t('打开响应') : t('打开会话')
+    card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong>${escapeHtml(targetLabel)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${runtime?.error ? `<p class="router-card-error">${escapeHtml(runtime.error)}</p>` : ''}<footer><span>${footerLabel}</span><button type="button" data-router-target="${escapeHtml(targetRef?.id || '')}" data-router-backend="${escapeHtml(targetRef?.backend || '')}" data-router-turn="${escapeHtml(runtime?.targetTurnId || '')}">${linkLabel}</button></footer></article>`
   } else if (runtime?.status === 'failed') {
-    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('路由失败')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header></article>`
-  } else if (turn.status === 'inProgress' || state.routerPending.has(String(turn.id || ''))) {
+    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t(runtime.decisionInvalid ? 'Router 决策无效' : '路由失败')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header>${runtime.decisionInvalid ? renderRouterDecisionDebug(turn) : ''}</article>`
+  } else if (turn.status === 'inProgress' || state.routerPending.has(runtimeKey) || ['routing', 'dispatching'].includes(runtime?.status)) {
     card = `<article class="router-card routing"><header><span class="router-card-mark pulse-mark">↝</span><div><strong>${t('正在选择目标会话')}</strong><small>${t('Router 正在比较会话职责')}</small></div></header></article>`
   } else {
-    const content = items.map((item) => renderItem(item, turn.id)).join('')
-    return `<section class="turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${content}</section>`
+    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('Router 决策无效')}</strong><small>${t('Router 没有返回候选列表中的有效目标会话。')}</small></div></header>${renderRouterDecisionDebug(turn)}</article>`
   }
   return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
+}
+
+function renderRouterDecisionDebug(turn) {
+  const raw = finalAgentText(turn).slice(0, 16 * 1024)
+  return raw ? `<details class="router-decision-debug"><summary>${t('查看原始决策')}</summary><pre>${escapeHtml(raw)}</pre></details>` : ''
 }
 
 function renderItem(item, turnId, { forkable = false } = {}) {
@@ -3425,7 +3648,11 @@ async function handleTranscriptClick(event) {
   }
   const routerTarget = event.target.closest('[data-router-target]')
   if (routerTarget) {
-    await selectThread(routerTarget.dataset.routerTarget, { backend: 'codex' })
+    await selectThread(routerTarget.dataset.routerTarget, { backend: routerTarget.dataset.routerBackend })
+    const turnId = routerTarget.dataset.routerTurn
+    if (turnId) {
+      requestAnimationFrame(() => document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`)?.scrollIntoView({ block: 'start' }))
+    }
     return
   }
   const forkButton = event.target.closest('[data-fork-turn]')
@@ -4109,7 +4336,7 @@ function renderComposerState() {
     state.pendingFiles[selectedStateKey()]?.length && t('{count} 个文件', { count: state.pendingFiles[selectedStateKey()].length }),
   ].filter(Boolean)
   const baseHint = isRouterThread() && !shellMode
-    ? active ? 'Router 正在选择目标会话' : '请求将由 Codex 路由，并在目标会话中执行'
+    ? active ? 'Router 正在选择目标会话' : '请求将由 Router 派发，并在目标会话中执行'
     : shellMode
     ? active
       ? 'Shell 命令需等待当前 Turn 完成'
@@ -4274,109 +4501,169 @@ async function prepareSessionMapTurn() {
 }
 
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {
-  return backend === 'codex' && Boolean(threadId) && threadId === state.router.threadId
+  const controller = routerControllerRef(state.router)
+  return Boolean(threadId) && controller?.backend === backend && controller.id === threadId
 }
 
 function currentRouterCandidates() {
-  return routerCandidates(state.router, state.threadsByBackend.codex, state.openingMessages)
+  return routerCandidates(state.router, routerTargetCatalogs(), state.openingMessages)
 }
 
 async function startRouterTurn(text) {
   if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('Router 正在处理上一条请求。'))
+  const controller = routerControllerRef(state.router)
+  if (!controller || !sessionDispatch.supports(controller.backend)) throw new Error(t('Router 后端当前不可用。'))
   const candidates = currentRouterCandidates()
   if (!candidates.length) throw new Error(t('Router 没有可用的目标会话，请先打开“路由设置”。'))
-  await rpc('thread/resume', {
-    threadId: state.router.threadId,
-    developerInstructions: routerDeveloperInstructions(candidates),
-  })
-  const result = await rpc('turn/start', {
-    threadId: state.router.threadId,
-    clientUserMessageId: randomId(),
-    input: [{ type: 'text', text }],
-    outputSchema: routerDecisionSchema(),
-    ...configuredTurnOptions(),
+  const developerInstructions = routerDeveloperInstructions(candidates)
+  const result = await sessionDispatch.startTurn(controller, [{ type: 'text', text }], {
+    ...(controller.backend === 'codex'
+      ? { additionalContext: routerApplicationContext(candidates) }
+      : { developerInstructions }),
+    outputSchema: routerDecisionSchema(candidates.map((candidate) => candidate.key)),
+    turnOptions: configuredTurnOptions(),
   })
   if (!result?.turn) throw new Error(t('Router 未能启动新的 Turn。'))
   const turnId = String(result.turn.id || '')
-  state.routerPending.set(turnId, {
-    candidateIds: candidates.map((candidate) => candidate.id),
+  const runtimeKey = routerRuntimeKey(controller.backend, turnId)
+  state.routerPending.set(runtimeKey, {
+    candidateKeys: candidates.map((candidate) => candidate.key),
     requestedAt: Date.now(),
   })
-  state.routerDispatches.set(turnId, { status: 'routing' })
-  applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: state.router.threadId, turn: result.turn } })
-  cacheThreadModel('codex', state.router.threadId, state.model)
+  state.routerDispatches.set(runtimeKey, { status: 'routing' })
+  applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
+  cacheThreadModel(controller.backend, controller.id, state.model)
   renderTranscript()
+  monitorRouterTurn(controller, turnId)
 }
 
-async function completeRouterTurn(message, model) {
-  const turnId = String(message.params?.turn?.id || message.params?.turnId || '')
+async function completeRouterTurn({ backend, turnId, model, turn: suppliedTurn }) {
+  turnId = String(turnId || '')
   if (!turnId) return
-  const routed = state.routerTargetTurns.get(turnId)
+  const runtimeKey = routerRuntimeKey(backend, turnId)
+  const routed = state.routerTargetTurns.get(runtimeKey)
   if (routed) {
-    const completed = model.turns?.find((turn) => turn.id === turnId) || message.params?.turn
+    const completed = model.turns?.find((turn) => String(turn.id) === turnId) || suppliedTurn
     const existing = state.routerDispatches.get(routed.routerTurnId) || {}
     state.routerDispatches.set(routed.routerTurnId, {
       ...existing,
       status: completed?.status === 'failed' ? 'failed' : 'completed',
       error: completed?.error?.message || '',
     })
-    state.routerTargetTurns.delete(turnId)
+    state.routerTargetTurns.delete(runtimeKey)
     if (isRouterThread()) renderTranscript()
     return
   }
-
-  const pending = state.routerPending.get(turnId)
+  const pending = state.routerPending.get(runtimeKey)
   if (!pending) return
-  state.routerPending.delete(turnId)
-  const turn = model.turns?.find((candidate) => candidate.id === turnId) || message.params?.turn
+  state.routerPending.delete(runtimeKey)
+  const turn = model.turns?.find((candidate) => String(candidate.id) === turnId) || suppliedTurn
+  let decisionParsed = false
   try {
-    const decision = parseRouterDecision(finalAgentText(turn), pending.candidateIds)
+    const decision = parseRouterDecision(finalAgentText(turn), pending.candidateKeys)
+    decisionParsed = true
     if (decision.action === 'clarify') {
-      state.routerDispatches.set(turnId, { status: 'clarify', decision })
+      state.routerDispatches.set(runtimeKey, { status: 'clarify', decision })
       if (isRouterThread()) renderTranscript()
       return
     }
-    const target = state.threadsByBackend.codex.find((thread) => thread.id === decision.targetThreadId)
+    const targetRef = parseSessionRefKey(decision.targetSessionKey)
+    const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
     if (!target) throw new Error(t('目标会话已不存在。'))
-    state.routerDispatches.set(turnId, { status: 'dispatching', decision })
+    if (!sessionDispatch.supports(targetRef.backend)) throw new Error(t('目标会话的后端当前不可用。'))
+    state.routerDispatches.set(runtimeKey, { status: 'dispatching', decision })
     if (isRouterThread()) renderTranscript()
-    const targetModel = await ensureCodexThreadModel(target.id)
+    await sessionDispatch.prepareTurn(targetRef)
+    const targetModel = await ensureSessionModel(targetRef)
     if (targetModel.activeTurnId) throw new Error(t('“{title}”正在运行，暂时不能接收新请求。', { title: threadTitle(target) }))
-    const result = await rpc('turn/start', {
-      threadId: target.id,
-      clientUserMessageId: randomId(),
-      input: [{ type: 'text', text: decision.forwardedPrompt }],
-    })
+    const result = await sessionDispatch.startTurn(targetRef, [{ type: 'text', text: decision.forwardedPrompt }])
     if (!result?.turn) throw new Error(t('目标会话未能启动新的 Turn。'))
-    applyCodexNotification(targetModel, { method: 'turn/started', params: { threadId: target.id, turn: result.turn } })
-    cacheThreadModel('codex', target.id, targetModel)
-    updateLoadedThreadTimestamp('codex', target.id)
-    state.routerDispatches.set(turnId, {
-      status: 'running', decision, targetTurnId: result.turn.id,
+    applyCodexNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
+    cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
+    updateLoadedThreadTimestamp(targetRef.backend, targetRef.id)
+    state.routerDispatches.set(runtimeKey, {
+      status: 'running', decision, targetTurnId: String(result.turn.id || ''),
     })
-    state.routerTargetTurns.set(String(result.turn.id), { routerTurnId: turnId, targetThreadId: target.id })
+    state.routerTargetTurns.set(routerRuntimeKey(targetRef.backend, result.turn.id), {
+      routerTurnId: runtimeKey,
+      targetSessionKey: targetRef.key,
+    })
     renderThreadList()
     if (isRouterThread() || state.model === targetModel) {
       renderWorkspace()
       renderTranscript()
     }
+    monitorRouterTurn(targetRef, result.turn.id)
   } catch (error) {
-    state.routerDispatches.set(turnId, { status: 'failed', error: error.message })
+    state.routerDispatches.set(runtimeKey, { status: 'failed', error: error.message, decisionInvalid: !decisionParsed })
     if (isRouterThread()) renderTranscript()
     toast(t('路由失败：{message}', { message: error.message }), 'error')
+  } finally {
+    if (isRouterThread()) renderComposerState()
   }
 }
 
-async function ensureCodexThreadModel(threadId) {
-  const key = threadCatalogKey('codex', threadId)
-  const result = await rpc('thread/read', { threadId, includeTurns: true })
-  const model = state.backend === 'codex' && state.selectedId === threadId
+function routerRuntimeKey(backend, turnId) {
+  return sessionRefKey(backend, String(turnId || ''))
+}
+
+async function ensureSessionModel(ref) {
+  const key = threadCatalogKey(ref.backend, ref.id)
+  const result = await sessionDispatch.read(ref)
+  const model = state.backend === ref.backend && state.selectedId === ref.id
     ? state.model
     : state.threadModels.get(key)?.model || createCodexViewModel()
   hydrateCodexThread(model, result.thread)
-  mergeThreadMetadata(result.thread)
-  cacheThreadModel('codex', threadId, model)
+  if (ref.backend === 'opencode') {
+    model.messageTurns = { ...(result.thread?.messageTurns || {}) }
+    model.messageRoles = { ...(result.thread?.messageRoles || {}) }
+    model.status = result.thread?.status || model.status
+    model.activeTurnId = model.status === 'running' ? model.turns.at(-1)?.id || null : null
+  }
+  mergeThreadIntoCatalog(ref.backend, result.thread)
+  cacheThreadModel(ref.backend, ref.id, model)
   return model
+}
+
+function mergeThreadIntoCatalog(backend, incoming) {
+  if (!incoming?.id) return
+  const catalog = state.threadsByBackend[backend] || (state.threadsByBackend[backend] = [])
+  const metadata = { ...incoming, turns: undefined }
+  const index = catalog.findIndex((thread) => thread.id === incoming.id)
+  if (index >= 0) catalog[index] = { ...catalog[index], ...metadata }
+  else catalog.unshift(metadata)
+  if (backend === state.backend) state.threads = catalog
+}
+
+function monitorRouterTurn(ref, turnId) {
+  const key = routerRuntimeKey(ref.backend, turnId)
+  if (!key || state.routerMonitors.has(key)) return
+  let failures = 0
+  const poll = async () => {
+    try {
+      const model = await ensureSessionModel(ref)
+      const turn = model.turns?.find((candidate) => String(candidate.id) === String(turnId))
+      const terminal = turn && turn.status !== 'inProgress' && model.status !== 'running'
+      if (terminal) {
+        state.routerMonitors.delete(key)
+        await completeRouterTurn({ backend: ref.backend, turnId, model, turn })
+        return
+      }
+      failures = 0
+    } catch (error) {
+      failures += 1
+      if (failures >= 5) {
+        state.routerMonitors.delete(key)
+        const routed = state.routerTargetTurns.get(key)
+        const dispatchKey = routed?.routerTurnId || key
+        state.routerDispatches.set(dispatchKey, { ...(state.routerDispatches.get(dispatchKey) || {}), status: 'failed', error: error.message })
+        if (isRouterThread()) renderTranscript()
+        return
+      }
+    }
+    state.routerMonitors.set(key, setTimeout(poll, 1_000))
+  }
+  state.routerMonitors.set(key, setTimeout(poll, 500))
 }
 
 async function interruptTurn() {
@@ -5942,7 +6229,10 @@ async function loadPreferences() {
     state.annotationPromptTemplates[initialLocale] = defaultAnnotationPrompt(initialLocale)
   }
   state.annotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
-  state.openingMessages = normalizeOpeningMessages(saved.openingMessages)
+  state.openingMessages = migrateLegacyResponsibilities(
+    normalizeOpeningMessages(saved.openingMessages),
+    saved.router,
+  )
   state.router = normalizeThreadRouter(saved.router)
   preferencesReady = true
   applySidebarState()
@@ -5974,7 +6264,7 @@ function preferencesSnapshot() {
     annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
     openingMessages: state.openingMessages,
-    router: state.router.threadId || Object.keys(state.router.responsibilities).length ? state.router : null,
+    router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
   }
 }
 
@@ -5989,21 +6279,23 @@ function persistPreferences() {
 
 function openRouterDialog() {
   closeActionMenus()
-  if (state.backend !== 'codex') return
-  const managed = state.threadsByBackend.codex.find((thread) => thread.id === state.router.threadId)
-  $('#managed-router-status').textContent = managed
-    ? t('已创建并持续复用 · {title}', { title: threadTitle(managed) })
-    : t('首次保存时由 Studio 自动创建')
   state.routerEditor = {
-    page: 0,
-    pageSize: 12,
-    query: '',
-    responsibilities: Object.fromEntries(Object.entries(state.router.responsibilities).map(([id, value]) => [id, { ...value }])),
+    fallbacks: state.router.fallbacks.map((entry) => ({ ...entry })),
   }
-  $('#router-target-search').value = ''
+  renderManagedRouterStatus()
   $('#router-error').classList.add('hidden')
-  renderRouterResponsibilities({ capture: false })
+  renderRouterFallbacks()
   $('#router-dialog').showModal()
+  $('.router-dialog-body').scrollTop = 0
+}
+
+function renderManagedRouterStatus() {
+  const backend = state.router.controllerBackend
+  const id = state.router.controllers[backend]
+  const managed = state.threadsByBackend[backend]?.find((thread) => thread.id === id)
+  $('#managed-router-status').textContent = managed
+    ? t('{backend} · 已创建并持续复用 · {title}', { backend: backendDescriptor(backend).name, title: threadTitle(managed) })
+    : t('{backend} · 首次保存时由 Studio 自动创建', { backend: backendDescriptor(backend).name })
 }
 
 function closeRouterDialog() {
@@ -6011,62 +6303,85 @@ function closeRouterDialog() {
   state.routerEditor = null
 }
 
-function captureRouterVisibleEdits() {
+function captureRouterFallbacks() {
   if (!state.routerEditor) return
-  for (const row of $$('#router-responsibilities .router-responsibility')) {
-    const description = row.querySelector('.router-description').value.trim()
-    const fallback = row.querySelector('.router-fallback').value
-    if (description || fallback !== 'none') state.routerEditor.responsibilities[row.dataset.routerThreadId] = { description, fallback }
-    else delete state.routerEditor.responsibilities[row.dataset.routerThreadId]
+  state.routerEditor.fallbacks = $$('#router-fallbacks .router-fallback-card').map((row) => ({
+    sessionKey: row.querySelector('.router-fallback-session').value,
+    condition: row.querySelector('.router-fallback-condition').value.trim() || DEFAULT_FALLBACK_CONDITION,
+  }))
+}
+
+function routerTargetCatalogs() {
+  return Object.fromEntries(Object.entries(sidebarThreadCatalogs()).map(([backend, threads]) => [
+    backend,
+    (threads || []).filter((thread) => !isSessionDirectoryHidden(
+      thread.cwd,
+      state.hiddenSessionDirectories,
+      state.sessionDirectoryIgnore,
+    )),
+  ]))
+}
+
+function routerFallbackTargets() {
+  const controllerKeys = new Set(Object.entries(state.router.controllers).map(([backend, id]) => sessionRefKey(backend, id)))
+  return Object.entries(routerTargetCatalogs()).flatMap(([backend, threads]) => (threads || []).flatMap((thread) => {
+    const key = sessionRefKey(backend, thread.id)
+    return key && !controllerKeys.has(key) && !thread.archived && !thread.ephemeral
+      ? [{ key, backend, thread }]
+      : []
+  }))
+}
+
+function renderRouterFallbacks({ capture = false } = {}) {
+  if (!state.routerEditor) return
+  if (capture) captureRouterFallbacks()
+  const targets = routerFallbackTargets()
+  const options = (selected) => {
+    const known = targets.some((target) => target.key === selected)
+    return `<option value="">${t('选择 fallback 会话')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('已不可用')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backend === 'codex' ? 'CX' : 'OC'}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('未记录项目目录'))}</option>`).join('')}`
   }
+  const container = $('#router-fallbacks')
+  container.innerHTML = state.routerEditor.fallbacks.length
+    ? state.routerEditor.fallbacks.map((entry, index) => `<section class="router-fallback-card" data-router-fallback-index="${index}">
+      <header><strong>${t('Fallback 目标 {index}', { index: index + 1 })}</strong><button class="icon-button router-remove-fallback" type="button" title="${t('移除 fallback')}" aria-label="${t('移除 fallback')}">×</button></header>
+      <label class="field"><span>${t('目标会话')}</span><select class="router-fallback-session">${options(entry.sessionKey)}</select></label>
+      <label class="field"><span>${t('Fallback 条件')}</span><textarea class="router-fallback-condition" rows="2" maxlength="4096">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
+    </section>`).join('')
+    : `<div class="router-fallback-empty"><strong>${t('未配置 fallback target')}</strong><small>${t('没有精确匹配时，Router 将选择最接近的普通会话。')}</small></div>`
+  container.querySelectorAll('.router-remove-fallback').forEach((button) => button.addEventListener('click', () => {
+    captureRouterFallbacks()
+    state.routerEditor.fallbacks.splice(Number(button.closest('.router-fallback-card').dataset.routerFallbackIndex), 1)
+    renderRouterFallbacks()
+  }))
+  $('#router-add-fallback').disabled = state.routerEditor.fallbacks.length >= 3 || !targets.length
 }
 
-function renderRouterResponsibilities({ capture = true } = {}) {
-  if (!state.routerEditor) return
-  if (capture) captureRouterVisibleEdits()
-  const routerId = state.router.threadId
-  const container = $('#router-responsibilities')
-  const query = state.routerEditor.query
-  const targets = state.threadsByBackend.codex.filter((thread) => {
-    if (thread.id === routerId) return false
-    if (!query) return true
-    const assignment = state.routerEditor.responsibilities[thread.id]
-    return [threadTitle(thread), thread.cwd, assignment?.description].some((value) => String(value || '').toLowerCase().includes(query))
-  })
-  const pages = Math.max(1, Math.ceil(targets.length / state.routerEditor.pageSize))
-  state.routerEditor.page = Math.min(state.routerEditor.page, pages - 1)
-  const start = state.routerEditor.page * state.routerEditor.pageSize
-  const visible = targets.slice(start, start + state.routerEditor.pageSize)
-  container.innerHTML = visible.length ? visible.map((thread) => {
-    const assignment = state.routerEditor.responsibilities[thread.id] || { description: '', fallback: 'none' }
-    return `<section class="router-responsibility" data-router-thread-id="${escapeHtml(thread.id)}">
-      <header><div><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n>${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></div><select class="router-fallback" aria-label="${t('目标角色')}"><option value="none"${assignment.fallback === 'none' ? ' selected' : ''}>${t('普通目标')}</option><option value="fallback"${assignment.fallback === 'fallback' ? ' selected' : ''}>${t('兜底目标')}</option></select></header>
-      <textarea class="router-description" rows="2" maxlength="4096" placeholder="${t('例如：负责书籍阅读、概念学习和知识整理')}">${escapeHtml(assignment.description)}</textarea>
-    </section>`
-  }).join('') : `<div class="list-empty">${t(query ? '没有匹配的目标会话' : '没有可作为目标的 Codex 会话')}</div>`
-  $('#router-page-summary').textContent = t('第 {page} / {pages} 页 · 共 {count} 个', { page: state.routerEditor.page + 1, pages, count: targets.length })
-  $('#router-page-previous').disabled = state.routerEditor.page === 0
-  $('#router-page-next').disabled = state.routerEditor.page >= pages - 1
-}
-
-function changeRouterPage(offset) {
-  if (!state.routerEditor) return
-  captureRouterVisibleEdits()
-  state.routerEditor.page = Math.max(0, state.routerEditor.page + offset)
-  renderRouterResponsibilities({ capture: false })
+function addRouterFallback() {
+  if (!state.routerEditor || state.routerEditor.fallbacks.length >= 3) return
+  captureRouterFallbacks()
+  const used = new Set(state.routerEditor.fallbacks.map((entry) => entry.sessionKey))
+  const target = routerFallbackTargets().find((entry) => !used.has(entry.key))
+  state.routerEditor.fallbacks.push({ sessionKey: target?.key || '', condition: DEFAULT_FALLBACK_CONDITION })
+  renderRouterFallbacks()
 }
 
 async function saveRouterSettings(event) {
   event.preventDefault()
-  captureRouterVisibleEdits()
-  const responsibilities = state.routerEditor?.responsibilities || {}
+  captureRouterFallbacks()
+  const fallbacks = (state.routerEditor?.fallbacks || []).filter((entry) => entry.sessionKey)
+  if (new Set(fallbacks.map((entry) => entry.sessionKey)).size !== fallbacks.length) {
+    $('#router-error').textContent = t('同一个会话不能重复配置为 fallback。')
+    $('#router-error').classList.remove('hidden')
+    return
+  }
   const button = $('#router-form .primary-button')
   button.disabled = true
   $('#router-error').classList.add('hidden')
   try {
-    const threadId = await ensureManagedRouterThread()
-    delete responsibilities[threadId]
-    state.router = normalizeThreadRouter({ threadId, responsibilities })
+    const controllerBackend = state.router.controllerBackend
+    const threadId = await ensureManagedRouterSession(controllerBackend)
+    const controllers = { ...state.router.controllers, [controllerBackend]: threadId }
+    state.router = normalizeThreadRouter({ controllerBackend, controllers, fallbacks })
     persistPreferences()
     closeRouterDialog()
     renderThreadList()
@@ -6078,19 +6393,21 @@ async function saveRouterSettings(event) {
   } finally { button.disabled = false }
 }
 
-async function ensureManagedRouterThread() {
-  const cwd = state.backendInfo?.routerWorkspace
+async function ensureManagedRouterSession(backend = state.router.controllerBackend) {
+  if (!sessionDispatch.supports(backend)) throw new Error(t('Router 后端当前不可用。'))
+  const cwd = (await loadBackendInfo('codex'))?.routerWorkspace
   if (!cwd) throw new Error(t('无法确定 Studio Router 的工作目录。'))
-  const routerId = state.router.threadId
-  const existing = managedRouterThread(state.threadsByBackend.codex, routerId, cwd)
+  const routerId = state.router.controllers[backend]
+  const existing = managedRouterThread(state.threadsByBackend[backend], routerId, cwd)
   if (existing) return existing.id
   if (routerId) {
     try {
-      const result = await rpc('thread/read', { threadId: routerId, includeTurns: false })
-      const recoveredCatalog = recoverManagedRouterCatalog(state.threadsByBackend.codex, routerId, cwd, result?.thread)
+      const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: routerId, includeTurns: false })
+      const recoveredCatalog = recoverManagedRouterCatalog(state.threadsByBackend[backend], routerId, cwd, result?.thread)
       const recovered = managedRouterThread(recoveredCatalog, routerId, cwd)
       if (recovered) {
-        setActiveThreads(recoveredCatalog)
+        state.threadsByBackend[backend] = recoveredCatalog
+        if (backend === state.backend) state.threads = recoveredCatalog
         return recovered.id
       }
     } catch (error) {
@@ -6099,15 +6416,19 @@ async function ensureManagedRouterThread() {
     throw new Error(t('已配置的 Router 会话与专用工作目录不匹配；Studio 不会自动创建替代会话。'))
   }
   if (!shouldCreateManagedRouter(routerId)) throw new Error(t('Router ID 已存在；Studio 不会自动创建替代会话。'))
-  const result = await rpc('thread/start', {
+  const result = await dispatchBackendRpc(backend, 'thread/start', {
     cwd,
+    name: 'Thread Router',
     approvalPolicy: 'never',
     sandbox: 'read-only',
   })
   if (!result?.thread?.id) throw new Error(t('无法创建系统 Router 会话。'))
-  await rpc('thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
-  mergeThreadMetadata({ ...result.thread, name: 'Thread Router' })
-  state.router = normalizeThreadRouter({ ...state.router, threadId: result.thread.id })
+  if (backend === 'codex') await dispatchBackendRpc(backend, 'thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
+  mergeThreadIntoCatalog(backend, { ...result.thread, name: 'Thread Router' })
+  state.router = normalizeThreadRouter({
+    ...state.router,
+    controllers: { ...state.router.controllers, [backend]: result.thread.id },
+  })
   persistPreferences()
   return result.thread.id
 }
@@ -6115,10 +6436,6 @@ async function ensureManagedRouterThread() {
 function openSettings() {
   populateSettingsForm()
   $('#settings-dialog').showModal()
-  loadEnvironmentProfile().catch((error) => {
-    $('#settings-error').textContent = error.message
-    $('#settings-error').classList.remove('hidden')
-  })
 }
 
 function populateSettingsForm() {
@@ -6140,7 +6457,6 @@ function populateSettingsForm() {
   $('#wsl-codex-binary').value = state.wsl.codexBinary
   $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
   $('#annotation-template').value = state.annotationPromptTemplate
-  populateEnvironmentForm(state.environmentProfile)
   $('#settings-error').classList.add('hidden')
 }
 
@@ -6187,13 +6503,6 @@ async function saveSettings(event) {
     ? template.slice(0, 32000)
     : state.annotationPromptTemplates[nextLocale] || defaultAnnotationPrompt(nextLocale)
   state.annotationPromptTemplates[nextLocale] = state.annotationPromptTemplate
-  try {
-    await saveEnvironmentProfile()
-  } catch (error) {
-    $('#settings-error').textContent = error.message
-    $('#settings-error').classList.remove('hidden')
-    return
-  }
   applyAppearance()
   persistPreferences()
   $('#settings-dialog').close()
@@ -6203,43 +6512,155 @@ async function saveSettings(event) {
   }
 }
 
-async function loadEnvironmentProfile() {
-  const root = developerEnvironmentRoot || selectedThread()?.cwd || ''
-  $('#environment-settings').classList.toggle('capability-disabled', !root)
-  $('#environment-settings-root').textContent = root || t('选择带项目目录的会话后配置。')
-  if (!root) { state.environmentProfile = null; populateEnvironmentForm(null); return }
+async function fetchEnvironmentProfile(root) {
   const response = await gatewayFetch(`/studio/environment?root=${encodeURIComponent(root)}`, { cache: 'no-store' })
   const result = await response.json().catch(() => null)
   if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
-  state.environmentProfile = result
-  populateEnvironmentForm(result)
+  return result
+}
+
+async function openEnvironmentDialog(root = selectedThread()?.cwd || '') {
+  closeActionMenus()
+  root = String(root || '').trim()
+  if (!root) {
+    toast(t('当前会话没有项目目录。'), 'error')
+    return
+  }
+  environmentDialogRoot = root
+  environmentDialogProfile = null
+  environmentSecretRemovals.clear()
+  const name = basename(root) || root
+  $('#environment-project-name').textContent = name
+  $('#environment-project-root').textContent = root
+  $('#environment-project-monogram').textContent = [...name][0]?.toUpperCase() || 'P'
+  $('#environment-profile-status').className = 'environment-profile-status default'
+  $('#environment-profile-status').textContent = t('正在读取')
+  $('#environment-error').classList.add('hidden')
+  setEnvironmentDialogLoading(true)
+  const dialog = $('#environment-dialog')
+  if (dialog.open) dialog.close()
+  dialog.showModal()
+  try {
+    const profile = await fetchEnvironmentProfile(root)
+    if (!dialog.open || environmentDialogRoot !== root) return
+    environmentDialogProfile = profile
+    populateEnvironmentForm(profile)
+    setEnvironmentDialogLoading(false)
+  } catch (error) {
+    if (!dialog.open || environmentDialogRoot !== root) return
+    $('#environment-error').textContent = error.message
+    $('#environment-error').classList.remove('hidden')
+    setEnvironmentDialogLoading(false, { failed: true })
+  }
+}
+
+function closeEnvironmentDialog() {
+  const dialog = $('#environment-dialog')
+  if (dialog.open) dialog.close()
+  environmentDialogRoot = ''
+  environmentDialogProfile = null
+  environmentSecretRemovals.clear()
+}
+
+function setEnvironmentDialogLoading(loading, { failed = false } = {}) {
+  $('#environment-loading').classList.toggle('hidden', !loading)
+  $('#environment-form-content').classList.toggle('is-loading', loading || failed)
+  const disabled = loading || failed
+  for (const id of ['environment-variables', 'environment-secrets', 'environment-allowed-hosts', 'environment-cache-variables']) $(`#${id}`).disabled = disabled
+  $$('input[name="environment-network-policy"]').forEach((input) => { input.disabled = disabled })
+  $('#save-environment').disabled = disabled
 }
 
 function populateEnvironmentForm(profile) {
-  const disabled = !profile
-  for (const id of ['environment-variables', 'environment-secrets', 'environment-remove-secrets', 'environment-network-policy', 'environment-allowed-hosts', 'environment-cache-variables']) $(`#${id}`).disabled = disabled
   $('#environment-variables').value = formatEnvironmentLines(profile?.variables)
   $('#environment-secrets').value = ''
-  $('#environment-remove-secrets').value = ''
-  $('#environment-network-policy').value = profile?.networkPolicy || 'restricted'
+  const policy = profile?.networkPolicy === 'enabled' ? 'enabled' : 'restricted'
+  $$('input[name="environment-network-policy"]').forEach((input) => { input.checked = input.value === policy })
   $('#environment-allowed-hosts').value = (profile?.allowedHosts || []).join(', ')
   $('#environment-cache-variables').value = formatEnvironmentLines(profile?.cacheVariables)
-  $('#environment-secret-names').textContent = profile?.secretNames?.length ? `${t('已保存 Secret')}: ${profile.secretNames.join(', ')}` : t('尚未保存 Secret')
+  const status = $('#environment-profile-status')
+  status.className = `environment-profile-status${profile?.configured ? '' : ' default'}`
+  status.textContent = t(profile?.configured ? '已配置' : '默认环境')
+  renderEnvironmentSecretNames()
+  $('#environment-advanced').open = policy === 'enabled'
+    || Boolean(profile?.allowedHosts?.length)
+    || Boolean(Object.keys(profile?.cacheVariables || {}).length)
+  updateEnvironmentDraftSummary()
+}
+
+function renderEnvironmentSecretNames() {
+  const names = Array.isArray(environmentDialogProfile?.secretNames) ? environmentDialogProfile.secretNames : []
+  $('#environment-secret-names').innerHTML = names.length
+    ? names.map((name) => `<button class="environment-secret-chip" type="button" data-secret-name="${escapeHtml(name)}" aria-pressed="${environmentSecretRemovals.has(name)}" title="${escapeHtml(t('点击标记为删除；再次点击可撤销'))}">${escapeHtml(name)}</button>`).join('')
+    : `<span class="environment-secret-empty">${escapeHtml(t('尚未保存 Secret'))}</span>`
+}
+
+function toggleEnvironmentSecretRemoval(event) {
+  const chip = event.target.closest('[data-secret-name]')
+  if (!chip) return
+  const name = chip.dataset.secretName
+  if (environmentSecretRemovals.has(name)) environmentSecretRemovals.delete(name)
+  else environmentSecretRemovals.add(name)
+  renderEnvironmentSecretNames()
+  updateEnvironmentDraftSummary()
+}
+
+function environmentDraftNames(value) {
+  return String(value || '').split(/\r?\n/gu).map((line) => line.trim()).flatMap((line) => {
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]{0,127})\s*=/u)
+    return match ? [match[1]] : []
+  })
+}
+
+function selectedEnvironmentPolicy() {
+  return $('input[name="environment-network-policy"]:checked')?.value === 'enabled' ? 'enabled' : 'restricted'
+}
+
+function updateEnvironmentDraftSummary() {
+  const variableNames = new Set(environmentDraftNames($('#environment-variables').value))
+  const cacheNames = new Set(environmentDraftNames($('#environment-cache-variables').value))
+  const secretNames = new Set((environmentDialogProfile?.secretNames || []).filter((name) => !environmentSecretRemovals.has(name)))
+  environmentDraftNames($('#environment-secrets').value).forEach((name) => secretNames.add(name))
+  $('#environment-variable-count').textContent = String(variableNames.size)
+  $('#environment-secret-count').textContent = String(secretNames.size)
+  const policy = selectedEnvironmentPolicy() === 'enabled' ? 'Enabled' : 'Restricted'
+  $('#environment-advanced-summary').textContent = cacheNames.size
+    ? `${policy} · ${cacheNames.size} ${t('缓存项')}`
+    : policy
+}
+
+async function saveProjectEnvironment(event) {
+  event.preventDefault()
+  const button = $('#save-environment')
+  button.disabled = true
+  button.textContent = t('正在保存…')
+  $('#environment-error').classList.add('hidden')
+  try {
+    await saveEnvironmentProfile()
+    closeEnvironmentDialog()
+    toast(t('项目环境已保存'))
+  } catch (error) {
+    $('#environment-error').textContent = error.message
+    $('#environment-error').classList.remove('hidden')
+  } finally {
+    button.disabled = false
+    button.textContent = t('保存项目环境')
+  }
 }
 
 async function saveEnvironmentProfile() {
-  const root = developerEnvironmentRoot || selectedThread()?.cwd || ''
-  if (!root || !state.environmentProfile) return
+  const root = environmentDialogRoot
+  if (!root || !environmentDialogProfile) return
   const secrets = parseEnvironmentLines($('#environment-secrets').value, { allowEmpty: false })
-  const removeSecrets = [...new Set($('#environment-remove-secrets').value.split(/[\s,]+/gu).map((name) => name.trim()).filter(Boolean))]
+  const removeSecrets = [...environmentSecretRemovals]
   for (const name of removeSecrets) {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(name)) throw new Error(`Invalid secret name: ${name}`)
   }
   const variables = parseEnvironmentLines($('#environment-variables').value, { allowEmpty: true })
   const allowedHosts = parseHosts($('#environment-allowed-hosts').value)
   const cacheVariables = parseEnvironmentLines($('#environment-cache-variables').value, { allowEmpty: false })
-  const networkPolicy = $('#environment-network-policy').value
-  if (!state.environmentProfile.configured && !Object.keys(variables).length && !Object.keys(secrets).length && !removeSecrets.length && !allowedHosts.length && !Object.keys(cacheVariables).length && networkPolicy === 'restricted') return
+  const networkPolicy = selectedEnvironmentPolicy()
+  if (!environmentDialogProfile.configured && !Object.keys(variables).length && !Object.keys(secrets).length && !removeSecrets.length && !allowedHosts.length && !Object.keys(cacheVariables).length && networkPolicy === 'restricted') return
   const response = await gatewayFetch('/studio/environment', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -6253,14 +6674,35 @@ async function saveEnvironmentProfile() {
   })
   const result = await response.json().catch(() => null)
   if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
-  state.environmentProfile = result
-  await applyEnvironmentToCodex(root)
-  populateEnvironmentForm(result)
+  environmentDialogProfile = result
+  if (selectedThread()?.cwd === root) {
+    state.environmentProfile = result
+    await applyEnvironmentToCodex(root)
+    renderProjectEnvironmentEntry()
+  }
 }
 
 async function activateSelectedEnvironment() {
-  await loadEnvironmentProfile()
+  const root = selectedThread()?.cwd || ''
+  if (!root) {
+    state.environmentProfile = null
+    renderProjectEnvironmentEntry()
+    return
+  }
+  state.environmentProfile = await fetchEnvironmentProfile(root)
+  renderProjectEnvironmentEntry()
   if (state.environmentProfile?.configured) await applyEnvironmentToCodex(state.environmentProfile.root)
+}
+
+function renderProjectEnvironmentEntry() {
+  const action = $('#project-environment-action')
+  const thread = selectedThread()
+  const root = thread?.cwd || ''
+  if (!action) return
+  action.disabled = !root
+  action.title = t(root ? '配置当前项目的环境变量、Secret、网络与缓存' : '当前会话没有项目目录')
+  const configured = Boolean(root && state.environmentProfile?.configured && state.environmentProfile.root === root)
+  $('#project-environment-indicator').classList.toggle('hidden', !configured)
 }
 
 async function applyEnvironmentToCodex(root) {
@@ -6473,8 +6915,10 @@ function normalizeOpeningMessages(value) {
   return Object.fromEntries(Object.entries(value).slice(0, 2048).flatMap(([key, message]) => {
     if (!key || !message || typeof message !== 'object') return []
     const text = truncateUtf8(String(message.text || '').trim(), 16 * 1024)
-    return text ? [[key.includes(':') ? key : `codex:${key}`, {
+    const responsibility = String(message.responsibility || '').trim().slice(0, 4096)
+    return text || responsibility ? [[key.includes(':') ? key : `codex:${key}`, {
       text,
+      responsibility,
       source: String(message.source || 'history').slice(0, 64),
       capturedAt: String(message.capturedAt || new Date().toISOString()).slice(0, 128),
       truncated: Boolean(message.truncated),

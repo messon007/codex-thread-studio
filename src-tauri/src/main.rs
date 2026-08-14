@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -164,9 +164,15 @@ struct AnnotationTarget {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpeningMessage {
+    #[serde(default)]
     text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    responsibility: String,
+    #[serde(default)]
     source: String,
+    #[serde(default)]
     captured_at: String,
+    #[serde(default)]
     truncated: bool,
 }
 
@@ -181,11 +187,25 @@ struct RouterResponsibility {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RouterFallbackPreference {
+    session_key: String,
+    condition: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ThreadRouterPreferences {
+    // Legacy Codex-only controller identity. Kept for reading pre-registry settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    controller_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    controllers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     responsibilities: BTreeMap<String, RouterResponsibility>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fallbacks: Vec<RouterFallbackPreference>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -678,6 +698,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/session-map.mjs", get(session_map_js))
         .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
+        .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
         .route(
@@ -1750,6 +1771,10 @@ async fn thread_router_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-router.mjs"))
 }
 
+async fn session_dispatch_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-dispatch.mjs"))
+}
+
 async fn turn_navigator_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/turn-navigator.mjs"))
 }
@@ -2571,6 +2596,7 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
             id.is_empty()
                 || id.len() > 320
                 || message.text.len() > 16 * 1024
+                || message.responsibility.len() > 4096
                 || message.source.len() > 64
                 || message.captured_at.len() > 128
         })
@@ -2578,23 +2604,75 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         return Err("opening message preferences are invalid".to_string());
     }
     if let Some(router) = &preferences.router {
+        let mut controller_keys = router
+            .controllers
+            .iter()
+            .map(|(backend, id)| format!("{backend}:{id}"))
+            .collect::<BTreeSet<_>>();
+        if let Some(id) = &router.thread_id {
+            controller_keys.insert(format!("codex:{id}"));
+        }
         if router
             .thread_id
             .as_ref()
             .is_some_and(|id| id.is_empty() || id.len() > 256)
+            || router
+                .controller_backend
+                .as_ref()
+                .is_some_and(|backend| !valid_router_backend(backend))
+            || router.controllers.len() > 64
+            || router.controllers.iter().any(|(backend, id)| {
+                !valid_router_backend(backend) || id.is_empty() || id.len() > 256
+            })
             || router.responsibilities.len() > 2048
-            || router.responsibilities.iter().any(|(id, responsibility)| {
-                id.is_empty()
-                    || id.len() > 256
-                    || router.thread_id.as_ref() == Some(id)
+            || router.responsibilities.iter().any(|(key, responsibility)| {
+                key.is_empty()
+                    || key.len() > 320
+                    || controller_keys.contains(key)
+                    || (key.contains(':') && !valid_router_session_key(key))
+                    || router.thread_id.as_ref() == Some(key)
                     || responsibility.description.len() > 4096
                     || !matches!(responsibility.fallback.as_str(), "none" | "fallback")
             })
+            || router.fallbacks.len() > 3
+            || router.fallbacks.iter().any(|fallback| {
+                fallback.session_key.is_empty()
+                    || fallback.session_key.len() > 320
+                    || !valid_router_session_key(&fallback.session_key)
+                    || controller_keys.contains(&fallback.session_key)
+                    || fallback.condition.is_empty()
+                    || fallback.condition.len() > 4096
+            })
+            || router
+                .fallbacks
+                .iter()
+                .map(|fallback| &fallback.session_key)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != router.fallbacks.len()
         {
             return Err("thread router preferences are invalid".to_string());
         }
     }
     Ok(())
+}
+
+fn valid_router_backend(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index == 0 {
+                byte.is_ascii_lowercase()
+            } else {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+            }
+        })
+}
+
+fn valid_router_session_key(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(backend, id)| {
+        valid_router_backend(backend) && !id.is_empty() && id.len() <= 256
+    })
 }
 
 fn valid_runtime_value(value: &str, max_len: usize) -> bool {
@@ -2905,6 +2983,8 @@ mod tests {
                 "/favorites.mjs",
                 "/session-map.mjs",
                 "/mermaid-config.mjs",
+                "/thread-router.mjs",
+                "/session-dispatch.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
                 "/transcript-presentation.mjs",
@@ -3739,23 +3819,32 @@ mod tests {
     fn validates_thread_router_preferences() {
         let mut preferences = StudioPreferences {
             router: Some(ThreadRouterPreferences {
-                thread_id: Some("router-thread".to_string()),
+                thread_id: None,
+                controller_backend: Some("opencode".to_string()),
+                controllers: BTreeMap::from([
+                    ("codex".to_string(), "router-codex".to_string()),
+                    ("opencode".to_string(), "router-opencode".to_string()),
+                ]),
                 responsibilities: BTreeMap::from([
                     (
-                        "learn-thread".to_string(),
+                        "codex:learn-thread".to_string(),
                         RouterResponsibility {
                             description: "Books and structured learning".to_string(),
                             fallback: "fallback".to_string(),
                         },
                     ),
                     (
-                        "general-thread".to_string(),
+                        "opencode:general-thread".to_string(),
                         RouterResponsibility {
                             description: "Requests without a better match".to_string(),
                             fallback: "fallback".to_string(),
                         },
                     ),
                 ]),
+                fallbacks: vec![RouterFallbackPreference {
+                    session_key: "codex:learn-thread".to_string(),
+                    condition: "No regular session is suitable for the user query.".to_string(),
+                }],
             }),
             ..StudioPreferences::default()
         };
@@ -3767,12 +3856,17 @@ mod tests {
             .unwrap()
             .responsibilities
             .insert(
-                "router-thread".to_string(),
+                "opencode:router-opencode".to_string(),
                 RouterResponsibility {
                     description: String::new(),
                     fallback: "none".to_string(),
                 },
             );
+        assert!(validate_preferences(&preferences).is_err());
+
+        let router = preferences.router.as_mut().unwrap();
+        router.responsibilities.clear();
+        router.fallbacks.push(router.fallbacks[0].clone());
         assert!(validate_preferences(&preferences).is_err());
     }
 

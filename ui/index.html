@@ -91,6 +91,7 @@
                 <button id="delete-thread" class="danger-text" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg><span>删除会话</span></button>
                 <span class="menu-separator"></span>
                 <button id="refresh-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg><span>重载</span></button>
+                <button id="project-environment-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5z"/><path d="m8.5 9 2 2-2 2M13 14h3"/></svg><span>项目环境</span><i id="project-environment-indicator" class="menu-status-dot hidden" aria-hidden="true"></i></button>
                 <button id="session-map-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6 5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/></svg><span>创建 Map</span></button>
                 <button id="router-settings-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.8-1L14.4 3h-4.8l-.4 3.1a7 7 0 0 0-1.8 1l-2.4-1-2 3.4L5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.8 1l.4 3.1h4.8l.4-3.1a7 7 0 0 0 1.8-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1z"/></svg><span>路由设置</span></button>
                 <button id="thread-info" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>会话信息</span></button>
@@ -374,20 +375,18 @@
     </dialog>
 
     <dialog id="thread-info-dialog" class="dialog thread-info-dialog">
-      <header class="dialog-header"><div><span class="eyebrow">SESSION</span><h2>会话信息</h2><p>起始问题独立保存，重命名不会覆盖。</p></div><button id="close-thread-info" class="icon-button" type="button">×</button></header>
+      <header class="dialog-header"><div><span class="eyebrow">SESSION</span><h2>会话信息</h2><p>起始问题和会话职责独立保存，重命名不会覆盖。</p></div><button id="close-thread-info" class="icon-button" type="button">×</button></header>
       <div id="thread-info-content" class="dialog-body"></div>
-      <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button" type="button">复制起始问题</button><button id="done-thread-info" class="primary-button" type="button">完成</button></footer>
+      <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button push-left" type="button">复制起始问题</button><button id="done-thread-info" class="primary-button" type="button">保存</button></footer>
     </dialog>
 
     <dialog id="router-dialog" class="dialog router-dialog">
       <form id="router-form">
-        <header class="dialog-header"><div><span class="eyebrow">THREAD ROUTER</span><h2>会话路由</h2><p>在一个固定入口发送请求，由 Codex 转发到最合适的目标会话。</p></div><button id="close-router-dialog" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">THREAD ROUTER</span><h2>会话路由</h2><p>在一个固定入口发送请求，由所选后端判断并派发到最合适的目标会话。</p></div><button id="close-router-dialog" class="icon-button" type="button">×</button></header>
         <div class="router-dialog-body">
           <section class="managed-router"><span class="router-card-mark">R</span><div><strong>Thread Router</strong><small id="managed-router-status">由 Studio 自动创建并持续复用</small></div><span>系统会话</span></section>
-          <div class="router-section-heading"><div><strong>会话职责</strong><small>名称、目录和起始问题会自动提供给 Router；这里补充最明确的职责边界。</small></div></div>
-          <label class="router-search"><span aria-hidden="true">⌕</span><input id="router-target-search" type="search" placeholder="搜索目标会话或目录" /></label>
-          <div id="router-responsibilities" class="router-responsibilities"></div>
-          <div class="router-pagination"><span id="router-page-summary"></span><div><button id="router-page-previous" class="subtle-button compact" type="button">上一页</button><button id="router-page-next" class="subtle-button compact" type="button">下一页</button></div></div>
+          <div class="router-section-heading"><div><strong>Fallback 目标</strong><small>最多配置 3 个兜底会话；其他所有会话自动作为普通目标。</small></div><button id="router-add-fallback" class="subtle-button compact" type="button">添加 fallback</button></div>
+          <div id="router-fallbacks" class="router-fallbacks"></div>
           <div id="router-error" class="form-error hidden"></div>
         </div>
         <footer class="dialog-footer"><button id="cancel-router" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
@@ -473,7 +472,7 @@
 
     <dialog id="settings-dialog" class="dialog settings-dialog">
       <form id="settings-form">
-        <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>界面设置</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>Studio 设置</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
           <label class="field"><span>语言</span><select id="language-select"><option value="system">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></label>
           <label class="field"><span>主题</span><select id="theme-select"><option value="light">浅色</option><option value="dark">深色</option></select></label>
@@ -506,21 +505,85 @@
               </section>
             </div>
           </section>
-          <section id="environment-settings" class="settings-section full">
-            <header><strong>项目环境</strong><small id="environment-settings-root">选择带项目目录的会话后配置。Secret 只保存在本机受限文件中，界面不会回显值。</small></header>
-            <div class="settings-section-grid">
-              <label class="field full"><span>环境变量</span><textarea id="environment-variables" rows="4" placeholder="NODE_ENV=development&#10;API_BASE=https://api.example.com"></textarea></label>
-              <label class="field full"><span>新增或更新 Secret</span><textarea id="environment-secrets" rows="3" placeholder="API_TOKEN=…"></textarea><small id="environment-secret-names">尚未保存 Secret</small></label>
-              <label class="field full"><span>删除 Secret 名称</span><input id="environment-remove-secrets" placeholder="OLD_TOKEN, LEGACY_KEY" /></label>
-              <label class="field"><span>网络策略</span><select id="environment-network-policy"><option value="restricted">Restricted</option><option value="enabled">Enabled</option></select></label>
-              <label class="field"><span>允许的主机</span><input id="environment-allowed-hosts" placeholder="api.example.com, *.openai.com" /></label>
-              <label class="field full"><span>缓存环境变量</span><textarea id="environment-cache-variables" rows="3" placeholder="CARGO_HOME=/path/to/cache/cargo&#10;NPM_CONFIG_CACHE=/path/to/cache/npm"></textarea></label>
-            </div>
-          </section>
           <label class="field full"><span>批注提示词模板</span><textarea id="annotation-template" rows="7"></textarea><small>必须包含 <code>{{annotations}}</code>；可选 <code>{{additional}}</code>。</small></label>
           <div id="settings-error" class="form-error hidden"></div>
         </div>
         <footer class="dialog-footer"><button id="reset-settings" class="subtle-button" type="button">恢复默认</button><button class="primary-button" type="submit">保存</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="environment-dialog" class="dialog environment-dialog">
+      <form id="environment-form">
+        <header class="dialog-header environment-dialog-header">
+          <div class="environment-dialog-heading">
+            <span class="environment-dialog-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h14v15H5z"/><path d="m8.5 9 2 2-2 2M13 14h3"/></svg></span>
+            <div><span class="eyebrow">PROJECT ENVIRONMENT</span><h2>项目环境</h2><p>为这个项目的 Agent 与工具提供一致、可控的运行环境。</p></div>
+          </div>
+          <button id="close-environment-dialog" class="icon-button" type="button" aria-label="关闭项目环境">×</button>
+        </header>
+
+        <div class="environment-dialog-body">
+          <section class="environment-project-card">
+            <span id="environment-project-monogram" class="environment-project-monogram" aria-hidden="true">P</span>
+            <div class="environment-project-copy"><span>当前项目</span><strong id="environment-project-name" data-no-i18n>—</strong><code id="environment-project-root" data-no-i18n>—</code></div>
+            <span id="environment-profile-status" class="environment-profile-status default">默认环境</span>
+          </section>
+
+          <div id="environment-loading" class="environment-loading hidden"><span class="spinner" aria-hidden="true"></span><span>正在读取项目环境…</span></div>
+          <div id="environment-error" class="form-error hidden"></div>
+
+          <div id="environment-form-content" class="environment-form-content">
+            <div class="environment-primary-grid">
+              <section class="environment-editor-card variables">
+                <header class="environment-card-header">
+                  <span class="environment-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 13h5"/></svg></span>
+                  <div><strong>环境变量</strong><small>普通配置，会显示在界面中。</small></div>
+                  <span id="environment-variable-count" class="environment-count">0</span>
+                </header>
+                <label class="environment-code-field"><span>每行填写一个 KEY=VALUE</span><textarea id="environment-variables" rows="8" spellcheck="false" placeholder="NODE_ENV=development&#10;API_BASE=https://api.example.com"></textarea></label>
+              </section>
+
+              <section class="environment-editor-card secrets">
+                <header class="environment-card-header">
+                  <span class="environment-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="3"/><path d="M11 12h8M16 12v3M19 12v2"/></svg></span>
+                  <div><strong>Secrets</strong><small>值只写入本机受限文件，之后不会回显。</small></div>
+                  <span id="environment-secret-count" class="environment-count secure">0</span>
+                </header>
+                <div class="environment-saved-secrets"><span>已保存</span><div id="environment-secret-names" class="environment-secret-chips"></div></div>
+                <label class="environment-code-field"><span>新增或更新 · 每行一个 KEY=VALUE</span><textarea id="environment-secrets" rows="5" spellcheck="false" placeholder="API_TOKEN=…"></textarea></label>
+              </section>
+            </div>
+
+            <details id="environment-advanced" class="environment-advanced">
+              <summary>
+                <span class="environment-advanced-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span>
+                <span><strong>网络与缓存</strong><small>高级设置 · 通常保留默认值即可</small></span>
+                <span id="environment-advanced-summary" class="environment-advanced-summary">Restricted</span>
+                <svg class="environment-disclosure" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+              </summary>
+              <div class="environment-advanced-grid">
+                <section class="environment-advanced-panel">
+                  <header><strong>网络策略</strong><small>控制后续 Agent Turn 是否可以访问网络。</small></header>
+                  <div class="environment-policy-options">
+                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="restricted" checked /><span><strong>Restricted</strong><small>默认阻止网络访问</small></span></label>
+                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="enabled" /><span><strong>Enabled</strong><small>允许后续 Turn 使用网络</small></span></label>
+                  </div>
+                  <label class="environment-text-field"><span>允许的主机</span><input id="environment-allowed-hosts" spellcheck="false" placeholder="api.example.com, *.openai.com" /><small>为支持主机级策略的运行环境保留。</small></label>
+                </section>
+                <section class="environment-advanced-panel">
+                  <header><strong>缓存环境变量</strong><small>把大型工具缓存放到空间充足的位置。</small></header>
+                  <label class="environment-code-field"><span>每行填写一个 KEY=VALUE</span><textarea id="environment-cache-variables" rows="6" spellcheck="false" placeholder="CARGO_HOME=/path/to/cache/cargo&#10;NPM_CONFIG_CACHE=/path/to/cache/npm"></textarea></label>
+                </section>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <footer class="dialog-footer environment-dialog-footer">
+          <div class="environment-apply-note"><span aria-hidden="true">↻</span><span><strong>保存后的生效范围</strong><small>后续 Agent Turn 与新启动的 Terminal；已运行的 Terminal 需要重启。</small></span></div>
+          <button id="cancel-environment" class="subtle-button" type="button">取消</button>
+          <button id="save-environment" class="primary-button" type="submit">保存项目环境</button>
+        </footer>
       </form>
     </dialog>
 

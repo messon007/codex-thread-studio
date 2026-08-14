@@ -48,6 +48,7 @@ export function openCodeThreadFromHistory(session, messages, status) {
     }
     if (info.id) messageTurns[info.id] = current.id
     for (const part of message.parts || []) upsertItem(current, openCodePartToItem(part, info.role))
+    if (info.structured !== undefined) upsertItem(current, structuredOutputItem(info))
     if (info.error) {
       current.status = 'failed'
       current.error = { message: errorText(info.error) }
@@ -118,6 +119,7 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
       turn = ensureTurn(model, info.parentID || model.activeTurnId)
       model.messageTurns ||= {}
       model.messageTurns[info.id] = turn.id
+      if (info.structured !== undefined) upsertItem(turn, structuredOutputItem(info))
       if (info.error) {
         turn.status = 'failed'
         turn.error = { message: errorText(info.error) }
@@ -195,6 +197,14 @@ function userContentFromPart(part) {
   if (part?.type === 'text') return [{ type: 'text', text: part.text || '' }]
   if (part?.type === 'file') return [{ type: 'text', text: `@${part.filename || part.url || part.path || 'file'}` }]
   return []
+}
+
+function structuredOutputItem(info) {
+  return {
+    id: `${info.id || 'assistant'}-structured`,
+    type: 'agentMessage',
+    text: JSON.stringify(info.structured),
+  }
 }
 
 function openCodePartToItem(part, role) {

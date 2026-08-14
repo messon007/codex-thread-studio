@@ -26,4 +26,6 @@ Rules are evaluated in order and later rules override earlier rules. Studio supp
 
 The older `hiddenSessionDirectories` array remains supported. Its entries match one exact directory plus every descendant, but new configurations should use `sessionDirectoryIgnore`.
 
+Directory-filtered sessions are also excluded from Thread Router's regular target catalog and fallback target picker. Search text and the temporary All/Active/Attention sidebar views do not affect routing targets.
+
 Studio reads these options at startup. Close Studio before editing because later UI preference saves rewrite `settings.json`. Remove or negate a rule and restart Studio to show those sessions again.

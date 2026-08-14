@@ -18,7 +18,7 @@ On Windows 11, only the client and loopback gateway are native Windows processes
 
 The experimental Session Map feature adds Studio-owned structured navigation state without changing that history boundary. Its revisioned Items, Relations, and change history are local presentation/workflow data; Codex and OpenCode remain authoritative for Threads, Turns, and Items. A Map is created only after an explicit user action. Missing Maps are represented by the absence of a database row and do not produce a rail or placeholder for existing Threads. See the [Session Map specification](session-map/specification.md).
 
-The optional Thread Router is a Codex-only orchestration layer implemented in the WebView over the same App Server transport. It is independent of Agent Deck, tmux, and external conductor services. Studio creates and continuously reuses one ordinary Codex Thread as the durable routing controller. Its structured decision starts a Turn in an existing target Thread; target output continues through the normal App Server event stream and cache. See the [Thread Router specification](thread-router/specification.md).
+The optional Thread Router is a backend-neutral orchestration layer implemented in the WebView. A registry maps stable `backend:id` session references to native `read` and `startTurn` adapters; routing policy sees only the merged session catalog and concise responsibility metadata. The durable controller can use Codex or OpenCode independently of the selected target's backend. A dispatch becomes a normal user message in the target history, while Router tracks only terminal state and an opening link. See the [Thread Router specification](thread-router/specification.md).
 
 ## Transport and handshake
 
@@ -119,7 +119,7 @@ Favorites use validated, bounded SQLite records. The first database initializati
 
 Session Maps use the rollout-isolated `session-maps.sqlite3` database beside Studio settings. The Rust gateway owns schema creation, validation, optimistic revision checks, transactional operation batches, and undo snapshots. Provider history is not copied into these tables. Declarative custom template snapshots remain a later milestone.
 
-Thread Router configuration is small structured metadata stored in `settings.json`: the Studio-managed Router Thread ID plus each target's responsibility and ordinary/fallback role. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
+Thread Router configuration is small structured metadata stored in `settings.json`: Studio-managed controller identities, up to three fallback session keys with conditions, and per-session opening-question/responsibility metadata. Every unlisted session is a regular target. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

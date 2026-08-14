@@ -26,4 +26,6 @@ Studio 可以隐藏指定项目目录中的会话，但不会删除、归档或�
 
 旧的 `hiddenSessionDirectories` 数组仍然兼容，其每一项匹配指定目录及全部子目录；新配置建议使用 `sessionDirectoryIgnore`。
 
+被目录规则过滤的会话也会从 Thread Router 的普通目标目录和 fallback 目标选择器中排除。搜索文字以及临时的全部/运行/待处理视图不会改变路由目标。
+
 Studio 在启动时读取此配置。请先关闭 Studio 再编辑，因为运行期间保存其他界面设置会重写 `settings.json`。删除或反选规则并重启后，相应会话会重新出现。

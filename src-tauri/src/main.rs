@@ -663,6 +663,7 @@ fn gateway_router(state: GatewayState) -> Router {
 
     Router::new()
         .route("/", get(index))
+        .route("/bootstrap-errors.js", get(bootstrap_errors_js))
         .route("/app.js", get(app_js))
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
@@ -672,6 +673,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
+        .route("/document-outline.mjs", get(document_outline_js))
         .route("/environment-profile.mjs", get(environment_profile_js))
         .route("/epub-reader.mjs", get(epub_reader_js))
         .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
@@ -1682,6 +1684,10 @@ async fn app_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/app.js"))
 }
 
+async fn bootstrap_errors_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/bootstrap-errors.js"))
+}
+
 async fn i18n_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/i18n.mjs"))
 }
@@ -1716,6 +1722,10 @@ async fn composer_tools_js() -> impl IntoResponse {
 
 async fn document_review_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/document-review.mjs"))
+}
+
+async fn document_outline_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/document-outline.mjs"))
 }
 
 async fn environment_profile_js() -> impl IntoResponse {
@@ -2980,6 +2990,7 @@ mod tests {
             let router = gateway_router(state);
             for path in [
                 "/",
+                "/bootstrap-errors.js",
                 "/app.js",
                 "/i18n.mjs",
                 "/codex-native.mjs",
@@ -2989,6 +3000,7 @@ mod tests {
                 "/thread-workset.mjs",
                 "/composer-tools.mjs",
                 "/document-review.mjs",
+                "/document-outline.mjs",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
                 "/session-resources.mjs",

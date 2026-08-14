@@ -77,14 +77,6 @@ export async function createEpubReader({
   let currentHref = ''
   let locationGeneration = 0
 
-  const setTocOpen = (open) => {
-    readerState.tocOpen = Boolean(open)
-    shell.root.classList.toggle('toc-open', readerState.tocOpen)
-    shell.tocToggle.classList.toggle('active', readerState.tocOpen)
-    shell.tocToggle.setAttribute('aria-expanded', String(readerState.tocOpen))
-    notifyRelocate()
-  }
-
   const notifyRelocate = () => {
     if (destroyed) return
     onRelocate({ ...readerState, href: currentHref })
@@ -167,7 +159,6 @@ export async function createEpubReader({
     const percentage = generated ? book.locations.percentageFromCfi(readerState.cfi) : location.start.percentage
     if (Number.isFinite(percentage)) readerState.progress = clamp(percentage, 0, 1)
     renderPosition(shell, readerState, translate)
-    highlightToc(shell, currentHref)
     notifyRelocate()
   }
 
@@ -223,13 +214,10 @@ export async function createEpubReader({
       rendition?.next()
     } else if (event.key === 'Escape') {
       shell.settings.classList.add('hidden')
-      setTocOpen(false)
     }
   }
 
   shell.root.addEventListener('keydown', handleKeydown)
-  shell.tocToggle.addEventListener('click', () => setTocOpen(!readerState.tocOpen))
-  shell.tocClose.addEventListener('click', () => setTocOpen(false))
   shell.previous.addEventListener('click', () => rendition?.prev())
   shell.next.addEventListener('click', () => rendition?.next())
   shell.settingsToggle.addEventListener('click', () => shell.settings.classList.toggle('hidden'))
@@ -241,13 +229,6 @@ export async function createEpubReader({
     if (theme) changeTheme(theme)
     if (flow) changeFlow(flow).catch(() => {})
   })
-  shell.toc.addEventListener('click', (event) => {
-    const item = event.target.closest('[data-epub-href]')
-    if (!item) return
-    rendition?.display(item.dataset.epubHref)
-    if (matchMedia('(max-width: 1100px)').matches) setTocOpen(false)
-  })
-
   try {
     const [, navigation, metadata] = await Promise.all([
       book.ready,
@@ -256,10 +237,8 @@ export async function createEpubReader({
     ])
     if (destroyed) throw new Error('EPUB reader was closed while loading')
     currentToc = navigation?.toc || []
-    renderToc(shell, currentToc)
     shell.bookTitle.textContent = displayMetadata(metadata?.title) || translate('电子书')
     shell.bookAuthor.textContent = displayMetadata(metadata?.creator)
-    setTocOpen(readerState.tocOpen)
     updateSettings(shell, readerState)
     await mountRendition(readerState.cfi)
     const generation = ++locationGeneration
@@ -282,6 +261,12 @@ export async function createEpubReader({
   return {
     title: shell.bookTitle.textContent,
     state: () => ({ ...readerState, href: currentHref }),
+    outline: () => flattenEpubToc(currentToc).map((item, index) => ({
+      id: `epub-${index + 1}`,
+      label: item.label,
+      depth: item.depth,
+      target: { kind: 'epub', href: item.href },
+    })),
     display: (target) => rendition?.display(target),
     destroy() {
       destroyed = true
@@ -296,7 +281,6 @@ export async function createEpubReader({
 function buildShell(container, translate) {
   container.innerHTML = `<section class="epub-reader" tabindex="0">
     <header class="epub-toolbar">
-      <button class="epub-tool-button epub-toc-toggle" type="button" aria-expanded="false"><span aria-hidden="true">☰</span><span>${escapeHtml(translate('章节'))}</span></button>
       <div class="epub-book-identity"><strong></strong><small></small></div>
       <div class="epub-page-actions">
         <button class="epub-tool-button epub-previous" type="button" title="${escapeHtml(translate('上一页'))}" aria-label="${escapeHtml(translate('上一页'))}">←</button>
@@ -310,7 +294,6 @@ function buildShell(container, translate) {
       </div>
     </header>
     <div class="epub-reader-body">
-      <aside class="epub-toc-drawer"><header><strong>${escapeHtml(translate('章节'))}</strong><button class="epub-toc-close" type="button" aria-label="${escapeHtml(translate('关闭目录'))}">×</button></header><nav class="epub-toc-list"></nav></aside>
       <div class="epub-viewer"></div>
     </div>
     <footer class="epub-reader-footer"><span class="epub-chapter"></span><span class="epub-progress">0%</span></footer>
@@ -319,9 +302,6 @@ function buildShell(container, translate) {
   return {
     root,
     viewer: root.querySelector('.epub-viewer'),
-    toc: root.querySelector('.epub-toc-list'),
-    tocToggle: root.querySelector('.epub-toc-toggle'),
-    tocClose: root.querySelector('.epub-toc-close'),
     previous: root.querySelector('.epub-previous'),
     next: root.querySelector('.epub-next'),
     settingsToggle: root.querySelector('.epub-settings-toggle'),
@@ -334,24 +314,6 @@ function buildShell(container, translate) {
     bookTitle: root.querySelector('.epub-book-identity strong'),
     bookAuthor: root.querySelector('.epub-book-identity small'),
   }
-}
-
-function renderToc(shell, toc) {
-  shell.toc.replaceChildren(...flattenEpubToc(toc).map((item) => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.dataset.epubHref = item.href
-    button.style.setProperty('--epub-toc-depth', item.depth)
-    button.textContent = item.label
-    return button
-  }))
-}
-
-function highlightToc(shell, href) {
-  const target = stripFragment(href)
-  shell.toc.querySelectorAll('[data-epub-href]').forEach((item) => {
-    item.classList.toggle('active', stripFragment(item.dataset.epubHref) === target)
-  })
 }
 
 function renderPosition(shell, state, translate) {

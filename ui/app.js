@@ -39,6 +39,13 @@ import {
   STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
 import {
+  extractHtmlOutline,
+  extractMarkdownOutline,
+  filterDocumentOutline,
+  normalizeDocumentOutline,
+  outlineItemForLocation,
+} from './document-outline.mjs'
+import {
   CommentSourceRegistry,
   commentSelectionSnapshot,
   createCommentDraft,
@@ -296,6 +303,11 @@ const state = {
   artifactSearch: '',
   artifactSearchMatches: [],
   artifactSearchIndex: -1,
+  artifactSearchOpen: false,
+  artifactOutlineOpen: false,
+  artifactOutlineFilter: '',
+  artifactOutlineActiveId: '',
+  artifactOutlineCollapsed: new Set(),
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
@@ -337,6 +349,10 @@ const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
 let artifactSearchTimer = null
+let artifactOutlineObserver = null
+let artifactOutlineResizeObserver = null
+let artifactOutlineLocationCleanup = null
+let artifactOutlineRefreshTimer = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
 const openCodeStatusReconcileTimers = new Map()
@@ -606,6 +622,13 @@ function bindUI() {
   $('#artifact-source').addEventListener('click', () => setArtifactView('source'))
   $('#artifact-edit').addEventListener('click', () => setArtifactView('edit'))
   $('#artifact-save').addEventListener('click', () => saveArtifact().catch(showError))
+  $('#artifact-outline-toggle').addEventListener('click', toggleArtifactOutline)
+  $('#artifact-outline-close').addEventListener('click', () => setArtifactOutlineOpen(false))
+  $('#artifact-outline-backdrop').addEventListener('click', () => setArtifactOutlineOpen(false))
+  $('#artifact-outline-filter').addEventListener('input', handleArtifactOutlineFilter)
+  $('#artifact-outline-filter').addEventListener('keydown', handleArtifactOutlineFilterKeydown)
+  $('#artifact-outline-list').addEventListener('click', (event) => handleArtifactOutlineClick(event).catch(showError))
+  $('#artifact-search-toggle').addEventListener('click', toggleArtifactSearch)
   $('#artifact-search-input').addEventListener('input', handleArtifactSearchInput)
   $('#artifact-search-input').addEventListener('keydown', handleArtifactSearchKeydown)
   $('#artifact-search-prev').addEventListener('click', () => navigateArtifactSearch(-1))
@@ -626,7 +649,9 @@ function bindUI() {
     scheduleTurnNavigatorSync()
     applyRightRailWidth()
     workspaceTools.resize()
+    updateArtifactOutlineLayout()
   })
+  document.addEventListener('keydown', handleArtifactNavigationKeydown)
   $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
   $('#selection-comment').addEventListener('click', openAnnotationFromSelection)
   $('#selection-favorite').addEventListener('click', openFavoriteFromSelection)
@@ -5062,11 +5087,12 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   const kind = previewableFileKind(file)
   if (!kind) throw new Error(t('此文件类型不能在文档审阅器中打开'))
   resetArtifactSearch()
+  resetArtifactOutline({ preserveOpen: true })
   activateRightWorkspace('document')
   hideComposerMenu()
   closeActionMenus()
   $('#artifact-content').classList.add('hidden')
-  $('#artifact-search-toolbar').classList.add('hidden')
+  $('#artifact-search-panel').classList.add('hidden')
   $('#artifact-error').classList.add('hidden')
   $('#artifact-loading').classList.remove('hidden')
   disposeArtifactEditor()
@@ -5209,6 +5235,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
   disposeArtifactEditor()
   disposeEpubReader()
   disposeRichArtifactReader()
+  resetArtifactOutline({ preserveOpen: true })
   state.artifact = null
   resetArtifactSearch()
   hideSelectionPopover()
@@ -5229,6 +5256,263 @@ function setArtifactView(view) {
   if (!['preview', 'source', 'edit'].includes(view)) return
   state.artifactView = view
   renderArtifact()
+}
+
+function toggleArtifactSearch() {
+  if ($('#artifact-search-toggle').classList.contains('hidden')) return
+  state.artifactSearchOpen = !state.artifactSearchOpen
+  $('#artifact-search-toggle').classList.toggle('active', state.artifactSearchOpen)
+  $('#artifact-search-toggle').setAttribute('aria-expanded', String(state.artifactSearchOpen))
+  $('#artifact-search-panel').classList.toggle('hidden', !state.artifactSearchOpen)
+  if (state.artifactSearchOpen) requestAnimationFrame(() => $('#artifact-search-input').focus())
+}
+
+function toggleArtifactOutline() {
+  if ($('#artifact-outline-toggle').classList.contains('hidden')) return
+  setArtifactOutlineOpen(!state.artifactOutlineOpen)
+}
+
+function setArtifactOutlineOpen(open, { persist = true } = {}) {
+  state.artifactOutlineOpen = Boolean(open)
+  renderArtifactOutline()
+  if (state.artifactOutlineOpen) requestAnimationFrame(() => $('#artifact-outline-filter').focus())
+  if (persist) persistPreferences()
+}
+
+function handleArtifactNavigationKeydown(event) {
+  if (event.key !== 'Escape' || $('#artifact-rail').classList.contains('hidden')) return
+  if (state.artifactOutlineOpen && !$('#artifact-outline-toggle').classList.contains('hidden')) {
+    event.preventDefault()
+    setArtifactOutlineOpen(false)
+  } else if (state.artifactSearchOpen) {
+    event.preventDefault()
+    state.artifactSearchOpen = false
+    $('#artifact-search-panel').classList.add('hidden')
+    $('#artifact-search-toggle').classList.remove('active')
+    $('#artifact-search-toggle').setAttribute('aria-expanded', 'false')
+  }
+}
+
+function resetArtifactOutline({ preserveOpen = false } = {}) {
+  disposeArtifactOutlineBindings()
+  artifactOutlineResizeObserver?.disconnect()
+  artifactOutlineResizeObserver = null
+  clearTimeout(artifactOutlineRefreshTimer)
+  artifactOutlineRefreshTimer = null
+  state.artifactOutlineFilter = ''
+  state.artifactOutlineActiveId = ''
+  state.artifactOutlineCollapsed = new Set()
+  if (!preserveOpen) state.artifactOutlineOpen = false
+  const filter = $('#artifact-outline-filter')
+  if (filter) filter.value = ''
+  $('#artifact-outline-list')?.replaceChildren()
+  $('#artifact-outline')?.classList.add('hidden')
+  $('#artifact-outline-toggle')?.classList.add('hidden')
+  $('#artifact-reader-shell')?.classList.remove('outline-open', 'compact')
+}
+
+function setArtifactOutline(file, items, provider = file?.outlineProvider || null) {
+  if (!file || state.artifact !== file) return
+  file.outlineItems = normalizeDocumentOutline(items)
+  file.outlineProvider = provider
+  if (state.artifactOutlineActiveId && !file.outlineItems.some((item) => item.id === state.artifactOutlineActiveId)) {
+    state.artifactOutlineActiveId = ''
+  }
+  renderArtifactOutline()
+  ensureArtifactOutlineResizeObserver()
+}
+
+function renderArtifactOutline() {
+  const file = state.artifact
+  const items = file?.outlineItems || []
+  const available = items.length > 0
+  const toggle = $('#artifact-outline-toggle')
+  const outline = $('#artifact-outline')
+  const shell = $('#artifact-reader-shell')
+  toggle.classList.toggle('hidden', !available)
+  toggle.classList.toggle('active', available && state.artifactOutlineOpen)
+  toggle.setAttribute('aria-expanded', String(available && state.artifactOutlineOpen))
+  outline.classList.toggle('hidden', !available || !state.artifactOutlineOpen)
+  shell.classList.toggle('outline-open', available && state.artifactOutlineOpen)
+  $('#artifact-outline-count').textContent = String(items.length)
+  if (!available) {
+    $('#artifact-outline-list').replaceChildren()
+    return
+  }
+  const filtered = filterDocumentOutline(items, state.artifactOutlineFilter)
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const visible = state.artifactOutlineFilter.trim() ? filtered : filtered.filter((item) => {
+    let parentId = item.parentId
+    while (parentId) {
+      if (state.artifactOutlineCollapsed.has(parentId)) return false
+      parentId = byId.get(parentId)?.parentId || ''
+    }
+    return true
+  })
+  const childParents = new Set(items.map((item) => item.parentId).filter(Boolean))
+  const list = $('#artifact-outline-list')
+  list.innerHTML = visible.length ? visible.map((item) => {
+    const hasChildren = childParents.has(item.id)
+    const collapsed = state.artifactOutlineCollapsed.has(item.id)
+    const depth = Math.min(4, item.depth)
+    return `<button class="artifact-outline-row${item.id === state.artifactOutlineActiveId ? ' active' : ''}${item.contextOnly ? ' context-only' : ''}${collapsed ? ' collapsed' : ''}" style="--outline-depth:${depth}" type="button" data-outline-id="${escapeHtml(item.id)}" title="${escapeHtml(item.label)}"><span class="artifact-outline-chevron"${hasChildren ? ' data-outline-collapse="true"' : ''}>${hasChildren ? '⌄' : ''}</span><span class="artifact-outline-label">${escapeHtml(item.label)}</span></button>`
+  }).join('') : `<p class="artifact-outline-empty">${escapeHtml(t('没有匹配章节'))}</p>`
+  scrollActiveOutlineItemIntoView()
+}
+
+function handleArtifactOutlineFilter(event) {
+  state.artifactOutlineFilter = event.target.value
+  renderArtifactOutline()
+}
+
+async function handleArtifactOutlineFilterKeydown(event) {
+  if (event.key !== 'Enter') return
+  const first = $('#artifact-outline-list .artifact-outline-row:not(.context-only)')
+  if (!first) return
+  event.preventDefault()
+  await navigateArtifactOutlineItem(first.dataset.outlineId)
+}
+
+async function handleArtifactOutlineClick(event) {
+  const row = event.target.closest('[data-outline-id]')
+  if (!row) return
+  const id = row.dataset.outlineId
+  if (event.target.closest('[data-outline-collapse]')) {
+    if (state.artifactOutlineCollapsed.has(id)) state.artifactOutlineCollapsed.delete(id)
+    else state.artifactOutlineCollapsed.add(id)
+    renderArtifactOutline()
+    return
+  }
+  await navigateArtifactOutlineItem(id)
+}
+
+async function navigateArtifactOutlineItem(id) {
+  const file = state.artifact
+  const item = file?.outlineItems?.find((candidate) => candidate.id === id)
+  if (!item) return
+  setArtifactOutlineActive(id)
+  await file.outlineProvider?.navigate?.(item)
+  if ($('#artifact-reader-shell').classList.contains('compact')) setArtifactOutlineOpen(false, { persist: false })
+}
+
+function setArtifactOutlineActive(id) {
+  if (!id || state.artifactOutlineActiveId === id) return
+  state.artifactOutlineActiveId = id
+  $('#artifact-outline-list').querySelectorAll('[data-outline-id]').forEach((row) => row.classList.toggle('active', row.dataset.outlineId === id))
+  scrollActiveOutlineItemIntoView()
+}
+
+function scrollActiveOutlineItemIntoView() {
+  const active = [...$('#artifact-outline-list').querySelectorAll('[data-outline-id]')].find((row) => row.dataset.outlineId === state.artifactOutlineActiveId)
+  if (!active) return
+  const list = $('#artifact-outline-list')
+  const listRect = list.getBoundingClientRect()
+  const rowRect = active.getBoundingClientRect()
+  if (rowRect.top < listRect.top || rowRect.bottom > listRect.bottom) active.scrollIntoView({ block: 'nearest' })
+}
+
+function ensureArtifactOutlineResizeObserver() {
+  if (!globalThis.ResizeObserver) {
+    updateArtifactOutlineLayout()
+    return
+  }
+  if (!artifactOutlineResizeObserver) artifactOutlineResizeObserver = new ResizeObserver(updateArtifactOutlineLayout)
+  artifactOutlineResizeObserver.disconnect()
+  artifactOutlineResizeObserver.observe($('#artifact-reader-shell'))
+  updateArtifactOutlineLayout()
+}
+
+function updateArtifactOutlineLayout() {
+  const shell = $('#artifact-reader-shell')
+  if (!shell) return
+  shell.classList.toggle('compact', shell.clientWidth > 0 && shell.clientWidth < 680)
+}
+
+function configureTextArtifactOutline(file, content, source, { markdown, html, view }) {
+  if (!markdown && !html) {
+    setArtifactOutline(file, [])
+    return
+  }
+  let items = markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
+  if (view === 'preview') {
+    const headings = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+    if (html) {
+      items = normalizeDocumentOutline(headings.slice(0, 2_000).map((heading, index) => ({
+        ...(items[index] || {}),
+        id: items[index]?.id || `section-${index + 1}`,
+        label: heading.textContent.trim() || t('未命名章节'),
+        depth: Number(heading.tagName.slice(1)) - 1,
+        target: items[index]?.target || { kind: 'text-heading', offset: 0, line: 1 },
+      })))
+    }
+    headings.forEach((heading, index) => {
+      if (items[index]) heading.dataset.documentOutlineId = items[index].id
+    })
+  }
+  const provider = { navigate: (item) => navigateTextArtifactOutline(file, content, item, view) }
+  setArtifactOutline(file, items, provider)
+  if (view === 'preview' && items.length) bindTextArtifactOutlineLocation(content)
+  else if (items.length && !state.artifactOutlineActiveId) setArtifactOutlineActive(items[0].id)
+}
+
+function bindTextArtifactOutlineLocation(content) {
+  const headings = [...content.querySelectorAll('[data-document-outline-id]')]
+  if (!headings.length) return
+  let frame = null
+  const sync = () => {
+    frame = null
+    const threshold = content.getBoundingClientRect().top + 42
+    let active = headings[0]
+    for (const heading of headings) {
+      if (heading.getBoundingClientRect().top > threshold) break
+      active = heading
+    }
+    setArtifactOutlineActive(active.dataset.documentOutlineId)
+  }
+  const onScroll = () => {
+    if (frame != null) return
+    frame = requestAnimationFrame(sync)
+  }
+  content.addEventListener('scroll', onScroll, { passive: true })
+  artifactOutlineLocationCleanup = () => {
+    content.removeEventListener('scroll', onScroll)
+    if (frame != null) cancelAnimationFrame(frame)
+  }
+  sync()
+}
+
+async function navigateTextArtifactOutline(file, content, item, view) {
+  if (state.artifact !== file) return
+  if (view === 'preview') {
+    const heading = [...content.querySelectorAll('[data-document-outline-id]')].find((candidate) => candidate.dataset.documentOutlineId === item.id)
+    if (!heading) return
+    const targetTop = content.scrollTop + heading.getBoundingClientRect().top - content.getBoundingClientRect().top - 18
+    content.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+    flashArtifactOutlineTarget(heading)
+    return
+  }
+  if (view === 'edit') {
+    artifactEditor?.revealOffset?.(item.target?.offset || 0)
+    return
+  }
+  const pre = content.querySelector('.artifact-source')
+  const textNode = pre?.firstChild
+  if (!textNode) return
+  const offset = Math.min(textNode.textContent.length, Math.max(0, Number(item.target?.offset) || 0))
+  const range = document.createRange()
+  range.setStart(textNode, offset)
+  range.setEnd(textNode, offset)
+  const rect = range.getBoundingClientRect()
+  const contentRect = content.getBoundingClientRect()
+  content.scrollTo({ top: Math.max(0, content.scrollTop + rect.top - contentRect.top - 18), behavior: 'auto' })
+  flashArtifactOutlineTarget(pre)
+}
+
+function flashArtifactOutlineTarget(element) {
+  element.classList.remove('artifact-outline-target')
+  void element.offsetWidth
+  element.classList.add('artifact-outline-target')
+  setTimeout(() => element.classList.remove('artifact-outline-target'), 1_300)
 }
 
 async function saveArtifact({ overwrite = false } = {}) {
@@ -5275,11 +5559,13 @@ function renderArtifact() {
   const file = state.artifact
   if (!file) {
     disposeArtifactEditor()
+    disposeArtifactOutlineBindings()
     rail.classList.add('hidden')
     resetArtifactSearch()
     return
   }
   disposeArtifactEditor()
+  disposeArtifactOutlineBindings()
   disposeEpubReader()
   applyRightRailWidth()
   rail.classList.remove('hidden')
@@ -5300,6 +5586,7 @@ function renderArtifact() {
   const tableReady = !file.loading && !file.error && file.kind === 'table' && (file.bytes instanceof ArrayBuffer || typeof file.content === 'string')
   const ready = textReady || imageReady || epubReady || pdfReady || tableReady
   const content = $('#artifact-content')
+  $('#artifact-reader-shell').classList.toggle('hidden', !ready)
   content.classList.toggle('hidden', !ready)
   $('#artifact-meta').textContent = textReady
     ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
@@ -5321,14 +5608,22 @@ function renderArtifact() {
   $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
   $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
   const canSearch = artifactSearchAvailable(file, state.artifactView)
-  $('#artifact-search-toolbar').classList.toggle('hidden', !canSearch)
+  if (!canSearch) state.artifactSearchOpen = false
+  $('#artifact-search-toggle').classList.toggle('hidden', !canSearch)
+  $('#artifact-search-toggle').classList.toggle('active', canSearch && state.artifactSearchOpen)
+  $('#artifact-search-toggle').setAttribute('aria-expanded', String(canSearch && state.artifactSearchOpen))
+  $('#artifact-search-panel').classList.toggle('hidden', !canSearch || !state.artifactSearchOpen)
   $('#artifact-search-input').setAttribute('placeholder', t('搜索文档内容…'))
   $('#artifact-search-prev').title = t('上一个匹配')
   $('#artifact-search-prev').setAttribute('aria-label', t('上一个匹配'))
   $('#artifact-search-next').title = t('下一个匹配')
   $('#artifact-search-next').setAttribute('aria-label', t('下一个匹配'))
-  if (!ready) return
+  if (!ready) {
+    setArtifactOutline(file, [])
+    return
+  }
   if (imageReady) {
+    setArtifactOutline(file, [])
     content.className = 'artifact-content artifact-image-preview'
     content.innerHTML = `<div class="artifact-image-stage"><img src="${escapeHtml(file.imageUrl)}" alt="${escapeHtml(fileDisplayName(file.path))}" draggable="false" /></div>`
     const image = content.querySelector('img')
@@ -5345,6 +5640,7 @@ function renderArtifact() {
     return
   }
   if (epubReady) {
+    setArtifactOutline(file, file.outlineItems || [])
     content.className = 'artifact-content artifact-epub-preview'
     content.innerHTML = '<div class="artifact-epub-host" data-no-i18n></div>'
     mountEpubReader(file, content.firstElementChild).catch((error) => {
@@ -5356,6 +5652,7 @@ function renderArtifact() {
     return
   }
   if (pdfReady) {
+    setArtifactOutline(file, file.outlineItems || [])
     content.className = 'artifact-content artifact-pdf-preview'
     content.innerHTML = '<div class="artifact-pdf-host" data-no-i18n></div>'
     mountPdfReader(file, content.firstElementChild).catch(showError)
@@ -5363,6 +5660,7 @@ function renderArtifact() {
     return
   }
   if (tableReady) {
+    setArtifactOutline(file, [])
     content.className = 'artifact-content artifact-table-preview'
     content.innerHTML = '<div class="artifact-table-host" data-no-i18n></div>'
     mountTableReader(file, content.firstElementChild).catch(showError)
@@ -5383,6 +5681,7 @@ function renderArtifact() {
     content.className = 'artifact-content'
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
   }
+  configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
 }
@@ -5390,6 +5689,15 @@ function renderArtifact() {
 function disposeArtifactEditor() {
   artifactEditor?.destroy()
   artifactEditor = null
+}
+
+function disposeArtifactOutlineBindings() {
+  artifactOutlineObserver?.disconnect()
+  artifactOutlineObserver = null
+  artifactOutlineLocationCleanup?.()
+  artifactOutlineLocationCleanup = null
+  clearTimeout(artifactOutlineRefreshTimer)
+  artifactOutlineRefreshTimer = null
 }
 
 function disposeEpubReader() {
@@ -5404,6 +5712,8 @@ function disposeEpubReader() {
 }
 
 function disposeRichArtifactReader() {
+  artifactOutlineLocationCleanup?.()
+  artifactOutlineLocationCleanup = null
   richArtifactReader?.destroy?.()
   richArtifactReader = null
 }
@@ -5412,16 +5722,29 @@ async function mountPdfReader(file, parent) {
   pdfReaderModule ||= import('./pdf-reader.mjs')
   const { createPdfReader } = await pdfReaderModule
   if (state.artifact !== file || !parent.isConnected) return
-  richArtifactReader = await createPdfReader({
+  const reader = await createPdfReader({
     container: parent, bytes: file.bytes, initialPage: file.page || 1, search: state.artifactSearch,
     translate: t,
-    onPageChange: (page) => { file.page = page },
+    onPageChange: (page) => {
+      file.page = page
+      const active = outlineItemForLocation(file.outlineItems, { page })
+      if (active) setArtifactOutlineActive(active.id)
+    },
     onSelection: (selection) => {
       if (state.artifact !== file || !selection.quote) return
       state.pendingSelection = { quote: selection.quote, itemId: null, turnId: null, source: pdfCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, page: selection.page, rects: selection.rects }) }
       positionSelectionPopover(selection.rect, { allowFavorite: false })
     },
   })
+  if (state.artifact !== file || !parent.isConnected) {
+    reader.destroy()
+    return
+  }
+  richArtifactReader = reader
+  const outline = reader.outline()
+  setArtifactOutline(file, outline, { navigate: (item) => reader.goToPage(item.target?.page) })
+  const active = outlineItemForLocation(outline, { page: file.page || 1 })
+  if (active) setArtifactOutlineActive(active.id)
 }
 
 async function mountTableReader(file, parent) {
@@ -5467,6 +5790,8 @@ async function mountEpubReader(file, parent) {
     onRelocate: (readingState) => {
       if (state.artifact !== file) return
       file.readingState = readingState
+      const active = outlineItemForLocation(file.outlineItems, readingState.href)
+      if (active) setArtifactOutlineActive(active.id)
       scheduleEpubReadingState(file)
     },
     onExternalLink: (url) => openBrowserUrl(url).catch(showError),
@@ -5476,6 +5801,10 @@ async function mountEpubReader(file, parent) {
     return
   }
   epubReader = reader
+  const outline = reader.outline()
+  setArtifactOutline(file, outline, { navigate: (item) => reader.display(item.target?.href) })
+  const active = outlineItemForLocation(outline, reader.state().href)
+  if (active) setArtifactOutlineActive(active.id)
   file.bookTitle = reader.title
   if (file.bookTitle) $('#artifact-title').textContent = file.bookTitle
 }
@@ -5555,6 +5884,18 @@ async function mountArtifactEditor(file, parent, content) {
       $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
       $('#artifact-save').disabled = !file.dirty
       $('#artifact-meta').textContent = t('{lines} 行 · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
+      if (isMarkdownFile(file.path) || isHtmlFile(file.path)) {
+        clearTimeout(artifactOutlineRefreshTimer)
+        artifactOutlineRefreshTimer = setTimeout(() => {
+          artifactOutlineRefreshTimer = null
+          if (state.artifact !== file || state.artifactView !== 'edit') return
+          configureTextArtifactOutline(file, $('#artifact-content'), file.editContent, {
+            markdown: isMarkdownFile(file.path),
+            html: isHtmlFile(file.path),
+            view: 'edit',
+          })
+        }, 250)
+      }
     },
   })
   artifactEditor.focus()
@@ -5589,8 +5930,13 @@ function resetArtifactSearch() {
   state.artifactSearch = ''
   state.artifactSearchIndex = -1
   state.artifactSearchMatches = []
+  state.artifactSearchOpen = false
   const searchInput = $('#artifact-search-input')
   if (searchInput) searchInput.value = ''
+  $('#artifact-search-toolbar')?.classList.remove('hidden')
+  $('#artifact-search-panel')?.classList.add('hidden')
+  $('#artifact-search-toggle')?.classList.remove('active')
+  $('#artifact-search-toggle')?.setAttribute('aria-expanded', 'false')
   clearArtifactSearchHighlights()
   renderArtifactSearchStatus()
   clearTimeout(artifactSearchTimer)
@@ -6415,6 +6761,7 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
+  state.artifactOutlineOpen = Boolean(saved.artifactOutlineOpen)
   state.desktopNotifications = Boolean(saved.desktopNotifications)
   state.browser = {
     enabled: true,
@@ -6476,6 +6823,7 @@ function preferencesSnapshot() {
     typography: state.typography,
     mermaid: state.mermaid,
     markdown: state.markdown,
+    artifactOutlineOpen: state.artifactOutlineOpen,
     desktopNotifications: state.desktopNotifications,
     browser: state.browser,
     selectedThread: state.selectedByBackend.codex,

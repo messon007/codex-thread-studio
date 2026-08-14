@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/vendor/xterm.css" />
     <link rel="stylesheet" href="/styles.css" />
     <script defer src="/vendor/mermaid.min.js"></script>
+    <script src="/bootstrap-errors.js"></script>
     <script type="module" src="/app.js"></script>
   </head>
   <body>
@@ -236,17 +237,12 @@
             <div><h2 id="artifact-title">Document</h2><p id="artifact-path"></p></div>
           </div>
           <div class="artifact-header-actions">
-            <div id="artifact-search-toolbar" class="artifact-search-wrap hidden" role="search">
-              <label class="artifact-search">
-                <span aria-hidden="true">⌕</span>
-                <input id="artifact-search-input" type="search" placeholder="搜索文档内容…" autocomplete="off" />
-              </label>
-              <span id="artifact-search-summary" class="artifact-search-summary"></span>
-              <div class="artifact-search-actions">
-                <button id="artifact-search-prev" type="button" title="上一个匹配" aria-label="上一个匹配">↑</button>
-                <button id="artifact-search-next" type="button" title="下一个匹配" aria-label="下一个匹配">↓</button>
-              </div>
-            </div>
+            <button id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden" type="button" title="文档目录" aria-label="文档目录" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="7" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="17" r="1"/><path d="M9 7h10M9 12h7M9 17h9"/></svg>
+            </button>
+            <button id="artifact-search-toggle" class="icon-button artifact-action-icon hidden" type="button" title="搜索文档" aria-label="搜索文档" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg>
+            </button>
             <div id="artifact-view-switch" class="segmented-control hidden" role="group" aria-label="文档视图">
               <button id="artifact-preview" class="active" type="button">预览</button>
               <button id="artifact-source" type="button">源码</button>
@@ -264,9 +260,31 @@
             </button>
           </div>
         </header>
+        <div id="artifact-search-panel" class="artifact-search-panel hidden">
+          <div id="artifact-search-toolbar" class="artifact-search-wrap" role="search">
+            <label class="artifact-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="artifact-search-input" type="search" placeholder="搜索文档内容…" autocomplete="off" />
+            </label>
+            <span id="artifact-search-summary" class="artifact-search-summary"></span>
+            <div class="artifact-search-actions">
+              <button id="artifact-search-prev" type="button" title="上一个匹配" aria-label="上一个匹配">↑</button>
+              <button id="artifact-search-next" type="button" title="下一个匹配" aria-label="下一个匹配">↓</button>
+            </div>
+          </div>
+        </div>
         <div id="artifact-loading" class="artifact-state hidden"><span class="artifact-spinner"></span><strong>正在打开文档…</strong></div>
         <div id="artifact-error" class="artifact-state error hidden"><span>!</span><strong>无法打开文档</strong><p id="artifact-error-message"></p></div>
-        <article id="artifact-content" class="artifact-content"></article>
+        <div id="artifact-reader-shell" class="artifact-reader-shell hidden">
+          <button id="artifact-outline-backdrop" class="artifact-outline-backdrop" type="button" aria-label="关闭文档目录"></button>
+          <aside id="artifact-outline" class="artifact-outline hidden" aria-label="文档目录">
+            <header><div><strong>文档目录</strong><span id="artifact-outline-count">0</span></div><button id="artifact-outline-close" class="icon-button" type="button" title="关闭目录" aria-label="关闭目录">×</button></header>
+            <label class="artifact-outline-search"><span aria-hidden="true">⌕</span><input id="artifact-outline-filter" type="search" placeholder="筛选章节…" autocomplete="off" /></label>
+            <nav id="artifact-outline-list" class="artifact-outline-list" aria-label="章节"></nav>
+            <p id="artifact-outline-truncated" class="artifact-outline-truncated hidden">目录过长，仅显示前 2000 项</p>
+          </aside>
+          <article id="artifact-content" class="artifact-content"></article>
+        </div>
         <footer class="artifact-footer"><span id="artifact-meta"></span><span id="artifact-hint">选择文字即可批注</span></footer>
       </aside>
 

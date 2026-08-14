@@ -101,9 +101,18 @@ test('keeps document search available in preview and source modes', () => {
   assert.equal(artifactSearchAvailable(file, 'source'), true)
   assert.equal(artifactSearchAvailable({ ...file, loading: true }, 'source'), false)
 
-  const searchPosition = documentReviewHtml.indexOf('id="artifact-search-toolbar"')
+  const searchPosition = documentReviewHtml.indexOf('id="artifact-search-toggle"')
   const viewPosition = documentReviewHtml.indexOf('id="artifact-view-switch"')
   assert.ok(searchPosition >= 0 && searchPosition < viewPosition)
+  assert.ok(documentReviewHtml.includes('id="artifact-search-panel"'))
+})
+
+test('document outline stays inside the document shell and uses compact header actions', () => {
+  const shellPosition = documentReviewHtml.indexOf('id="artifact-reader-shell"')
+  const outlinePosition = documentReviewHtml.indexOf('id="artifact-outline"')
+  const contentPosition = documentReviewHtml.indexOf('id="artifact-content"')
+  assert.ok(documentReviewHtml.includes('id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden"'))
+  assert.ok(shellPosition >= 0 && shellPosition < outlinePosition && outlinePosition < contentPosition)
 })
 
 test('static HTML preview blocks executable and externally loaded content', () => {

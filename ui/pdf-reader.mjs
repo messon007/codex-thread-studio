@@ -1,4 +1,5 @@
 import * as pdfjsLib from './vendor/pdf.min.mjs'
+import { extractPdfOutline } from './document-outline.mjs'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.min.mjs', import.meta.url).href
 
@@ -6,6 +7,7 @@ export async function createPdfReader({ container, bytes, initialPage = 1, searc
   if (!container) throw new Error('PDF reader requires a container')
   const task = pdfjsLib.getDocument({ data: bytes.slice(0), isEvalSupported: false })
   const document = await task.promise
+  const outline = await extractPdfOutline(document)
   let pageNumber = Math.min(document.numPages, Math.max(1, Number(initialPage) || 1))
   let query = String(search || '').trim()
   let searchGeneration = 0
@@ -116,6 +118,7 @@ export async function createPdfReader({ container, bytes, initialPage = 1, searc
   await render()
   return {
     pageCount: document.numPages,
+    outline: () => outline,
     goToPage: async (page) => { pageNumber = Math.min(document.numPages, Math.max(1, Number(page) || 1)); await render() },
     destroy: () => { if (!destroyed) { destroyed = true; task.destroy(); shell.remove() } },
   }

@@ -58,6 +58,14 @@ export function createWorkspaceEditor({ parent, content = '', language = 'text',
     view,
     focus: () => view.focus(),
     value: () => view.state.doc.toString(),
+    revealOffset: (offset) => {
+      const anchor = Math.min(view.state.doc.length, Math.max(0, Number(offset) || 0))
+      view.dispatch({
+        selection: { anchor },
+        effects: EditorView.scrollIntoView(anchor, { y: 'center' }),
+      })
+      view.focus()
+    },
     destroy: () => view.destroy(),
   }
 }

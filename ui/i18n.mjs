@@ -326,6 +326,8 @@ const english = {
   '请求将由 Router 派发，并在目标会话中执行': 'The Router will dispatch this request to run in the target session',
   'Router 正在处理上一条请求。': 'The Router is still processing the previous request.',
   'Router 后端当前不可用。': 'The Router backend is currently unavailable.',
+  '不支持的会话后端：{backend}': 'Unsupported session backend: {backend}',
+  '无法刷新完整会话目录：{message}': 'Unable to refresh the complete session catalog: {message}',
   'Router 没有可用的目标会话，请先打开“路由设置”。': 'The Router has no available target session. Open Router settings first.',
   'Router 未能启动新的 Turn。': 'The Router could not start a new turn.',
   '目标会话已不存在。': 'The target session no longer exists.',

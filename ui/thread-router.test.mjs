@@ -63,6 +63,16 @@ test('keeps at most three unique fallback targets with explicit conditions', () 
   ])
 })
 
+test('measures responsibility and fallback limits in Unicode characters', () => {
+  const chinese = '会'.repeat(4097)
+  assert.equal(normalizeThreadRouter({
+    fallbacks: [{ sessionKey: 'codex:a', condition: chinese }],
+  }).fallbacks[0].condition, '会'.repeat(4096))
+  assert.equal(migrateLegacyResponsibilities({}, {
+    responsibilities: { 'codex:a': { description: chinese } },
+  })['codex:a'].responsibility, '会'.repeat(4096))
+})
+
 test('uses stable backend-qualified session references', () => {
   assert.equal(sessionRefKey('codex', 'same'), 'codex:same')
   assert.deepEqual(parseSessionRefKey('opencode:same'), { backend: 'opencode', id: 'same', key: 'opencode:same' })

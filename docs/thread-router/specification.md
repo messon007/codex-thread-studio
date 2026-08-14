@@ -24,7 +24,7 @@ The controller does not solve the task or call tools. Studio injects the complet
 
 ```text
 User → active Router controller
-  → refresh bounded session catalog
+  → concurrently refresh each backend's lightweight session list
   → native structured controller Turn
   → dispatch
           → validate backend:id against the supplied catalog
@@ -35,7 +35,9 @@ User → active Router controller
           → observe only the target Turn's terminal state
 ```
 
-The dispatch registry requires adapters to implement `read` and `startTurn`, and offers an optional `prepareTurn` lifecycle hook. Codex uses the hook to resume a persisted thread before `turn/start`; backends that can start directly leave it empty. Router policy contains no Codex/OpenCode branch; adding a backend means registering an adapter and exposing its sessions in the catalog.
+Catalog refresh reads only bounded metadata and never resumes candidate sessions. OpenCode routing refresh deliberately skips per-directory status calls, so the Router does not pay that cost before every decision. A catalog failure blocks that Router Turn rather than allowing a decision from an incomplete cross-backend cache.
+
+The dispatch registry requires adapters to implement `read` and `startTurn`, and offers an optional `prepareTurn` lifecycle hook. Codex uses the hook to resume only the selected persisted thread before its first `turn/start`; Studio remembers that preparation for the current App Server lifetime and does not resume it again until the server generation changes. Backends that can start directly leave the hook empty. Router policy contains no Codex/OpenCode branch; adding a backend means registering an adapter and exposing its sessions in the catalog.
 
 ## Presentation and completion
 

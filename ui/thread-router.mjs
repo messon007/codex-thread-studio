@@ -266,5 +266,5 @@ function cleanBackend(value) {
 }
 
 function cleanText(value, max) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : ''
+  return typeof value === 'string' ? [...value.trim()].slice(0, max).join('') : ''
 }

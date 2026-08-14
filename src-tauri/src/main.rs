@@ -2596,7 +2596,7 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
             id.is_empty()
                 || id.len() > 320
                 || message.text.len() > 16 * 1024
-                || message.responsibility.len() > 4096
+                || message.responsibility.chars().count() > 4096
                 || message.source.len() > 64
                 || message.captured_at.len() > 128
         })
@@ -2631,7 +2631,7 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                     || controller_keys.contains(key)
                     || (key.contains(':') && !valid_router_session_key(key))
                     || router.thread_id.as_ref() == Some(key)
-                    || responsibility.description.len() > 4096
+                    || responsibility.description.chars().count() > 4096
                     || !matches!(responsibility.fallback.as_str(), "none" | "fallback")
             })
             || router.fallbacks.len() > 3
@@ -2641,7 +2641,7 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                     || !valid_router_session_key(&fallback.session_key)
                     || controller_keys.contains(&fallback.session_key)
                     || fallback.condition.is_empty()
-                    || fallback.condition.len() > 4096
+                    || fallback.condition.chars().count() > 4096
             })
             || router
                 .fallbacks
@@ -3849,6 +3849,34 @@ mod tests {
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_ok());
+
+        preferences.opening_messages.insert(
+            "codex:unicode-thread".to_string(),
+            OpeningMessage {
+                text: String::new(),
+                responsibility: "会".repeat(4096),
+                source: "manual".to_string(),
+                captured_at: String::new(),
+                truncated: false,
+            },
+        );
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4096);
+        assert!(validate_preferences(&preferences).is_ok());
+
+        preferences
+            .opening_messages
+            .get_mut("codex:unicode-thread")
+            .unwrap()
+            .responsibility = "会".repeat(4097);
+        assert!(validate_preferences(&preferences).is_err());
+        preferences
+            .opening_messages
+            .get_mut("codex:unicode-thread")
+            .unwrap()
+            .responsibility = "会".repeat(4096);
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4097);
+        assert!(validate_preferences(&preferences).is_err());
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4096);
 
         preferences
             .router

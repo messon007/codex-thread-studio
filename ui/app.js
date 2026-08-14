@@ -342,6 +342,8 @@ const openCodeStatusReconcileTimers = new Map()
 let threadCatalogRetryTimer = null
 let threadCatalogRetryAttempt = 0
 let threadCatalogErrorMessage = null
+const catalogRefreshes = new Map()
+const catalogRequestGenerations = new Map()
 let favoritesSearchTimer = null
 let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
@@ -1170,7 +1172,11 @@ function handleAppServerMessage(message) {
     if (status === 'ready') {
       const firstReady = !state.ready
       const reconnecting = state.lastAppServerGeneration != null
-      state.lastAppServerGeneration = message.params?.generation ?? state.lastAppServerGeneration
+      const nextGeneration = message.params?.generation ?? state.lastAppServerGeneration
+      if (state.lastAppServerGeneration != null && nextGeneration !== state.lastAppServerGeneration) {
+        sessionDispatch.clearPrepared('codex')
+      }
+      state.lastAppServerGeneration = nextGeneration
       state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
       state.appServerInitialization = message.params?.initialization || null
       state.ready = true
@@ -1185,6 +1191,7 @@ function handleAppServerMessage(message) {
     } else if (status === 'starting') {
       setBackendState('checking', '正在启动 Codex', message.params?.binary || 'App Server')
     } else if (status === 'error' || status === 'stopped') {
+      sessionDispatch.clearPrepared('codex')
       const reason = message.params?.message || message.params?.reason || 'App Server 已停止'
       setBackendState('error', 'Codex 不可用', reason)
       setNativeError(reason)
@@ -1606,7 +1613,7 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
   } finally { clearTimeout(timer) }
 }
 
-async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {}) {
+async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includeStatuses = true } = {}) {
   if (allowInactive) {
     const response = await gatewayFetch('/studio/opencode', { cache: 'no-store' })
     if (!response.ok) {
@@ -1616,6 +1623,7 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false } = {})
   }
   const options = { timeoutMs: 30_000, allowInactive }
   const sessions = await openCodeFetch(`/experimental/session?limit=${limit}&archived=false`, options)
+  if (!includeStatuses) return normalizeOpenCodeSessions(sessions, {})
   const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
   const statusMaps = await Promise.all(directories.map((cwd) =>
     openCodeFetch(withDirectory('/session/status', cwd), options).catch(() => ({})),
@@ -1673,19 +1681,66 @@ function fetchCodexCatalog(limit = 100, { routerId = null, routerWorkspace = '' 
   })
 }
 
+async function fetchBackendCatalog(backend, { includeStatuses = true } = {}) {
+  if (backend === 'opencode') {
+    const threads = await fetchOpenCodeCatalog(100, { allowInactive: true, includeStatuses })
+    if (includeStatuses) return threads
+    const knownStatuses = new Map((state.threadsByBackend.opencode || []).map((thread) => [thread.id, thread.status]))
+    return threads.map((thread) => knownStatuses.has(thread.id)
+      ? { ...thread, status: knownStatuses.get(thread.id) }
+      : thread)
+  }
+  if (backend === 'codex') {
+    const info = await loadBackendInfo('codex')
+    return fetchCodexCatalog(100, {
+      routerId: state.router.controllers.codex || null,
+      routerWorkspace: info?.routerWorkspace || '',
+    })
+  }
+  throw new Error(t('不支持的会话后端：{backend}', { backend }))
+}
+
+async function refreshBackendCatalog(backend, { includeStatuses = true } = {}) {
+  const refreshKey = `${backend}:${includeStatuses ? 'full' : 'list'}`
+  if (catalogRefreshes.has(refreshKey)) return catalogRefreshes.get(refreshKey)
+  const generation = (catalogRequestGenerations.get(backend) || 0) + 1
+  catalogRequestGenerations.set(backend, generation)
+  const refresh = fetchBackendCatalog(backend, { includeStatuses })
+    .then((threads) => {
+      if (catalogRequestGenerations.get(backend) === generation) installBackendCatalog(backend, threads)
+      return threads
+    })
+    .finally(() => catalogRefreshes.delete(refreshKey))
+  catalogRefreshes.set(refreshKey, refresh)
+  return refresh
+}
+
+function installBackendCatalog(backend, threads) {
+  state.threadsByBackend[backend] = threads
+  if (backend === state.backend) state.threads = threads
+  renderThreadList()
+}
+
+async function refreshRouterCatalogs() {
+  try {
+    const backends = sessionDispatch.backends()
+    const catalogs = await Promise.all(backends.map((backend) =>
+      refreshBackendCatalog(backend, { includeStatuses: false }),
+    ))
+    backends.forEach((backend, index) => {
+      catalogRequestGenerations.set(backend, (catalogRequestGenerations.get(backend) || 0) + 1)
+      installBackendCatalog(backend, catalogs[index])
+    })
+  } catch (error) {
+    throw new Error(t('无法刷新完整会话目录：{message}', { message: error.message }))
+  }
+}
+
 async function refreshInactiveCatalog() {
   const backend = state.backend === 'codex' ? 'opencode' : 'codex'
   try {
-    const codexInfo = backend === 'codex' ? await loadBackendInfo('codex') : null
-    const threads = backend === 'opencode'
-      ? await fetchOpenCodeCatalog(100, { allowInactive: true })
-      : await fetchCodexCatalog(100, {
-          routerId: state.router.controllers.codex || null,
-          routerWorkspace: codexInfo?.routerWorkspace || '',
-        })
-    state.threadsByBackend[backend] = threads
+    await refreshBackendCatalog(backend)
     if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
-    renderThreadList()
   } catch (error) {
     console.warn(`Unable to refresh ${backend} catalog`, error)
     reportClientError(new Error(`${backend} inactive session catalog failed: ${error?.message || error}`))
@@ -2035,6 +2090,7 @@ async function resumeThreadUncached(id) {
   $('#native-connection').textContent = '正在恢复会话…'
   try {
     const result = await rpc('thread/resume', { threadId: id })
+    sessionDispatch.markPrepared({ backend: state.backend, id })
     if (state.selectedId !== id) return
     hydrateCodexThread(state.model, result.thread)
     if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
@@ -2207,7 +2263,7 @@ function openThreadInfo() {
     </section>
     ${routable ? `<section class="session-responsibility-card">
       <header><div><strong>${t('会话职责')}</strong><small>${t('供 Thread Router 判断哪些请求应派发到这个会话。')}</small></div><button id="generate-session-responsibility" class="subtle-button compact" type="button">${t('AI 生成')}</button></header>
-      <textarea id="session-responsibility" rows="4" maxlength="4096" placeholder="${t('概括这个会话负责的领域和适合处理的请求')}">${escapeHtml(opening?.responsibility || '')}</textarea>
+      <textarea id="session-responsibility" rows="4" placeholder="${t('概括这个会话负责的领域和适合处理的请求')}">${escapeHtml(opening?.responsibility || '')}</textarea>
     </section>` : ''}
     <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
     <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
@@ -2223,12 +2279,13 @@ function openThreadInfo() {
   $('#thread-info-dialog').showModal()
 }
 
-function saveThreadInfo() {
+async function saveThreadInfo() {
   const key = selectedStateKey()
   if (!key) return
+  const hadExisting = Object.hasOwn(state.openingMessages, key)
   const existing = state.openingMessages[key] || {}
   const text = truncateUtf8($('#session-opening-question')?.value.trim() || '', 16 * 1024)
-  const responsibility = ($('#session-responsibility')?.value || '').trim().slice(0, 4096)
+  const responsibility = truncateCharacters(($('#session-responsibility')?.value || '').trim(), 4096)
   if (!text && !responsibility) delete state.openingMessages[key]
   else {
     state.openingMessages[key] = {
@@ -2240,9 +2297,15 @@ function saveThreadInfo() {
       truncated: false,
     }
   }
-  persistPreferences()
-  $('#thread-info-dialog').close()
-  toast(t('会话信息已保存'))
+  try {
+    await persistPreferences()
+    $('#thread-info-dialog').close()
+    toast(t('会话信息已保存'))
+  } catch (error) {
+    if (hadExisting) state.openingMessages[key] = existing
+    else delete state.openingMessages[key]
+    showError(error)
+  }
 }
 
 async function generateSessionResponsibility() {
@@ -2266,7 +2329,7 @@ async function generateSessionResponsibility() {
     renderTranscript()
     renderComposerState()
     const turn = await waitForSessionTurn(ref, result.turn.id, 300_000)
-    const responsibility = finalAgentText(turn).trim().slice(0, 4096)
+    const responsibility = truncateCharacters(finalAgentText(turn).trim(), 4096)
     if (!responsibility) throw new Error(t('AI 没有返回会话职责摘要。'))
     if ($('#thread-info-dialog').open && selectedStateKey() === key) $('#session-responsibility').value = responsibility
     toast(t('会话职责已生成，请确认后保存'))
@@ -4513,6 +4576,7 @@ async function startRouterTurn(text) {
   if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('Router 正在处理上一条请求。'))
   const controller = routerControllerRef(state.router)
   if (!controller || !sessionDispatch.supports(controller.backend)) throw new Error(t('Router 后端当前不可用。'))
+  await refreshRouterCatalogs()
   const candidates = currentRouterCandidates()
   if (!candidates.length) throw new Error(t('Router 没有可用的目标会话，请先打开“路由设置”。'))
   const developerInstructions = routerDeveloperInstructions(candidates)
@@ -4573,7 +4637,7 @@ async function completeRouterTurn({ backend, turnId, model, turn: suppliedTurn }
     if (!sessionDispatch.supports(targetRef.backend)) throw new Error(t('目标会话的后端当前不可用。'))
     state.routerDispatches.set(runtimeKey, { status: 'dispatching', decision })
     if (isRouterThread()) renderTranscript()
-    await sessionDispatch.prepareTurn(targetRef)
+    await sessionDispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
     const targetModel = await ensureSessionModel(targetRef)
     if (targetModel.activeTurnId) throw new Error(t('“{title}”正在运行，暂时不能接收新请求。', { title: threadTitle(target) }))
     const result = await sessionDispatch.startTurn(targetRef, [{ type: 'text', text: decision.forwardedPrompt }])
@@ -6269,12 +6333,14 @@ function preferencesSnapshot() {
 }
 
 function persistPreferences() {
-  if (!preferencesReady) return
+  if (!preferencesReady) return Promise.resolve()
   const body = JSON.stringify(preferencesSnapshot())
-  preferencesWriteChain = preferencesWriteChain.then(async () => {
+  const write = preferencesWriteChain.catch(() => {}).then(async () => {
     const response = await gatewayFetch('/studio/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  }).catch((error) => console.error('Unable to persist preferences', error))
+  })
+  preferencesWriteChain = write.catch((error) => console.error('Unable to persist preferences', error))
+  return write
 }
 
 function openRouterDialog() {
@@ -6345,7 +6411,7 @@ function renderRouterFallbacks({ capture = false } = {}) {
     ? state.routerEditor.fallbacks.map((entry, index) => `<section class="router-fallback-card" data-router-fallback-index="${index}">
       <header><strong>${t('Fallback 目标 {index}', { index: index + 1 })}</strong><button class="icon-button router-remove-fallback" type="button" title="${t('移除 fallback')}" aria-label="${t('移除 fallback')}">×</button></header>
       <label class="field"><span>${t('目标会话')}</span><select class="router-fallback-session">${options(entry.sessionKey)}</select></label>
-      <label class="field"><span>${t('Fallback 条件')}</span><textarea class="router-fallback-condition" rows="2" maxlength="4096">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
+      <label class="field"><span>${t('Fallback 条件')}</span><textarea class="router-fallback-condition" rows="2">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
     </section>`).join('')
     : `<div class="router-fallback-empty"><strong>${t('未配置 fallback target')}</strong><small>${t('没有精确匹配时，Router 将选择最接近的普通会话。')}</small></div>`
   container.querySelectorAll('.router-remove-fallback').forEach((button) => button.addEventListener('click', () => {
@@ -6381,8 +6447,12 @@ async function saveRouterSettings(event) {
     const controllerBackend = state.router.controllerBackend
     const threadId = await ensureManagedRouterSession(controllerBackend)
     const controllers = { ...state.router.controllers, [controllerBackend]: threadId }
+    const previousRouter = state.router
     state.router = normalizeThreadRouter({ controllerBackend, controllers, fallbacks })
-    persistPreferences()
+    try { await persistPreferences() } catch (error) {
+      state.router = previousRouter
+      throw error
+    }
     closeRouterDialog()
     renderThreadList()
     renderWorkspace()
@@ -6873,6 +6943,7 @@ function truncateUtf8(value, limit) {
   if (encoded.length <= limit) return text
   return new TextDecoder().decode(encoded.slice(0, limit)).replace(/\uFFFD$/u, '')
 }
+function truncateCharacters(value, limit) { return [...String(value || '')].slice(0, limit).join('') }
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
 
@@ -6915,7 +6986,7 @@ function normalizeOpeningMessages(value) {
   return Object.fromEntries(Object.entries(value).slice(0, 2048).flatMap(([key, message]) => {
     if (!key || !message || typeof message !== 'object') return []
     const text = truncateUtf8(String(message.text || '').trim(), 16 * 1024)
-    const responsibility = String(message.responsibility || '').trim().slice(0, 4096)
+    const responsibility = truncateCharacters(String(message.responsibility || '').trim(), 4096)
     return text || responsibility ? [[key.includes(':') ? key : `codex:${key}`, {
       text,
       responsibility,

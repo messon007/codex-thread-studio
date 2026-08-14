@@ -27,6 +27,47 @@ test('dispatches by session backend without embedding backend policy', async () 
   assert.equal(await registry.prepareTurn({ backend: 'third-party', id: 'one' }), null)
 })
 
+test('prepares an inactive session once per backend lifecycle', async () => {
+  let preparations = 0
+  const registry = new SessionDispatchRegistry().register('codex', {
+    read: () => null,
+    prepareTurn: async () => { preparations += 1 },
+    startTurn: () => null,
+  })
+
+  await Promise.all([
+    registry.prepareTurn({ backend: 'codex', id: 'cold' }),
+    registry.prepareTurn({ backend: 'codex', id: 'cold' }),
+  ])
+  await registry.prepareTurn({ backend: 'codex', id: 'cold' })
+  await registry.prepareTurn({ backend: 'codex', id: 'warm' }, { alreadyActive: true })
+  assert.equal(preparations, 1)
+
+  registry.clearPrepared('codex')
+  await registry.prepareTurn({ backend: 'codex', id: 'cold' })
+  assert.equal(preparations, 2)
+})
+
+test('does not retain a preparation that finishes after its backend was reset', async () => {
+  let release
+  let preparations = 0
+  const registry = new SessionDispatchRegistry().register('codex', {
+    read: () => null,
+    prepareTurn: () => {
+      preparations += 1
+      return preparations === 1 ? new Promise((resolve) => { release = resolve }) : null
+    },
+    startTurn: () => null,
+  })
+
+  const stalePreparation = registry.prepareTurn({ backend: 'codex', id: 'target' })
+  registry.clearPrepared('codex')
+  release()
+  await stalePreparation
+  await registry.prepareTurn({ backend: 'codex', id: 'target' })
+  assert.equal(preparations, 2)
+})
+
 test('rejects malformed references and incomplete adapters', () => {
   const registry = new SessionDispatchRegistry()
   assert.throws(() => registry.register('Bad Backend', {}), /Invalid session backend/)

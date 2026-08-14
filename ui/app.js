@@ -396,6 +396,7 @@ const sessionResources = createSessionResourcesUI({
   },
   openResource: openSessionResource,
   openSource: openSessionResourceSource,
+  favoriteResource: openFavoriteForResource,
   translate: t,
   notify: toast,
 })
@@ -804,6 +805,39 @@ function openSessionResourceSource(occurrence) {
     target.classList.add('resource-source-highlight')
     setTimeout(() => target.classList.remove('resource-source-highlight'), 1800)
   })
+}
+
+function openFavoriteForResource(resource, occurrence) {
+  const thread = selectedThread()
+  if (!thread || !occurrence?.turnId || !occurrence?.itemId) {
+    toast(t('无法确定资源的消息位置'), 'error')
+    return
+  }
+  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(occurrence.turnId))
+  const target = resource.target?.url || resource.target?.path || resource.raw
+  const location = resource.target?.line
+    ? `${target}:${resource.target.line}${resource.target.column ? `:${resource.target.column}` : ''}`
+    : target
+  const content = resource.target?.url ? String(location) : `\`${String(location).replaceAll('`', '')}\``
+  state.favoriteEditMode = false
+  state.pendingFavorite = {
+    id: randomId(),
+    scope: 'selection',
+    backend: state.backend,
+    threadId: state.selectedId,
+    threadTitle: threadTitle(thread),
+    projectPath: thread.cwd || '',
+    turnId: String(occurrence.turnId),
+    itemId: String(occurrence.itemId),
+    title: String(resource.display || autoFavoriteTitle(location)),
+    presentation: 'resource',
+    question: turn ? questionForTurn(turn) : '',
+    content,
+    note: '',
+    tags: [],
+    createdAt: new Date().toISOString(),
+  }
+  populateFavoriteDialog(state.pendingFavorite)
 }
 
 function jumpArtifactToLine(line, column = 1) {
@@ -6186,8 +6220,10 @@ function openFavoriteForMessage(turnId, itemId) {
 
 function populateFavoriteDialog(favorite) {
   const editing = state.favoriteEditMode
-  $('#favorite-dialog-title').textContent = t(editing ? '编辑收藏' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复')
+  const resource = favorite.presentation === 'resource'
+  $('#favorite-dialog-title').textContent = t(editing ? '编辑收藏' : resource ? '收藏资源' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复')
   $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || t('未命名会话')}`
+  $('#favorite-preview-label').textContent = t(resource ? '资源' : 'AI 回复')
   $('#favorite-answer-length').textContent = t('{count} 字', { count: [...favorite.content].length.toLocaleString(getLocale()) })
   $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
   $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)

@@ -8,6 +8,7 @@ export function createSessionResourcesUI({
   deactivate,
   openResource,
   openSource,
+  favoriteResource,
   translate = (value) => value,
   notify = () => {},
 }) {
@@ -159,6 +160,7 @@ export function createSessionResourcesUI({
         <button class="resource-open" type="button" data-resource-open="${escapeHtml(resource.id)}" ${resource.state === 'blocked' ? 'disabled' : ''}>${escapeHtml(openLabel(resource, translate))}</button>
         <button type="button" data-resource-source="${escapeHtml(occurrences.at(-1)?.id || '')}">${escapeHtml(translate('返回消息'))}</button>
         <button type="button" data-resource-copy="${escapeHtml(resource.id)}">${escapeHtml(translate('复制地址'))}</button>
+        <button class="resource-favorite" type="button" data-resource-favorite="${escapeHtml(resource.id)}" title="${escapeHtml(translate('收藏资源'))}" aria-label="${escapeHtml(translate('收藏资源'))}">${favoriteSvg()}</button>
       </div>${occurrenceRows}
     </article>`
   }
@@ -178,6 +180,13 @@ export function createSessionResourcesUI({
     if (sourceButton?.dataset.resourceSource) {
       const occurrence = state.index.occurrencesById.get(sourceButton.dataset.resourceSource)
       if (occurrence) openSource?.(occurrence)
+      return
+    }
+    const favoriteButton = event.target.closest('[data-resource-favorite]')
+    if (favoriteButton) {
+      const resource = state.index.resourcesById.get(favoriteButton.dataset.resourceFavorite)
+      const occurrence = resource && state.index.occurrences(resource.id).at(-1)
+      if (resource && occurrence) favoriteResource?.(resource, occurrence)
       return
     }
     const copyButton = event.target.closest('[data-resource-copy]')
@@ -215,17 +224,24 @@ export function createSessionResourcesUI({
       backend: 'codex',
       thread: { id: 'developer-resources-preview', cwd: path },
       model: {
-        turns: [
-          { id: 'preview-1', items: [{ id: 'preview-agent', type: 'agentMessage', text: `Design references: https://code.visualstudio.com/api/references/vscode-api and \`docs/session-resources/specification.md\`.` }] },
-          { id: 'preview-2', items: [{ id: 'preview-change', type: 'fileChange', changes: [{ kind: 'update', path: 'ui/session-resources.mjs' }] }] },
-          { id: 'preview-3', items: [{ id: 'preview-command', type: 'commandExecution', aggregatedOutput: 'ui/app.js:3745:3\n/tmp/external-result.json' }] },
-        ],
+        turns: [{
+          id: 'preview-1',
+          items: [
+            { id: 'preview-user', type: 'userMessage', content: 'Please review src-tauri/src/main.rs:640 and /tmp/external-result.json.' },
+            { id: 'preview-agent', type: 'agentMessage', text: `Design references: https://code.visualstudio.com/api/references/vscode-api and \`docs/session-resources/specification.md\`.` },
+            { id: 'preview-change', type: 'fileChange', changes: [{ kind: 'update', path: 'ui/session-resources.mjs' }] },
+          ],
+        }],
       },
     }
     open()
   }
 
   return { bind, sync, rebuild, open, openForDebug, close, isOpen, render, currentIndex: () => stateForCurrent()?.index || null }
+}
+
+function favoriteSvg() {
+  return '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg>'
 }
 
 function openLabel(resource, translate) {

@@ -86,6 +86,15 @@ test('document actions use consistent SVG icon buttons', () => {
   assert.match(html, /id="close-resources"[^>]*class="icon-button artifact-action-icon"/u)
 })
 
+test('session resources provide an explicit favorite action', () => {
+  const resources = readFileSync(new URL('./session-resources-ui.mjs', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  assert.match(resources, /data-resource-favorite=/u)
+  assert.match(resources, /favoriteResource\?\.\(resource, occurrence\)/u)
+  assert.match(app, /favoriteResource: openFavoriteForResource/u)
+  assert.match(app, /favorite\.presentation === 'resource'/u)
+})
+
 test('documents opened from Files and Review keep a return destination', () => {
   const workspace = readFileSync(new URL('./workspace-tools.mjs', import.meta.url), 'utf8')
   const review = readFileSync(new URL('./git-review.mjs', import.meta.url), 'utf8')

@@ -475,6 +475,9 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .resource-card-actions { min-height: 40px; padding: 6px 9px; display: flex; align-items: center; gap: 5px; border-top: 1px solid var(--border); background: var(--panel); }
 .resource-card-actions button { min-height: 27px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 8px; }
 .resource-card-actions button:hover { border-color: var(--border-strong); color: var(--text); }.resource-card-actions .resource-open { border-color: color-mix(in srgb, var(--brand) 35%, var(--border)); background: var(--brand-soft); color: var(--brand); font-weight: 700; }.resource-card-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.resource-card-actions .resource-favorite { width: 27px; padding: 0; margin-left: auto; display: grid; place-items: center; color: var(--favorite); }
+.resource-card-actions .resource-favorite:hover { border-color: color-mix(in srgb, var(--favorite) 38%, var(--border)); background: var(--favorite-soft); color: var(--favorite); }
+.resource-favorite svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .resource-occurrences { padding: 5px; border-top: 1px solid var(--border); background: var(--panel-soft); }
 .resource-occurrences button { width: 100%; padding: 7px 8px; display: flex; flex-direction: column; gap: 3px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
 .resource-occurrences button:hover { background: var(--panel); color: var(--brand); }.resource-occurrences span { font-size: 8px; font-weight: 650; }.resource-occurrences small { width: 100%; overflow: hidden; color: var(--faint); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }

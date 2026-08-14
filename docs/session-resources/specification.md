@@ -1,6 +1,6 @@
 # Session Resources 特性规格
 
-状态：设计候选（尚未实现）
+状态：MVP 已实现
 
 适用产品：Codex Thread Studio
 
@@ -358,7 +358,7 @@ Directory Opener 切换到 Files，逐级展开并选中目标。文件无法预
 
 ### 12.5 Terminal
 
-Terminal LinkProvider 属于第二阶段。它复用同一个 Resolver 和 Opener，但不要求终端滚动缓冲区全部写入 SessionResourceIndex；只有属于结构化 command Item 的输出才进入会话资源列表。
+Terminal LinkProvider 属于第二阶段。它可复用同一个 Resolver 和 Opener，但终端滚动缓冲区与结构化 command Item 默认都不进入 SessionResourceIndex；用户在终端中明确点击链接即可打开，不扩大 Resources 的索引范围。
 
 ### 12.6 Shared right workspace
 
@@ -512,7 +512,7 @@ Enricher 只能增强显示，不能决定资源是否存在或能否打开。
 
 ### Phase 4：收藏协作
 
-- 从 Resource 快速创建 Favorite；
+- 从 Resource 快速创建 Favorite（MVP 已完成）；
 - Favorite 保留来源会话和原始响应锚点；
 - Resources 继续保持易失，不演化为第二套历史索引。
 

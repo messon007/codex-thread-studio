@@ -147,6 +147,8 @@ const english = {
   '安全策略阻止了此资源': 'This resource was blocked by the security policy',
   '返回消息': 'Go to message',
   '复制地址': 'Copy address',
+  '收藏资源': 'Save resource',
+  '无法确定资源的消息位置': 'Unable to locate the resource in its message',
   '无法打开资源': 'Unable to open resource',
   '资源地址已复制': 'Resource address copied',
   '无法复制资源地址': 'Unable to copy resource address',

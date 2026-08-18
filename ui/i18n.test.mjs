@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -22,21 +22,27 @@ test('resolves explicit and system languages', () => {
 test('translates interface text and interpolates values', () => {
   setLanguage('en-US')
   assert.equal(getLocale(), 'en-US')
-  assert.equal(t('设置'), 'Settings')
-  assert.equal(t('运行'), 'Active')
-  assert.equal(t('运行命令'), 'Run')
-  assert.equal(t('找到 {count} 条匹配收藏', { count: 3 }), 'Found 3 matching favorites')
+  assert.equal(t('Settings'), 'Settings')
+  assert.equal(t('Active'), 'Active')
+  assert.equal(t('Run'), 'Run')
+  assert.equal(t('Found {count} matching favorites', { count: 3 }), 'Found 3 matching favorites')
   assert.equal(t('untranslated user text'), 'untranslated user text')
   setLanguage('zh-CN')
-  assert.equal(t('Settings'), '设置')
+  assert.equal(t('Settings'), '\u8BBE\u7F6E')
+  assert.equal(t('Found {count} matching favorites', { count: 3 }), '\u627E\u5230 3 \u6761\u5339\u914D\u6536\u85CF')
+  setLanguage('en-US')
+  assert.equal(t('\u8BBE\u7F6E'), 'Settings')
 })
 
-test('contains both required interface languages', () => {
-  assert.ok(Object.keys(translationEntries['en-US']).length > 100)
+test('contains the Chinese catalog keyed by English source messages', () => {
+  assert.ok(Object.keys(translationEntries['zh-CN']).length > 100)
+  assert.equal(translationEntries['zh-CN'].Settings, '\u8BBE\u7F6E')
+  const localizedMessages = Object.values(translationEntries['zh-CN'])
+  assert.equal(new Set(localizedMessages).size, localizedMessages.length)
 })
 
 test('migrates a legacy template into its actual language slot', () => {
-  const chinese = '请根据这些内容回复：\n{{annotations}}'
+  const chinese = '\u8BF7\u6839\u636E\u8FD9\u4E9B\u5185\u5BB9\u56DE\u590D\uFF1A\n{{annotations}}'
   const migrated = migrateLocalizedTemplates({ 'en-US': chinese }, chinese, 'en-US')
   assert.deepEqual(migrated.templates, { 'zh-CN': chinese })
   assert.equal(migrated.legacyLocale, 'zh-CN')
@@ -52,7 +58,7 @@ test('migrates a legacy template into its actual language slot', () => {
   assert.equal(preserved.migratedLegacy, false)
 })
 
-test('translates a rendered subtree in both directions without changing protected content', () => {
+test('translates an English source subtree in both directions without changing protected content', () => {
   globalThis.Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 }
   class Element {
     constructor(children = [], attributes = {}, protectedContent = false) {
@@ -71,46 +77,63 @@ test('translates a rendered subtree in both directions without changing protecte
   class Text {
     constructor(value) { this.nodeType = Node.TEXT_NODE; this.nodeValue = value }
   }
-  const label = new Text('设置')
-  const protectedText = new Text('设置')
+  const label = new Text('Settings')
+  const protectedText = new Text('Settings')
   const root = new Element([
     label,
     new Element([protectedText], {}, true),
-  ], { title: '打开设置' })
+  ], { title: 'Open settings' })
+
+  setLanguage('zh-CN')
+  translateDocument(root)
+  assert.equal(label.nodeValue, '\u8BBE\u7F6E')
+  assert.equal(root.getAttribute('title'), '\u6253\u5F00\u8BBE\u7F6E')
+  assert.equal(protectedText.nodeValue, 'Settings')
 
   setLanguage('en-US')
   translateDocument(root)
   assert.equal(label.nodeValue, 'Settings')
   assert.equal(root.getAttribute('title'), 'Open settings')
-  assert.equal(protectedText.nodeValue, '设置')
-
-  setLanguage('zh-CN')
-  translateDocument(root)
-  assert.equal(label.nodeValue, '设置')
-  assert.equal(root.getAttribute('title'), '打开设置')
 })
 
-test('every static Chinese interface string has an English translation', () => {
-  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
-  const values = [
-    ...[...html.matchAll(/>([^<>]+)</g)].map((match) => match[1].trim()),
-    ...[...html.matchAll(/(?:placeholder|title|aria-label)="([^"]+)"/g)].map((match) => match[1].trim()),
-  ].filter((value) => /\p{Script=Han}/u.test(value))
-  setLanguage('en-US')
-  const missing = [...new Set(values.filter((value) => t(value) === value))]
-  assert.deepEqual(missing, [])
+test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
+  const runtimeFiles = readdirSync(new URL('.', import.meta.url), { withFileTypes: true })
+    .filter((entry) => entry.isFile()
+      && /\.(?:js|mjs|html)$/u.test(entry.name)
+      && entry.name !== 'i18n.mjs'
+      && !entry.name.startsWith('vendor'))
+    .map((entry) => entry.name)
+  const violations = runtimeFiles.filter((name) => /\p{Script=Han}/u.test(
+    readFileSync(new URL(name, import.meta.url), 'utf8'),
+  ))
+  assert.deepEqual(violations, [])
 })
 
-test('every exact Chinese JavaScript interface literal has an English translation', () => {
+test('native and prototype runtime source contains no embedded Chinese UI text', () => {
+  const sourceRoots = [
+    new URL('../src-tauri/src/', import.meta.url),
+    new URL('../prototypes/', import.meta.url),
+  ]
+  const files = []
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const target = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory)
+      if (entry.isDirectory()) visit(target)
+      else if (/\.(?:rs|html|js|mjs)$/u.test(entry.name)) files.push(target)
+    }
+  }
+  sourceRoots.forEach(visit)
+  const violations = files.filter((file) => /\p{Script=Han}/u.test(readFileSync(file, 'utf8')))
+    .map((file) => file.pathname)
+  assert.deepEqual(violations, [])
+})
+
+test('every native browser translation source exists in the Chinese catalog', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  const values = [
-    ...[...source.matchAll(/'([^'\n]*\p{Script=Han}[^'\n]*)'/gu)].map((match) => match[1]),
-    ...[...source.matchAll(/"([^"\n]*\p{Script=Han}[^"\n]*)"/gu)].map((match) => match[1]),
-  ].map((value) => value.replaceAll('\\n', '\n'))
-    .filter((value) => !value.includes('${') && !value.includes('<'))
-  setLanguage('en-US')
-  const missing = [...new Set(values.filter((value) => t(value) === value))]
-  assert.deepEqual(missing, [])
+  const block = source.match(/const embeddedBrowserTranslationSources = \[([\s\S]*?)\n\]/u)?.[1] || ''
+  const messages = [...block.matchAll(/'([^']+)'/gu)].map((match) => match[1])
+  assert.ok(messages.length > 20)
+  assert.deepEqual(messages.filter((message) => !translationEntries['zh-CN'][message]), [])
 })
 
 test('saving settings closes the dialog before rerendering dynamic UI', () => {

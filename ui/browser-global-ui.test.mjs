@@ -39,7 +39,7 @@ test('Embedded Browser selection enters the shared Comment Core flow', () => {
 test('Browser navigation controls use consistently aligned vector icons', () => {
   const toolbar = readFileSync(new URL('./embedded-browser.html', import.meta.url), 'utf8')
   assert.match(toolbar, /\.icon \{[^}]*display: grid; place-items: center;/)
-  assert.match(toolbar, /data-action="back"[^>]*aria-label="网页后退"[^>]*><svg/)
+  assert.match(toolbar, /data-action="back"[^>]*aria-label="Back"[^>]*><svg/)
   assert.match(toolbar, /data-action="forward"[^>]*><svg/)
   assert.match(toolbar, /data-action="reload"[^>]*><svg/)
 })

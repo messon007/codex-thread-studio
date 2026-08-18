@@ -1,5 +1,8 @@
 #[cfg(any(windows, test))]
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
@@ -78,6 +81,7 @@ pub enum ToolbarAction {
     ShowDownloads,
     OpenDownloadsDirectory,
     SetBrowserWidth(u32),
+    SetTranslations(HashMap<String, String>),
 }
 
 #[cfg(any(windows, test))]
@@ -111,6 +115,9 @@ pub fn parse_toolbar_action(raw: &str) -> Option<ToolbarAction> {
         "browser-downloads" => Some(ToolbarAction::ShowDownloads),
         "open-downloads-directory" => Some(ToolbarAction::OpenDownloadsDirectory),
         "set-browser-width" => query_u32(&url, "width").map(ToolbarAction::SetBrowserWidth),
+        "set-browser-translations" => query_value(&url, "messages")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .map(ToolbarAction::SetTranslations),
         _ => None,
     }
 }

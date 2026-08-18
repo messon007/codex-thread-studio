@@ -43,7 +43,7 @@ export function createChatCommentProvider() {
     describe(draft, context) {
       const index = Number(context.index) + 1
       const turnId = draft.source.anchor.turnId
-      return `${context.translate?.('回复批注 {index}', { index }) || `Comment ${index}`}${turnId ? ` · ${turnId.slice(0, 8)}` : ''}`
+      return `${context.translate?.('Reply comment {index}', { index }) || `Comment ${index}`}${turnId ? ` · ${turnId.slice(0, 8)}` : ''}`
     },
     promptAnchor(draft) {
       const { turnId, itemId } = draft.source.anchor
@@ -69,7 +69,7 @@ export function createDocumentCommentProvider() {
       return fileAnnotationAnchor(target, context.contentForSource?.(draft.source))
     },
     promptInstruction(_draft, context) {
-      return context.translate?.('文档批注：请先读取标注路径的当前文件，再依据引用、位置和上下文完成修改。') || ''
+      return context.translate?.('Document comments: read the current file at each annotated path, then make changes using the quote, location, and surrounding context.') || ''
     },
     async reopen(draft, context) {
       const target = fileTarget(draft.source.anchor)

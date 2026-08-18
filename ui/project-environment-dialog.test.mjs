@@ -25,7 +25,7 @@ test('dedicated environment dialog establishes project identity and separates pr
   assert.match(dialog, /class="environment-primary-grid"/u)
   assert.match(dialog, /<details id="environment-advanced"/u)
   assert.equal((dialog.match(/name="environment-network-policy"/gu) || []).length, 2)
-  assert.match(dialog, /后续 Agent Turn 与新启动的 Terminal/u)
+  assert.match(dialog, /Subsequent agent turns and newly opened terminals/u)
 })
 
 test('secret values remain write-only while saved names use reversible removal chips', () => {

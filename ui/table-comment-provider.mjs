@@ -19,7 +19,7 @@ export function createTableCommentProvider() {
       return [anchor.filePath, `${anchor.sheet || 'Sheet'}!${anchor.range}`, anchor.documentHash && `base ${anchor.documentHash}`].filter(Boolean).join(' / ')
     },
     promptInstruction(_draft, context) {
-      return context.translate?.('表格摘录：请结合工作表、单元格范围、列名和引文回答。') || ''
+      return context.translate?.('Table excerpt: answer using the sheet, cell range, headers, and quoted value.') || ''
     },
     async reopen(draft, context) {
       await context.openTableSource?.(normalizeTableAnchor(draft?.source?.anchor), draft?.excerpt)

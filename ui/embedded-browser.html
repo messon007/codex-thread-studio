@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en-US">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -65,24 +65,24 @@
   </head>
   <body>
     <div class="tabs-row">
-      <div id="tabs" class="tabs" role="tablist" aria-label="浏览器标签"></div>
-      <button class="new-tab" data-action="new-tab" title="新建标签 (Ctrl+T)" aria-label="新建标签">+</button>
-      <button class="workspace-close" data-action="toggle-browser" title="隐藏浏览器" aria-label="隐藏浏览器">×</button>
+      <div id="tabs" class="tabs" role="tablist" aria-label="Browser tabs" data-i18n-aria-label="Browser tabs"></div>
+      <button class="new-tab" data-action="new-tab" title="New tab (Ctrl+T)" aria-label="New tab" data-i18n-title="New tab (Ctrl+T)" data-i18n-aria-label="New tab">+</button>
+      <button class="workspace-close" data-action="toggle-browser" title="Hide browser" aria-label="Hide browser" data-i18n-title="Hide browser" data-i18n-aria-label="Hide browser">×</button>
     </div>
     <div class="toolbar">
       <div class="nav">
-        <button class="icon" data-action="back" title="网页后退" aria-label="网页后退"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/><path d="M9 12h9"/></svg></button>
-        <button class="icon" data-action="forward" title="网页前进" aria-label="网页前进"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/><path d="M15 12H6"/></svg></button>
-        <button class="icon" data-action="reload" title="刷新网页" aria-label="刷新网页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg></button>
+        <button class="icon" data-action="back" title="Back" aria-label="Back" data-i18n-title="Back" data-i18n-aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/><path d="M9 12h9"/></svg></button>
+        <button class="icon" data-action="forward" title="Forward" aria-label="Forward" data-i18n-title="Forward" data-i18n-aria-label="Forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/><path d="M15 12H6"/></svg></button>
+        <button class="icon" data-action="reload" title="Reload" aria-label="Reload" data-i18n-title="Reload" data-i18n-aria-label="Reload"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg></button>
       </div>
-      <input id="address" class="address" value="https://example.com" spellcheck="false" aria-label="网址" />
+      <input id="address" class="address" value="https://example.com" spellcheck="false" aria-label="Address" data-i18n-aria-label="Address" />
       <div class="tools">
-        <button class="icon zoom-control" data-action="zoom-out" title="缩小" aria-label="缩小">−</button>
-        <button id="zoom" class="icon zoom" data-action="zoom-reset" title="恢复 100%">100%</button>
-        <button class="icon zoom-control" data-action="zoom-in" title="放大" aria-label="放大">+</button>
-        <button id="fit" class="icon fit" data-action="fit-width" title="适应宽度" aria-label="适应宽度">↔</button>
-        <button id="comment" class="comment" type="button">批注</button>
-        <button class="icon browser-menu" data-action="browser-menu" title="更多浏览器操作" aria-label="更多浏览器操作">•••</button>
+        <button class="icon zoom-control" data-action="zoom-out" title="Zoom out" aria-label="Zoom out" data-i18n-title="Zoom out" data-i18n-aria-label="Zoom out">−</button>
+        <button id="zoom" class="icon zoom" data-action="zoom-reset" title="Reset to 100%" data-i18n-title="Reset to 100%">100%</button>
+        <button class="icon zoom-control" data-action="zoom-in" title="Zoom in" aria-label="Zoom in" data-i18n-title="Zoom in" data-i18n-aria-label="Zoom in">+</button>
+        <button id="fit" class="icon fit" data-action="fit-width" title="Fit page width" aria-label="Fit page width" data-i18n-title="Fit page width" data-i18n-aria-label="Fit page width">↔</button>
+        <button id="comment" class="comment" type="button" data-i18n="Comment">Comment</button>
+        <button class="icon browser-menu" data-action="browser-menu" title="More browser actions" aria-label="More browser actions" data-i18n-title="More browser actions" data-i18n-aria-label="More browser actions">•••</button>
       </div>
     </div>
     <aside id="browser-panel" class="browser-panel" aria-live="polite"></aside>
@@ -92,6 +92,13 @@
       const zoom = document.querySelector('#zoom')
       const fit = document.querySelector('#fit')
       const panel = document.querySelector('#browser-panel')
+      let translations = {}
+      const tr = (source) => translations[source] || source
+      const applyTranslations = () => {
+        document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = tr(element.dataset.i18n) })
+        document.querySelectorAll('[data-i18n-title]').forEach((element) => { element.title = tr(element.dataset.i18nTitle) })
+        document.querySelectorAll('[data-i18n-aria-label]').forEach((element) => { element.setAttribute('aria-label', tr(element.dataset.i18nAriaLabel)) })
+      }
 
       const action = (name, params = {}) => {
         const query = new URLSearchParams(params).toString()
@@ -122,12 +129,12 @@
 
           const title = document.createElement('span')
           title.className = 'tab-title'
-          title.textContent = item.title || 'New Tab'
+          title.textContent = item.title || tr('New tab')
           const close = document.createElement('button')
           close.className = 'tab-close'
           close.type = 'button'
           close.textContent = '×'
-          close.title = '关闭标签 (Ctrl+W)'
+          close.title = tr('Close tab (Ctrl+W)')
           close.addEventListener('click', (event) => {
             event.stopPropagation()
             action('close-tab', { id: item.id })
@@ -156,6 +163,8 @@
       })
       window.__embeddedBrowserToolbar = {
         setState(value) {
+          translations = value?.translations || {}
+          applyTranslations()
           renderTabs(value?.tabs)
           if (value?.url && document.activeElement !== address) address.value = value.url
           zoom.textContent = `${value?.zoomPercent || 100}%`
@@ -173,11 +182,11 @@
             return button
           }
           panel.append(
-            make('浏览器信息', 'browser-info'),
-            make('下载记录', 'browser-downloads'),
-            make('打开下载目录', 'open-downloads-directory'),
+            make(tr('Browser information'), 'browser-info'),
+            make(tr('Downloads'), 'browser-downloads'),
+            make(tr('Open downloads folder'), 'open-downloads-directory'),
             document.createElement('hr'),
-            make('退出浏览器', 'exit-browser'),
+            make(tr('Exit browser'), 'exit-browser'),
           )
           panel.classList.add('open')
         },
@@ -188,7 +197,7 @@
           ]
           panel.replaceChildren()
           const heading = document.createElement('h2')
-          heading.textContent = '浏览器信息'
+          heading.textContent = tr('Browser information')
           panel.append(heading)
           for (const [label, content] of rows) {
             const line = document.createElement('p')
@@ -200,11 +209,11 @@
         showDownloads(items) {
           panel.replaceChildren()
           const heading = document.createElement('h2')
-          heading.textContent = '下载记录'
+          heading.textContent = tr('Downloads')
           panel.append(heading)
           if (!items?.length) {
             const empty = document.createElement('p')
-            empty.textContent = '暂无下载记录'
+            empty.textContent = tr('No downloads yet')
             panel.append(empty)
           } else for (const item of items) {
             const row = document.createElement('div')
@@ -218,7 +227,7 @@
           }
           const open = document.createElement('button')
           open.type = 'button'
-          open.textContent = '打开下载目录'
+          open.textContent = tr('Open downloads folder')
           open.addEventListener('click', () => action('open-downloads-directory'))
           panel.append(document.createElement('hr'), open)
           panel.classList.add('open')

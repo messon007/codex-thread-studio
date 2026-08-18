@@ -29,7 +29,7 @@ export function createEpubCommentProvider() {
       ].filter(Boolean).join(' / ')
     },
     promptInstruction(_draft, context) {
-      return context.translate?.('电子书摘录：请结合所附引文和我的问题进行解释；说明核心含义、上下文与关键概念，不要假设你能直接修改电子书。') || ''
+      return context.translate?.('E-book excerpt: explain it using the quoted passage and my question. Cover its core meaning, context, and key concepts; do not assume the e-book itself can be edited.') || ''
     },
     async reopen(draft, context) {
       await context.openEpubSource?.(normalizeEpubAnchor(draft?.source?.anchor), draft?.excerpt)

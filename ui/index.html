@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en-US">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -22,12 +22,12 @@
           </div>
         </header>
 
-        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">新建会话</b> <kbd>Ctrl N</kbd></button>
-        <label class="search-box"><span>⌕</span><input id="thread-search" type="search" placeholder="搜索会话或目录" /><kbd>/</kbd></label>
-        <div class="filters thread-filters" role="tablist" aria-label="会话筛选">
-          <button class="filter thread-filter active" type="button" role="tab" data-filter="all" aria-selected="true">全部 <span id="count-all">0</span></button>
-          <button class="filter thread-filter" type="button" role="tab" data-filter="active" aria-selected="false">运行 <span id="count-active">0</span></button>
-          <button class="filter thread-filter" type="button" role="tab" data-filter="attention" aria-selected="false">待处理 <span id="count-attention">0</span></button>
+        <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">New session</b> <kbd>Ctrl N</kbd></button>
+        <label class="search-box"><span>⌕</span><input id="thread-search" type="search" placeholder="Search sessions or paths" /><kbd>/</kbd></label>
+        <div class="filters thread-filters" role="tablist" aria-label="Session filters">
+          <button class="filter thread-filter active" type="button" role="tab" data-filter="all" aria-selected="true">All <span id="count-all">0</span></button>
+          <button class="filter thread-filter" type="button" role="tab" data-filter="active" aria-selected="false">Active <span id="count-active">0</span></button>
+          <button class="filter thread-filter" type="button" role="tab" data-filter="attention" aria-selected="false">Attention <span id="count-attention">0</span></button>
         </div>
         <div id="thread-list" class="thread-list" aria-live="polite"></div>
 
@@ -35,26 +35,26 @@
           <div class="menu-anchor studio-menu-anchor">
             <button id="studio-menu-button" class="studio-entry" type="button" aria-haspopup="menu" aria-expanded="false">
               <span class="studio-avatar" aria-hidden="true">⌂</span>
-              <span class="studio-entry-copy"><strong>本机工作区</strong><small>Local workspace</small></span>
+              <span class="studio-entry-copy"><strong>Local workspace</strong><small>Local workspace</small></span>
               <span class="chevron">›</span>
             </button>
             <div id="studio-menu" class="action-menu studio-menu hidden" role="menu">
-              <button id="open-favorites" type="button" role="menuitem"><span>全局收藏</span><span id="favorites-badge" class="studio-menu-count hidden">0</span></button>
-              <button id="open-browser-workspace" type="button" role="menuitem" title="启动或显示浏览器">
-                <span>浏览器</span>
+              <button id="open-favorites" type="button" role="menuitem"><span>Global favorites</span><span id="favorites-badge" class="studio-menu-count hidden">0</span></button>
+              <button id="open-browser-workspace" type="button" role="menuitem" title="Start or show browser">
+                <span>Browser</span>
                 <span id="browser-menu-status" class="browser-menu-status offline"><i></i><small>default</small></span>
               </button>
               <span class="menu-separator"></span>
-              <button id="connections-button" type="button" role="menuitem"><span>连接与账号</span></button>
-              <button id="settings-button" type="button" role="menuitem"><span>设置</span></button>
-              <button id="about-button" type="button" role="menuitem"><span>关于</span></button>
+              <button id="connections-button" type="button" role="menuitem"><span>Connections & accounts</span></button>
+              <button id="settings-button" type="button" role="menuitem"><span>Settings</span></button>
+              <button id="about-button" type="button" role="menuitem"><span>About</span></button>
             </div>
           </div>
         </footer>
       </aside>
 
       <div id="sidebar-divider" class="sidebar-divider" aria-hidden="false">
-        <button id="toggle-sidebar" type="button" title="收起会话栏 (Ctrl+B)" aria-label="收起会话栏" aria-expanded="true"><span aria-hidden="true">‹</span></button>
+        <button id="toggle-sidebar" type="button" title="Collapse sidebar (Ctrl+B)" aria-label="Collapse sidebar" aria-expanded="true"><span aria-hidden="true">‹</span></button>
       </div>
 
       <main class="workspace">
@@ -62,46 +62,46 @@
           <div class="thread-toolbar-leading">
             <div id="thread-heading" class="thread-heading hidden">
               <div id="tool-avatar" class="tool-avatar">CX</div>
-              <div><div class="title-line"><h1 id="thread-title">Codex 会话</h1><span id="thread-connection" class="thread-connection checking"><i aria-hidden="true"></i><span id="native-connection">正在连接…</span></span></div><p id="thread-path"></p></div>
+              <div><div class="title-line"><h1 id="thread-title">Codex session</h1><span id="thread-connection" class="thread-connection checking"><i aria-hidden="true"></i><span id="native-connection">Connecting…</span></span></div><p id="thread-path"></p></div>
             </div>
           </div>
           <div id="thread-actions" class="thread-actions hidden">
-            <div class="workspace-tool-launchers" role="group" aria-label="右侧区域">
-              <button id="open-thread-comments" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="批注" aria-label="查看批注" aria-pressed="false">
+            <div class="workspace-tool-launchers" role="group" aria-label="Right workspace">
+              <button id="open-thread-comments" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Comments" aria-label="View comments" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg>
                 <span id="thread-comments-count" class="workspace-tool-count hidden">0</span>
               </button>
-              <button id="open-thread-favorites" class="toolbar-button workspace-tool-launcher favorite-tool-launcher icon-only" type="button" title="收藏" aria-label="查看本会话收藏" aria-pressed="false">
+              <button id="open-thread-favorites" class="toolbar-button workspace-tool-launcher favorite-tool-launcher icon-only" type="button" title="Favorites" aria-label="View session favorites" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.8 2.5 5.1 5.6.8-4.1 4 .9 5.6-4.9-2.6-4.9 2.6.9-5.6-4.1-4 5.6-.8z"/></svg>
                 <span id="thread-favorites-count" class="workspace-tool-count hidden">0</span>
               </button>
-              <button id="open-thread-resources" class="toolbar-button workspace-tool-launcher resource-tool-launcher icon-only" type="button" title="资源" aria-label="查看会话资源" aria-pressed="false">
+              <button id="open-thread-resources" class="toolbar-button workspace-tool-launcher resource-tool-launcher icon-only" type="button" title="Resources" aria-label="View session resources" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 14.5-2 2a4 4 0 0 1-5.7-5.7l3-3a4 4 0 0 1 5.7 0"/><path d="m14.5 9.5 2-2a4 4 0 0 1 5.7 5.7l-3 3a4 4 0 0 1-5.7 0"/><path d="m8.5 15.5 7-7"/></svg>
                 <span id="thread-resources-count" class="workspace-tool-count hidden">0</span>
               </button>
-              <button id="open-workspace-files" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="文件" aria-label="打开文件树" aria-pressed="false">
+              <button id="open-workspace-files" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Files" aria-label="Open file tree" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 9h17"/></svg>
               </button>
-              <button id="open-workspace-terminal" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="终端" aria-label="打开终端" aria-pressed="false">
+              <button id="open-workspace-terminal" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Terminal" aria-label="Open terminal" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4M11.5 16H19"/></svg>
               </button>
-              <button id="open-workspace-review" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Git Review" aria-label="打开 Git Review" aria-pressed="false">
+              <button id="open-workspace-review" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Git Review" aria-label="Open Git Review" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v11a3 3 0 0 0 3 3h7"/><circle cx="7" cy="4" r="2"/><circle cx="17" cy="18" r="2"/><path d="M12 7h7M15.5 3.5 19 7l-3.5 3.5"/></svg>
               </button>
             </div>
             <div class="menu-anchor">
-              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="更多会话操作" aria-expanded="false">•••</button>
+              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="More session actions" aria-expanded="false">•••</button>
               <div id="thread-more-menu" class="action-menu thread-action-menu hidden" role="menu">
-                <button id="rename-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span>重命名会话</span></button>
-                <button id="fork-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M8 5h3a5 5 0 0 1 5 5"/></svg><span>Fork 会话</span></button>
-                <button id="archive-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM3 4h18v4H3z"/><path d="M9 12h6"/></svg><span>归档会话</span></button>
-                <button id="delete-thread" class="danger-text" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg><span>删除会话</span></button>
+                <button id="rename-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span>Rename session</span></button>
+                <button id="fork-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M8 5h3a5 5 0 0 1 5 5"/></svg><span>Fork session</span></button>
+                <button id="archive-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM3 4h18v4H3z"/><path d="M9 12h6"/></svg><span>Archive session</span></button>
+                <button id="delete-thread" class="danger-text" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg><span>Delete session</span></button>
                 <span class="menu-separator"></span>
-                <button id="refresh-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg><span>重载</span></button>
-                <button id="project-environment-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5z"/><path d="m8.5 9 2 2-2 2M13 14h3"/></svg><span>项目环境</span><i id="project-environment-indicator" class="menu-status-dot hidden" aria-hidden="true"></i></button>
-                <button id="session-map-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6 5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/></svg><span>创建 Map</span></button>
-                <button id="router-settings-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.8-1L14.4 3h-4.8l-.4 3.1a7 7 0 0 0-1.8 1l-2.4-1-2 3.4L5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.8 1l.4 3.1h4.8l.4-3.1a7 7 0 0 0 1.8-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1z"/></svg><span>路由设置</span></button>
-                <button id="thread-info" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>会话信息</span></button>
+                <button id="refresh-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg><span>Reload session</span></button>
+                <button id="project-environment-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5z"/><path d="m8.5 9 2 2-2 2M13 14h3"/></svg><span>Project environment</span><i id="project-environment-indicator" class="menu-status-dot hidden" aria-hidden="true"></i></button>
+                <button id="session-map-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6 5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/></svg><span>Create Map</span></button>
+                <button id="router-settings-action" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.8-1L14.4 3h-4.8l-.4 3.1a7 7 0 0 0-1.8 1l-2.4-1-2 3.4L5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.8 1l.4 3.1h4.8l.4-3.1a7 7 0 0 0 1.8-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1z"/></svg><span>Router settings</span></button>
+                <button id="thread-info" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>Session information</span></button>
               </div>
             </div>
           </div>
@@ -109,27 +109,27 @@
 
         <section id="empty-workspace" class="empty-workspace">
           <div id="empty-mark" class="empty-mark">C</div>
-          <h2 id="empty-title">结构化 Codex 工作台</h2>
-          <p id="empty-description">消息、命令、文件修改、计划、审批和停止原因都直接来自 Codex App Server，不再解析终端字符。</p>
-          <button id="empty-new-thread" class="primary-button" type="button">创建第一个会话</button>
+          <h2 id="empty-title">Structured Codex workspace</h2>
+          <p id="empty-description">Messages, commands, file changes, plans, approvals, and stop reasons come directly from Codex App Server.</p>
+          <button id="empty-new-thread" class="primary-button" type="button">Create your first session</button>
         </section>
 
         <section id="native-workspace" class="native-workspace hidden">
-          <div id="native-error" class="native-error hidden"><strong id="native-error-title">Codex App Server 无法使用</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">重试</button></div>
+          <div id="native-error" class="native-error hidden"><strong id="native-error-title">Codex App Server unavailable</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">Retry</button></div>
           <div id="transcript" class="transcript" aria-live="polite"></div>
-          <nav id="turn-navigator" class="turn-navigator hidden" aria-label="当前会话的 Turn 导航"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
+          <nav id="turn-navigator" class="turn-navigator hidden" aria-label="Turn navigation for the current session"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
           <div id="selection-popover" class="selection-popover hidden">
-            <button id="selection-comment" type="button">批注</button>
-            <button id="selection-favorite" type="button">收藏</button>
+            <button id="selection-comment" type="button">Comments</button>
+            <button id="selection-favorite" type="button">Favorites</button>
           </div>
 
           <form id="composer-form" class="composer">
-            <div id="composer-menu" class="composer-menu hidden" role="listbox" aria-label="Codex 输入建议"></div>
+            <div id="composer-menu" class="composer-menu hidden" role="listbox" aria-label="Codex input suggestions"></div>
             <div id="composer-review-context" class="composer-review-context hidden">
               <span class="review-context-icon">⌁</span>
-              <span><strong id="composer-review-count">0 条批注</strong><small id="composer-review-source">等待加入消息</small></span>
-              <button id="composer-review-open" type="button">查看</button>
-              <button id="composer-review-insert" type="button">插入</button>
+              <span><strong id="composer-review-count">0 comments</strong><small id="composer-review-source">Waiting to be added</small></span>
+              <button id="composer-review-open" type="button">View</button>
+              <button id="composer-review-insert" type="button">Insert</button>
             </div>
             <textarea
               id="composer-input"
@@ -138,7 +138,7 @@
               spellcheck="false"
               aria-controls="composer-menu"
               aria-autocomplete="list"
-              placeholder="向 Codex 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell"
+              placeholder="Message Codex… @ files · $ skills · / commands · ! shell"
             ></textarea>
             <div class="composer-footer">
               <div class="composer-context">
@@ -148,118 +148,118 @@
                 </div>
               </div>
               <div class="composer-actions">
-                <button id="interrupt-turn" class="subtle-button hidden" type="button">停止</button>
-                <button id="send-message" class="primary-button" type="submit">发送</button>
+                <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
+                <button id="send-message" class="primary-button" type="submit">Send</button>
               </div>
             </div>
           </form>
         </section>
       </main>
 
-      <aside id="session-map-rail" class="session-map-rail hidden" aria-label="会话 Map">
-        <div id="session-map-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+      <aside id="session-map-rail" class="session-map-rail hidden" aria-label="Session Map">
+        <div id="session-map-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
         <header class="session-map-header">
           <div>
             <span class="eyebrow">SESSION MAP</span>
             <h2>Map</h2>
           </div>
           <div class="session-map-header-actions">
-            <span id="session-map-sync-state" class="session-map-sync-state" title="Map 同步状态"><i></i></span>
+            <span id="session-map-sync-state" class="session-map-sync-state" title="Map sync status"><i></i></span>
             <div class="menu-anchor">
-              <button id="session-map-more" class="icon-button" type="button" aria-label="Map 操作" aria-expanded="false">•••</button>
+              <button id="session-map-more" class="icon-button" type="button" aria-label="Map actions" aria-expanded="false">•••</button>
               <div id="session-map-menu" class="action-menu hidden" role="menu">
-                <button id="session-map-add-root" type="button" role="menuitem">添加</button>
-                <button id="session-map-ai-generate" type="button" role="menuitem">AI 生成</button>
-                <button id="session-map-edit-goal" type="button" role="menuitem">编辑目标</button>
-                <button id="session-map-undo" type="button" role="menuitem">撤销更新</button>
+                <button id="session-map-add-root" type="button" role="menuitem">Add</button>
+                <button id="session-map-ai-generate" type="button" role="menuitem">Generate with AI</button>
+                <button id="session-map-edit-goal" type="button" role="menuitem">Edit goal</button>
+                <button id="session-map-undo" type="button" role="menuitem">Undo update</button>
                 <span class="menu-separator"></span>
-                <button id="session-map-delete" class="danger-text" type="button" role="menuitem">删除 Map</button>
+                <button id="session-map-delete" class="danger-text" type="button" role="menuitem">Delete Map</button>
               </div>
             </div>
-            <button id="close-session-map" class="icon-button" type="button" aria-label="关闭 Map">×</button>
+            <button id="close-session-map" class="icon-button" type="button" aria-label="Close Map">×</button>
           </div>
         </header>
         <section class="session-map-goal">
-          <span>目标</span>
+          <span>Goal</span>
           <h3 id="session-map-goal"></h3>
           <p id="session-map-definition" class="hidden"></p>
         </section>
         <div id="session-map-trail" class="session-map-trail hidden"></div>
-        <nav id="session-map-tree" class="session-map-tree" aria-label="Map 内容"></nav>
+        <nav id="session-map-tree" class="session-map-tree" aria-label="Map contents"></nav>
         <div id="session-map-item-menu" class="session-map-item-menu action-menu hidden" role="menu">
-          <button data-map-item-action="current" type="button" role="menuitem">设为当前</button>
-          <button data-map-item-action="visited" type="button" role="menuitem">已浏览</button>
-          <button data-map-item-action="done" type="button" role="menuitem">完成</button>
-          <button data-map-item-action="paused" type="button" role="menuitem">暂停</button>
+          <button data-map-item-action="current" type="button" role="menuitem">Set current</button>
+          <button data-map-item-action="visited" type="button" role="menuitem">Visited</button>
+          <button data-map-item-action="done" type="button" role="menuitem">Done</button>
+          <button data-map-item-action="paused" type="button" role="menuitem">Pause</button>
           <span class="menu-separator"></span>
-          <button data-map-item-action="add-child" type="button" role="menuitem">添加子项</button>
-          <button data-map-item-action="edit" type="button" role="menuitem">编辑</button>
-          <button data-map-item-action="archive" class="danger-text" type="button" role="menuitem">移除</button>
+          <button data-map-item-action="add-child" type="button" role="menuitem">Add child</button>
+          <button data-map-item-action="edit" type="button" role="menuitem">Edit</button>
+          <button data-map-item-action="archive" class="danger-text" type="button" role="menuitem">Remove</button>
         </div>
         <footer class="session-map-footer">
-          <span id="session-map-progress">0 项</span>
+          <span id="session-map-progress">0 items</span>
           <span id="session-map-revision">rev 0</span>
         </footer>
       </aside>
 
-      <aside id="resources-rail" class="resources-rail hidden" aria-label="会话资源">
-        <div id="resources-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+      <aside id="resources-rail" class="resources-rail hidden" aria-label="Session resources">
+        <div id="resources-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
         <header class="resources-header">
           <div class="resources-heading">
             <span class="resources-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9.5 14.5-2 2a4 4 0 0 1-5.7-5.7l3-3a4 4 0 0 1 5.7 0"/><path d="m14.5 9.5 2-2a4 4 0 0 1 5.7 5.7l-3 3a4 4 0 0 1-5.7 0"/><path d="m8.5 15.5 7-7"/></svg></span>
-            <div><h2>资源 <span id="resources-count" class="annotation-count">0</span></h2><p id="resources-path" data-no-i18n></p></div>
+            <div><h2>Resources <span id="resources-count" class="annotation-count">0</span></h2><p id="resources-path" data-no-i18n></p></div>
           </div>
           <div class="resources-header-actions">
-            <button id="refresh-resources" class="icon-button artifact-action-icon" type="button" title="刷新资源" aria-label="刷新资源索引">
+            <button id="refresh-resources" class="icon-button artifact-action-icon" type="button" title="Refresh resources" aria-label="Refresh resource index">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg>
             </button>
-            <button id="close-resources" class="icon-button artifact-action-icon" type="button" title="关闭资源" aria-label="关闭资源">
+            <button id="close-resources" class="icon-button artifact-action-icon" type="button" title="Close resources" aria-label="Close resources">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
             </button>
           </div>
         </header>
         <div class="resources-toolbar">
-          <label class="resources-search"><span aria-hidden="true">⌕</span><input id="resources-search" type="search" placeholder="搜索 URL、文件、代码位置…" autocomplete="off" /></label>
-          <div id="resources-filters" class="resources-filters" role="tablist" aria-label="资源类型">
-            <button class="active" type="button" role="tab" data-resource-filter="all" aria-selected="true">全部 <span>0</span></button>
-            <button type="button" role="tab" data-resource-filter="web" aria-selected="false">网页 <span>0</span></button>
-            <button type="button" role="tab" data-resource-filter="file" aria-selected="false">文件 <span>0</span></button>
-            <button type="button" role="tab" data-resource-filter="code" aria-selected="false">代码 <span>0</span></button>
+          <label class="resources-search"><span aria-hidden="true">⌕</span><input id="resources-search" type="search" placeholder="Search URLs, files, and code locations…" autocomplete="off" /></label>
+          <div id="resources-filters" class="resources-filters" role="tablist" aria-label="Resource type">
+            <button class="active" type="button" role="tab" data-resource-filter="all" aria-selected="true">All <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="web" aria-selected="false">Web <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="file" aria-selected="false">Files <span>0</span></button>
+            <button type="button" role="tab" data-resource-filter="code" aria-selected="false">Code <span>0</span></button>
           </div>
         </div>
         <div class="resources-content">
-          <div id="resources-empty" class="resources-empty"><span class="resources-empty-mark" aria-hidden="true">⌁</span><strong>最后一个 Turn 中没有资源</strong><p>本轮正文中的网页、文件和代码位置会显示在这里。</p></div>
+          <div id="resources-empty" class="resources-empty"><span class="resources-empty-mark" aria-hidden="true">⌁</span><strong>No resources in the latest turn</strong><p>Web pages, files, and code locations from the latest turn appear here.</p></div>
           <div id="resources-list" class="resources-list hidden"></div>
         </div>
-        <footer class="resources-footer"><span><i></i><b id="resources-local-state">仅索引最后一个 Turn</b></span><span id="resources-summary">0 个资源 · 0 次引用</span></footer>
+        <footer class="resources-footer"><span><i></i><b id="resources-local-state">Latest turn only</b></span><span id="resources-summary">0 resources · 0 references</span></footer>
       </aside>
 
-      <aside id="artifact-rail" class="artifact-rail hidden" aria-label="文档审阅">
-        <div id="artifact-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+      <aside id="artifact-rail" class="artifact-rail hidden" aria-label="Document review">
+        <div id="artifact-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
         <header class="artifact-header">
           <div class="artifact-heading">
             <span class="artifact-file-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4M9 12h6M9 15.5h6"/></svg></span>
             <div><h2 id="artifact-title">Document</h2><p id="artifact-path"></p></div>
           </div>
           <div class="artifact-header-actions">
-            <button id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden" type="button" title="文档目录" aria-label="文档目录" aria-expanded="false">
+            <button id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden" type="button" title="Document outline" aria-label="Document outline" aria-expanded="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="7" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="17" r="1"/><path d="M9 7h10M9 12h7M9 17h9"/></svg>
             </button>
-            <button id="artifact-search-toggle" class="icon-button artifact-action-icon hidden" type="button" title="搜索文档" aria-label="搜索文档" aria-expanded="false">
+            <button id="artifact-search-toggle" class="icon-button artifact-action-icon hidden" type="button" title="Search document" aria-label="Search document" aria-expanded="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg>
             </button>
-            <div id="artifact-view-switch" class="segmented-control hidden" role="group" aria-label="文档视图">
-              <button id="artifact-preview" class="active" type="button">预览</button>
-              <button id="artifact-source" type="button">源码</button>
-              <button id="artifact-edit" type="button">编辑</button>
+            <div id="artifact-view-switch" class="segmented-control hidden" role="group" aria-label="Document view">
+              <button id="artifact-preview" class="active" type="button">Preview</button>
+              <button id="artifact-source" type="button">Source code</button>
+              <button id="artifact-edit" type="button">Edit</button>
             </div>
-            <button id="artifact-save" class="icon-button artifact-save hidden" type="button" title="保存" aria-label="保存">
+            <button id="artifact-save" class="icon-button artifact-save hidden" type="button" title="Save" aria-label="Save">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/></svg>
             </button>
-            <button id="refresh-artifact" class="icon-button artifact-action-icon" type="button" title="重新载入" aria-label="重新载入">
+            <button id="refresh-artifact" class="icon-button artifact-action-icon" type="button" title="Reload" aria-label="Reload">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg>
             </button>
-            <button id="close-artifact" class="icon-button artifact-action-icon" type="button" aria-label="关闭文档">
+            <button id="close-artifact" class="icon-button artifact-action-icon" type="button" aria-label="Close document">
               <svg class="artifact-close-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
               <svg class="artifact-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 6-6 6 6 6"/><path d="M9 12h9"/></svg>
             </button>
@@ -269,307 +269,307 @@
           <div id="artifact-search-toolbar" class="artifact-search-wrap" role="search">
             <label class="artifact-search">
               <span aria-hidden="true">⌕</span>
-              <input id="artifact-search-input" type="search" placeholder="搜索文档内容…" autocomplete="off" />
+              <input id="artifact-search-input" type="search" placeholder="Search document content…" autocomplete="off" />
             </label>
             <span id="artifact-search-summary" class="artifact-search-summary"></span>
             <div class="artifact-search-actions">
-              <button id="artifact-search-prev" type="button" title="上一个匹配" aria-label="上一个匹配">↑</button>
-              <button id="artifact-search-next" type="button" title="下一个匹配" aria-label="下一个匹配">↓</button>
+              <button id="artifact-search-prev" type="button" title="Previous match" aria-label="Previous match">↑</button>
+              <button id="artifact-search-next" type="button" title="Next match" aria-label="Next match">↓</button>
             </div>
           </div>
         </div>
-        <div id="artifact-loading" class="artifact-state hidden"><span class="artifact-spinner"></span><strong>正在打开文档…</strong></div>
-        <div id="artifact-error" class="artifact-state error hidden"><span>!</span><strong>无法打开文档</strong><p id="artifact-error-message"></p></div>
+        <div id="artifact-loading" class="artifact-state hidden"><span class="artifact-spinner"></span><strong>Opening document…</strong></div>
+        <div id="artifact-error" class="artifact-state error hidden"><span>!</span><strong>Unable to open document</strong><p id="artifact-error-message"></p></div>
         <div id="artifact-reader-shell" class="artifact-reader-shell hidden">
-          <button id="artifact-outline-backdrop" class="artifact-outline-backdrop" type="button" aria-label="关闭文档目录"></button>
-          <aside id="artifact-outline" class="artifact-outline hidden" aria-label="文档目录">
-            <header><div><strong>文档目录</strong><span id="artifact-outline-count">0</span></div><button id="artifact-outline-close" class="icon-button" type="button" title="关闭目录" aria-label="关闭目录">×</button></header>
-            <label class="artifact-outline-search"><span aria-hidden="true">⌕</span><input id="artifact-outline-filter" type="search" placeholder="筛选章节…" autocomplete="off" /></label>
-            <nav id="artifact-outline-list" class="artifact-outline-list" aria-label="章节"></nav>
-            <p id="artifact-outline-truncated" class="artifact-outline-truncated hidden">目录过长，仅显示前 2000 项</p>
+          <button id="artifact-outline-backdrop" class="artifact-outline-backdrop" type="button" aria-label="Close document outline"></button>
+          <aside id="artifact-outline" class="artifact-outline hidden" aria-label="Document outline">
+            <header><div><strong>Document outline</strong><span id="artifact-outline-count">0</span></div><button id="artifact-outline-close" class="icon-button" type="button" title="Close contents" aria-label="Close contents">×</button></header>
+            <label class="artifact-outline-search"><span aria-hidden="true">⌕</span><input id="artifact-outline-filter" type="search" placeholder="Filter sections…" autocomplete="off" /></label>
+            <nav id="artifact-outline-list" class="artifact-outline-list" aria-label="Chapters"></nav>
+            <p id="artifact-outline-truncated" class="artifact-outline-truncated hidden">The outline is truncated to 2,000 sections</p>
           </aside>
           <article id="artifact-content" class="artifact-content"></article>
         </div>
-        <footer class="artifact-footer"><span id="artifact-meta"></span><span id="artifact-hint">选择文字即可批注</span></footer>
+        <footer class="artifact-footer"><span id="artifact-meta"></span><span id="artifact-hint">Select text to comment</span></footer>
       </aside>
 
-      <aside id="workspace-tools-rail" class="workspace-tools-rail hidden" aria-label="项目工作区">
-        <div id="workspace-tools-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+      <aside id="workspace-tools-rail" class="workspace-tools-rail hidden" aria-label="Project workspace">
+        <div id="workspace-tools-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
         <header class="workspace-tools-header">
           <div class="workspace-tools-heading">
             <span class="workspace-tools-mark" aria-hidden="true">⌘</span>
             <div><h2 id="workspace-tools-title">Workspace</h2><p id="workspace-tools-path" data-no-i18n></p></div>
           </div>
-          <button id="close-workspace-tools" class="icon-button" type="button" aria-label="关闭项目工作区">×</button>
+          <button id="close-workspace-tools" class="icon-button" type="button" aria-label="Close project workspace">×</button>
         </header>
         <section id="workspace-files-pane" class="workspace-tool-pane workspace-files-pane">
           <div class="workspace-file-toolbar">
             <label><span aria-hidden="true">⌕</span><input id="workspace-file-filter" type="search" placeholder="Filter files" autocomplete="off" /></label>
-            <button id="workspace-files-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新文件树">↻</button>
+            <button id="workspace-files-refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh file tree">↻</button>
           </div>
           <div class="workspace-root-row"><span class="workspace-root-dot"></span><strong id="workspace-root-name" data-no-i18n></strong><small>SESSION ROOT</small></div>
-          <div id="workspace-file-tree" class="workspace-file-tree" role="tree" aria-label="当前会话目录"></div>
-          <footer class="workspace-scope-note"><span>⌁</span><p><strong>Scoped workspace</strong><small>仅显示当前会话目录内的文件</small></p></footer>
+          <div id="workspace-file-tree" class="workspace-file-tree" role="tree" aria-label="Current session directory"></div>
+          <footer class="workspace-scope-note"><span>⌁</span><p><strong>Scoped workspace</strong><small>Only files inside the current session directory are shown</small></p></footer>
         </section>
         <section id="workspace-terminal-pane" class="workspace-tool-pane workspace-terminal-pane hidden">
           <div id="workspace-terminal-disconnected" class="workspace-terminal-disconnected">
             <span class="workspace-terminal-empty-mark" aria-hidden="true">›_</span>
-            <strong>终端尚未启动</strong>
-            <p>启动后将以当前会话目录作为工作目录。</p>
-            <button id="start-workspace-terminal" class="workspace-terminal-start" type="button">启动终端</button>
+            <strong>Terminal not started</strong>
+            <p>When started, it will use the current session directory as its working directory.</p>
+            <button id="start-workspace-terminal" class="workspace-terminal-start" type="button">Start terminal</button>
           </div>
           <div id="workspace-terminal-session" class="workspace-terminal-session hidden">
             <header class="workspace-terminal-toolbar">
               <div><span class="terminal-live-dot"></span><strong id="workspace-terminal-shell">shell</strong><small id="workspace-terminal-cwd" data-no-i18n></small></div>
-              <div><button id="clear-workspace-terminal" class="icon-button" type="button" title="清空" aria-label="清空终端">⌫</button><button id="stop-workspace-terminal" class="icon-button workspace-terminal-stop" type="button" title="停止终端" aria-label="停止终端"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 7.5h11M9 7.5V5h6v2.5M8 7.5l1 11h6l1-11"/></svg></button></div>
+              <div><button id="clear-workspace-terminal" class="icon-button" type="button" title="Clear" aria-label="Clear terminal">⌫</button><button id="stop-workspace-terminal" class="icon-button workspace-terminal-stop" type="button" title="Stop terminal" aria-label="Stop terminal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 7.5h11M9 7.5V5h6v2.5M8 7.5l1 11h6l1-11"/></svg></button></div>
             </header>
-            <div id="workspace-terminal-screen" class="workspace-terminal-screen" aria-label="终端"></div>
+            <div id="workspace-terminal-screen" class="workspace-terminal-screen" aria-label="Terminal"></div>
           </div>
         </section>
         <section id="workspace-review-pane" class="workspace-tool-pane workspace-review-pane hidden">
           <div class="workspace-review-toolbar">
-            <label><span aria-hidden="true">⌕</span><input id="workspace-review-filter" type="search" placeholder="筛选变更文件" autocomplete="off" /></label>
-            <button id="workspace-review-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新 Git 变更">↻</button>
+            <label><span aria-hidden="true">⌕</span><input id="workspace-review-filter" type="search" placeholder="Filter changed files" autocomplete="off" /></label>
+            <button id="workspace-review-refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh Git changes">↻</button>
           </div>
-          <div class="workspace-review-repository"><span class="workspace-root-dot"></span><strong id="workspace-review-branch" data-no-i18n>Git</strong><small id="workspace-review-count">0 个变更</small></div>
-          <div id="workspace-review-scopes" class="workspace-review-scopes" role="tablist" aria-label="Git 变更范围">
-            <button class="active" type="button" role="tab" data-review-filter="all" aria-selected="true">全部 <span>0</span></button>
-            <button type="button" role="tab" data-review-filter="unstaged" aria-selected="false">未暂存 <span>0</span></button>
-            <button type="button" role="tab" data-review-filter="staged" aria-selected="false">已暂存 <span>0</span></button>
+          <div class="workspace-review-repository"><span class="workspace-root-dot"></span><strong id="workspace-review-branch" data-no-i18n>Git</strong><small id="workspace-review-count">0 changes</small></div>
+          <div id="workspace-review-scopes" class="workspace-review-scopes" role="tablist" aria-label="Git change scope">
+            <button class="active" type="button" role="tab" data-review-filter="all" aria-selected="true">All <span>0</span></button>
+            <button type="button" role="tab" data-review-filter="unstaged" aria-selected="false">Unstaged <span>0</span></button>
+            <button type="button" role="tab" data-review-filter="staged" aria-selected="false">Staged <span>0</span></button>
           </div>
-          <div id="workspace-review-files" class="workspace-review-files" aria-label="Git 变更文件"></div>
+          <div id="workspace-review-files" class="workspace-review-files" aria-label="Git changed files"></div>
           <header id="workspace-review-diff-header" class="workspace-review-diff-header hidden">
-            <div><strong id="workspace-review-diff-path" data-no-i18n></strong><div id="workspace-review-diff-scopes" class="workspace-review-diff-scopes"><button type="button" data-diff-scope="unstaged">工作区</button><button type="button" data-diff-scope="staged">暂存区</button></div></div>
-            <div><button id="workspace-review-open-file" class="subtle-button compact" type="button">打开文件</button><button id="workspace-review-action" class="primary-button compact" type="button">暂存文件</button></div>
+            <div><strong id="workspace-review-diff-path" data-no-i18n></strong><div id="workspace-review-diff-scopes" class="workspace-review-diff-scopes"><button type="button" data-diff-scope="unstaged">Working tree</button><button type="button" data-diff-scope="staged">Index</button></div></div>
+            <div><button id="workspace-review-open-file" class="subtle-button compact" type="button">Open file</button><button id="workspace-review-action" class="primary-button compact" type="button">Stage file</button></div>
           </header>
-          <div id="workspace-review-diff" class="workspace-review-diff"><div class="workspace-review-diff-empty"><span>±</span><strong>选择文件查看 Diff</strong></div></div>
-          <footer class="workspace-review-safety"><span>✓</span><p><strong>安全审阅</strong><small>支持暂存与取消暂存；不会丢弃工作区修改</small></p></footer>
+          <div id="workspace-review-diff" class="workspace-review-diff"><div class="workspace-review-diff-empty"><span>±</span><strong>Select a file to view its diff</strong></div></div>
+          <footer class="workspace-review-safety"><span>✓</span><p><strong>Safe review</strong><small>Stage or unstage files without discarding working-tree changes</small></p></footer>
         </section>
       </aside>
 
       <aside id="annotation-rail" class="annotation-rail hidden">
-        <div id="annotation-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
-        <header><div><span class="eyebrow">REVIEW DRAFT</span><h2>回覆草稿 <span id="annotation-count" class="annotation-count">0</span></h2></div><button id="close-annotation-rail" class="icon-button">×</button></header>
-        <div class="annotation-content"><div id="annotation-empty" class="annotation-empty"><strong>还没有批注</strong><p>在结构化输出中选择文字，再点击“添加批注”。</p></div><div id="annotation-list" class="annotation-list"></div></div>
+        <div id="annotation-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
+        <header><div><span class="eyebrow">REVIEW DRAFT</span><h2>Reply draft <span id="annotation-count" class="annotation-count">0</span></h2></div><button id="close-annotation-rail" class="icon-button">×</button></header>
+        <div class="annotation-content"><div id="annotation-empty" class="annotation-empty"><strong>No comments yet</strong><p>Select text in the structured output, then choose Comments → Add.</p></div><div id="annotation-list" class="annotation-list"></div></div>
         <footer class="annotation-footer">
-          <label for="annotation-additional">整体补充（可选）</label>
-          <textarea id="annotation-additional" rows="3" placeholder="例如：请先逐项回应，再继续修改。"></textarea>
-          <div class="annotation-footer-actions"><button id="clear-annotations" class="subtle-button">清空</button><button id="insert-annotations" class="primary-button">插入输入框</button></div>
-          <small>只插入输入框，不会自动发送。</small>
+          <label for="annotation-additional">Overall note (optional)</label>
+          <textarea id="annotation-additional" rows="3" placeholder="For example: respond to each point before continuing."></textarea>
+          <div class="annotation-footer-actions"><button id="clear-annotations" class="subtle-button">Clear</button><button id="insert-annotations" class="primary-button">Insert into composer</button></div>
+          <small>Only inserts into the composer; it does not send.</small>
         </footer>
       </aside>
 
-      <aside id="favorites-rail" class="favorites-rail hidden" aria-label="全局收藏">
-        <div id="favorites-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧区域宽度" tabindex="0"><span></span></div>
+      <aside id="favorites-rail" class="favorites-rail hidden" aria-label="Global favorites">
+        <div id="favorites-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
         <header>
-          <div><span class="eyebrow">KNOWLEDGE LIBRARY</span><h2><span id="favorites-title">全局收藏</span> <span id="favorites-count" class="annotation-count">0</span></h2></div>
+          <div><span class="eyebrow">KNOWLEDGE LIBRARY</span><h2><span id="favorites-title">Global favorites</span> <span id="favorites-count" class="annotation-count">0</span></h2></div>
           <div class="favorites-header-actions">
-            <button id="export-favorites" class="icon-button" type="button" title="导出收藏" aria-label="导出收藏">
+            <button id="export-favorites" class="icon-button" type="button" title="Export favorites" aria-label="Export favorites">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 17v2.5h14V17"/></svg>
             </button>
-            <button id="close-favorites" class="icon-button" type="button" aria-label="关闭收藏">×</button>
+            <button id="close-favorites" class="icon-button" type="button" aria-label="Close favorites">×</button>
           </div>
         </header>
         <div class="favorites-search-wrap">
-          <label class="favorites-search"><span>⌕</span><input id="favorites-search" type="search" placeholder="搜索标题、正文、问题、标签…" /></label>
-          <p id="favorites-search-summary">跨会话保存的结构化 AI 回复</p>
+          <label class="favorites-search"><span>⌕</span><input id="favorites-search" type="search" placeholder="Search titles, content, questions, or tags…" /></label>
+          <p id="favorites-search-summary">Structured AI responses saved across sessions</p>
         </div>
         <div id="favorites-content" class="favorites-content">
           <div id="favorites-empty" class="favorites-empty">
             <span class="favorites-empty-mark">☆</span>
-            <strong>还没有收藏</strong>
-            <p>将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。</p>
+            <strong>No favorites yet</strong>
+            <p>Hover over an AI response and use its favorite button.</p>
           </div>
           <div id="favorites-list" class="favorites-list hidden"></div>
         </div>
-        <footer class="favorites-footer">收藏保存在本机 SQLite 数据库，与会话历史相互独立。</footer>
+        <footer class="favorites-footer">Favorites are stored in a local SQLite database independently from session history.</footer>
       </aside>
     </div>
 
     <dialog id="session-map-dialog" class="dialog session-map-dialog">
       <form id="session-map-form">
-        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>创建 Map</h2><p>Map 是可选的。创建后，AI 才会根据聊天进展维护它。</p></div><button id="close-session-map-dialog" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>Create Map</h2><p>A Map is optional. After you create one, AI can maintain it as the conversation progresses.</p></div><button id="close-session-map-dialog" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
-          <label class="field full"><span>当前目标</span><textarea id="session-map-create-goal" required rows="3" maxlength="4096" placeholder="一句话说明你希望这个会话最终帮助你完成什么"></textarea></label>
-          <label class="field"><span>结构</span><select id="session-map-structure"><option value="hierarchy">层级</option><option value="path">路径</option><option value="flow">流程</option><option value="blank">空白</option></select></label>
-          <label class="field full"><span>完成定义（可选）</span><textarea id="session-map-create-done" rows="2" maxlength="8192" placeholder="什么情况下可以认为目标完成"></textarea></label>
-          <p class="session-map-cost-note">自动同步复用当前 Turn，不增加模型请求；首次生成、手动 AI 补全和目标建议会使用该 Map 的同一个临时 Worker。</p>
+          <label class="field full"><span>Current goal</span><textarea id="session-map-create-goal" required rows="3" maxlength="4096" placeholder="In one sentence, what should this session ultimately help you accomplish?"></textarea></label>
+          <label class="field"><span>Structure</span><select id="session-map-structure"><option value="hierarchy">Hierarchy</option><option value="path">Path</option><option value="flow">Flow</option><option value="blank">Blank</option></select></label>
+          <label class="field full"><span>Completion definition (optional)</span><textarea id="session-map-create-done" rows="2" maxlength="8192" placeholder="What must be true for this goal to be complete?"></textarea></label>
+          <p class="session-map-cost-note">Automatic synchronization reuses the current turn and adds no model request. Initial generation, manual AI completion, and goal suggestions share one temporary worker for this Map.</p>
           <div id="session-map-create-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="cancel-session-map" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">创建</button></footer>
+        <footer class="dialog-footer"><button id="cancel-session-map" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Create</button></footer>
       </form>
     </dialog>
 
     <dialog id="session-map-goal-dialog" class="dialog session-map-dialog">
       <form id="session-map-goal-form">
-        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>编辑目标</h2><p>目标改变后，从下一次对话开始使用新目标。</p></div><button id="close-session-map-goal" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>Edit goal</h2><p>The new goal takes effect from the next interaction.</p></div><button id="close-session-map-goal" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
-          <label class="field full"><span>当前目标</span><textarea id="session-map-goal-input" required rows="3" maxlength="4096"></textarea></label>
-          <label class="field full"><span>完成定义（可选）</span><textarea id="session-map-done-input" rows="2" maxlength="8192"></textarea></label>
+          <label class="field full"><span>Current goal</span><textarea id="session-map-goal-input" required rows="3" maxlength="4096"></textarea></label>
+          <label class="field full"><span>Completion definition (optional)</span><textarea id="session-map-done-input" rows="2" maxlength="8192"></textarea></label>
           <div id="session-map-goal-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="session-map-suggest-goal" class="subtle-button push-left" type="button">AI 建议</button><button id="cancel-session-map-goal" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+        <footer class="dialog-footer"><button id="session-map-suggest-goal" class="subtle-button push-left" type="button">AI suggestion</button><button id="cancel-session-map-goal" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 
     <dialog id="session-map-item-dialog" class="dialog session-map-item-dialog">
       <form id="session-map-item-form">
-        <header class="dialog-header"><div><span class="eyebrow">MAP ITEM</span><h2 id="session-map-item-dialog-title">添加项目</h2><p>所有模板都使用相同的通用项目结构。</p></div><button id="close-session-map-item" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">MAP ITEM</span><h2 id="session-map-item-dialog-title">Add item</h2><p>Every template uses the same generic item structure.</p></div><button id="close-session-map-item" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
           <input id="session-map-item-id" type="hidden" />
-          <label class="field full"><span>名称</span><input id="session-map-item-title" required maxlength="512" /></label>
-          <label class="field"><span>类型</span><input id="session-map-item-kind" maxlength="64" value="item" placeholder="item" /></label>
-          <label class="field"><span>父级</span><select id="session-map-item-parent"><option value="">顶层</option></select></label>
-          <label class="field full"><span>摘要（可选）</span><textarea id="session-map-item-summary" rows="3" maxlength="4096"></textarea></label>
+          <label class="field full"><span>Name</span><input id="session-map-item-title" required maxlength="512" /></label>
+          <label class="field"><span>Kind</span><input id="session-map-item-kind" maxlength="64" value="item" placeholder="item" /></label>
+          <label class="field"><span>Parent</span><select id="session-map-item-parent"><option value="">Top level</option></select></label>
+          <label class="field full"><span>Summary (optional)</span><textarea id="session-map-item-summary" rows="3" maxlength="4096"></textarea></label>
           <div id="session-map-item-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="cancel-session-map-item" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+        <footer class="dialog-footer"><button id="cancel-session-map-item" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
       <form id="annotation-form">
-        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2>批注选中内容</h2><p id="annotation-source-hint">批注会保留原位置，发送时交给当前会话处理。</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>你的意见（可选）</span><textarea id="annotation-comment" rows="5" placeholder="说明问题和期望调整，也可以直接将选中内容加入草稿。"></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
-        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">加入草稿</button></footer>
+        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2>Comment on selection</h2><p id="annotation-source-hint">The original location is preserved and sent to the current session.</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>Your comment (optional)</span><textarea id="annotation-comment" rows="5" placeholder="Describe the issue and expected change, or add the selection directly to the draft."></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
+        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Add to draft</button></footer>
       </form>
     </dialog>
 
     <dialog id="thread-info-dialog" class="dialog thread-info-dialog">
-      <header class="dialog-header"><div><span class="eyebrow">SESSION</span><h2>会话信息</h2><p>起始问题和会话职责独立保存，重命名不会覆盖。</p></div><button id="close-thread-info" class="icon-button" type="button">×</button></header>
+      <header class="dialog-header"><div><span class="eyebrow">SESSION</span><h2>Session information</h2><p>The opening question and session responsibility are saved independently and are not overwritten by renaming.</p></div><button id="close-thread-info" class="icon-button" type="button">×</button></header>
       <div id="thread-info-content" class="dialog-body"></div>
-      <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button push-left" type="button">复制起始问题</button><button id="done-thread-info" class="primary-button" type="button">保存</button></footer>
+      <footer class="dialog-footer"><button id="copy-opening-message" class="subtle-button push-left" type="button">Copy opening question</button><button id="done-thread-info" class="primary-button" type="button">Save</button></footer>
     </dialog>
 
     <dialog id="router-dialog" class="dialog router-dialog">
       <form id="router-form">
-        <header class="dialog-header"><div><span class="eyebrow">THREAD ROUTER</span><h2>会话路由</h2><p>在一个固定入口发送请求，由所选后端判断并派发到最合适的目标会话。</p></div><button id="close-router-dialog" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">THREAD ROUTER</span><h2>Thread router</h2><p>Send requests through one fixed entry point; the selected backend chooses and dispatches each one to the best target session.</p></div><button id="close-router-dialog" class="icon-button" type="button">×</button></header>
         <div class="router-dialog-body">
-          <section class="managed-router"><span class="router-card-mark">R</span><div><strong>Thread Router</strong><small id="managed-router-status">由 Studio 自动创建并持续复用</small></div><span>系统会话</span></section>
-          <div class="router-section-heading"><div><strong>Fallback 目标</strong><small>最多配置 3 个兜底会话；其他所有会话自动作为普通目标。</small></div><button id="router-add-fallback" class="subtle-button compact" type="button">添加 fallback</button></div>
+          <section class="managed-router"><span class="router-card-mark">R</span><div><strong>Thread Router</strong><small id="managed-router-status">Created and continuously reused by Studio</small></div><span>System session</span></section>
+          <div class="router-section-heading"><div><strong>Fallback targets</strong><small>Configure up to 3 fallback sessions; every other session is automatically a regular target.</small></div><button id="router-add-fallback" class="subtle-button compact" type="button">Add fallback</button></div>
           <div id="router-fallbacks" class="router-fallbacks"></div>
           <div id="router-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="cancel-router" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存</button></footer>
+        <footer class="dialog-footer"><button id="cancel-router" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 
     <dialog id="favorite-dialog" class="dialog favorite-dialog">
       <form id="favorite-form">
         <header class="dialog-header">
-          <div><span class="eyebrow">SAVE TO LIBRARY</span><h2 id="favorite-dialog-title">收藏这条回复</h2><p id="favorite-source-label">保留结构化消息来源，可随时返回原会话。</p></div>
-          <button id="close-favorite-dialog" class="icon-button" type="button" aria-label="关闭">×</button>
+          <div><span class="eyebrow">SAVE TO LIBRARY</span><h2 id="favorite-dialog-title">Favorite this response</h2><p id="favorite-source-label">Keeps the structured source so you can return to the original message.</p></div>
+          <button id="close-favorite-dialog" class="icon-button" type="button" aria-label="Close">×</button>
         </header>
         <div class="favorite-dialog-body">
           <section class="favorite-preview">
-            <div class="favorite-preview-heading"><span id="favorite-preview-label">AI 回复</span><small id="favorite-answer-length"></small></div>
+            <div class="favorite-preview-heading"><span id="favorite-preview-label">AI response</span><small id="favorite-answer-length"></small></div>
             <div id="favorite-answer-preview" class="favorite-answer-preview markdown-body"></div>
           </section>
           <label id="favorite-question-option" class="favorite-question-option">
             <input id="favorite-include-question" type="checkbox" checked />
-            <span><strong>同时保存这次提问</strong><small>已根据同一 Turn 自动关联，无需手动选择。</small></span>
+            <span><strong>Also save this question</strong><small>Automatically linked from the same turn; no manual selection needed.</small></span>
           </label>
           <div id="favorite-question-preview" class="favorite-question-preview"></div>
           <div class="favorite-fields">
-            <label class="field full"><span>标题</span><input id="favorite-title" required maxlength="200" placeholder="为这条内容取一个容易搜索的标题" /></label>
-            <label class="field full"><span>标签</span><input id="favorite-tags" maxlength="1000" placeholder="架构, Rust, 值得复用" /><small>使用逗号分隔，最多 20 个。</small></label>
-            <label class="field full"><span>笔记（可选）</span><textarea id="favorite-note" rows="3" maxlength="16000" placeholder="为什么值得收藏？以后准备怎么使用？"></textarea></label>
+            <label class="field full"><span>Title</span><input id="favorite-title" required maxlength="200" placeholder="Give this content an easy-to-search title" /></label>
+            <label class="field full"><span>Tags</span><input id="favorite-tags" maxlength="1000" placeholder="architecture, Rust, reusable" /><small>Separate with commas; up to 20 tags.</small></label>
+            <label class="field full"><span>Note (optional)</span><textarea id="favorite-note" rows="3" maxlength="16000" placeholder="Why is this useful, and how will you use it?"></textarea></label>
             <div id="favorite-error" class="form-error hidden"></div>
           </div>
         </div>
-        <footer class="dialog-footer"><button id="cancel-favorite" class="subtle-button" type="button">取消</button><button id="save-favorite" class="primary-button" type="submit">保存到收藏</button></footer>
+        <footer class="dialog-footer"><button id="cancel-favorite" class="subtle-button" type="button">Cancel</button><button id="save-favorite" class="primary-button" type="submit">Save favorite</button></footer>
       </form>
     </dialog>
 
     <dialog id="favorite-detail-dialog" class="dialog favorite-detail-dialog">
       <header class="dialog-header favorite-detail-header">
-        <div><span id="favorite-detail-backend" class="favorite-backend-pill">CODEX</span><h2 id="favorite-detail-title">收藏详情</h2><p id="favorite-detail-source"></p></div>
-        <button id="close-favorite-detail" class="icon-button" type="button" aria-label="关闭">×</button>
+        <div><span id="favorite-detail-backend" class="favorite-backend-pill">CODEX</span><h2 id="favorite-detail-title">Favorite details</h2><p id="favorite-detail-source"></p></div>
+        <button id="close-favorite-detail" class="icon-button" type="button" aria-label="Close">×</button>
       </header>
       <div class="favorite-detail-body">
         <section id="favorite-detail-question-section" class="favorite-detail-section">
-          <header><span>你的问题</span></header>
+          <header><span>Your question</span></header>
           <div id="favorite-detail-question" class="favorite-question-full"></div>
         </section>
         <section class="favorite-detail-section answer">
-          <header><span>AI 回复</span></header>
+          <header><span>AI response</span></header>
           <div id="favorite-detail-answer" class="markdown-body"></div>
         </section>
-        <section id="favorite-detail-note-section" class="favorite-detail-note hidden"><span>收藏笔记</span><p id="favorite-detail-note"></p></section>
+        <section id="favorite-detail-note-section" class="favorite-detail-note hidden"><span>Favorite note</span><p id="favorite-detail-note"></p></section>
         <div id="favorite-detail-tags" class="favorite-tags"></div>
       </div>
       <footer class="dialog-footer favorite-detail-actions">
-        <button id="delete-favorite" class="subtle-button danger-text" type="button">删除</button>
+        <button id="delete-favorite" class="subtle-button danger-text" type="button">Delete</button>
         <span></span>
-        <button id="copy-favorite" class="subtle-button" type="button">复制内容</button>
-        <button id="edit-favorite" class="subtle-button" type="button">编辑</button>
-        <button id="open-favorite-source" class="primary-button" type="button">返回原消息</button>
+        <button id="copy-favorite" class="subtle-button" type="button">Copy content</button>
+        <button id="edit-favorite" class="subtle-button" type="button">Edit</button>
+        <button id="open-favorite-source" class="primary-button" type="button">Return to original message</button>
       </footer>
     </dialog>
 
     <dialog id="new-thread-dialog" class="dialog">
       <form id="new-thread-form">
-        <header class="dialog-header"><div><span id="new-thread-eyebrow" class="eyebrow">NEW AGENT THREAD</span><h2 id="new-thread-title">创建会话</h2><p id="new-thread-description">选择后端，并由其原生服务创建和持久化会话。</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span id="new-thread-eyebrow" class="eyebrow">NEW AGENT THREAD</span><h2 id="new-thread-title">Create session</h2><p id="new-thread-description">Choose a backend; its native service will create and persist the session.</p></div><button id="close-new-thread" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
-          <label class="field full"><span>AI 后端</span><select id="new-thread-backend"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select></label>
-          <label class="field full"><span>会话名称（可选）</span><input id="new-thread-name" placeholder="例如：实现 Codex 原生界面" /></label>
-          <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small id="new-thread-cwd-help">必须是本机绝对路径。</small></label>
-          <label class="field"><span>模型（可选）</span><input id="new-thread-model" list="new-thread-model-options" placeholder="使用 Codex 默认模型" /><datalist id="new-thread-model-options"></datalist><small id="new-thread-model-help">Models come from the selected backend and are never mixed with another backend.</small></label>
-          <label id="new-thread-approval-field" class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
-          <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspace-write">项目目录可写</option><option value="read-only">只读</option><option value="danger-full-access">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
+          <label class="field full"><span>AI backend</span><select id="new-thread-backend"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select></label>
+          <label class="field full"><span>Session name (optional)</span><input id="new-thread-name" placeholder="For example: implement a native Codex UI" /></label>
+          <label class="field full"><span>Project directory</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small id="new-thread-cwd-help">Must be an absolute local path.</small></label>
+          <label class="field"><span>Model (optional)</span><input id="new-thread-model" list="new-thread-model-options" placeholder="Use the Codex default model" /><datalist id="new-thread-model-options"></datalist><small id="new-thread-model-help">Models come from the selected backend and are never mixed with another backend.</small></label>
+          <label id="new-thread-approval-field" class="field"><span>Approval policy</span><select id="new-thread-approval"><option value="on-request">Ask when needed</option><option value="never">Never ask</option><option value="untrusted">Ask for untrusted commands</option></select><small class="backend-capability-note hidden">OpenCode does not currently support this launch option.</small></label>
+          <label id="new-thread-sandbox-field" class="field full"><span>Sandbox</span><select id="new-thread-sandbox"><option value="workspace-write">Workspace write</option><option value="read-only">Read only</option><option value="danger-full-access">Full access</option></select><small class="backend-capability-note hidden">OpenCode does not currently support this launch option.</small></label>
           <div id="new-thread-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="cancel-new-thread" class="subtle-button" type="button">取消</button><button id="create-thread" class="primary-button" type="submit">创建并打开</button></footer>
+        <footer class="dialog-footer"><button id="cancel-new-thread" class="subtle-button" type="button">Cancel</button><button id="create-thread" class="primary-button" type="submit">Create and open</button></footer>
       </form>
     </dialog>
 
     <dialog id="rename-thread-dialog" class="dialog small-dialog">
       <form id="rename-thread-form">
-        <header class="dialog-header"><div><span class="eyebrow">RENAME THREAD</span><h2>重命名会话</h2><p id="rename-thread-description">名称由 Codex 持久化，并显示在所有原生客户端中。</p></div><button id="close-rename-thread" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body"><label class="field full"><span>会话名称</span><input id="rename-thread-name" required maxlength="200" /></label><div id="rename-thread-error" class="form-error hidden"></div></div>
-        <footer class="dialog-footer"><button id="cancel-rename-thread" class="subtle-button" type="button">取消</button><button class="primary-button" type="submit">保存名称</button></footer>
+        <header class="dialog-header"><div><span class="eyebrow">RENAME THREAD</span><h2>Rename session</h2><p id="rename-thread-description">The name is persisted by Codex and shown in all native clients.</p></div><button id="close-rename-thread" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body"><label class="field full"><span>Session name</span><input id="rename-thread-name" required maxlength="200" /></label><div id="rename-thread-error" class="form-error hidden"></div></div>
+        <footer class="dialog-footer"><button id="cancel-rename-thread" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save name</button></footer>
       </form>
     </dialog>
 
     <dialog id="settings-dialog" class="dialog settings-dialog">
       <form id="settings-form">
-        <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>Studio 设置</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>Studio settings</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
-          <label class="field"><span>语言</span><select id="language-select"><option value="system">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></label>
-          <label class="field"><span>主题</span><select id="theme-select"><option value="light">浅色</option><option value="dark">深色</option></select></label>
-          <label class="field"><span>内容宽度</span><select id="content-width"><option value="comfortable">舒适 · 960px</option><option value="wide">宽屏 · 1280px</option><option value="full">全宽 · 自适应</option></select></label>
-          <label class="field full"><span>界面字体</span><input id="ui-font-family" /></label>
-          <label class="field full"><span>工作区字体</span><input id="workspace-font-family" /></label>
-          <label class="field full"><span>代码、Diff 与终端字体</span><input id="code-font-family" /></label>
-          <label class="field"><span>界面字重</span><select id="ui-font-weight"><option value="400">常规 400</option><option value="500">中等 500</option><option value="600">较粗 600</option></select></label>
-          <label class="field"><span>工作区字号</span><input id="workspace-font-size" type="number" min="11" max="20" /></label>
-          <label class="field"><span>代码字重</span><select id="code-font-weight"><option value="400">常规 400</option><option value="500">中等 500</option><option value="600">较粗 600</option></select></label>
-          <label class="field"><span>代码、Diff 与终端字号</span><input id="code-font-size" type="number" min="11" max="20" /></label>
-          <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>增强文字对比度</strong><small>加深次要文字和代码输出</small></span></label>
-          <label class="check-field"><input id="desktop-notifications" type="checkbox" /><span><strong>桌面通知</strong><small>窗口不活跃时通知任务完成和等待输入</small></span></label>
+          <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
+          <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          <label class="field"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
+          <label class="field full"><span>UI font</span><input id="ui-font-family" /></label>
+          <label class="field full"><span>Workspace font</span><input id="workspace-font-family" /></label>
+          <label class="field full"><span>Code, diff, and terminal font</span><input id="code-font-family" /></label>
+          <label class="field"><span>UI weight</span><select id="ui-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+          <label class="field"><span>Workspace size</span><input id="workspace-font-size" type="number" min="11" max="20" /></label>
+          <label class="field"><span>Code weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+          <label class="field"><span>Code, diff, and terminal size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
+          <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
+          <label class="check-field"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
           <section id="wsl-settings" class="settings-section wsl-settings-card full hidden">
             <header class="wsl-settings-header">
-              <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>在 WSL2 中运行 Codex 与 OpenCode，并使用 Linux 环境中的配置和凭证。</small></div></div>
-              <span class="wsl-restart-badge">重启后生效</span>
+              <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>Run Codex and OpenCode in WSL2 using the Linux environment configuration and credentials.</small></div></div>
+              <span class="wsl-restart-badge">Applies after restart</span>
             </header>
             <div class="wsl-settings-layout">
               <section class="wsl-environment-card">
-                <header><strong>Linux 运行环境</strong><small>留空时使用系统默认 Distribution 和用户。</small></header>
+                <header><strong>Linux runtime</strong><small>Leave blank to use the system default distribution and user.</small></header>
                 <div class="wsl-identity-grid">
-                  <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="默认 WSL Distribution" /></label>
-                  <label class="field"><span>Linux 用户</span><input id="wsl-user" maxlength="128" placeholder="Distribution 默认用户" /></label>
+                  <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="Default WSL distribution" /></label>
+                  <label class="field"><span>Linux user</span><input id="wsl-user" maxlength="128" placeholder="Distribution default user" /></label>
                 </div>
               </section>
               <section class="wsl-command-list">
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex 命令</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>WSL 内的命令名或绝对路径</small></label>
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode 命令</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>WSL 内的命令名或绝对路径</small></label>
+                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex command</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>Command name or absolute path inside WSL</small></label>
+                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode command</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>Command name or absolute path inside WSL</small></label>
               </section>
             </div>
           </section>
-          <label class="field full"><span>批注提示词模板</span><textarea id="annotation-template" rows="7"></textarea><small>必须包含 <code>{{annotations}}</code>；可选 <code>{{additional}}</code>。</small></label>
+          <label class="field full"><span>Comment prompt template</span><textarea id="annotation-template" rows="7"></textarea><small>Must contain <code>{{annotations}}</code>; optional <code>{{additional}}</code>.</small></label>
           <div id="settings-error" class="form-error hidden"></div>
         </div>
-        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button" type="button">恢复默认</button><button class="primary-button" type="submit">保存</button></footer>
+        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button" type="button">Restore defaults</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 
@@ -578,19 +578,19 @@
         <header class="dialog-header environment-dialog-header">
           <div class="environment-dialog-heading">
             <span class="environment-dialog-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h14v15H5z"/><path d="m8.5 9 2 2-2 2M13 14h3"/></svg></span>
-            <div><span class="eyebrow">PROJECT ENVIRONMENT</span><h2>项目环境</h2><p>为这个项目的 Agent 与工具提供一致、可控的运行环境。</p></div>
+            <div><span class="eyebrow">PROJECT ENVIRONMENT</span><h2>Project environment</h2><p>Give this project a consistent, controlled runtime for agents and tools.</p></div>
           </div>
-          <button id="close-environment-dialog" class="icon-button" type="button" aria-label="关闭项目环境">×</button>
+          <button id="close-environment-dialog" class="icon-button" type="button" aria-label="Close project environment">×</button>
         </header>
 
         <div class="environment-dialog-body">
           <section class="environment-project-card">
             <span id="environment-project-monogram" class="environment-project-monogram" aria-hidden="true">P</span>
-            <div class="environment-project-copy"><span>当前项目</span><strong id="environment-project-name" data-no-i18n>—</strong><code id="environment-project-root" data-no-i18n>—</code></div>
-            <span id="environment-profile-status" class="environment-profile-status default">默认环境</span>
+            <div class="environment-project-copy"><span>Current project</span><strong id="environment-project-name" data-no-i18n>—</strong><code id="environment-project-root" data-no-i18n>—</code></div>
+            <span id="environment-profile-status" class="environment-profile-status default">Default environment</span>
           </section>
 
-          <div id="environment-loading" class="environment-loading hidden"><span class="spinner" aria-hidden="true"></span><span>正在读取项目环境…</span></div>
+          <div id="environment-loading" class="environment-loading hidden"><span class="spinner" aria-hidden="true"></span><span>Loading project environment…</span></div>
           <div id="environment-error" class="form-error hidden"></div>
 
           <div id="environment-form-content" class="environment-form-content">
@@ -598,42 +598,42 @@
               <section class="environment-editor-card variables">
                 <header class="environment-card-header">
                   <span class="environment-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 13h5"/></svg></span>
-                  <div><strong>环境变量</strong><small>普通配置，会显示在界面中。</small></div>
+                  <div><strong>Environment variables</strong><small>Visible, non-sensitive project configuration.</small></div>
                   <span id="environment-variable-count" class="environment-count">0</span>
                 </header>
-                <label class="environment-code-field"><span>每行填写一个 KEY=VALUE</span><textarea id="environment-variables" rows="8" spellcheck="false" placeholder="NODE_ENV=development&#10;API_BASE=https://api.example.com"></textarea></label>
+                <label class="environment-code-field"><span>One KEY=VALUE per line</span><textarea id="environment-variables" rows="8" spellcheck="false" placeholder="NODE_ENV=development&#10;API_BASE=https://api.example.com"></textarea></label>
               </section>
 
               <section class="environment-editor-card secrets">
                 <header class="environment-card-header">
                   <span class="environment-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="3"/><path d="M11 12h8M16 12v3M19 12v2"/></svg></span>
-                  <div><strong>Secrets</strong><small>值只写入本机受限文件，之后不会回显。</small></div>
+                  <div><strong>Secrets</strong><small>Values are written to a restricted local file and never shown again.</small></div>
                   <span id="environment-secret-count" class="environment-count secure">0</span>
                 </header>
-                <div class="environment-saved-secrets"><span>已保存</span><div id="environment-secret-names" class="environment-secret-chips"></div></div>
-                <label class="environment-code-field"><span>新增或更新 · 每行一个 KEY=VALUE</span><textarea id="environment-secrets" rows="5" spellcheck="false" placeholder="API_TOKEN=…"></textarea></label>
+                <div class="environment-saved-secrets"><span>Saved</span><div id="environment-secret-names" class="environment-secret-chips"></div></div>
+                <label class="environment-code-field"><span>Add or update · one KEY=VALUE per line</span><textarea id="environment-secrets" rows="5" spellcheck="false" placeholder="API_TOKEN=…"></textarea></label>
               </section>
             </div>
 
             <details id="environment-advanced" class="environment-advanced">
               <summary>
                 <span class="environment-advanced-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span>
-                <span><strong>网络与缓存</strong><small>高级设置 · 通常保留默认值即可</small></span>
+                <span><strong>Network & cache</strong><small>Advanced · defaults are usually sufficient</small></span>
                 <span id="environment-advanced-summary" class="environment-advanced-summary">Restricted</span>
                 <svg class="environment-disclosure" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
               </summary>
               <div class="environment-advanced-grid">
                 <section class="environment-advanced-panel">
-                  <header><strong>网络策略</strong><small>控制后续 Agent Turn 是否可以访问网络。</small></header>
+                  <header><strong>Network policy</strong><small>Control network access for subsequent agent turns.</small></header>
                   <div class="environment-policy-options">
-                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="restricted" checked /><span><strong>Restricted</strong><small>默认阻止网络访问</small></span></label>
-                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="enabled" /><span><strong>Enabled</strong><small>允许后续 Turn 使用网络</small></span></label>
+                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="restricted" checked /><span><strong>Restricted</strong><small>Block network access by default</small></span></label>
+                    <label class="environment-policy-option"><input type="radio" name="environment-network-policy" value="enabled" /><span><strong>Enabled</strong><small>Allow network access in subsequent turns</small></span></label>
                   </div>
-                  <label class="environment-text-field"><span>允许的主机</span><input id="environment-allowed-hosts" spellcheck="false" placeholder="api.example.com, *.openai.com" /><small>为支持主机级策略的运行环境保留。</small></label>
+                  <label class="environment-text-field"><span>Allowed hosts</span><input id="environment-allowed-hosts" spellcheck="false" placeholder="api.example.com, *.openai.com" /><small>Preserved for runtimes that support host-level policy.</small></label>
                 </section>
                 <section class="environment-advanced-panel">
-                  <header><strong>缓存环境变量</strong><small>把大型工具缓存放到空间充足的位置。</small></header>
-                  <label class="environment-code-field"><span>每行填写一个 KEY=VALUE</span><textarea id="environment-cache-variables" rows="6" spellcheck="false" placeholder="CARGO_HOME=/path/to/cache/cargo&#10;NPM_CONFIG_CACHE=/path/to/cache/npm"></textarea></label>
+                  <header><strong>Cache environment variables</strong><small>Move large tool caches to a location with enough space.</small></header>
+                  <label class="environment-code-field"><span>One KEY=VALUE per line</span><textarea id="environment-cache-variables" rows="6" spellcheck="false" placeholder="CARGO_HOME=/path/to/cache/cargo&#10;NPM_CONFIG_CACHE=/path/to/cache/npm"></textarea></label>
                 </section>
               </div>
             </details>
@@ -641,20 +641,20 @@
         </div>
 
         <footer class="dialog-footer environment-dialog-footer">
-          <div class="environment-apply-note"><span aria-hidden="true">↻</span><span><strong>保存后的生效范围</strong><small>后续 Agent Turn 与新启动的 Terminal；已运行的 Terminal 需要重启。</small></span></div>
-          <button id="cancel-environment" class="subtle-button" type="button">取消</button>
-          <button id="save-environment" class="primary-button" type="submit">保存项目环境</button>
+          <div class="environment-apply-note"><span aria-hidden="true">↻</span><span><strong>Where saved changes apply</strong><small>Subsequent agent turns and newly opened terminals; restart terminals that are already running.</small></span></div>
+          <button id="cancel-environment" class="subtle-button" type="button">Cancel</button>
+          <button id="save-environment" class="primary-button" type="submit">Save environment</button>
         </footer>
       </form>
     </dialog>
 
-    <dialog id="connections-dialog" class="dialog connections-dialog"><header class="dialog-header"><div><span class="eyebrow">CONNECTIONS</span><h2>连接与账号</h2><p>后端按会话选择，并使用各自运行环境中的凭证。</p></div><button id="close-connections" class="icon-button" type="button">×</button></header><div id="connections-dialog-content" class="connections-dialog-content"></div></dialog>
+    <dialog id="connections-dialog" class="dialog connections-dialog"><header class="dialog-header"><div><span class="eyebrow">CONNECTIONS</span><h2>Connections & accounts</h2><p>Each session selects its backend and uses credentials from that backend environment.</p></div><button id="close-connections" class="icon-button" type="button">×</button></header><div id="connections-dialog-content" class="connections-dialog-content"></div></dialog>
     <dialog id="backend-dialog" class="dialog about-dialog"><header class="dialog-header"><div><span class="eyebrow">ABOUT</span><h2>Codex Thread Studio</h2></div><button id="close-backend" class="icon-button" type="button">×</button></header><div id="backend-dialog-content" class="backend-dialog-content"></div></dialog>
-    <dialog id="command-dialog" class="dialog command-dialog"><header class="dialog-header"><div><span class="eyebrow">CODEX COMMAND</span><h2 id="command-title">命令</h2></div><button id="close-command" class="icon-button" type="button">×</button></header><div id="command-content" class="command-content"></div></dialog>
+    <dialog id="command-dialog" class="dialog command-dialog"><header class="dialog-header"><div><span class="eyebrow">CODEX COMMAND</span><h2 id="command-title">Command</h2></div><button id="close-command" class="icon-button" type="button">×</button></header><div id="command-content" class="command-content"></div></dialog>
     <dialog id="activity-log-dialog" class="dialog activity-log-dialog">
-      <header class="dialog-header"><div><span class="eyebrow">ACTIVITY LOG</span><h2 id="activity-log-title">完整活动记录</h2><p id="activity-log-subtitle">原始详情按项目加载，不会影响主聊天流。</p></div><button id="close-activity-log" class="icon-button" type="button">×</button></header>
+      <header class="dialog-header"><div><span class="eyebrow">ACTIVITY LOG</span><h2 id="activity-log-title">Full activity log</h2><p id="activity-log-subtitle">Raw details load per item without slowing the main chat.</p></div><button id="close-activity-log" class="icon-button" type="button">×</button></header>
       <div id="activity-log-content" class="activity-log-content"></div>
-      <footer class="dialog-footer"><button id="done-activity-log" class="primary-button" type="button">完成</button></footer>
+      <footer class="dialog-footer"><button id="done-activity-log" class="primary-button" type="button">Done</button></footer>
     </dialog>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
   </body>

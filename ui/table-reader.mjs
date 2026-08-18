@@ -33,8 +33,8 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   function render() {
     const sheet = workbook.sheets[sheetIndex] || { name: 'Sheet', rows: [] }
     const width = Math.max(1, ...sheet.rows.map((row) => row.length))
-    const dimensions = translate('{rows} 行 · {columns} 列', { rows: sheet.rows.length, columns: width })
-    shell.innerHTML = `<div class="table-toolbar"><select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button">${escapeHtml(translate('图表'))}</button></div><div class="table-grid-wrap"><table class="table-grid"><thead><tr><th></th>${Array.from({ length: width }, (_, index) => `<th>${columnName(index + 1)}</th>`).join('')}</tr></thead><tbody>${sheet.rows.map((row, rowIndex) => `<tr><th>${rowIndex + 1}</th>${Array.from({ length: width }, (_, columnIndex) => `<td tabindex="0" data-row="${rowIndex + 1}" data-column="${columnIndex + 1}">${escapeHtml(row[columnIndex] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="table-chart hidden"></div>`
+    const dimensions = translate('{rows} rows · {columns} columns', { rows: sheet.rows.length, columns: width })
+    shell.innerHTML = `<div class="table-toolbar"><select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button">${escapeHtml(translate('Chart'))}</button></div><div class="table-grid-wrap"><table class="table-grid"><thead><tr><th></th>${Array.from({ length: width }, (_, index) => `<th>${columnName(index + 1)}</th>`).join('')}</tr></thead><tbody>${sheet.rows.map((row, rowIndex) => `<tr><th>${rowIndex + 1}</th>${Array.from({ length: width }, (_, columnIndex) => `<td tabindex="0" data-row="${rowIndex + 1}" data-column="${columnIndex + 1}">${escapeHtml(row[columnIndex] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="table-chart hidden"></div>`
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => { sheetIndex = Number(event.target.value); render() })
     shell.querySelector('.table-grid').addEventListener('click', (event) => {
       const cell = event.target.closest('td[data-row]')
@@ -60,10 +60,10 @@ function toggleChart(shell, sheet, translate) {
   const showing = chart.classList.contains('hidden')
   grid.classList.toggle('hidden', showing)
   chart.classList.toggle('hidden', !showing)
-  button.textContent = translate(showing ? '网格' : '图表')
+  button.textContent = translate(showing ? 'Grid' : 'Chart')
   if (!showing) return
   const data = chartData(sheet.rows)
-  if (!data.length) { chart.innerHTML = `<p>${escapeHtml(translate('没有可用于绘图的数值列。'))}</p>`; return }
+  if (!data.length) { chart.innerHTML = `<p>${escapeHtml(translate('No numeric column is available for a chart.'))}</p>`; return }
   const max = Math.max(...data.map((item) => Math.abs(item.value)), 1)
   chart.innerHTML = `<svg viewBox="0 0 720 360" role="img" aria-label="Bar chart">${data.map((item, index) => {
     const width = Math.max(3, 620 / data.length - 4); const height = Math.abs(item.value) / max * 270; const x = 70 + index * (620 / data.length); const y = 310 - height

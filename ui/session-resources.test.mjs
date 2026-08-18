@@ -44,7 +44,7 @@ test('paths outside the session root remain visible but blocked', () => {
     backend: 'codex', root: '/home/rui/project',
   })
   assert.equal(resource.state, 'blocked')
-  assert.match(resource.reason, /根目录/u)
+  assert.match(resource.reason, /session root/u)
 })
 
 test('session index merges resources without losing occurrences', () => {

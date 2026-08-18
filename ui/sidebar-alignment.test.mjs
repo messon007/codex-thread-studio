@@ -51,7 +51,7 @@ test('Windows WSL backend settings use a full-width grouped layout', () => {
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 
   assert.match(html, /id="wsl-settings" class="settings-section wsl-settings-card full hidden"/u)
-  assert.match(html, /class="wsl-restart-badge">重启后生效/u)
+  assert.match(html, /class="wsl-restart-badge">Applies after restart/u)
   assert.match(html, /class="wsl-environment-card"/u)
   assert.equal((html.match(/class="field wsl-command-field"/gu) || []).length, 2)
   assert.match(styles, /\.settings-section\.full \{ grid-column: 1 \/ -1;/u)
@@ -66,9 +66,9 @@ test('Windows WSL backend settings use a full-width grouped layout', () => {
 
 test('filters use the same flat label-and-number structure as Agent Deck Studio', () => {
   assert.match(html, /class="filters thread-filters"/)
-  assert.match(html, />全部 <span id="count-all">0<\/span><\/button>/)
-  assert.match(html, />运行 <span id="count-active">0<\/span><\/button>/)
-  assert.match(html, />待处理 <span id="count-attention">0<\/span><\/button>/)
+  assert.match(html, />All <span id="count-all">0<\/span><\/button>/)
+  assert.match(html, />Active <span id="count-active">0<\/span><\/button>/)
+  assert.match(html, />Attention <span id="count-attention">0<\/span><\/button>/)
   assert.match(rule('.filters'), /display:\s*flex/)
   assert.match(rule('.filters'), /padding:\s*0 16px 10px/)
   assert.match(rule('.filters'), /border-bottom:\s*1px solid var\(--border\)/)

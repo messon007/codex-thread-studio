@@ -46,7 +46,7 @@ export function createSessionResourcesUI({
     element('close-resources')?.addEventListener('click', close)
     element('refresh-resources')?.addEventListener('click', () => {
       rebuild()
-      notify(translate('资源索引已刷新'))
+      notify(translate('Resource index refreshed'))
     })
     element('resources-search')?.addEventListener('input', (event) => {
       const state = stateForCurrent()
@@ -136,9 +136,9 @@ export function createSessionResourcesUI({
     empty.classList.toggle('hidden', resources.length > 0)
     list.classList.toggle('hidden', resources.length === 0)
     list.innerHTML = resources.map((resource) => renderResourceCard(resource, state)).join('')
-    element('resources-summary').textContent = translate('{resources} 个资源 · {occurrences} 次引用')
+    element('resources-summary').textContent = translate('{resources} resources · {occurrences} references')
       .replace('{resources}', String(counts.all)).replace('{occurrences}', String(counts.occurrences))
-    element('resources-local-state').textContent = translate('仅索引最后一个 Turn')
+    element('resources-local-state').textContent = translate('Latest turn only')
   }
 
   function renderResourceCard(resource, state) {
@@ -147,7 +147,7 @@ export function createSessionResourcesUI({
     const group = resourceGroup(resource.kind)
     const target = resource.target?.url || resource.target?.path || resource.raw
     const location = resource.target?.line ? `${target}:${resource.target.line}${resource.target.column ? `:${resource.target.column}` : ''}` : target
-    const label = resource.state === 'blocked' ? translate('已阻止') : group === 'web' ? translate('网页') : group === 'code' ? translate('代码') : translate('文件')
+    const label = resource.state === 'blocked' ? translate('Blocked') : group === 'web' ? translate('Web') : group === 'code' ? translate('Code') : translate('Files')
     const occurrenceRows = selected ? `<div class="resource-occurrences">${occurrences.map((occurrence, index) => `<button type="button" data-resource-source="${escapeHtml(occurrence.id)}"><span>${sourceLabel(occurrence, index, translate)}</span><small>${escapeHtml(occurrence.excerpt || '')}</small></button>`).join('')}</div>` : ''
     return `<article class="resource-card${selected ? ' selected' : ''}${resource.state === 'blocked' ? ' blocked' : ''}" data-resource-id="${escapeHtml(resource.id)}">
       <button class="resource-card-main" type="button" data-resource-select="${escapeHtml(resource.id)}">
@@ -155,12 +155,12 @@ export function createSessionResourcesUI({
         <span class="resource-card-copy"><strong>${escapeHtml(resource.display)}</strong><small>${escapeHtml(location)}</small></span>
         <span class="resource-kind-pill">${escapeHtml(label)} · ${occurrences.length}</span>
       </button>
-      ${resource.state === 'blocked' ? `<p class="resource-blocked-reason">${escapeHtml(translate(resource.reason || '安全策略阻止了此资源'))}</p>` : ''}
+      ${resource.state === 'blocked' ? `<p class="resource-blocked-reason">${escapeHtml(translate(resource.reason || 'This resource was blocked by the security policy'))}</p>` : ''}
       <div class="resource-card-actions">
         <button class="resource-open" type="button" data-resource-open="${escapeHtml(resource.id)}" ${resource.state === 'blocked' ? 'disabled' : ''}>${escapeHtml(openLabel(resource, translate))}</button>
-        <button type="button" data-resource-source="${escapeHtml(occurrences.at(-1)?.id || '')}">${escapeHtml(translate('返回消息'))}</button>
-        <button type="button" data-resource-copy="${escapeHtml(resource.id)}">${escapeHtml(translate('复制地址'))}</button>
-        <button class="resource-favorite" type="button" data-resource-favorite="${escapeHtml(resource.id)}" title="${escapeHtml(translate('收藏资源'))}" aria-label="${escapeHtml(translate('收藏资源'))}">${favoriteSvg()}</button>
+        <button type="button" data-resource-source="${escapeHtml(occurrences.at(-1)?.id || '')}">${escapeHtml(translate('Go to message'))}</button>
+        <button type="button" data-resource-copy="${escapeHtml(resource.id)}">${escapeHtml(translate('Copy address'))}</button>
+        <button class="resource-favorite" type="button" data-resource-favorite="${escapeHtml(resource.id)}" title="${escapeHtml(translate('Save resource'))}" aria-label="${escapeHtml(translate('Save resource'))}">${favoriteSvg()}</button>
       </div>${occurrenceRows}
     </article>`
   }
@@ -172,7 +172,7 @@ export function createSessionResourcesUI({
     if (openButton) {
       const resource = state.index.resourcesById.get(openButton.dataset.resourceOpen)
       if (resource) {
-        try { await openResource?.(resource) } catch (error) { notify(error?.message || translate('无法打开资源'), 'error') }
+        try { await openResource?.(resource) } catch (error) { notify(error?.message || translate('Unable to open resource'), 'error') }
       }
       return
     }
@@ -195,8 +195,8 @@ export function createSessionResourcesUI({
       if (!resource) return
       try {
         await navigator.clipboard.writeText(resource.target?.url || resource.raw)
-        notify(translate('资源地址已复制'))
-      } catch { notify(translate('无法复制资源地址'), 'error') }
+        notify(translate('Resource address copied'))
+      } catch { notify(translate('Unable to copy resource address'), 'error') }
       return
     }
     const selectButton = event.target.closest('[data-resource-select]')
@@ -213,7 +213,7 @@ export function createSessionResourcesUI({
     badge.textContent = count > 99 ? '99+' : String(count)
     badge.classList.toggle('hidden', count < 1)
     button.setAttribute('aria-pressed', String(isOpen()))
-    const title = count ? `${translate('资源')} · ${count}` : translate('资源')
+    const title = count ? `${translate('Resources')} · ${count}` : translate('Resources')
     button.title = title
     button.setAttribute('aria-label', title)
   }
@@ -246,20 +246,20 @@ function favoriteSvg() {
 
 function openLabel(resource, translate) {
   const group = resourceGroup(resource.kind)
-  if (group === 'web') return translate('在浏览器打开')
-  if (group === 'code') return translate('定位代码')
-  return resource.kind === 'directory' ? translate('在文件中显示') : translate('打开文件')
+  if (group === 'web') return translate('Open in Browser')
+  if (group === 'code') return translate('Go to code')
+  return resource.kind === 'directory' ? translate('Reveal in Files') : translate('Open file')
 }
 
 function sourceLabel(occurrence, index, translate) {
   const labels = {
-    userMessage: translate('用户消息'),
-    agentMessage: translate('Agent 回复'),
-    commandExecution: translate('命令输出'),
-    fileChange: translate('文件修改'),
-    webSearch: translate('网页搜索'),
+    userMessage: translate('User message'),
+    agentMessage: translate('Agent response'),
+    commandExecution: translate('Command output'),
+    fileChange: translate('File changes'),
+    webSearch: translate('Web search'),
   }
-  return `${labels[occurrence.itemType] || occurrence.itemType || translate('消息')} · ${translate('引用')} ${index + 1}`
+  return `${labels[occurrence.itemType] || occurrence.itemType || translate('Message')} · ${translate('Reference')} ${index + 1}`
 }
 
 function resourceKindSvg(kind) {

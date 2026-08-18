@@ -121,7 +121,7 @@ export function createWorkspaceTools({
 
   async function open(tool) {
     if (!currentThread()?.cwd) {
-      notify(translate('当前会话没有项目目录。'), 'error')
+      notify(translate('The current session has no project directory.'), 'error')
       return
     }
     closePeerRails?.()
@@ -193,7 +193,7 @@ export function createWorkspaceTools({
       if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
       const entries = (result?.entries || []).filter((entry) => safeWorkspaceRelativePath(entry.path) != null)
       state.children.set(path, entries)
-      if (result?.truncated) state.errors.set(path, translate('目录内容过多，仅显示前 500 项。'))
+      if (result?.truncated) state.errors.set(path, translate('This directory is large; only the first 500 entries are shown.'))
     } catch (error) {
       state.errors.set(path, error.message)
     } finally {
@@ -216,7 +216,7 @@ export function createWorkspaceTools({
     const tree = element('workspace-file-tree')
     if (!tree) return
     if (state.loading.has('') && !state.children.has('')) {
-      tree.innerHTML = `<div class="workspace-tree-state">${escapeHtml(translate('正在读取当前会话目录…'))}</div>`
+      tree.innerHTML = `<div class="workspace-tree-state">${escapeHtml(translate('Reading the current session directory…'))}</div>`
       return
     }
     if (state.errors.has('') && !state.children.has('')) {
@@ -235,7 +235,7 @@ export function createWorkspaceTools({
         <span class="tree-name" data-no-i18n>${escapeHtml(row.name)}</span>
         ${directory || row.size == null ? '' : `<span class="tree-size">${formatSize(row.size)}</span>`}
       </button>`
-    }).join('') || `<div class="workspace-tree-state">${escapeHtml(translate(state.filter ? '没有匹配的文件。' : '目录为空。'))}</div>`
+    }).join('') || `<div class="workspace-tree-state">${escapeHtml(translate(state.filter ? 'No matching files.' : 'The directory is empty.'))}</div>`
   }
 
   async function handleTreeClick(event) {
@@ -245,7 +245,7 @@ export function createWorkspaceTools({
     const path = safeWorkspaceRelativePath(row.dataset.path)
     if (path == null) return
     if (row.getAttribute('aria-disabled') === 'true') {
-      notify(translate('此文件类型暂不支持预览。'))
+      notify(translate('This file type cannot be previewed yet.'))
       return
     }
     state.selected = path
@@ -288,7 +288,7 @@ export function createWorkspaceTools({
     } catch (error) {
       state.terminalStarted = false
       renderTerminal(state)
-      notify(`${translate('无法加载终端组件')}: ${error.message}`, 'error')
+      notify(`${translate('Unable to load terminal component')}: ${error.message}`, 'error')
       return
     }
     if (state !== stateForCurrent() || !state.terminalStarted) {
@@ -399,10 +399,10 @@ export function createWorkspaceTools({
         element('workspace-terminal-shell').textContent = message.shell || 'shell'
         terminal.view.focus()
       } else if (message.type === 'error') {
-        terminal.view.writeln(`\r\n\x1b[31m${message.message || translate('终端连接失败')}\x1b[0m`)
+        terminal.view.writeln(`\r\n\x1b[31m${message.message || translate('Terminal connection failed')}\x1b[0m`)
       } else if (message.type === 'exit') {
         terminal.ready = false
-        terminal.view.writeln(`\r\n\x1b[90m[${translate('终端已退出')} ${message.code ?? ''}]\x1b[0m`)
+        terminal.view.writeln(`\r\n\x1b[90m[${translate('Terminal exited')} ${message.code ?? ''}]\x1b[0m`)
       }
     })
     socket.addEventListener('close', () => {
@@ -411,7 +411,7 @@ export function createWorkspaceTools({
     })
     socket.addEventListener('error', () => {
       if (state.terminal !== terminal) return
-      terminal.view.writeln(`\r\n\x1b[31m${translate('无法连接终端')}\x1b[0m`)
+      terminal.view.writeln(`\r\n\x1b[31m${translate('Unable to connect to terminal')}\x1b[0m`)
     })
   }
 

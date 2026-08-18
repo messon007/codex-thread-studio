@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en-US">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -70,23 +70,23 @@
     <section class="chat">
       <header class="chat-header">
         <strong>Wayland Browser Prototype</strong>
-        <div><button class="pill" id="browserToggle">浏览器</button> <button class="pill" id="toggleDrawer">批注</button></div>
+        <div><button class="pill" id="browserToggle">Browser</button> <button class="pill" id="toggleDrawer">Comments</button></div>
       </header>
       <div class="messages">
-        <article class="message user"><div class="role">You</div>在同一个 Studio 窗口里查看网页，并把网页选区加入批注。</article>
-        <article class="message"><div class="role">Codex</div>浏览器内容由独立的原生 WebView 渲染；工具栏、会话和批注仍由 Studio WebView 管理。拖动中间分隔线可以验证 Wayland 下两个原生视图能否稳定重排。</article>
+        <article class="message user"><div class="role">You</div>View a web page in the same Studio window and add a web selection to the comment draft.</article>
+        <article class="message"><div class="role">Codex</div>A separate native WebView renders browser content, while the Studio WebView continues to manage the toolbar, sessions, and comments. Drag the center divider to verify that Wayland can reliably resize both native views.</article>
       </div>
       <footer class="composer"><div class="composer-box">Ask Codex…</div></footer>
     </section>
 
   </main>
 
-  <section class="drawer" id="drawer" aria-label="批注草稿">
-    <div class="drawer-head"><strong>网页批注</strong><button class="icon" id="closeDrawer">×</button></div>
-    <div class="source" id="selectedText">请先在网页中选择文本。</div>
-    <div class="meta" id="selectedMeta">尚无网页选区</div>
-    <textarea id="commentText" placeholder="写下针对这段内容的意见…"></textarea>
-    <div class="drawer-actions"><button class="secondary" id="clearDraft">清除</button><button class="primary" id="saveDraft">加入草稿</button></div>
+  <section class="drawer" id="drawer" aria-label="Comment draft">
+    <div class="drawer-head"><strong>Web comment</strong><button class="icon" id="closeDrawer">×</button></div>
+    <div class="source" id="selectedText">Select text on the web page first.</div>
+    <div class="meta" id="selectedMeta">No web selection</div>
+    <textarea id="commentText" placeholder="Write a comment about this content…"></textarea>
+    <div class="drawer-actions"><button class="secondary" id="clearDraft">Clear</button><button class="primary" id="saveDraft">Add to draft</button></div>
   </section>
   <div class="toast" id="toast"></div>
 
@@ -104,10 +104,10 @@
     });
     document.querySelector('#saveDraft').addEventListener('click', () => {
       if (!currentSelection || !document.querySelector('#commentText').value.trim()) {
-        showToast('选区和批注意见不能为空');
+        showToast('The selection and comment are required.');
         return;
       }
-      showToast('已加入批注草稿');
+      showToast('Added to the comment draft');
       drawer.classList.remove('open');
     });
 
@@ -121,7 +121,7 @@
 
     window.prototype = {
       setBrowserVisible(visible) {
-        document.querySelector('#browserToggle').textContent = visible ? '隐藏浏览器' : '浏览器';
+        document.querySelector('#browserToggle').textContent = visible ? 'Hide browser' : 'Browser';
       },
       openSelectionComment(selection) {
         currentSelection = selection;

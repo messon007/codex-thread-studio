@@ -9,7 +9,7 @@ export function questionForTurn(turn) {
   return userContentText(message?.content).trim()
 }
 
-export function autoFavoriteTitle(content, fallback = '收藏的 AI 回复') {
+export function autoFavoriteTitle(content, fallback = 'Favorite AI response') {
   const firstMeaningfulLine = String(content || '')
     .split('\n')
     .map((line) => line
@@ -24,17 +24,17 @@ export function autoFavoriteTitle(content, fallback = '收藏的 AI 回复') {
 
 export function normalizeFavoriteTags(value) {
   const tags = String(value || '')
-    .split(/[,，]/u)
+    .split(/[,\uFF0C]/u)
     .map((tag) => tag.trim())
     .filter(Boolean)
   return [...new Set(tags)].slice(0, 20)
 }
 
-export function favoriteCopyText(favorite) {
+export function favoriteCopyText(favorite, translate = (value) => value) {
   return [
-    favorite?.question && `问题：\n${favorite.question}`,
-    favorite?.content && `回答：\n${favorite.content}`,
-    favorite?.note && `收藏笔记：\n${favorite.note}`,
+    favorite?.question && `${translate('Question')}:\n${favorite.question}`,
+    favorite?.content && `${translate('Answer')}:\n${favorite.content}`,
+    favorite?.note && `${translate('Favorite note')}:\n${favorite.note}`,
   ].filter(Boolean).join('\n\n')
 }
 

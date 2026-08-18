@@ -14,7 +14,7 @@ export async function createPdfReader({ container, bytes, initialPage = 1, searc
   let destroyed = false
 
   const shell = documentNode('div', 'pdf-reader')
-  shell.innerHTML = `<div class="pdf-toolbar"><button data-pdf-action="previous" type="button">←</button><span data-pdf-page></span><button data-pdf-action="next" type="button">→</button><input data-pdf-search type="search" placeholder="${escapeHtml(translate('搜索 PDF…'))}" value="${escapeHtml(query)}"/><span data-pdf-results></span></div><div class="pdf-page-stage"><div class="pdf-page"><canvas></canvas><div class="pdf-text-layer"></div></div></div>`
+  shell.innerHTML = `<div class="pdf-toolbar"><button data-pdf-action="previous" type="button">←</button><span data-pdf-page></span><button data-pdf-action="next" type="button">→</button><input data-pdf-search type="search" placeholder="${escapeHtml(translate('Search PDF…'))}" value="${escapeHtml(query)}"/><span data-pdf-results></span></div><div class="pdf-page-stage"><div class="pdf-page"><canvas></canvas><div class="pdf-text-layer"></div></div></div>`
   container.replaceChildren(shell)
   const canvas = shell.querySelector('canvas')
   const textLayer = shell.querySelector('.pdf-text-layer')
@@ -50,7 +50,7 @@ export async function createPdfReader({ container, bytes, initialPage = 1, searc
     }
     shell.querySelector('[data-pdf-page]').textContent = `${pageNumber} / ${document.numPages}`
     const count = query ? content.items.filter((item) => String(item.str || '').toLowerCase().includes(query.toLowerCase())).length : 0
-    shell.querySelector('[data-pdf-results]').textContent = query ? translate('{count} 个匹配', { count }) : ''
+    shell.querySelector('[data-pdf-results]').textContent = query ? translate('{count} matches', { count }) : ''
     onPageChange?.(pageNumber)
   }
 
@@ -76,7 +76,7 @@ export async function createPdfReader({ container, bytes, initialPage = 1, searc
     }
     if (firstPage != null) pageNumber = firstPage
     await render()
-    if (generation === searchGeneration) shell.querySelector('[data-pdf-results]').textContent = translate('{count} 个匹配', { count })
+    if (generation === searchGeneration) shell.querySelector('[data-pdf-results]').textContent = translate('{count} matches', { count })
   })
   textLayer.addEventListener('mouseup', () => {
     const selection = window.getSelection()

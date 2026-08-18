@@ -237,7 +237,7 @@ export async function createEpubReader({
     ])
     if (destroyed) throw new Error('EPUB reader was closed while loading')
     currentToc = navigation?.toc || []
-    shell.bookTitle.textContent = displayMetadata(metadata?.title) || translate('电子书')
+    shell.bookTitle.textContent = displayMetadata(metadata?.title) || translate('E-book')
     shell.bookAuthor.textContent = displayMetadata(metadata?.creator)
     updateSettings(shell, readerState)
     await mountRendition(readerState.cfi)
@@ -283,14 +283,14 @@ function buildShell(container, translate) {
     <header class="epub-toolbar">
       <div class="epub-book-identity"><strong></strong><small></small></div>
       <div class="epub-page-actions">
-        <button class="epub-tool-button epub-previous" type="button" title="${escapeHtml(translate('上一页'))}" aria-label="${escapeHtml(translate('上一页'))}">←</button>
-        <button class="epub-tool-button epub-next" type="button" title="${escapeHtml(translate('下一页'))}" aria-label="${escapeHtml(translate('下一页'))}">→</button>
-        <button class="epub-tool-button epub-settings-toggle" type="button" title="${escapeHtml(translate('阅读设置'))}" aria-label="${escapeHtml(translate('阅读设置'))}">Aa</button>
+        <button class="epub-tool-button epub-previous" type="button" title="${escapeHtml(translate('Previous'))}" aria-label="${escapeHtml(translate('Previous'))}">←</button>
+        <button class="epub-tool-button epub-next" type="button" title="${escapeHtml(translate('Next'))}" aria-label="${escapeHtml(translate('Next'))}">→</button>
+        <button class="epub-tool-button epub-settings-toggle" type="button" title="${escapeHtml(translate('Reading settings'))}" aria-label="${escapeHtml(translate('Reading settings'))}">Aa</button>
       </div>
       <div class="epub-settings-popover hidden">
-        <div class="epub-setting-row"><span>${escapeHtml(translate('字号'))}</span><div><button class="epub-font-decrease" type="button">A−</button><output class="epub-font-value">100%</output><button class="epub-font-increase" type="button">A+</button></div></div>
-        <div class="epub-setting-row"><span>${escapeHtml(translate('纸张'))}</span><div class="epub-setting-options"><button data-epub-theme="light" type="button">${escapeHtml(translate('明亮'))}</button><button data-epub-theme="sepia" type="button">${escapeHtml(translate('柔和'))}</button><button data-epub-theme="dark" type="button">${escapeHtml(translate('深色'))}</button></div></div>
-        <div class="epub-setting-row"><span>${escapeHtml(translate('翻阅'))}</span><div class="epub-setting-options"><button data-epub-flow="paginated" type="button">${escapeHtml(translate('分页'))}</button><button data-epub-flow="scrolled" type="button">${escapeHtml(translate('连续'))}</button></div></div>
+        <div class="epub-setting-row"><span>${escapeHtml(translate('Type size'))}</span><div><button class="epub-font-decrease" type="button">A−</button><output class="epub-font-value">100%</output><button class="epub-font-increase" type="button">A+</button></div></div>
+        <div class="epub-setting-row"><span>${escapeHtml(translate('Paper'))}</span><div class="epub-setting-options"><button data-epub-theme="light" type="button">${escapeHtml(translate('Bright'))}</button><button data-epub-theme="sepia" type="button">${escapeHtml(translate('Sepia'))}</button><button data-epub-theme="dark" type="button">${escapeHtml(translate('Dark'))}</button></div></div>
+        <div class="epub-setting-row"><span>${escapeHtml(translate('Reading flow'))}</span><div class="epub-setting-options"><button data-epub-flow="paginated" type="button">${escapeHtml(translate('Pages'))}</button><button data-epub-flow="scrolled" type="button">${escapeHtml(translate('Scroll'))}</button></div></div>
       </div>
     </header>
     <div class="epub-reader-body">
@@ -317,7 +317,7 @@ function buildShell(container, translate) {
 }
 
 function renderPosition(shell, state, translate) {
-  shell.chapter.textContent = state.chapterLabel || translate('正在阅读')
+  shell.chapter.textContent = state.chapterLabel || translate('Reading')
   shell.progress.textContent = `${Math.round(clamp(state.progress, 0, 1) * 100)}%`
 }
 
@@ -328,7 +328,7 @@ function updateSettings(shell, state) {
 }
 
 function displayMetadata(value) {
-  if (Array.isArray(value)) return value.map(displayMetadata).filter(Boolean).join('、')
+  if (Array.isArray(value)) return value.map(displayMetadata).filter(Boolean).join(', ')
   if (value && typeof value === 'object') return displayMetadata(value.name || Object.values(value)[0])
   return bounded(value, 1024)
 }

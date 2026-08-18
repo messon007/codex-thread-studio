@@ -209,6 +209,7 @@ struct EmbeddedBrowserWorkspace {
     visible_tab_id: Option<u64>,
     recent_recoveries: HashMap<u64, (u8, std::time::Instant)>,
     downloads: Vec<BrowserDownload>,
+    translations: HashMap<String, String>,
 }
 
 pub fn is_supported() -> bool {
@@ -272,6 +273,7 @@ pub fn build(
         visible_tab_id: None,
         recent_recoveries: HashMap::new(),
         downloads: Vec::new(),
+        translations: HashMap::new(),
     };
     WORKSPACE.with(|slot| *slot.borrow_mut() = Some(workspace));
     window.on_window_event(|event| {
@@ -291,9 +293,10 @@ fn create_native_splitter(window: &tauri::Window) -> Result<NativeSplitter, Stri
 
     let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
     if instance.is_null() {
-        return Err(format!("无法读取 Browser 分隔条模块句柄：{}", unsafe {
-            GetLastError()
-        }));
+        return Err(format!(
+            "Unable to read the Browser divider module handle: {}",
+            unsafe { GetLastError() }
+        ));
     }
     CLASS_REGISTRATION
         .get_or_init(|| {
@@ -305,9 +308,10 @@ fn create_native_splitter(window: &tauri::Window) -> Result<NativeSplitter, Stri
                 ..Default::default()
             };
             if unsafe { RegisterClassW(&class) } == 0 {
-                Err(format!("无法注册 Browser 分隔条窗口类：{}", unsafe {
-                    GetLastError()
-                }))
+                Err(format!(
+                    "Unable to register the Browser divider window class: {}",
+                    unsafe { GetLastError() }
+                ))
             } else {
                 Ok(())
             }
@@ -316,7 +320,7 @@ fn create_native_splitter(window: &tauri::Window) -> Result<NativeSplitter, Stri
 
     let parent = window
         .hwnd()
-        .map_err(|error| format!("无法读取 Studio HWND：{error}"))?;
+        .map_err(|error| format!("Unable to read the Studio HWND: {error}"))?;
     let hwnd = unsafe {
         CreateWindowExW(
             0,
@@ -334,9 +338,10 @@ fn create_native_splitter(window: &tauri::Window) -> Result<NativeSplitter, Stri
         )
     };
     if hwnd.is_null() {
-        return Err(format!("无法创建 Browser 原生分隔条：{}", unsafe {
-            GetLastError()
-        }));
+        return Err(format!(
+            "Unable to create the native Browser divider: {}",
+            unsafe { GetLastError() }
+        ));
     }
     Ok(NativeSplitter { hwnd })
 }
@@ -478,9 +483,10 @@ fn create_native_browser_menu(window: &tauri::Window) -> Result<NativeBrowserMen
 
     let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
     if instance.is_null() {
-        return Err(format!("无法读取 Browser 菜单模块句柄：{}", unsafe {
-            GetLastError()
-        }));
+        return Err(format!(
+            "Unable to read the Browser menu module handle: {}",
+            unsafe { GetLastError() }
+        ));
     }
     CLASS_REGISTRATION
         .get_or_init(|| {
@@ -493,9 +499,10 @@ fn create_native_browser_menu(window: &tauri::Window) -> Result<NativeBrowserMen
                 ..Default::default()
             };
             if unsafe { RegisterClassW(&class) } == 0 {
-                Err(format!("无法注册 Browser 菜单窗口类：{}", unsafe {
-                    GetLastError()
-                }))
+                Err(format!(
+                    "Unable to register the Browser menu window class: {}",
+                    unsafe { GetLastError() }
+                ))
             } else {
                 Ok(())
             }
@@ -504,7 +511,7 @@ fn create_native_browser_menu(window: &tauri::Window) -> Result<NativeBrowserMen
 
     let parent = window
         .hwnd()
-        .map_err(|error| format!("无法读取 Studio HWND：{error}"))?;
+        .map_err(|error| format!("Unable to read the Studio HWND: {error}"))?;
     let scale = window.scale_factor().unwrap_or(1.0).max(1.0);
     let width = (BROWSER_MENU_WIDTH as f64 * scale).round() as i32;
     let height = (BROWSER_MENU_HEIGHT as f64 * scale).round() as i32;
@@ -525,9 +532,10 @@ fn create_native_browser_menu(window: &tauri::Window) -> Result<NativeBrowserMen
         )
     };
     if hwnd.is_null() {
-        return Err(format!("无法创建 Browser 原生菜单：{}", unsafe {
-            GetLastError()
-        }));
+        return Err(format!(
+            "Unable to create the native Browser menu: {}",
+            unsafe { GetLastError() }
+        ));
     }
 
     let mut origin = POINT::default();
@@ -672,7 +680,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
         let _ = GetClientRect(hwnd, &mut client);
     }
     let scale = (client.right as f64 / BROWSER_MENU_WIDTH as f64).max(1.0);
-    let (hover, zoom_percent) = WORKSPACE.with(|slot| {
+    let (hover, zoom_percent, translations) = WORKSPACE.with(|slot| {
         slot.try_borrow()
             .ok()
             .and_then(|slot| {
@@ -682,9 +690,10 @@ fn paint_native_browser_menu(hwnd: HWND) {
                     active_tab(workspace)
                         .map(|tab| (tab.zoom * 100.0).round() as u32)
                         .unwrap_or(100),
+                    workspace.translations.clone(),
                 ))
             })
-            .unwrap_or((BrowserMenuHit::None, 100))
+            .unwrap_or((BrowserMenuHit::None, 100, HashMap::new()))
     });
     let background = unsafe { CreateSolidBrush(0x00FF_FFFF) };
     let border = unsafe { CreateSolidBrush(0x00E6_DDD7) };
@@ -701,7 +710,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             6,
-            "新建标签页",
+            translated(&translations, "New tab"),
             Some("Ctrl+T"),
             hover == BrowserMenuHit::NewTab,
         );
@@ -709,7 +718,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             40,
-            "重新加载",
+            translated(&translations, "Reload"),
             Some("Ctrl+R"),
             hover == BrowserMenuHit::Reload,
         );
@@ -717,17 +726,17 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             74,
-            "复制当前链接",
+            translated(&translations, "Copy current link"),
             None,
             hover == BrowserMenuHit::CopyUrl,
         );
         draw_native_menu_separator(hdc, scale, 112);
-        draw_native_zoom_row(hdc, scale, hover, zoom_percent);
+        draw_native_zoom_row(hdc, scale, hover, zoom_percent, &translations);
         draw_native_menu_item(
             hdc,
             scale,
             153,
-            "适应页面宽度",
+            translated(&translations, "Fit page width"),
             None,
             hover == BrowserMenuHit::FitWidth,
         );
@@ -735,7 +744,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             187,
-            "批注选中内容",
+            translated(&translations, "Comment on selection"),
             None,
             hover == BrowserMenuHit::CommentSelection,
         );
@@ -744,7 +753,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             230,
-            "浏览器信息",
+            translated(&translations, "Browser information"),
             Some("›"),
             hover == BrowserMenuHit::ShowInfo,
         );
@@ -752,7 +761,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             264,
-            "下载内容",
+            translated(&translations, "Downloads"),
             Some("›"),
             hover == BrowserMenuHit::ShowDownloads,
         );
@@ -761,7 +770,7 @@ fn paint_native_browser_menu(hwnd: HWND) {
             hdc,
             scale,
             307,
-            "退出浏览器",
+            translated(&translations, "Exit browser"),
             None,
             hover == BrowserMenuHit::Exit,
         );
@@ -803,15 +812,29 @@ unsafe fn draw_native_menu_item(
     }
 }
 
+fn translated<'a>(translations: &'a HashMap<String, String>, source: &'static str) -> &'a str {
+    translations
+        .get(source)
+        .map(String::as_str)
+        .unwrap_or(source)
+}
+
 unsafe fn draw_native_zoom_row(
     hdc: windows_sys::Win32::Graphics::Gdi::HDC,
     scale: f64,
     hover: BrowserMenuHit,
     zoom_percent: u32,
+    translations: &HashMap<String, String>,
 ) {
     unsafe {
         let _ = SetTextColor(hdc, 0x0033_2017);
-        draw_native_text(hdc, scale, "缩放", (15, 117, 155, 153), DT_LEFT);
+        draw_native_text(
+            hdc,
+            scale,
+            translated(translations, "Zoom"),
+            (15, 117, 155, 153),
+            DT_LEFT,
+        );
         draw_native_square(
             hdc,
             scale,
@@ -1023,7 +1046,23 @@ fn dispatch_toolbar_action(action: ToolbarAction) {
         ToolbarAction::ShowDownloads => show_downloads(),
         ToolbarAction::OpenDownloadsDirectory => open_downloads_directory(),
         ToolbarAction::SetBrowserWidth(width) => set_browser_width(width),
+        ToolbarAction::SetTranslations(translations) => set_browser_translations(translations),
     }
+}
+
+fn set_browser_translations(translations: HashMap<String, String>) {
+    WORKSPACE.with(|slot| {
+        let Ok(mut slot) = slot.try_borrow_mut() else {
+            return;
+        };
+        let Some(workspace) = slot.as_mut() else {
+            return;
+        };
+        workspace.translations = translations;
+        workspace.browser_menu = None;
+        workspace.browser_panel_webview = None;
+    });
+    sync_toolbar();
 }
 
 fn toggle_workspace() {
@@ -1041,7 +1080,7 @@ fn toggle_workspace() {
                 eprintln!("Embedded Browser Workspace initialization failed: {error}");
                 notify(
                     &workspace.studio_webview,
-                    &format!("无法初始化内嵌浏览器：{error}"),
+                    &format!("Unable to initialize the embedded browser: {error}"),
                 );
                 return false;
             }
@@ -1151,7 +1190,7 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
     .with_bounds(bounds(0, 0, 1, TOOLBAR_HEIGHT))
     .with_visible(false)
     .build_as_child(&workspace.window)
-    .map_err(|error| format!("无法创建可信 Browser Toolbar WebView：{error:?}"))?;
+    .map_err(|error| format!("Unable to create the trusted Browser Toolbar WebView: {error:?}"))?;
     eprintln!("Embedded Browser: trusted toolbar WebView created");
     eprintln!("Embedded Browser: creating native splitter HWND");
     let splitter = create_native_splitter(&workspace.window)?;
@@ -1160,7 +1199,7 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
     workspace.splitter = Some(splitter);
     eprintln!("Embedded Browser: creating initial page Tab");
     let tab = build_browser_tab(workspace, 1, DEFAULT_BROWSER_URL)
-        .map_err(|error| format!("无法创建初始 Browser 页面 Tab：{error}"))?;
+        .map_err(|error| format!("Unable to create the initial Browser page tab: {error}"))?;
     eprintln!("Embedded Browser: initial page Tab created");
     workspace.tabs.push(tab);
     workspace.active_tab_id = 1;
@@ -1183,7 +1222,7 @@ fn build_browser_tab(
     let context = workspace
         .browser_context
         .as_mut()
-        .ok_or("浏览器 Profile 不可用")?;
+        .ok_or("The browser profile is unavailable")?;
     eprintln!("Embedded Browser: creating WebView2 page container for {url}");
     let webview = WebViewBuilder::with_web_context(context)
         .with_url(&url)
@@ -1212,14 +1251,14 @@ fn build_browser_tab(
             finish_download(&url, path.as_deref(), success)
         })
         .build_as_child(&workspace.window)
-        .map_err(|error| format!("WebView2 页面容器创建失败：{error:?}"))?;
+        .map_err(|error| format!("Unable to create the WebView2 page container: {error:?}"))?;
     eprintln!("Embedded Browser: page container created; binding security callbacks");
     deny_page_permissions(&webview)
-        .map_err(|error| format!("WebView2 页面权限策略绑定失败：{error}"))?;
+        .map_err(|error| format!("Unable to bind the WebView2 page permission policy: {error}"))?;
     bind_page_failure_handler(&webview, id, &workspace.window)
-        .map_err(|error| format!("WebView2 页面异常处理绑定失败：{error}"))?;
+        .map_err(|error| format!("Unable to bind WebView2 page failure handling: {error}"))?;
     bind_tab_shortcuts(&webview, &workspace.window)
-        .map_err(|error| format!("WebView2 页面快捷键绑定失败：{error}"))?;
+        .map_err(|error| format!("Unable to bind WebView2 page shortcuts: {error}"))?;
     eprintln!("Embedded Browser: page callbacks bound");
     Ok(BrowserTab {
         id,
@@ -1276,7 +1315,7 @@ fn request_popup_tab(url: &str) {
             queue_browser_action(&window, move || new_tab(Some(&url)));
         }
     } else {
-        notify_current(&format!("已阻止不安全的浏览器地址：{url}"));
+        notify_current(&format!("Blocked an unsafe browser URL: {url}"));
     }
 }
 
@@ -1300,7 +1339,7 @@ fn new_tab(url: Option<&str>) {
             Err(error) => {
                 notify(
                     &workspace.studio_webview,
-                    &format!("无法创建浏览器标签页：{error}"),
+                    &format!("Unable to create a browser tab: {error}"),
                 );
                 false
             }
@@ -1354,7 +1393,10 @@ fn close_tab(id: u64) {
                     w.next_tab_id = replacement_id.wrapping_add(1).max(1);
                 }
                 Err(error) => {
-                    notify(&w.studio_webview, &format!("无法创建空白标签页：{error}"));
+                    notify(
+                        &w.studio_webview,
+                        &format!("Unable to create a blank tab: {error}"),
+                    );
                     return false;
                 }
             }
@@ -1399,13 +1441,15 @@ fn cycle_tab(delta: isize) {
 fn navigate_active(raw: &str) {
     let result = WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
-            return Err("浏览器正忙，请稍后重试".to_owned());
+            return Err("The browser is busy. Try again shortly.".to_owned());
         };
-        let w = slot.as_mut().ok_or("浏览器工作区尚未初始化")?;
+        let w = slot
+            .as_mut()
+            .ok_or("The browser workspace is not initialized")?;
         let url = validate_browser_url(raw, &w.preferences)
             .map_err(|e| e.to_string())?
             .to_string();
-        let tab = active_tab_mut(w).ok_or("没有可用的浏览器标签页")?;
+        let tab = active_tab_mut(w).ok_or("No browser tab is available")?;
         tab.fit_width = true;
         tab.zoom = 1.0;
         tab.webview.zoom(1.0).map_err(|e| e.to_string())?;
@@ -1424,12 +1468,15 @@ fn evaluate_active(script: &str) {
     let result = WORKSPACE.with(|slot| {
         let slot = slot
             .try_borrow()
-            .map_err(|_| "浏览器正忙，请稍后重试".to_owned())?;
-        active_tab(slot.as_ref().ok_or("浏览器工作区尚未初始化")?)
-            .ok_or("没有可用的浏览器标签页")?
-            .webview
-            .evaluate_script(script)
-            .map_err(|e| e.to_string())
+            .map_err(|_| "The browser is busy. Try again shortly.".to_owned())?;
+        active_tab(
+            slot.as_ref()
+                .ok_or("The browser workspace is not initialized")?,
+        )
+        .ok_or("No browser tab is available")?
+        .webview
+        .evaluate_script(script)
+        .map_err(|e| e.to_string())
     });
     if let Err(error) = result {
         notify_current(&error);
@@ -1452,10 +1499,13 @@ fn adjust_zoom(delta: f64) {
 fn set_active_zoom(zoom: f64, fit_width: bool) {
     let result = WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
-            return Err("浏览器正忙，请稍后重试".to_owned());
+            return Err("The browser is busy. Try again shortly.".to_owned());
         };
-        let tab = active_tab_mut(slot.as_mut().ok_or("浏览器工作区尚未初始化")?)
-            .ok_or("没有可用的浏览器标签页")?;
+        let tab = active_tab_mut(
+            slot.as_mut()
+                .ok_or("The browser workspace is not initialized")?,
+        )
+        .ok_or("No browser tab is available")?;
         let zoom = (zoom.clamp(MIN_ZOOM, MAX_ZOOM) * 100.0).round() / 100.0;
         tab.webview.zoom(zoom).map_err(|e| e.to_string())?;
         tab.zoom = zoom;
@@ -1550,9 +1600,9 @@ fn copy_active_url() {
     });
     let Some(url) = url else { return };
     if copy_to_clipboard(&url) {
-        notify_current("已复制当前链接");
+        notify_current("Current link copied");
     } else {
-        notify_current("无法复制当前链接");
+        notify_current("Unable to copy the current link");
     }
 }
 
@@ -1616,7 +1666,7 @@ fn handle_page_ipc(id: u64, raw: &str) {
             if let Some(selection) = selection {
                 open_comment(&selection);
             } else {
-                notify_current("请先在网页中选择文本");
+                notify_current("Select text on the web page first");
             }
         }
         PageIpcMessage::FitMetrics(metrics) => {
@@ -2124,9 +2174,9 @@ fn finish_download(url: &str, path: Option<&Path>, success: bool) {
         Some(format!(
             "{}：{name}",
             if success {
-                "下载完成"
+                "Download completed"
             } else {
-                "下载失败"
+                "Download failed"
             }
         ))
     });
@@ -2150,9 +2200,11 @@ fn toggle_browser_panel() {
 
     let result = WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
-            return Err("浏览器正忙，请稍后重试".to_owned());
+            return Err("The browser is busy. Try again shortly.".to_owned());
         };
-        let w = slot.as_mut().ok_or("浏览器工作区尚未初始化")?;
+        let w = slot
+            .as_mut()
+            .ok_or("The browser workspace is not initialized")?;
         if !w.lifecycle.visible() {
             return Ok(());
         }
@@ -2187,7 +2239,8 @@ fn show_browser_info() {
             "profile": w.browser_profile_directory.display().to_string(), "cache": resolved_cache_directory(w).display().to_string(),
             "downloads": w.downloads_directory.display().to_string(),
             "engine": wry::webview_version().unwrap_or_else(|_| "WebView2".to_owned()),
-            "tls": "Windows WebView2 使用系统 TLS 验证；无绕过选项。"
+            "tls": "Windows WebView2 uses system TLS validation with no bypass option.",
+            "translations": w.translations,
         }))
     });
     if let Some(info) = info {
@@ -2218,14 +2271,20 @@ fn resolved_cache_directory(workspace: &EmbeddedBrowserWorkspace) -> PathBuf {
 fn show_downloads() {
     let downloads = WORKSPACE.with(|slot| {
         let slot = slot.try_borrow().ok()?; let w = slot.as_ref()?;
-        Some(w.downloads.iter().map(|download| serde_json::json!({
+        let items = w.downloads.iter().map(|download| serde_json::json!({
             "url": download.url, "path": download.path.display().to_string(),
             "name": download.path.file_name().and_then(|name| name.to_str()).unwrap_or("download"),
-            "state": match download.state { BrowserDownloadState::Downloading => "下载中", BrowserDownloadState::Completed => "已完成", BrowserDownloadState::Failed => "失败" }
-        })).collect::<Vec<_>>())
+            "state": match download.state { BrowserDownloadState::Downloading => "Downloading", BrowserDownloadState::Completed => "Completed", BrowserDownloadState::Failed => "Failed" }
+        })).collect::<Vec<_>>();
+        Some(serde_json::json!({ "items": items, "translations": w.translations }))
     });
     if let Some(downloads) = downloads {
-        let height = (BROWSER_DOWNLOADS_EMPTY_HEIGHT + downloads.len().min(4) as u32 * 48).min(360);
+        let item_count = downloads
+            .get("items")
+            .and_then(|items| items.as_array())
+            .map(Vec::len)
+            .unwrap_or(0);
+        let height = (BROWSER_DOWNLOADS_EMPTY_HEIGHT + item_count.min(4) as u32 * 48).min(360);
         if let Err(error) = open_browser_detail_panel(height, "showDownloads", &downloads) {
             notify_current(&error);
         }
@@ -2244,16 +2303,21 @@ fn open_browser_detail_panel<T: Serialize>(
     );
     WORKSPACE.with(|slot| {
         let Ok(mut slot) = slot.try_borrow_mut() else {
-            return Err("浏览器正忙，请稍后重试".to_owned());
+            return Err("The browser is busy. Try again shortly.".to_owned());
         };
-        let w = slot.as_mut().ok_or("浏览器工作区尚未初始化")?;
+        let w = slot
+            .as_mut()
+            .ok_or("The browser workspace is not initialized")?;
         if !w.lifecycle.visible() {
             return Ok(());
         }
         w.browser_panel_webview = None;
         w.browser_panel_height = height;
         let panel_window = w.window.clone();
-        let context = w.toolbar_context.as_mut().ok_or("Browser Toolbar 不可用")?;
+        let context = w
+            .toolbar_context
+            .as_mut()
+            .ok_or("Browser Toolbar is unavailable")?;
         let panel = WebViewBuilder::with_web_context(context)
             .with_html(BROWSER_PANEL_HTML)
             .with_initialization_script(&initialization_script)
@@ -2273,7 +2337,7 @@ fn open_browser_detail_panel<T: Serialize>(
             ))
             .with_visible(true)
             .build_as_child(&w.window)
-            .map_err(|error| format!("无法创建 Browser 详情面板：{error:?}"))?;
+            .map_err(|error| format!("Unable to create the Browser detail panel: {error:?}"))?;
         w.browser_panel_webview = Some(panel);
         Ok(())
     })
@@ -2317,7 +2381,7 @@ fn open_downloads_directory() {
             .spawn()
             .map(|_| ())
     }) {
-        notify_current(&format!("无法打开下载目录：{error}"));
+        notify_current(&format!("Unable to open the downloads folder: {error}"));
     }
 }
 
@@ -2328,7 +2392,8 @@ fn sync_toolbar() {
         let state = serde_json::json!({
             "tabs": tabs, "url": active.map(|tab| tab.url.as_str()).unwrap_or(DEFAULT_BROWSER_URL),
             "title": active.map(|tab| display_title(&tab.title, &tab.url)).unwrap_or_else(|| "Browser".to_owned()),
-            "zoomPercent": active.map(|tab| (tab.zoom * 100.0).round() as u32).unwrap_or(100), "fitWidth": active.is_some_and(|tab| tab.fit_width)
+            "zoomPercent": active.map(|tab| (tab.zoom * 100.0).round() as u32).unwrap_or(100), "fitWidth": active.is_some_and(|tab| tab.fit_width),
+            "translations": w.translations,
         });
         evaluate(toolbar, "window.__embeddedBrowserToolbar?.setState", &state);
         if let Some(panel) = w.browser_panel_webview.as_ref() {
@@ -2556,7 +2621,9 @@ fn recover_tab(id: u64) {
             layout_workspace();
             sync_toolbar();
         }
-        Some(Err(())) => notify_current("浏览器页面进程重复异常，已停止自动恢复"),
+        Some(Err(())) => {
+            notify_current("The browser page process failed repeatedly; automatic recovery stopped")
+        }
         None => {}
     }
 }

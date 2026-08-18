@@ -276,7 +276,7 @@ function normalizeWebResource(candidate, source) {
     priority: Number(candidate.priority || 0),
     confidence: Number(candidate.confidence || 0.9),
     state: blocked ? 'blocked' : 'resolved',
-    reason: blocked ? 'URL 中包含用户名或密码' : '',
+    reason: blocked ? 'The URL contains a username or password' : '',
     target: { url: navigationUrl },
     firstSeenAt: nowFromSource(source),
     lastSeenAt: nowFromSource(source),
@@ -316,7 +316,7 @@ function normalizeFileResource(candidate, source, context) {
     priority: Number(candidate.priority || 0),
     confidence: Number(candidate.confidence || 0.75),
     state: blocked ? 'blocked' : 'unresolved',
-    reason: blocked ? '路径位于当前会话根目录之外' : '',
+    reason: blocked ? 'The path is outside the current session root' : '',
     target: {
       backend: String(source.backend || context.backend || 'codex'),
       workspaceRoot: root,

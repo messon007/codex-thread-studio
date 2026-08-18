@@ -49,6 +49,7 @@ enum BrowserAction {
     Hide,
     Open(String, Option<i32>),
     Resize(i32),
+    SetTranslations(HashMap<String, String>),
     Exit,
     Navigate(String),
     NewTab(Option<String>),
@@ -169,6 +170,7 @@ struct EmbeddedBrowserWorkspace {
     overflow_menu: Option<gtk::Menu>,
     info_dialog: Option<gtk::Dialog>,
     downloads_dialog: Option<gtk::Dialog>,
+    translations: HashMap<String, String>,
 }
 
 pub fn is_supported() -> bool {
@@ -524,6 +526,7 @@ pub fn build(
             overflow_menu: None,
             info_dialog: None,
             downloads_dialog: None,
+            translations: HashMap::new(),
         });
     });
     split_signal.connect_position_notify(|split| {
@@ -925,6 +928,18 @@ fn dispatch_action(action: BrowserAction) {
                 unreachable!("workspace visibility actions are handled without a nested borrow")
             }
             BrowserAction::Exit => unreachable!("exit is handled without a nested borrow"),
+            BrowserAction::SetTranslations(translations) => {
+                workspace.translations = translations;
+                if let Some(menu) = workspace.overflow_menu.take() {
+                    menu.popdown();
+                }
+                if let Some(dialog) = workspace.info_dialog.take() {
+                    dialog.close();
+                }
+                if let Some(dialog) = workspace.downloads_dialog.take() {
+                    dialog.close();
+                }
+            }
             BrowserAction::Navigate(raw) => {
                 match validate_browser_url(&raw, &workspace.preferences) {
                     Ok(url) => {
@@ -1069,7 +1084,7 @@ fn dispatch_action(action: BrowserAction) {
             BrowserAction::NavigationRejected { url, reason } => {
                 notify(
                     &workspace.studio_webview,
-                    &format!("已阻止不安全导航：{reason}（{url}）"),
+                    &format!("Blocked unsafe navigation: {reason} ({url})"),
                 );
             }
             BrowserAction::TlsError { id, url, details } => {
@@ -1146,13 +1161,15 @@ fn handle_page_termination(
         if let Some(tab) = workspace.tabs.iter_mut().find(|tab| tab.id == id) {
             tab.crashed = true;
             tab.title = match reason {
-                WebProcessTerminationReason::ExceededMemoryLimit => "页面内存超限".to_owned(),
-                _ => "页面异常退出".to_owned(),
+                WebProcessTerminationReason::ExceededMemoryLimit => {
+                    "Page memory limit exceeded".to_owned()
+                }
+                _ => "Page process exited unexpectedly".to_owned(),
             };
         }
         notify(
             &workspace.studio_webview,
-            "网页连续异常退出，请使用重新加载手动恢复",
+            "The page repeatedly crashed. Reload it manually to recover.",
         );
         return;
     }
@@ -1194,7 +1211,10 @@ fn recover_tab(workspace: &mut EmbeddedBrowserWorkspace, id: u64, automatic: boo
                     .set_visible_child(&workspace.tabs[index].host);
             }
             if automatic {
-                notify(&workspace.studio_webview, "网页渲染进程已自动恢复");
+                notify(
+                    &workspace.studio_webview,
+                    "The page renderer recovered automatically",
+                );
             }
         }
         Err(error) => {
@@ -1219,7 +1239,7 @@ fn handle_toolbar_termination(
     if repeated {
         notify(
             &workspace.studio_webview,
-            "浏览器工具栏连续异常退出，浏览器已关闭",
+            "The browser toolbar repeatedly crashed, so the browser was closed",
         );
         queue_action(BrowserAction::Exit);
         return;
@@ -1241,7 +1261,7 @@ fn show_tls_error(workspace: &mut EmbeddedBrowserWorkspace, id: u64, url: &str, 
         return;
     };
     tab.url = url.to_owned();
-    tab.title = "证书错误".to_owned();
+    tab.title = "Certificate error".to_owned();
     tab.crashed = false;
     tab.internal_navigation.set(true);
     let html = tls_error_html(url, details);
@@ -1256,7 +1276,7 @@ fn show_tls_error(workspace: &mut EmbeddedBrowserWorkspace, id: u64, url: &str, 
     } else {
         notify(
             &workspace.studio_webview,
-            &format!("已阻止证书无效的页面：{url}"),
+            &format!("Blocked a page with an invalid certificate: {url}"),
         );
     }
 }
@@ -1264,12 +1284,12 @@ fn show_tls_error(workspace: &mut EmbeddedBrowserWorkspace, id: u64, url: &str, 
 fn tls_error_html(url: &str, details: &str) -> String {
     format!(
         r#"<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark">
-<title>证书错误</title><style>
+<title>Certificate error</title><style>
 html,body{{height:100%;margin:0}}body{{display:grid;place-items:center;background:#f6f8fa;color:#172033;font:15px/1.6 system-ui,sans-serif}}
 main{{width:min(620px,calc(100% - 48px));padding:30px;border:1px solid #d8e0e6;border-radius:14px;background:#fff;box-shadow:0 12px 32px #17203312}}
 h1{{margin:0 0 10px;font-size:22px}}p{{margin:8px 0;color:#4d5968}}code{{display:block;margin-top:18px;padding:12px;overflow-wrap:anywhere;border-radius:8px;background:#f0f3f5;color:#263241}}
 @media(prefers-color-scheme:dark){{body{{background:#101719;color:#edf3f4}}main{{background:#182124;border-color:#344246}}p{{color:#b7c2c5}}code{{background:#11191c;color:#dbe6e8}}}}
-</style><main><h1>无法建立安全连接</h1><p>Studio 已阻止加载证书无效的页面。请检查系统时间、网址或网站证书后重新加载。</p><code>{}</code><p>{}</p></main>"#,
+</style><main><h1>Unable to establish a secure connection</h1><p>Studio blocked a page with an invalid certificate. Check the system clock, URL, or site certificate, then reload.</p><code>{}</code><p>{}</p></main>"#,
         escape_html(url),
         escape_html(details)
     )
@@ -1297,47 +1317,49 @@ fn show_browser_menu(workspace: &mut EmbeddedBrowserWorkspace) {
     menu.set_size_request(292, -1);
     menu.style_context().add_class("browser-overflow-menu");
     menu.append(&browser_native_menu_item(
-        "新建标签页",
+        browser_text(workspace, "New tab"),
         Some("Ctrl+T"),
         || queue_action(BrowserAction::NewTab(None)),
     ));
     menu.append(&browser_native_menu_item(
-        "重新加载",
+        browser_text(workspace, "Reload"),
         Some("Ctrl+R"),
         || queue_action(BrowserAction::Reload),
     ));
     menu.append(&browser_native_menu_item(
-        "复制当前链接",
+        browser_text(workspace, "Copy current link"),
         None,
         || queue_action(BrowserAction::CopyUrl),
     ));
     menu.append(&gtk::SeparatorMenuItem::new());
     menu.append(&browser_native_zoom_item(workspace));
     menu.append(&browser_native_menu_item(
-        "适应页面宽度",
+        browser_text(workspace, "Fit page width"),
         None,
         || queue_action(BrowserAction::FitWidth),
     ));
     menu.append(&browser_native_menu_item(
-        "批注选中内容",
+        browser_text(workspace, "Comment on selection"),
         None,
         || queue_action(BrowserAction::CommentSelection),
     ));
     menu.append(&gtk::SeparatorMenuItem::new());
     menu.append(&browser_native_menu_item(
-        "浏览器信息",
+        browser_text(workspace, "Browser information"),
         Some("›"),
         || queue_action(BrowserAction::ShowInfo),
     ));
     menu.append(&browser_native_menu_item(
-        "下载内容",
+        browser_text(workspace, "Downloads"),
         Some("›"),
         || queue_action(BrowserAction::ShowDownloads),
     ));
     menu.append(&gtk::SeparatorMenuItem::new());
-    menu.append(&browser_native_menu_item("退出浏览器", None, || {
-        queue_action(BrowserAction::Exit)
-    }));
+    menu.append(&browser_native_menu_item(
+        browser_text(workspace, "Exit browser"),
+        None,
+        || queue_action(BrowserAction::Exit),
+    ));
     menu.show_all();
     let Some(toolbar_webview) = workspace.toolbar_webview.as_ref() else {
         return;
@@ -1403,7 +1425,7 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
         }
     };
     let dialog = gtk::Dialog::new();
-    dialog.set_title("浏览器信息");
+    dialog.set_title(browser_text(workspace, "Browser information"));
     dialog.set_transient_for(Some(&parent));
     dialog.set_destroy_with_parent(true);
     dialog.set_modal(false);
@@ -1420,9 +1442,10 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
     info.set_margin_bottom(14);
 
     let summary = gtk::Label::new(Some(&format!(
-        "WebKitGTK {}  ·  {} 个标签页",
+        "WebKitGTK {}  ·  {} {}",
         workspace.webkit_version,
-        workspace.tabs.len()
+        workspace.tabs.len(),
+        browser_text(workspace, "tabs")
     )));
     summary.set_xalign(0.0);
     summary.style_context().add_class("dim-label");
@@ -1452,7 +1475,17 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
         ("Local Storage", local_storage.as_str()),
         ("WebKit Cache", cache.as_str()),
     ] {
-        info.pack_start(&browser_info_value_row(label, value), false, false, 0);
+        info.pack_start(
+            &browser_info_value_row(
+                browser_text(workspace, label),
+                value,
+                browser_text(workspace, "Copy"),
+                browser_text(workspace, "Copied"),
+            ),
+            false,
+            false,
+            0,
+        );
     }
 
     info.pack_start(
@@ -1461,15 +1494,16 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
         false,
         1,
     );
-    let storage_title = gtk::Label::new(Some("存储与清理"));
+    let storage_title = gtk::Label::new(Some(browser_text(workspace, "Storage & cleanup")));
     storage_title.set_xalign(0.0);
     storage_title
         .style_context()
         .add_class("browser-menu-subheading");
     info.pack_start(&storage_title, false, false, 0);
-    let storage = gtk::Label::new(Some(
-        "缓存、Cookies、Local Storage 等站点数据会保存在磁盘。标签页的前进/后退记录只存在于内存，退出 Studio 后自动消失。",
-    ));
+    let storage = gtk::Label::new(Some(browser_text(
+        workspace,
+        "Cache, cookies, Local Storage, and other site data are stored on disk. Tab navigation history stays in memory and disappears when Studio exits.",
+    )));
     storage.set_xalign(0.0);
     storage.set_line_wrap(true);
     storage.set_max_width_chars(62);
@@ -1480,15 +1514,17 @@ fn show_browser_info(workspace: &mut EmbeddedBrowserWorkspace) {
     clear_status.set_xalign(0.0);
     clear_status.set_line_wrap(true);
     clear_status.style_context().add_class("dim-label");
-    let clear_data = gtk::Button::with_label("清除浏览数据…");
+    let clear_data = gtk::Button::with_label(browser_text(workspace, "Clear browsing data…"));
     clear_data.set_halign(gtk::Align::Start);
     clear_data.style_context().add_class("browser-clear-data");
     let dialog_for_confirmation = dialog.clone();
     let clear_status_for_confirmation = clear_status.clone();
+    let translations = workspace.translations.clone();
     clear_data.connect_clicked(move |_| {
         confirm_clear_browser_data(
             &dialog_for_confirmation,
             clear_status_for_confirmation.clone(),
+            &translations,
         );
     });
     info.pack_start(&clear_data, false, false, 0);
@@ -1515,7 +1551,7 @@ fn show_downloads(workspace: &mut EmbeddedBrowserWorkspace) {
         }
     };
     let dialog = gtk::Dialog::new();
-    dialog.set_title("下载内容");
+    dialog.set_title(browser_text(workspace, "Downloads"));
     dialog.set_transient_for(Some(&parent));
     dialog.set_destroy_with_parent(true);
     dialog.set_modal(false);
@@ -1530,7 +1566,7 @@ fn show_downloads(workspace: &mut EmbeddedBrowserWorkspace) {
     content.set_margin_top(14);
     content.set_margin_bottom(14);
     if workspace.downloads.is_empty() {
-        let empty = gtk::Label::new(Some("还没有下载记录"));
+        let empty = gtk::Label::new(Some(browser_text(workspace, "No downloads yet")));
         empty.set_xalign(0.0);
         empty.style_context().add_class("dim-label");
         content.pack_start(&empty, false, false, 0);
@@ -1548,7 +1584,12 @@ fn show_downloads(workspace: &mut EmbeddedBrowserWorkspace) {
                     4,
                 );
             }
-            list.pack_start(&download_row(download), false, false, 0);
+            list.pack_start(
+                &download_row(download, &workspace.translations),
+                false,
+                false,
+                0,
+            );
         }
         scroller.add(&list);
         content.pack_start(&scroller, true, true, 0);
@@ -1559,7 +1600,7 @@ fn show_downloads(workspace: &mut EmbeddedBrowserWorkspace) {
     workspace.downloads_dialog = Some(dialog);
 }
 
-fn download_row(download: &BrowserDownload) -> gtk::Box {
+fn download_row(download: &BrowserDownload, translations: &HashMap<String, String>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.set_margin_top(6);
     row.set_margin_bottom(6);
@@ -1571,7 +1612,7 @@ fn download_row(download: &BrowserDownload) -> gtk::Box {
     name.set_tooltip_text(Some(&download.url));
     let detail = gtk::Label::new(Some(&format!(
         "{}  ·  {}",
-        download_state_label(download.state),
+        translated_text(translations, download_state_label(download.state)),
         download.path.display()
     )));
     detail.set_xalign(0.0);
@@ -1580,7 +1621,7 @@ fn download_row(download: &BrowserDownload) -> gtk::Box {
     copy.pack_start(&name, false, false, 0);
     copy.pack_start(&detail, false, false, 0);
     row.pack_start(&copy, true, true, 0);
-    let open = gtk::Button::with_label("打开目录");
+    let open = gtk::Button::with_label(translated_text(translations, "Open folder"));
     open.set_sensitive(download.state == BrowserDownloadState::Completed);
     let directory = download.path.parent().map(Path::to_path_buf);
     open.connect_clicked(move |_| {
@@ -1599,9 +1640,9 @@ fn download_row(download: &BrowserDownload) -> gtk::Box {
 
 fn download_state_label(state: BrowserDownloadState) -> &'static str {
     match state {
-        BrowserDownloadState::Downloading => "下载中",
-        BrowserDownloadState::Completed => "已完成",
-        BrowserDownloadState::Failed => "失败",
+        BrowserDownloadState::Downloading => "Downloading",
+        BrowserDownloadState::Completed => "Completed",
+        BrowserDownloadState::Failed => "Failed",
     }
 }
 
@@ -1640,14 +1681,14 @@ fn finish_download(
             &format!(
                 "{}：{filename}",
                 if success {
-                    "下载完成"
+                    "Download completed"
                 } else {
-                    "下载失败"
+                    "Download failed"
                 }
             ),
         );
     } else if !success {
-        notify(&workspace.studio_webview, "下载失败");
+        notify(&workspace.studio_webview, "Download failed");
     }
     refresh_downloads_if_open(workspace);
 }
@@ -1662,34 +1703,52 @@ fn refresh_downloads_if_open(workspace: &mut EmbeddedBrowserWorkspace) {
     }
 }
 
-fn confirm_clear_browser_data(parent: &gtk::Dialog, status: gtk::Label) {
+fn confirm_clear_browser_data(
+    parent: &gtk::Dialog,
+    status: gtk::Label,
+    translations: &HashMap<String, String>,
+) {
     let confirmation = gtk::MessageDialog::new(
         Some(parent),
         gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
         gtk::MessageType::Warning,
         gtk::ButtonsType::None,
-        "清除所有内嵌浏览器数据？",
+        translated_text(translations, "Clear all embedded browser data?"),
     );
-    confirmation.set_secondary_text(Some(
-        "将清除缓存、Cookies、Local Storage、IndexedDB 和服务工作线程等共享站点数据。网站登录状态可能失效，此操作无法撤销。",
-    ));
-    confirmation.add_button("取消", gtk::ResponseType::Cancel);
-    let clear = confirmation.add_button("清除", gtk::ResponseType::Accept);
+    confirmation.set_secondary_text(Some(translated_text(
+        translations,
+        "This clears shared site data including cache, cookies, Local Storage, IndexedDB, and service workers. Website sign-ins may be lost. This action cannot be undone.",
+    )));
+    confirmation.add_button(
+        translated_text(translations, "Cancel"),
+        gtk::ResponseType::Cancel,
+    );
+    let clear = confirmation.add_button(
+        translated_text(translations, "Clear"),
+        gtk::ResponseType::Accept,
+    );
+    let cleanup_requested = translated_text(
+        translations,
+        "Cleanup requested. The current page may need to be reloaded, and website sign-ins may be lost.",
+    )
+    .to_owned();
     clear.style_context().add_class("browser-clear-data");
     confirmation.connect_response(move |confirmation, response| {
         if response == gtk::ResponseType::Accept {
             let result = WORKSPACE.with(|slot| {
                 let slot = slot
                     .try_borrow()
-                    .map_err(|_| "浏览器正忙，请稍后重试".to_owned())?;
-                let workspace = slot.as_ref().ok_or("浏览器工作区尚未初始化")?;
-                let tab = active_tab(workspace).ok_or("没有可用的浏览器标签页")?;
+                    .map_err(|_| "The browser is busy. Try again shortly.".to_owned())?;
+                let workspace = slot
+                    .as_ref()
+                    .ok_or("The browser workspace is not initialized")?;
+                let tab = active_tab(workspace).ok_or("No browser tab is available")?;
                 tab.webview
                     .clear_all_browsing_data()
                     .map_err(|error| error.to_string())
             });
             status.set_text(match result {
-                Ok(()) => "清理请求已提交。当前页面可能需要重新加载，网站登录状态可能失效。",
+                Ok(()) => &cleanup_requested,
                 Err(ref error) => error,
             });
         }
@@ -1701,19 +1760,22 @@ fn confirm_clear_browser_data(parent: &gtk::Dialog, status: gtk::Label) {
 fn browser_zoom_row(workspace: &EmbeddedBrowserWorkspace) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     row.style_context().add_class("browser-zoom-row");
-    let label = gtk::Label::new(Some("缩放"));
+    let label = gtk::Label::new(Some(browser_text(workspace, "Zoom")));
     label.set_xalign(0.0);
     label.set_hexpand(true);
     let zoom = active_tab(workspace)
         .map(|tab| format!("{}%", (tab.zoom * 100.0).round() as u32))
         .unwrap_or_else(|| "100%".to_owned());
-    let minus =
-        browser_menu_square_button("−", "缩小", || queue_action(BrowserAction::ZoomOut));
-    let reset = browser_menu_square_button(&zoom, "恢复 100%", || {
+    let minus = browser_menu_square_button("−", browser_text(workspace, "Zoom out"), || {
+        queue_action(BrowserAction::ZoomOut)
+    });
+    let reset = browser_menu_square_button(&zoom, browser_text(workspace, "Reset to 100%"), || {
         queue_action(BrowserAction::ZoomReset)
     });
     reset.style_context().add_class("browser-zoom-value");
-    let plus = browser_menu_square_button("+", "放大", || queue_action(BrowserAction::ZoomIn));
+    let plus = browser_menu_square_button("+", browser_text(workspace, "Zoom in"), || {
+        queue_action(BrowserAction::ZoomIn)
+    });
     row.pack_start(&label, true, true, 0);
     row.pack_end(&plus, false, false, 0);
     row.pack_end(&reset, false, false, 0);
@@ -1817,7 +1879,12 @@ fn install_browser_native_styles() {
     }
 }
 
-fn browser_info_value_row(label: &str, value: &str) -> gtk::Box {
+fn browser_info_value_row(
+    label: &str,
+    value: &str,
+    copy_label: &str,
+    copied_label: &str,
+) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let heading = gtk::Label::new(Some(label));
     heading.set_xalign(0.0);
@@ -1831,22 +1898,33 @@ fn browser_info_value_row(label: &str, value: &str) -> gtk::Box {
     path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     path.set_tooltip_text(Some(value));
     path.set_hexpand(true);
-    let copy = gtk::Button::with_label("复制");
+    let copy = gtk::Button::with_label(copy_label);
     copy.style_context().add_class("browser-info-copy");
-    connect_copy_button(&copy, value.to_owned());
+    connect_copy_button(
+        &copy,
+        value.to_owned(),
+        copy_label.to_owned(),
+        copied_label.to_owned(),
+    );
     value_row.pack_start(&path, true, true, 0);
     value_row.pack_end(&copy, false, false, 0);
     row.pack_start(&value_row, false, false, 0);
     row
 }
 
-fn connect_copy_button(button: &gtk::Button, value: String) {
+fn connect_copy_button(
+    button: &gtk::Button,
+    value: String,
+    copy_label: String,
+    copied_label: String,
+) {
     button.connect_clicked(move |button| {
         if copy_to_clipboard(&value) {
-            button.set_label("已复制");
+            button.set_label(&copied_label);
             let button = button.clone();
+            let copy_label = copy_label.clone();
             gtk::glib::timeout_add_local_once(Duration::from_millis(900), move || {
-                button.set_label("复制");
+                button.set_label(&copy_label);
             });
         }
     });
@@ -2267,6 +2345,7 @@ fn sync_toolbar() {
                 "title": active.map(|tab| display_title(&tab.title, &tab.url)).unwrap_or_else(|| "Browser".to_owned()),
                 "zoomPercent": active.map(|tab| (tab.zoom * 100.0).round() as u32).unwrap_or(100),
                 "fitWidth": active.is_some_and(|tab| tab.fit_width),
+                "translations": workspace.translations,
             });
             evaluate(
                 toolbar_webview,
@@ -2326,13 +2405,27 @@ fn open_comment(selection: Option<BrowserSelection>) {
                 &selection,
             );
         } else {
-            notify(&workspace.studio_webview, "请先在网页中选择文本");
+            notify(
+                &workspace.studio_webview,
+                "Select text on the web page first",
+            );
         }
     });
 }
 
 fn notify(webview: &WebView, message: &str) {
     evaluate(webview, "window.__studioEmbeddedBrowser?.notify", &message);
+}
+
+fn browser_text<'a>(workspace: &'a EmbeddedBrowserWorkspace, source: &'static str) -> &'a str {
+    translated_text(&workspace.translations, source)
+}
+
+fn translated_text<'a>(translations: &'a HashMap<String, String>, source: &'static str) -> &'a str {
+    translations
+        .get(source)
+        .map(String::as_str)
+        .unwrap_or(source)
 }
 
 fn evaluate<T: Serialize>(webview: &WebView, function: &str, payload: &T) {
@@ -2353,6 +2446,9 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
         "open-browser" => query_value(&url, "url")
             .map(|target| BrowserAction::Open(target, query_i32(&url, "width"))),
         "resize-browser" => query_i32(&url, "width").map(BrowserAction::Resize),
+        "set-browser-translations" => query_value(&url, "messages")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .map(BrowserAction::SetTranslations),
         "navigate" => query_value(&url, "url").map(BrowserAction::Navigate),
         "new-tab" => Some(BrowserAction::NewTab(query_value(&url, "url"))),
         "activate-tab" => query_u64(&url, "id").map(BrowserAction::ActivateTab),
@@ -2423,8 +2519,12 @@ fn preferred_browser_width(preferences: &BrowserPreferences) -> i32 {
 
 fn download_destination_for_name(filename: &str) -> Result<PathBuf, String> {
     let directory = download_directory();
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("无法创建下载目录 {}：{error}", directory.display()))?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "Unable to create downloads directory {}: {error}",
+            directory.display()
+        )
+    })?;
     Ok(unique_download_path(
         &directory,
         &sanitize_download_filename(filename),

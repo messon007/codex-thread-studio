@@ -32,11 +32,11 @@ export function parseUnifiedDiff(source) {
 }
 
 export function reviewFileStatus(file) {
-  if (file?.conflicted) return { label: '!', title: '冲突', tone: 'conflict' }
-  if (file?.untracked) return { label: 'U', title: '未跟踪', tone: 'untracked' }
+  if (file?.conflicted) return { label: '!', title: 'Conflict', tone: 'conflict' }
+  if (file?.untracked) return { label: 'U', title: 'Untracked', tone: 'untracked' }
   const code = file?.worktreeStatus?.trim() || file?.indexStatus?.trim() || 'M'
-  const labels = { A: '新增', D: '删除', M: '修改', R: '重命名', C: '复制', T: '类型变化' }
-  return { label: code, title: labels[code] || '变更', tone: code.toLowerCase() }
+  const labels = { A: 'Added', D: 'Delete', M: 'Modified', R: 'Rename', C: 'Copy', T: 'Type changed' }
+  return { label: code, title: labels[code] || 'Changed', tone: code.toLowerCase() }
 }
 
 export function visibleReviewFiles(files, scope = 'all', filter = '') {
@@ -191,7 +191,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
       state.files = result.files || []
       state.branch = result.branch || state.branch
       chooseVisibleSelection(state)
-      notify(translate(stage ? '已暂存文件。' : '已取消暂存文件。'))
+      notify(translate(stage ? 'File staged.' : 'File unstaged.'))
       render(state)
       await loadSelectedDiff(state)
     } catch (error) {
@@ -222,7 +222,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
       staged: state.files.filter((file) => file.staged).length,
     }
     element('workspace-review-branch').textContent = state.branch || 'Git'
-    element('workspace-review-count').textContent = translate('{count} 个变更', { count: state.files.length })
+    element('workspace-review-count').textContent = translate('{count} changes', { count: state.files.length })
     for (const button of element('workspace-review-scopes')?.querySelectorAll('[data-review-filter]') || []) {
       const scope = button.dataset.reviewFilter
       button.classList.toggle('active', state.scope === scope)
@@ -232,11 +232,11 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
     }
     const list = element('workspace-review-files')
     if (state.loading && !state.files.length) {
-      list.innerHTML = `<div class="workspace-review-state">${escapeHtml(translate('正在读取 Git 变更…'))}</div>`
+      list.innerHTML = `<div class="workspace-review-state">${escapeHtml(translate('Reading Git changes…'))}</div>`
     } else if (state.error) {
-      list.innerHTML = `<div class="workspace-review-state error"><strong>${escapeHtml(translate('无法读取 Git 变更'))}</strong><span>${escapeHtml(state.error)}</span></div>`
+      list.innerHTML = `<div class="workspace-review-state error"><strong>${escapeHtml(translate('Unable to read Git changes'))}</strong><span>${escapeHtml(state.error)}</span></div>`
     } else if (!files.length) {
-      list.innerHTML = `<div class="workspace-review-state"><strong>${escapeHtml(translate(state.files.length ? '当前筛选没有变更' : '工作区没有未提交变更'))}</strong><span>${escapeHtml(translate('Review 只显示当前 Git 仓库的文本变更。'))}</span></div>`
+      list.innerHTML = `<div class="workspace-review-state"><strong>${escapeHtml(translate(state.files.length ? 'No changes match this filter' : 'The working tree has no uncommitted changes'))}</strong><span>${escapeHtml(translate('Review shows text changes in the current Git repository.'))}</span></div>`
     } else {
       list.innerHTML = files.map((file) => {
         const status = reviewFileStatus(file)
@@ -245,7 +245,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
         return `<button class="workspace-review-file${file.path === state.selected ? ' selected' : ''}" type="button" data-review-path="${escapeHtml(file.path)}">
           <span class="workspace-review-status ${status.tone}" title="${escapeHtml(translate(status.title))}">${status.label}</span>
           <span class="workspace-review-file-copy"><strong data-no-i18n>${escapeHtml(name)}</strong><small data-no-i18n>${escapeHtml(directory || '.')}</small></span>
-          <span class="workspace-review-file-scopes">${file.staged ? '<i title="已暂存">S</i>' : ''}${file.unstaged ? '<i title="未暂存">W</i>' : ''}</span>
+          <span class="workspace-review-file-scopes">${file.staged ? '<i title="Staged">S</i>' : ''}${file.unstaged ? '<i title="Unstaged">W</i>' : ''}</span>
         </button>`
       }).join('')
     }
@@ -258,7 +258,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
     header.classList.toggle('hidden', !file)
     const host = element('workspace-review-diff')
     if (!file) {
-      host.innerHTML = `<div class="workspace-review-diff-empty"><span>±</span><strong>${escapeHtml(translate('选择文件查看 Diff'))}</strong></div>`
+      host.innerHTML = `<div class="workspace-review-diff-empty"><span>±</span><strong>${escapeHtml(translate('Select a file to view its diff'))}</strong></div>`
       return
     }
     element('workspace-review-diff-path').textContent = file.path
@@ -268,10 +268,10 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
       button.classList.toggle('active', state.diffScope === scope)
     }
     const action = element('workspace-review-action')
-    action.textContent = state.diffScope === 'staged' ? translate('取消暂存') : translate('暂存文件')
+    action.textContent = state.diffScope === 'staged' ? translate('Unstage') : translate('Stage file')
     action.disabled = state.mutating || !file[state.diffScope]
     if (state.diffLoading) {
-      host.innerHTML = `<div class="workspace-review-diff-empty"><span class="artifact-spinner"></span><strong>${escapeHtml(translate('正在生成 Diff…'))}</strong></div>`
+      host.innerHTML = `<div class="workspace-review-diff-empty"><span class="artifact-spinner"></span><strong>${escapeHtml(translate('Generating diff…'))}</strong></div>`
       return
     }
     if (state.diffError) {
@@ -279,11 +279,11 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
       return
     }
     if (state.diff?.binary) {
-      host.innerHTML = `<div class="workspace-review-diff-empty"><span>◫</span><strong>${escapeHtml(translate('二进制文件无法按行比较'))}</strong></div>`
+      host.innerHTML = `<div class="workspace-review-diff-empty"><span>◫</span><strong>${escapeHtml(translate('Binary files cannot be compared line by line'))}</strong></div>`
       return
     }
     const rows = parseUnifiedDiff(state.diff?.content)
-    host.innerHTML = `<div class="workspace-review-code" data-extension="${escapeHtml(file.path.split('.').at(-1) || '')}">${rows.map((row) => `<div class="diff-row ${row.kind}"><span class="diff-old">${row.oldLine ?? ''}</span><span class="diff-new">${row.newLine ?? ''}</span><span class="diff-sign">${row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '−' : ''}</span><code>${escapeHtml(row.text)}</code></div>`).join('')}</div>${state.diff?.truncated ? `<div class="workspace-review-truncated">${escapeHtml(translate('Diff 过大，仅显示前 4 MiB。'))}</div>` : ''}`
+    host.innerHTML = `<div class="workspace-review-code" data-extension="${escapeHtml(file.path.split('.').at(-1) || '')}">${rows.map((row) => `<div class="diff-row ${row.kind}"><span class="diff-old">${row.oldLine ?? ''}</span><span class="diff-new">${row.newLine ?? ''}</span><span class="diff-sign">${row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '−' : ''}</span><code>${escapeHtml(row.text)}</code></div>`).join('')}</div>${state.diff?.truncated ? `<div class="workspace-review-truncated">${escapeHtml(translate('The diff is large; only the first 4 MiB is shown.'))}</div>` : ''}`
   }
 
   return { bind, open, close, refresh, render }

@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn truncates_diff_on_a_utf8_boundary() {
         let mut bytes = vec![b'a'; MAX_DIFF_BYTES - 1];
-        bytes.extend_from_slice("界".as_bytes());
+        bytes.extend_from_slice("\u{754c}".as_bytes());
         let (content, truncated) = bounded_diff(bytes);
         assert!(truncated);
         assert!(content.is_char_boundary(content.len()));

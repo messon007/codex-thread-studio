@@ -179,12 +179,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         eprintln!("Browser navigate: {url}");
                         if let Err(error) = browser_webview.load_url(url.as_str()) {
                             eprintln!("Browser navigation failed: {error}");
-                            notify(&shell_webview, &format!("打开网页失败：{error}"));
+                            notify(
+                                &shell_webview,
+                                &format!("Unable to open the web page: {error}"),
+                            );
                         } else {
                             let _ = browser_webview.focus();
                         }
                     }
-                    None => notify(&shell_webview, "只允许 http:// 或 https:// 地址"),
+                    None => notify(&shell_webview, "Only http:// and https:// URLs are allowed"),
                 },
                 ShellCommand::Back => {
                     let _ = browser_webview.evaluate_script("history.back()");
@@ -205,7 +208,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 .send_event(UserEvent::BrowserSelectionResult(selection));
                         },
                     ) {
-                        notify(&shell_webview, &format!("读取网页选区失败：{error}"));
+                        notify(
+                            &shell_webview,
+                            &format!("Unable to read the web selection: {error}"),
+                        );
                     }
                 }
                 ShellCommand::ToggleBrowser => {
@@ -228,7 +234,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     );
                     call_webview(&shell_webview, "openSelectionComment", &selection);
                 } else {
-                    notify(&shell_webview, "请先在网页中选择文本");
+                    notify(&shell_webview, "Select text on the web page first");
                 }
             }
             Event::UserEvent(UserEvent::BrowserTitle(title)) => {
@@ -248,7 +254,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // Phase 2A keeps one native browser surface. Popup requests are safely routed
                     // into it; tab lifecycle is intentionally deferred to the next slice.
                     let _ = browser_webview.load_url(url.as_str());
-                    notify(&shell_webview, "新窗口请求已在当前原型页打开");
+                    notify(
+                        &shell_webview,
+                        "The new-window request opened in the current prototype page",
+                    );
                 }
             }
             _ => {}
@@ -409,6 +418,9 @@ mod tests {
 
     #[test]
     fn truncation_keeps_utf8_valid() {
-        assert_eq!(truncate_utf8("中文测试".to_owned(), 7), "中文");
+        assert_eq!(
+            truncate_utf8("\u{4e2d}\u{6587}\u{6d4b}\u{8bd5}".to_owned(), 7),
+            "\u{4e2d}\u{6587}"
+        );
     }
 }

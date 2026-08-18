@@ -114,18 +114,18 @@ export function parseSessionMapUpdate(value) {
   if (markerIndex < 0) return { found: false, visibleText: sessionMapVisibleText(text), update: null }
   const payloadStart = markerIndex + SESSION_MAP_UPDATE_START.length
   const markerEnd = text.indexOf(SESSION_MAP_UPDATE_END, payloadStart)
-  if (markerEnd < 0) throw new Error('Map 更新区块不完整')
+  if (markerEnd < 0) throw new Error('The Map update block is incomplete')
   if (text.slice(markerEnd + SESSION_MAP_UPDATE_END.length).trim()) {
-    throw new Error('Map 更新区块必须位于回复结尾')
+    throw new Error('The Map update block must be at the end of the response')
   }
   let update
   try {
     update = JSON.parse(text.slice(payloadStart, markerEnd).trim())
   } catch {
-    throw new Error('Map 更新区块不是有效 JSON')
+    throw new Error('The Map update block is not valid JSON')
   }
   if (!update || !Number.isInteger(update.baseRevision) || !Array.isArray(update.operations)) {
-    throw new Error('Map 更新区块缺少 baseRevision 或 operations')
+    throw new Error('The Map update block is missing baseRevision or operations')
   }
   return { found: true, visibleText: text.slice(0, markerIndex).trimEnd(), update }
 }
@@ -274,8 +274,8 @@ export function structuredWorkerText(turn) {
     .trim()
   if (text) return text
   const error = structuredWorkerError(turn?.error)
-  if (error) throw new Error(`结构化 AI 任务失败：${error}`)
-  throw new Error('结构化 AI 任务没有返回结果')
+  if (error) throw new Error(`Structured AI task failed: ${error}`)
+  throw new Error('The structured AI task returned no result')
 }
 
 function normalizeAssistantOperation(operation) {

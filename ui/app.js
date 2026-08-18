@@ -126,6 +126,7 @@ import {
 } from './thread-fork.mjs'
 
 import {
+  annotationPromptDefaults,
   formatDate as formatLocalizedDate,
   getLocale,
   migrateLocalizedTemplates,
@@ -242,19 +243,6 @@ const typographyDefaults = Object.freeze({
   highContrast: true,
 })
 
-const annotationPromptDefaults = Object.freeze({
-  'zh-CN': `请根据下面引用的会话输出或项目文件内容，以及我的批注进行回应。请逐项处理，不要遗漏。涉及文件时，请先读取当前版本并依据文件路径、引用和上下文定位内容；如果文件已变化，以当前内容为准谨慎修改。
-
-{{annotations}}
-
-{{additional}}`,
-  'en-US': `Please respond to the quoted conversation output or project file content and my comments below. Address every item. For file comments, read the current version first and locate the passage using its path, quote, and context; if the file changed, modify the current content carefully.
-
-{{annotations}}
-
-{{additional}}`,
-})
-
 function defaultAnnotationPrompt(locale = getLocale()) {
   return annotationPromptDefaults[locale] || annotationPromptDefaults['en-US']
 }
@@ -275,8 +263,8 @@ const state = {
   hostPlatform: window.__CODEX_THREAD_STUDIO_GATEWAY__?.hostPlatform || null,
   wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
   backendStates: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, backend === 'codex'
-    ? { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' }
-    : { kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接' }])),
+    ? { kind: 'checking', label: 'Starting Codex', caption: 'App Server · stdio' }
+    : { kind: 'idle', label: backendDescriptor(backend).name, caption: 'Connect on demand' }])),
   requestId: 0,
   pending: new Map(),
   threads: [],
@@ -312,7 +300,7 @@ const state = {
   annotationDrafts: {},
   annotationAdditional: {},
   annotationPromptTemplates: {},
-  annotationPromptTemplate: annotationPromptDefaults['zh-CN'],
+  annotationPromptTemplate: annotationPromptDefaults['en-US'],
   openingMessages: {},
   pendingSelection: null,
   pendingAnnotation: null,
@@ -525,6 +513,7 @@ async function init() {
   startMermaidRendering()
   applyBackendCopy()
   await loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
+  syncEmbeddedBrowserTranslations()
   await loadFavorites().catch(showError)
   // Catalog discovery is independent of the active backend connection. A
   // transient failure in one backend must not leave the whole sidebar empty
@@ -561,7 +550,7 @@ async function loadBackendRegistry() {
   state.backendModels = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.backendModels[backend] || []]))
   state.appServerGenerations = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.appServerGenerations[backend] ?? null]))
   state.backendStates = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.backendStates[backend] || {
-    kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接',
+    kind: 'idle', label: backendDescriptor(backend).name, caption: 'Connect on demand',
   }]))
   for (const backend of BACKEND_IDS) {
     if (isCodexBackend(backend) && !sessionDispatch.supports(backend)) {
@@ -800,8 +789,8 @@ function applySidebarState() {
   $('.app-shell').classList.toggle('sidebar-collapsed', state.sidebarCollapsed)
   const button = $('#toggle-sidebar')
   button.setAttribute('aria-expanded', String(!state.sidebarCollapsed))
-  button.title = t(state.sidebarCollapsed ? '展开会话栏 (Ctrl+B)' : '收起会话栏 (Ctrl+B)')
-  button.setAttribute('aria-label', t(state.sidebarCollapsed ? '展开会话栏' : '收起会话栏'))
+  button.title = t(state.sidebarCollapsed ? 'Expand sidebar (Ctrl+B)' : 'Collapse sidebar (Ctrl+B)')
+  button.setAttribute('aria-label', t(state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'))
   button.querySelector('span').textContent = state.sidebarCollapsed ? '›' : '‹'
   setTimeout(applyRightRailWidth, 220)
 }
@@ -832,23 +821,23 @@ function renderBrowserMenuStatus() {
   const available = usesEmbeddedBrowser()
   element.className = `browser-menu-status ${state.embeddedBrowserVisible ? 'online' : available ? 'offline' : 'error'}`
   element.querySelector('small').textContent = 'embedded'
-  const label = t(!available ? '不可用' : state.embeddedBrowserVisible ? '已显示' : state.embeddedBrowserLoaded ? '已隐藏' : '未启动')
+  const label = t(!available ? 'Unavailable' : state.embeddedBrowserVisible ? 'Visible' : state.embeddedBrowserLoaded ? 'Hidden' : 'Not launched')
   const button = $('#open-browser-workspace')
   button.disabled = !available
-  button.title = `${t('浏览器')} · ${label} · embedded`
+  button.title = `${t('Browser')} · ${label} · embedded`
   button.setAttribute('aria-label', button.title)
 }
 
 async function openGlobalBrowser() {
   closeActionMenus()
-  if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  if (!usesEmbeddedBrowser()) throw new Error(t('The embedded browser is unavailable on this platform'))
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
   dispatchEmbeddedBrowserAction(`studio-action://show-browser?width=${width}`)
 }
 
 async function openBrowserUrl(url) {
-  if (!usesEmbeddedBrowser()) throw new Error(t('当前平台不支持嵌入浏览器'))
+  if (!usesEmbeddedBrowser()) throw new Error(t('The embedded browser is unavailable on this platform'))
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
   dispatchEmbeddedBrowserAction(`studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`)
@@ -856,21 +845,21 @@ async function openBrowserUrl(url) {
 
 async function openSessionResource(resource) {
   if (!resource || resource.state === 'blocked') {
-    throw new Error(resource?.reason || t('安全策略阻止了此资源'))
+    throw new Error(resource?.reason || t('This resource was blocked by the security policy'))
   }
   if (resource.target?.url) {
     await openBrowserUrl(resource.target.url)
     return
   }
   const target = resource.target || {}
-  if (!target.path || !target.workspaceRoot) throw new Error(t('资源没有可打开的文件目标'))
+  if (!target.path || !target.workspaceRoot) throw new Error(t('The resource has no file target that can be opened'))
   if (resource.kind === 'directory') {
     await workspaceTools.reveal(target.path)
     return
   }
   if (!previewableFileKind({ path: target.path })) {
     await workspaceTools.reveal(target.path)
-    toast(t('此文件类型暂不支持预览，已在文件中定位。'))
+    toast(t('This file type cannot be previewed; it has been revealed in Files.'))
     return
   }
   await openArtifact({ root: target.workspaceRoot, path: target.path }, { returnTool: 'resources' })
@@ -898,7 +887,7 @@ function openSessionResourceSource(occurrence) {
 function openFavoriteForResource(resource, occurrence) {
   const thread = selectedThread()
   if (!thread || !occurrence?.turnId || !occurrence?.itemId) {
-    toast(t('无法确定资源的消息位置'), 'error')
+    toast(t('Unable to locate the resource in its message'), 'error')
     return
   }
   const turn = state.model.turns.find((candidate) => String(candidate.id) === String(occurrence.turnId))
@@ -964,14 +953,35 @@ function dispatchEmbeddedBrowserAction(url) {
   window.location.href = url
 }
 
+const embeddedBrowserTranslationSources = [
+  'Browser tabs', 'New tab', 'New tab (Ctrl+T)', 'Hide browser', 'Back', 'Forward', 'Reload',
+  'Address', 'Zoom', 'Zoom out', 'Reset to 100%', 'Zoom in', 'Fit page width', 'Comment',
+  'Comment on selection', 'More browser actions', 'Close tab (Ctrl+W)', 'Copy current link',
+  'Browser information', 'Downloads', 'Open downloads folder', 'Exit browser', 'No downloads yet',
+  'tabs', 'Profile', 'Cookies', 'Local Storage', 'WebKit Cache', 'Storage & cleanup',
+  'WebView2 Profile', 'Cache', 'Engine', 'TLS',
+  'Cache, cookies, Local Storage, and other site data are stored on disk. Tab navigation history stays in memory and disappears when Studio exits.',
+  'Clear browsing data…', 'Open folder', 'Downloading', 'Completed', 'Failed', 'Copy', 'Copied',
+  'Clear all embedded browser data?',
+  'This clears shared site data including cache, cookies, Local Storage, IndexedDB, and service workers. Website sign-ins may be lost. This action cannot be undone.',
+  'Cancel', 'Clear',
+  'Cleanup requested. The current page may need to be reloaded, and website sign-ins may be lost.',
+]
+
+function syncEmbeddedBrowserTranslations() {
+  if (!usesEmbeddedBrowser()) return
+  const messages = Object.fromEntries(embeddedBrowserTranslationSources.map((source) => [source, t(source)]))
+  dispatchEmbeddedBrowserAction(`studio-action://set-browser-translations?messages=${encodeURIComponent(JSON.stringify(messages))}`)
+}
+
 function usesEmbeddedBrowser() {
   return state.browserInfo?.presentation === 'embedded-webview'
 }
 
 function openEmbeddedBrowserComment(selection) {
   const excerpt = String(selection?.text || '').trim().slice(0, 16000)
-  if (!excerpt) return toast(t('请先在网页中选择文本'), 'error')
-  if (!state.selectedId) return toast(t('请先选择一个会话'), 'error')
+  if (!excerpt) return toast(t('Select text on the web page first'), 'error')
+  if (!state.selectedId) return toast(t('Select a session first'), 'error')
   state.pendingSelection = {
     quote: excerpt,
     itemId: null,
@@ -1174,8 +1184,8 @@ async function switchBackend(backend, { selectedId } = {}) {
   const previousBackend = state.backend
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
-  state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: '按需连接' }
-  rejectPending(new Error('后端已切换'))
+  state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
+  rejectPending(new Error('Backend switched'))
   state.backend = backend
   if (selectedId) state.selectedByBackend[backend] = selectedId
   state.selectedId = state.selectedByBackend[backend] || null
@@ -1198,19 +1208,19 @@ function applyBackendCopy() {
   const descriptor = currentBackend()
   $('#empty-mark').textContent = descriptor.tag.slice(0, 1)
   $('#tool-avatar').textContent = descriptor.tag
-  $('#new-thread-label').textContent = t('新建会话')
-  $('#native-error-title').textContent = t('{backend} Server 无法使用', { backend: descriptor.name })
-  $('#empty-title').textContent = t('结构化 {backend} 工作台', { backend: descriptor.name })
+  $('#new-thread-label').textContent = t('New session')
+  $('#native-error-title').textContent = t('{backend} Server unavailable', { backend: descriptor.name })
+  $('#empty-title').textContent = t('Structured {backend} workspace', { backend: descriptor.name })
   $('#empty-description').textContent = isCodexBackend(descriptor.id)
     ? 'Messages, commands, file changes, plans, approvals, and stop reasons come from this independent Codex App Server instance.'
-    : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
-  $('#composer-input').placeholder = t('向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell', { backend: descriptor.name })
-  $('#rename-thread-description').textContent = t('名称由 {backend} 持久化。', { backend: descriptor.name })
+    : 'Messages, tools, file changes, permissions, and stop reasons come directly from OpenCode Server as structured events.'
+  $('#composer-input').placeholder = t('Message {backend}… @ files · $ skills · / commands · ! shell', { backend: descriptor.name })
+  $('#rename-thread-description').textContent = t('The name is persisted by {backend}.', { backend: descriptor.name })
   const wsl = state.backendInfo?.executionEnvironment === 'wsl'
   $('#new-thread-cwd').placeholder = '/home/user/projects/project'
   $('#new-thread-cwd-help').textContent = t(wsl
-    ? '填写 WSL 中的 Linux 绝对路径，例如 /home/user/project。'
-    : '必须是本机绝对路径。')
+    ? 'Enter an absolute Linux path inside WSL, such as /home/user/project.'
+    : 'Must be an absolute local path.')
 }
 
 function connectAppServer() {
@@ -1220,7 +1230,7 @@ function connectAppServer() {
   state.socketGeneration += 1
   const generation = state.socketGeneration
   const descriptor = currentBackend()
-  setBackendState('checking', `正在启动 ${descriptor.name}`, 'App Server · stdio')
+  setBackendState('checking', `Starting ${descriptor.name}`, 'App Server · stdio')
   setNativeError(null)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
@@ -1233,14 +1243,14 @@ function connectAppServer() {
   }
   socket.onerror = () => {
     if (generation !== state.socketGeneration) return
-    setBackendState('error', `${descriptor.name} 未连接`, 'WebSocket 连接失败')
+    setBackendState('error', `${descriptor.name} Disconnected`, 'WebSocket connection failed')
   }
   socket.onclose = () => {
     if (generation !== state.socketGeneration) return
     state.ready = false
     rejectPending(new Error(`${descriptor.name} App Server connection closed`))
-    setBackendState('error', `${descriptor.name} 已断开`, '正在准备重连…')
-    setNativeError(`与本机 ${descriptor.name} App Server 的连接已断开。`)
+    setBackendState('error', t('{backend} disconnected', { backend: descriptor.name }), 'Preparing to reconnect…')
+    setNativeError(t('The connection to the local {backend} App Server closed.', { backend: descriptor.name }))
     state.reconnectTimer = setTimeout(connectAppServer, 1800)
   }
 }
@@ -1251,26 +1261,26 @@ async function connectOpenCode() {
   state.ready = false
   state.socketGeneration += 1
   const generation = state.socketGeneration
-  setBackendState('checking', '正在启动 OpenCode', 'Server · HTTP/SSE')
+  setBackendState('checking', 'Starting OpenCode', 'Server · HTTP/SSE')
   setNativeError(null)
   await loadBackendInfo()
   if (generation !== state.socketGeneration) return
   if (state.backendInfo?.reachable === false || state.backendInfo?.error) {
-    const reason = state.backendInfo.error || 'OpenCode Server 未就绪'
-    setBackendState('error', 'OpenCode 不可用', reason)
+    const reason = state.backendInfo.error || 'OpenCode Server is not ready'
+    setBackendState('error', 'OpenCode unavailable', reason)
     setNativeError(reason)
     return
   }
   state.ready = true
-  setBackendState('online', 'OpenCode Server', '原生结构化连接')
-  $('#native-connection').textContent = '已连接'
+  setBackendState('online', 'OpenCode Server', 'Native structured connection')
+  $('#native-connection').textContent = 'Connected'
   loadBackendModels().catch((error) => console.debug('Unable to load OpenCode models', error))
   const events = gatewayEventSource('/opencode/global/event')
   state.eventSource = events
   events.onopen = () => {
     if (generation !== state.socketGeneration) return
-    setBackendState('online', 'OpenCode Server', '原生结构化连接')
-    $('#native-connection').textContent = '已连接'
+    setBackendState('online', 'OpenCode Server', 'Native structured connection')
+    $('#native-connection').textContent = 'Connected'
   }
   events.onmessage = (event) => {
     if (generation !== state.socketGeneration) return
@@ -1279,8 +1289,8 @@ async function connectOpenCode() {
   }
   events.onerror = () => {
     if (generation !== state.socketGeneration) return
-    setBackendState('checking', 'OpenCode 正在重连', 'SSE 事件流')
-    $('#native-connection').textContent = '正在重连事件流…'
+    setBackendState('checking', 'Reconnecting to OpenCode', 'SSE event stream')
+    $('#native-connection').textContent = 'Reconnecting event stream…'
   }
   await loadThreads().catch((error) => {
     handleThreadCatalogFailure('opencode', generation, error)
@@ -1387,8 +1397,8 @@ function handleAppServerMessage(message) {
       state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
       state.appServerInitialization = message.params?.initialization || null
       state.ready = true
-      setBackendState('online', `${descriptor.name} App Server`, '原生结构化连接')
-      $('#native-connection').textContent = '已连接'
+      setBackendState('online', `${descriptor.name} App Server`, 'Native structured connection')
+      $('#native-connection').textContent = 'Connected'
       setNativeError(null)
       loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error))
       if (firstReady) {
@@ -1397,11 +1407,11 @@ function handleAppServerMessage(message) {
         }).catch((error) => handleThreadCatalogFailure(backend, state.socketGeneration, error))
       }
     } else if (status === 'starting') {
-      setBackendState('checking', `正在启动 ${descriptor.name}`, message.params?.binary || 'App Server')
+      setBackendState('checking', `Starting ${descriptor.name}`, message.params?.binary || 'App Server')
     } else if (status === 'error' || status === 'stopped') {
       sessionDispatch.clearPrepared(backend)
-      const reason = message.params?.message || message.params?.reason || 'App Server 已停止'
-      setBackendState('error', `${descriptor.name} 不可用`, reason)
+      const reason = message.params?.message || message.params?.reason || 'App Server stopped'
+      setBackendState('error', `${descriptor.name} Unavailable`, reason)
       setNativeError(reason)
     }
     return
@@ -1413,14 +1423,14 @@ function handleAppServerMessage(message) {
   if (message.method === 'studio/appServer/lagged') {
     const skipped = Number(message.params?.skipped || 0)
     if (!state.selectedId) {
-      toast(t('界面错过了 {count} 条 App Server 事件', { count: skipped }), 'error')
+      toast(t('The UI missed {count} App Server events', { count: skipped }), 'error')
       return
     }
     setNativeError(`The interface missed ${skipped} App Server events and is resynchronizing the current session…`)
     refreshSelectedThread({ quiet: true }).then((refreshed) => {
       if (!refreshed) return
       setNativeError(null)
-      toast(`已从 ${descriptor.name} 重新同步会话`)
+      toast(t('Resynchronized the session from {backend}', { backend: descriptor.name }))
     })
     return
   }
@@ -1510,11 +1520,11 @@ function handleAppServerMessage(message) {
     }
     if (!applyCodexNotification(targetModel, message)) {
       sendRaw({ id: message.id, error: { code: -32601, message: `Studio does not support ${message.method}` } })
-      toast(t('Codex 请求了尚未支持的交互：{method}', { method: message.method }), 'error')
+      toast(t('Codex requested an unsupported interaction: {method}', { method: message.method }), 'error')
       return
     }
     if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
-      notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || selectedThread()?.name || '')
+      notifyDesktop(t('Codex is waiting for your input'), message.params?.questions?.[0]?.question || message.params?.message || selectedThread()?.name || '')
     }
     markCachedModelValidated(backend, targetModel)
     if (targetModel !== state.model) return
@@ -1528,7 +1538,7 @@ function handleAppServerMessage(message) {
     markCachedModelValidated(backend, targetModel)
     if (message.method === 'turn/completed') {
       const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
-      notifyDesktop(t('任务已完成'), threadTitle(completedThread || { name: t('未命名会话') }))
+      notifyDesktop(t('Work completed'), threadTitle(completedThread || { name: t('Untitled session') }))
       completeRouterTurn({
         backend,
         turnId: message.params?.turn?.id || message.params?.turnId,
@@ -1571,7 +1581,7 @@ async function captureOffscreenInteraction(message) {
   state.attentionThreads.add(threadCatalogKey(backend, threadId))
   persistPreferences()
   renderThreadList()
-  notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
+  notifyDesktop(t('Codex is waiting for your input'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
 }
 
 function notifyDesktop(title, body = '') {
@@ -1626,7 +1636,7 @@ async function handleSessionMapToolCall(message) {
         contentItems: [{ type: 'inputText', text: `Session Map updated to revision ${updated.revision}.` }],
       },
     })
-    state.sessionMapSync.set(key, { state: 'synced', message: 'Map 已在当前 Turn 中更新' })
+    state.sessionMapSync.set(key, { state: 'synced', message: 'Map updated during the current turn' })
     if (selectedStateKey() === key) renderSessionMap()
   } catch (error) {
     sendRaw({
@@ -1736,12 +1746,12 @@ async function refreshOpenCodeThreadList() {
 
 function rpc(method, params = {}, timeoutMs = 30_000) {
   if (state.backend === 'opencode') return openCodeRpc(method, params, timeoutMs)
-  if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error(`${currentBackend().name} App Server 尚未就绪`))
+  if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error(t('{backend} App Server is not ready', { backend: currentBackend().name })))
   const id = ++state.requestId
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       state.pending.delete(String(id))
-      reject(new Error(t('{method} 请求超时', { method })))
+      reject(new Error(t('{method} request timed out', { method })))
     }, timeoutMs)
     state.pending.set(String(id), { resolve, reject, timer, method })
     sendRaw({ id, method, params })
@@ -1775,12 +1785,12 @@ function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
       if (error) reject(error)
       else resolve(value)
     }
-    const timer = setTimeout(() => finish(new Error(t('{method} 请求超时', { method }))), timeoutMs)
+    const timer = setTimeout(() => finish(new Error(t('{method} request timed out', { method }))), timeoutMs)
     socket.onmessage = (event) => {
       let message
       try { message = JSON.parse(event.data) } catch { return }
       if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
-        finish(new Error(message.params?.message || 'Codex App Server 不可用'))
+        finish(new Error(message.params?.message || 'Codex App Server is unavailable'))
       } else if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
         requested = true
         socket.send(JSON.stringify({ id, method, params }))
@@ -1789,7 +1799,7 @@ function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
         else finish(null, message.result)
       }
     }
-    socket.onerror = () => finish(new Error(`无法连接 ${descriptor.name} App Server`))
+    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
   })
 }
 
@@ -1802,7 +1812,7 @@ async function ensureOpenCodeAvailable() {
 }
 
 async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false } = {}) {
-  if (!allowInactive && (state.backend !== 'opencode' || !state.ready)) throw new Error('OpenCode Server 尚未就绪')
+  if (!allowInactive && (state.backend !== 'opencode' || !state.ready)) throw new Error('OpenCode Server is not ready')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -1820,7 +1830,7 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
     if (!response.ok) throw new Error(value?.error?.message || value?.message || `${method} ${path} failed: HTTP ${response.status}`)
     return value
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error(t('{method} {path} 请求超时', { method, path }))
+    if (error.name === 'AbortError') throw new Error(t('{method} {path} request timed out', { method, path }))
     throw error
   } finally { clearTimeout(timer) }
 }
@@ -1850,7 +1860,7 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
     const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
     const routerReadId = id - 1
-    const timer = setTimeout(() => finish(new Error('Codex 会话目录请求超时')), 15_000)
+    const timer = setTimeout(() => finish(new Error('Codex session catalog request timed out')), 15_000)
     let requested = false
     let catalog = []
     const finish = (error, value) => {
@@ -1864,7 +1874,7 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
       let message
       try { message = JSON.parse(event.data) } catch { return }
       if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
-        finish(new Error(message.params?.message || 'Codex App Server 不可用'))
+        finish(new Error(message.params?.message || 'Codex App Server is unavailable'))
         return
       }
       if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
@@ -1874,7 +1884,7 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
       }
       if (message.id === id) {
         if (message.error) {
-          finish(new Error(message.error.message || 'Codex 会话目录请求失败'))
+          finish(new Error(message.error.message || 'Codex session catalog request failed'))
           return
         }
         catalog = Array.isArray(message.result?.data) ? message.result.data : []
@@ -1890,7 +1900,7 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
         finish(null, { data: recoverManagedRouterCatalog(catalog, routerId, routerWorkspace, recovered) })
       }
     }
-    socket.onerror = () => finish(new Error(`无法读取 ${descriptor.name} 会话目录`))
+    socket.onerror = () => finish(new Error(t('Unable to read the {backend} session catalog', { backend: descriptor.name })))
   })
 }
 
@@ -1910,7 +1920,7 @@ async function fetchBackendCatalog(backend, { includeStatuses = true } = {}) {
       routerWorkspace: info?.routerWorkspace || '',
     })
   }
-  throw new Error(t('不支持的会话后端：{backend}', { backend }))
+  throw new Error(t('Unsupported session backend: {backend}', { backend }))
 }
 
 async function refreshBackendCatalog(backend, { includeStatuses = true } = {}) {
@@ -1945,7 +1955,7 @@ async function refreshRouterCatalogs() {
       installBackendCatalog(backend, catalogs[index])
     })
   } catch (error) {
-    throw new Error(t('无法刷新完整会话目录：{message}', { message: error.message }))
+    throw new Error(t('Unable to refresh the complete session catalog: {message}', { message: error.message }))
   }
 }
 
@@ -1964,7 +1974,7 @@ async function refreshInactiveCatalog() {
 function handleThreadCatalogFailure(backend, generation, error) {
   if (backend !== state.backend || generation !== state.socketGeneration || !state.ready) return
   threadCatalogRetryAttempt += 1
-  threadCatalogErrorMessage = t('无法加载 {backend} 会话列表，Studio 将自动重试。', {
+  threadCatalogErrorMessage = t('Unable to load the {backend} session list. Studio will retry automatically.', {
     backend: backendDescriptor(backend).name,
   })
   console.warn(`${backend} session catalog load failed`, error)
@@ -2028,7 +2038,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
     return { thread: normalizeOpenCodeSessions([session], {})[0] }
   }
   if (method === 'thread/delete') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'DELETE', timeoutMs })
-  if (method === 'thread/archive') throw new Error('OpenCode 当前没有独立归档操作；可重命名、Fork 或删除会话。')
+  if (method === 'thread/archive') throw new Error('OpenCode does not provide a separate archive action. You can rename, fork, or delete the session.')
   if (method === 'turn/start') {
     const text = textFromUserContent(params.input)
     const model = splitOpenCodeModel(params.model)
@@ -2055,12 +2065,12 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
     })
     return null
   }
-  if (method === 'turn/steer') throw new Error('OpenCode 正在运行时不能追加消息；请等待完成或先停止。')
+  if (method === 'turn/steer') throw new Error('Messages cannot be added while OpenCode is running. Wait for completion or stop it first.')
   if (method === 'turn/interrupt') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/abort`, directory), { method: 'POST', timeoutMs })
   if (method === 'thread/shellCommand') {
     const options = currentTurnOptions()
     const model = splitOpenCodeModel(options.model || thread?.model)
-    if (!model) throw new Error('运行 OpenCode Shell 前请先通过 /model 选择模型。')
+    if (!model) throw new Error('Choose a model with /model before running an OpenCode shell command.')
     return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/shell`, directory), { method: 'POST', body: { agent: 'build', model, command: params.command }, timeoutMs })
   }
   if (method === 'fuzzyFileSearch') {
@@ -2084,7 +2094,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
     const command = method === 'review/start' ? 'review' : 'compact'
     return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), { method: 'POST', body: { command, arguments: '', agent: 'build' }, timeoutMs })
   }
-  throw new Error(t('OpenCode 后端尚未支持 {method}', { method }))
+  throw new Error(t('The OpenCode backend does not support {method} yet', { method }))
 }
 
 function openCodeFilePart(file) {
@@ -2168,12 +2178,12 @@ function renderThreadList() {
   const entries = visibleThreadEntries()
   if (!entries.length) {
     const message = state.search
-      ? '没有匹配的会话'
+      ? 'No matching sessions'
       : state.filter === 'active'
-        ? '没有正在运行的会话'
+        ? 'No active sessions'
         : state.filter === 'attention'
-          ? '没有已加载的会话'
-        : '还没有会话'
+          ? 'No loaded sessions'
+        : 'No sessions yet'
     list.innerHTML = `<div class="list-empty">${t(message)}</div>`
     return
   }
@@ -2185,7 +2195,7 @@ function renderThreadList() {
     const router = backend === state.router.controllerBackend && isRouterSession(state.router, backend, thread.id)
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
-      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('未记录项目目录'))}">${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></span>
+      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small></span>
       <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${descriptor.name}">${tag}</span></span>
     </button>`
   }
@@ -2193,10 +2203,10 @@ function renderThreadList() {
     list.innerHTML = entries.map(renderRow).join('')
   } else {
     list.innerHTML = groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => {
-      const label = name || t('其他会话')
+      const label = name || t('Other sessions')
       const collapsed = state.collapsedThreadGroups.has(cwd)
       return `<section class="thread-group${collapsed ? ' collapsed' : ''}" data-group-path="${escapeHtml(cwd)}">
-        <button class="thread-group-heading" type="button" data-no-i18n title="${escapeHtml(cwd || t('未记录项目目录'))}">
+        <button class="thread-group-heading" type="button" data-no-i18n title="${escapeHtml(cwd || t('Project directory not recorded'))}">
           <span class="twisty">▼</span><strong>${escapeHtml(label)}</strong><span>${groupEntries.length}</span>
         </button>
         <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
@@ -2246,7 +2256,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   renderWorkspace()
   renderTranscript()
   if (cached) {
-    $('#native-connection').textContent = t('已从缓存恢复')
+    $('#native-connection').textContent = t('Restored from cache')
     await mapLoad
     await activateSelectedEnvironment().catch((error) => reportClientError(error))
     maybeBootstrapSessionMap(key, state.model)
@@ -2303,7 +2313,7 @@ async function resumeThread(id) {
 
 async function resumeThreadUncached(id) {
   setNativeError(null)
-  $('#native-connection').textContent = '正在恢复会话…'
+  $('#native-connection').textContent = 'Resuming session…'
   try {
     const result = await rpc('thread/resume', { threadId: id })
     sessionDispatch.markPrepared({ backend: state.backend, id })
@@ -2312,14 +2322,14 @@ async function resumeThreadUncached(id) {
     if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
     mergeThreadMetadata(result.thread)
     cacheThreadModel(state.backend, id)
-    $('#native-connection').textContent = '已连接'
+    $('#native-connection').textContent = 'Connected'
     renderWorkspace()
     renderTranscript()
   } catch (error) {
     if (state.selectedId !== id) return
     state.model.error = error.message
     state.model.status = 'failed'
-    setNativeError(t('无法恢复此 {backend} 会话：{message}', { backend: currentBackend().name, message: error.message }))
+    setNativeError(t('Unable to resume this {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     renderWorkspace()
   }
 }
@@ -2336,10 +2346,10 @@ async function refreshSelectedThread({ quiet = false } = {}) {
     cacheThreadModel(state.backend, threadId)
     renderWorkspace()
     renderTranscript()
-    if (!quiet) toast('会话已刷新')
+    if (!quiet) toast('Session refreshed')
     return true
   } catch (error) {
-    if (quiet) setNativeError(t('无法重新同步当前 {backend} 会话：{message}', { backend: currentBackend().name, message: error.message }))
+    if (quiet) setNativeError(t('Unable to resynchronize the current {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     else showError(error)
     return false
   }
@@ -2475,22 +2485,22 @@ function openThreadInfo() {
   const routable = !isRouterThread()
   $('#thread-info-content').innerHTML = `
     <section class="opening-message-card">
-      <header><strong>${t('起始问题')}</strong><span>${opening ? `${opening.source === 'history' ? t('从历史提取') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('已截断')}` : ''}` : t('尚未识别')}</span></header>
-      <textarea id="session-opening-question" rows="4" maxlength="16384" placeholder="${t('当前结构化历史中没有找到用户首条消息。')}">${escapeHtml(opening?.text || '')}</textarea>
+      <header><strong>${t('Opening question')}</strong><span>${opening ? `${opening.source === 'history' ? t('Extracted from history') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('Truncated')}` : ''}` : t('Not identified')}</span></header>
+      <textarea id="session-opening-question" rows="4" maxlength="16384" placeholder="${t('No opening user message was found in the structured history.')}">${escapeHtml(opening?.text || '')}</textarea>
     </section>
     ${routable ? `<section class="session-responsibility-card">
-      <header><div><strong>${t('会话职责')}</strong><small>${t('供 Thread Router 判断哪些请求应派发到这个会话。')}</small></div><button id="generate-session-responsibility" class="subtle-button compact" type="button">${t('AI 生成')}</button></header>
-      <textarea id="session-responsibility" rows="4" placeholder="${t('概括这个会话负责的领域和适合处理的请求')}">${escapeHtml(opening?.responsibility || '')}</textarea>
+      <header><div><strong>${t('Session responsibility')}</strong><small>${t('Used by Thread Router to decide which requests should be dispatched to this session.')}</small></div><button id="generate-session-responsibility" class="subtle-button compact" type="button">${t('Generate with AI')}</button></header>
+      <textarea id="session-responsibility" rows="4" placeholder="${t('Summarize the domain this session owns and the requests it should handle')}">${escapeHtml(opening?.responsibility || '')}</textarea>
     </section>` : ''}
-    <div class="detail-row"><span>状态</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
-    <div class="detail-row"><span>后端</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
-    <div class="detail-row"><span>会话 ID</span><strong data-no-i18n>${escapeHtml(thread.id)}</strong></div>
-    ${thread.sessionId && thread.sessionId !== thread.id ? `<div class="detail-row"><span>会话树</span><strong data-no-i18n>${escapeHtml(thread.sessionId)}</strong></div>` : ''}
-    <div class="detail-row"><span>项目目录</span><strong data-no-i18n>${escapeHtml(thread.cwd || t('未记录'))}</strong></div>
-    ${source ? `<div class="detail-row"><span>来源</span><strong data-no-i18n>${escapeHtml(source)}</strong></div>` : ''}
-    ${thread.cliVersion ? `<div class="detail-row"><span>CLI 版本</span><strong data-no-i18n>${escapeHtml(thread.cliVersion)}</strong></div>` : ''}
-    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork 来源</span><strong data-no-i18n>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
-    ${thread.parentThreadId ? `<div class="detail-row"><span>父会话</span><strong data-no-i18n>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
+    <div class="detail-row"><span>Status</span><strong>${escapeHtml(statusLabel(status))}</strong></div>
+    <div class="detail-row"><span>Backend</span><strong>${escapeHtml(currentBackend().name)}</strong></div>
+    <div class="detail-row"><span>Session ID</span><strong data-no-i18n>${escapeHtml(thread.id)}</strong></div>
+    ${thread.sessionId && thread.sessionId !== thread.id ? `<div class="detail-row"><span>Session tree</span><strong data-no-i18n>${escapeHtml(thread.sessionId)}</strong></div>` : ''}
+    <div class="detail-row"><span>Project directory</span><strong data-no-i18n>${escapeHtml(thread.cwd || t('Not recorded'))}</strong></div>
+    ${source ? `<div class="detail-row"><span>Source</span><strong data-no-i18n>${escapeHtml(source)}</strong></div>` : ''}
+    ${thread.cliVersion ? `<div class="detail-row"><span>CLI Version</span><strong data-no-i18n>${escapeHtml(thread.cliVersion)}</strong></div>` : ''}
+    ${thread.forkedFromId ? `<div class="detail-row"><span>Fork source</span><strong data-no-i18n>${escapeHtml(thread.forkedFromId)}</strong></div>` : ''}
+    ${thread.parentThreadId ? `<div class="detail-row"><span>Parent session</span><strong data-no-i18n>${escapeHtml(thread.parentThreadId)}</strong></div>` : ''}`
   $('#copy-opening-message').disabled = !opening?.text
   $('#generate-session-responsibility')?.addEventListener('click', () => generateSessionResponsibility().catch(showError))
   $('#thread-info-dialog').showModal()
@@ -2517,7 +2527,7 @@ async function saveThreadInfo() {
   try {
     await persistPreferences()
     $('#thread-info-dialog').close()
-    toast(t('会话信息已保存'))
+    toast(t('Session information saved'))
   } catch (error) {
     if (hadExisting) state.openingMessages[key] = existing
     else delete state.openingMessages[key]
@@ -2527,12 +2537,12 @@ async function saveThreadInfo() {
 
 async function generateSessionResponsibility() {
   if (!state.selectedId || isRouterThread()) return
-  if (state.model.activeTurnId) throw new Error(t('请等待当前 Turn 完成后再生成会话职责。'))
+  if (state.model.activeTurnId) throw new Error(t('Wait for the current turn to finish before generating a session responsibility.'))
   const ref = { backend: state.backend, id: state.selectedId }
   const key = sessionRefKey(ref.backend, ref.id)
   const button = $('#generate-session-responsibility')
   button.disabled = true
-  button.textContent = t('正在生成…')
+  button.textContent = t('Generating…')
   const opening = $('#session-opening-question')?.value.trim() || state.openingMessages[key]?.text || ''
   const prompt = `Generate a concise session summary that can be used as this session's responsibility for routing future user queries. Describe the domain this session owns and the kinds of requests it should receive. Use the session conversation as primary context.${opening ? ` The opening question is:\n${opening}` : ''}\nReturn only the responsibility summary, with no preface or formatting.`
   try {
@@ -2540,20 +2550,20 @@ async function generateSessionResponsibility() {
       turnOptions: configuredTurnOptions(),
       timeoutMs: 60_000,
     })
-    if (!result?.turn?.id) throw new Error(t('无法启动会话职责生成。'))
+    if (!result?.turn?.id) throw new Error(t('Unable to start session responsibility generation.'))
     applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: ref.id, turn: result.turn } })
     cacheThreadModel(ref.backend, ref.id, state.model)
     renderTranscript()
     renderComposerState()
     const turn = await waitForSessionTurn(ref, result.turn.id, 300_000)
     const responsibility = truncateCharacters(finalAgentText(turn).trim(), 4096)
-    if (!responsibility) throw new Error(t('AI 没有返回会话职责摘要。'))
+    if (!responsibility) throw new Error(t('AI did not return a session responsibility summary.'))
     if ($('#thread-info-dialog').open && selectedStateKey() === key) $('#session-responsibility').value = responsibility
-    toast(t('会话职责已生成，请确认后保存'))
+    toast(t('Session responsibility generated. Review it before saving.'))
   } finally {
     if (button.isConnected) {
       button.disabled = false
-      button.textContent = t('AI 生成')
+      button.textContent = t('Generate with AI')
     }
   }
 }
@@ -2564,7 +2574,7 @@ async function waitForSessionTurn(ref, turnId, timeoutMs) {
     const model = await ensureSessionModel(ref)
     const turn = model.turns?.find((candidate) => String(candidate.id) === String(turnId))
     if (turn && turn.status !== 'inProgress' && model.status !== 'running') {
-      if (turn.status === 'failed') throw new Error(turn.error?.message || t('会话职责生成失败。'))
+      if (turn.status === 'failed') throw new Error(turn.error?.message || t('Session responsibility generation failed.'))
       if (state.backend === ref.backend && state.selectedId === ref.id) {
         renderTranscript()
         renderComposerState()
@@ -2573,14 +2583,14 @@ async function waitForSessionTurn(ref, turnId, timeoutMs) {
     }
     await new Promise((resolve) => setTimeout(resolve, 900))
   }
-  throw new Error(t('会话职责生成超时。'))
+  throw new Error(t('Session responsibility generation timed out.'))
 }
 
 async function copyOpeningMessage() {
   const text = state.openingMessages[selectedStateKey()]?.text
   if (!text) return
   await navigator.clipboard.writeText(text)
-  toast('起始问题已复制')
+  toast('Opening question copied')
 }
 
 function renderWorkspace() {
@@ -2599,7 +2609,7 @@ function renderWorkspace() {
   $('#thread-title').textContent = threadTitle(thread)
   $('#thread-path').textContent = thread.cwd || thread.id
   $('#archive-thread').disabled = state.backend === 'opencode'
-  $('#archive-thread').title = t(state.backend === 'opencode' ? 'OpenCode 后端暂不支持归档' : '归档会话')
+  $('#archive-thread').title = t(state.backend === 'opencode' ? 'The OpenCode backend does not support archiving yet' : 'Archive session')
   $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
   renderProjectEnvironmentEntry()
   renderComposerState()
@@ -2695,7 +2705,7 @@ async function createSessionMap(event) {
     closeAnnotationRail()
     closeFavoritesRail()
     renderSessionMap()
-    toast('Map 已创建')
+    toast('Map created')
     generateSessionMapStructure({ key, model: state.model, automatic: true }).catch((error) => {
       console.warn('Unable to generate initial Session Map structure', error)
     })
@@ -2726,7 +2736,7 @@ function renderSessionMap() {
   const key = selectedStateKey()
   const map = key ? state.sessionMaps.get(key) : null
   const hasMap = Boolean(map)
-  $('#session-map-action span').textContent = t(hasMap ? '打开 Map' : '创建 Map')
+  $('#session-map-action span').textContent = t(hasMap ? 'Open Map' : 'Create Map')
   const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
     || !$('#annotation-rail').classList.contains('hidden')
     || !$('#favorites-rail').classList.contains('hidden')
@@ -2754,22 +2764,22 @@ function renderSessionMap() {
   const tree = $('#session-map-tree')
   const emptySync = state.sessionMapSync.get(key)
   const emptyDescription = emptySync?.state === 'syncing'
-    ? t('AI 正在生成初始结构…')
+    ? t('AI is generating the initial structure…')
     : isCodexBackend(map.backend)
-      ? t('还没有项目。可以用 AI 生成，或手动添加。')
-      : t('还没有项目，请手动添加第一项。')
+      ? t('There are no items yet. Generate them with AI or add one manually.')
+      : t('There are no items yet. Add the first one manually.')
   tree.innerHTML = items.length
     ? flattenSessionMap(map).map(({ item, depth }) => renderSessionMapRow(item, depth, map)).join('')
-    : `<div class="session-map-empty"><span>⌁</span><strong>${t('Map 还是空的')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${isCodexBackend(map.backend) ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('AI 生成')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('添加')}</button></div></div>`
+    : `<div class="session-map-empty"><span>⌁</span><strong>${t('This Map is empty')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${isCodexBackend(map.backend) ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('Generate with AI')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('Add')}</button></div></div>`
 
   const progress = mapProgress(map)
-  $('#session-map-progress').textContent = t('{explored}/{total} 已浏览 · {done} 完成', progress)
+  $('#session-map-progress').textContent = t('{explored}/{total} visited · {done} done', progress)
   $('#session-map-revision').textContent = `rev ${map.revision}`
-  $('#session-map-ai-generate').textContent = items.length ? t('AI 补全') : t('AI 生成')
+  $('#session-map-ai-generate').textContent = items.length ? t('Complete with AI') : t('Generate with AI')
   $('#session-map-ai-generate').disabled = emptySync?.state === 'syncing'
   const sync = state.sessionMapSync.get(key) || (isCodexBackend(map.backend)
-    ? { state: 'synced', message: '等待下一次对话' }
-    : { state: '', message: 'OpenCode Map 当前由用户维护' })
+    ? { state: 'synced', message: 'Waiting for the next interaction' }
+    : { state: '', message: 'OpenCode Maps are currently maintained manually' })
   setSessionMapSyncState(sync.state, sync.message)
 }
 
@@ -2782,18 +2792,18 @@ function renderSessionMapRow(item, depth, map) {
     <button class="session-map-row-main" type="button" data-map-item-select="${escapeHtml(item.id)}">
       <span class="session-map-row-copy"><strong data-no-i18n>${escapeHtml(item.title)}</strong>${description}</span>
     </button>
-    <button class="session-map-row-menu" type="button" data-map-item-menu="${escapeHtml(item.id)}" aria-label="项目操作">•••</button>
+    <button class="session-map-row-menu" type="button" data-map-item-menu="${escapeHtml(item.id)}" aria-label="Item actions">•••</button>
   </div>`
 }
 
 function mapStateLabel(value) {
-  return ({ notStarted: '未开始', active: '当前', visited: '已浏览', done: '完成', paused: '暂停' })[value] || value
+  return ({ notStarted: 'Not started', active: 'Current', visited: 'Visited', done: 'Done', paused: 'Pause' })[value] || value
 }
 
 function setSessionMapSyncState(value, message = '') {
   const element = $('#session-map-sync-state')
   element.className = `session-map-sync-state ${value || ''}`
-  element.title = message || 'Map 同步状态'
+  element.title = message || 'Map sync status'
   const key = selectedStateKey()
   if (key) state.sessionMapSync.set(key, { state: value, message })
 }
@@ -2844,7 +2854,7 @@ async function handleSessionMapItemMenu(event) {
   if (action === 'add-child') return openSessionMapItemDialog(itemId)
   if (action === 'edit') return openSessionMapItemDialog(item.parentId, item)
   if (action === 'archive') {
-    if (!window.confirm(t('移除“{title}”及其子项？你可以立即撤销。', { title: item.title }))) return
+    if (!window.confirm(t('Remove “{title}” and its children? You can undo immediately.', { title: item.title }))) return
     return applySessionMapOperations([{ op: 'archiveItem', itemId }], { actor: 'user' }).catch(showError)
   }
   if (action === 'current') {
@@ -2859,13 +2869,13 @@ function openSessionMapItemDialog(parentId = null, item = null) {
   if (!map) return
   closeActionMenus()
   closeSessionMapItemMenu()
-  $('#session-map-item-dialog-title').textContent = item ? t('编辑项目') : t('添加项目')
+  $('#session-map-item-dialog-title').textContent = item ? t('Edit item') : t('Add item')
   $('#session-map-item-id').value = item?.id || ''
   $('#session-map-item-title').value = item?.title || ''
   $('#session-map-item-kind').value = item?.kind || 'item'
   $('#session-map-item-summary').value = item?.summary || ''
   const parent = $('#session-map-item-parent')
-  parent.innerHTML = `<option value="">${t('顶层')}</option>${visibleMapItems(map)
+  parent.innerHTML = `<option value="">${t('Top level')}</option>${visibleMapItems(map)
     .filter((candidate) => candidate.id !== item?.id)
     .map((candidate) => `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.title)}</option>`)
     .join('')}`
@@ -2913,11 +2923,11 @@ function openSessionMapGoalDialog() {
 async function suggestSessionMapGoal() {
   const map = selectedSessionMap()
   if (!map) return
-  if (!isCodexBackend(state.backend)) throw new Error('OpenCode 会话暂不支持 AI 重新生成目标')
+  if (!isCodexBackend(state.backend)) throw new Error('OpenCode sessions do not support AI goal regeneration yet')
   const button = $('#session-map-suggest-goal')
   const original = button.textContent
   button.disabled = true
-  button.textContent = t('正在生成…')
+  button.textContent = t('Generating…')
   const recent = (state.model.turns || []).slice(-6).map((turn, index) => ({
     turn: index + 1,
     user: questionForTurn(turn).slice(0, 8_000),
@@ -2937,12 +2947,12 @@ async function suggestSessionMapGoal() {
         required: ['goal', 'definitionOfDone'],
         additionalProperties: false,
       },
-      timeoutMessage: 'AI 生成目标超时',
+      timeoutMessage: 'AI goal generation timed out',
     })
-    if (!result?.goal) throw new Error('AI 没有返回可用目标')
+    if (!result?.goal) throw new Error('AI did not return a usable goal')
     $('#session-map-goal-input').value = result.goal
     $('#session-map-done-input').value = result.definitionOfDone || ''
-    toast('AI 建议已填入，请确认后保存')
+    toast('AI suggestion filled in; review it before saving')
   } finally {
     button.disabled = false
     button.textContent = original
@@ -2994,14 +3004,14 @@ async function undoSessionMap() {
   const value = await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId, 'undo'), { method: 'POST' })
   state.sessionMaps.set(key, normalizeSessionMap(value))
   renderSessionMap()
-  toast('已撤销最近一次 Map 更新')
+  toast('Undid the latest Map update')
 }
 
 async function deleteSessionMap() {
   closeActionMenus()
   const key = selectedStateKey()
   const map = selectedSessionMap()
-  if (!key || !map || !window.confirm(t('删除这个会话的 Map？聊天记录不会受影响。'))) return
+  if (!key || !map || !window.confirm(t('Delete this session Map? Conversation history will not be affected.'))) return
   await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' })
   if (isCodexBackend(map.backend) && state.backend === map.backend && state.ready) {
     rpc('thread/resume', {
@@ -3016,7 +3026,7 @@ async function deleteSessionMap() {
   state.sessionMapSelectedItem = null
   disposeSessionMapWorker(key)
   renderSessionMap()
-  toast('Map 已删除')
+  toast('Map deleted')
 }
 
 function maybeBootstrapSessionMap(key, model) {
@@ -3035,7 +3045,7 @@ async function generateSessionMapStructure({ key = selectedStateKey(), model = s
   if (!map) return null
   if (!isCodexBackend(backend)) {
     if (automatic) return null
-    throw new Error('OpenCode 会话暂不支持 AI 生成 Map')
+    throw new Error('OpenCode sessions do not support AI Map generation yet')
   }
   if (automatic && state.sessionMapBootstrapAttempts.has(key)) return map
   if (automatic) state.sessionMapBootstrapAttempts.add(key)
@@ -3045,7 +3055,7 @@ async function generateSessionMapStructure({ key = selectedStateKey(), model = s
     assistant: answerForMapTurn(turn),
   })).filter((interaction) => interaction.user || interaction.assistant)
   const sourceTurn = [...(model?.turns || [])].reverse().find((turn) => turn?.id && (questionForTurn(turn).trim() || answerForMapTurn(turn)))
-  state.sessionMapSync.set(key, { state: 'syncing', message: 'AI 正在生成初始 Map' })
+  state.sessionMapSync.set(key, { state: 'syncing', message: 'AI is generating the initial Map' })
   if (selectedStateKey() === key) renderSessionMap()
 
   try {
@@ -3054,16 +3064,16 @@ async function generateSessionMapStructure({ key = selectedStateKey(), model = s
       developerInstructions: 'You create a compact navigation Map for another conversation. Do not use tools, inspect files, or answer the user. Return only the JSON object required by the supplied output schema. Follow the safe-operation restrictions exactly.',
       input: bootstrapMapInput(map, interactions),
       outputSchema: assistantOperationSchema(),
-      timeoutMessage: 'AI 生成 Map 超时',
+      timeoutMessage: 'AI Map generation timed out',
     })
     const operations = safeAssistantOperations(result)
-    if (!operations.length) throw new Error('AI 没有生成可用的 Map 项目')
+    if (!operations.length) throw new Error('AI did not generate any usable Map items')
     const updated = await applySessionMapOperations(operations, {
       actor: 'assistant',
       sourceTurnId: sourceTurn?.id ? String(sourceTurn.id) : null,
       key,
     })
-    state.sessionMapSync.set(key, { state: 'synced', message: 'Map 结构已更新' })
+    state.sessionMapSync.set(key, { state: 'synced', message: 'Map structure updated' })
     if (selectedStateKey() === key) renderSessionMap()
     return updated
   } catch (error) {
@@ -3089,18 +3099,18 @@ async function processSessionMapInlineUpdate(backend, threadId, model, completed
     const message = [...(turn.items || [])].reverse().find((item) =>
       item?.type === 'agentMessage' && String(item.text || '').includes(SESSION_MAP_UPDATE_START),
     )
-    if (!message) throw new Error(t('本轮回复未包含 Map 更新区块；可以手动执行 AI 补全'))
+    if (!message) throw new Error(t('This response did not include a Map update block. You can run AI Complete manually.'))
     const parsed = parseSessionMapUpdate(message.text)
-    if (!parsed.found) throw new Error(t('本轮回复未包含 Map 更新区块'))
+    if (!parsed.found) throw new Error(t('This response did not include a Map update block'))
     if (parsed.update.baseRevision !== map.revision) {
-      throw new Error(t('Map 更新版本过期：回复基于 rev {responseRevision}，当前为 rev {currentRevision}', {
+      throw new Error(t('The Map update is stale: the response used rev {responseRevision}, but the current revision is {currentRevision}', {
         responseRevision: parsed.update.baseRevision,
         currentRevision: map.revision,
       }))
     }
-    if (parsed.update.operations.length > 40) throw new Error(t('Map 更新操作超过 40 条限制'))
+    if (parsed.update.operations.length > 40) throw new Error(t('The Map update exceeds the 40-operation limit'))
     const operations = safeAssistantOperations(parsed.update)
-    if (operations.length !== parsed.update.operations.length) throw new Error(t('Map 更新包含不安全或未知操作'))
+    if (operations.length !== parsed.update.operations.length) throw new Error(t('The Map update contains an unsafe or unknown operation'))
     if (operations.length) {
       await applySessionMapOperations(operations, {
         actor: 'assistant',
@@ -3112,7 +3122,7 @@ async function processSessionMapInlineUpdate(backend, threadId, model, completed
     }
     state.sessionMapSync.set(key, {
       state: 'synced',
-      message: operations.length ? t('Map 已从本轮回复更新') : t('本轮回复不需要调整 Map'),
+      message: operations.length ? t('Map updated from this response') : t('This response did not require a Map change'),
     })
     if (selectedStateKey() === key) renderSessionMap()
   } catch (error) {
@@ -3164,7 +3174,7 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
     let serverGeneration = null
     let started = false
     let settled = false
-    const timeout = setTimeout(() => finish(new Error(timeoutMessage || 'Codex 结构化任务超时')), 150_000)
+    const timeout = setTimeout(() => finish(new Error(timeoutMessage || 'Codex structured task timed out')), 150_000)
 
     const finish = (error, value) => {
       if (settled) return
@@ -3262,14 +3272,14 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
       if (!hiddenTurnId) buffered.push(message)
       else processTurnMessage(message)
     }
-    socket.onerror = () => finish(new Error(`无法连接 ${descriptor.name} Map 同步服务`))
-    socket.onclose = () => finish(new Error(`${descriptor.name} Map 同步连接已关闭`))
+    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} Map synchronization service', { backend: descriptor.name })))
+    socket.onclose = () => finish(new Error(t('The {backend} Map synchronization connection closed', { backend: descriptor.name })))
   })
 }
 
 function parseStructuredJson(value) {
   const text = String(value || '').trim()
-  if (!text) throw new Error('结构化 AI 任务没有返回结果')
+  if (!text) throw new Error('The structured AI task returned no result')
   const unwrapped = text.startsWith('```')
     ? text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')
     : text
@@ -3299,7 +3309,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   const visibleIds = entry.orderedIds.slice(entry.visibleStart)
   const turnById = new Map(turns.map((turn) => [String(turn.id || ''), turn]))
   const older = entry.visibleStart > 0
-    ? `<button class="load-earlier-turns" type="button" data-load-earlier>${t('更早的 {count} 个 Turn', { count: entry.visibleStart })}</button>`
+    ? `<button class="load-earlier-turns" type="button" data-load-earlier>${t('{count} earlier turns', { count: entry.visibleStart })}</button>`
     : ''
   container.innerHTML = older + visibleIds.map((id) => {
     const turn = turnById.get(id)
@@ -3343,7 +3353,7 @@ function renderTurnNavigator() {
 
   list.innerHTML = turns.map((turn, index) => {
     const label = turnNavigationLabel(turn, index)
-    const title = turnPromptPreview(turn) || t('用户输入 {index}', { index: index + 1 })
+    const title = turnPromptPreview(turn) || t('User input {index}', { index: index + 1 })
     return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(turn.id || '')}" aria-label="${escapeHtml(label)}"><span class="turn-nav-title">${escapeHtml(title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
   }).join('')
   navigator.classList.remove('hidden')
@@ -3498,7 +3508,7 @@ function renderTurn(presentation, index, { openActivity = false } = {}) {
     forkable: isTurnForkable(presentation.source),
   })).join('')
   const placeholder = shouldShowTurnPlaceholder(presentation)
-    ? `<div class="work-placeholder"><span class="message-track-mark" aria-hidden="true">${conversationTrackIcon('working')}</span><span>${t('{backend} 正在准备此 Turn…', { backend: currentBackend().name })}</span></div>`
+    ? `<div class="work-placeholder"><span class="message-track-mark" aria-hidden="true">${conversationTrackIcon('working')}</span><span>${t('{backend} is preparing this turn…', { backend: currentBackend().name })}</span></div>`
     : ''
   return `<section class="turn" data-turn-id="${escapeHtml(presentation.id)}" data-turn-index="${index}">${content}${placeholder}</section>`
 }
@@ -3507,7 +3517,7 @@ function renderPresentationBlock(block, turnId, options = {}) {
   if (block.type === 'user') return renderItem(block.item, turnId)
   if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
-  if (block.type === 'error') return `<div class="turn-error" role="alert"><strong>${t('执行失败')}</strong><span>${escapeHtml(block.message)}</span></div>`
+  if (block.type === 'error') return `<div class="turn-error" role="alert"><strong>${t('Execution failed')}</strong><span>${escapeHtml(block.message)}</span></div>`
   return ''
 }
 
@@ -3525,7 +3535,7 @@ function conversationTrackIcon(kind) {
 function renderActivity(block, turnId, { openActivity = false } = {}) {
   const summary = activitySummaryParts(block.summary)
   const stateClass = block.active ? ' active' : block.summary.failures ? ' failed' : ''
-  const title = block.active ? t('正在处理') : t('工作过程')
+  const title = block.active ? t('Working') : t('Worked')
   const statusIcon = conversationTrackIcon(block.active ? 'working' : block.summary.failures ? 'failed' : 'completed')
   const stage = block.latestStage ? `<span class="activity-stage">${escapeHtml(block.latestStage)}</span>` : ''
   const metrics = summary.length ? `<span class="activity-metrics">${summary.map(escapeHtml).join('<i>·</i>')}</span>` : ''
@@ -3538,12 +3548,12 @@ function renderActivity(block, turnId, { openActivity = false } = {}) {
 function activitySummaryParts(summary = {}) {
   const parts = []
   const explored = (summary.reads || 0) + (summary.searches || 0) + (summary.lists || 0)
-  if (explored) parts.push(t('探索 {count} 项', { count: explored }))
-  if (summary.commands) parts.push(t('运行 {count} 个命令', { count: summary.commands }))
-  if (summary.tools) parts.push(t('调用 {count} 个工具', { count: summary.tools }))
-  if (summary.webSearches) parts.push(t('搜索网页 {count} 次', { count: summary.webSearches }))
-  if (summary.changedFiles) parts.push(t('修改 {count} 个文件', { count: summary.changedFiles }))
-  if (summary.failures) parts.push(t('{count} 项失败', { count: summary.failures }))
+  if (explored) parts.push(t('Explored {count}', { count: explored }))
+  if (summary.commands) parts.push(t('Ran {count} commands', { count: summary.commands }))
+  if (summary.tools) parts.push(t('Called {count} tools', { count: summary.tools }))
+  if (summary.webSearches) parts.push(t('Searched the web {count} times', { count: summary.webSearches }))
+  if (summary.changedFiles) parts.push(t('Changed {count} files', { count: summary.changedFiles }))
+  if (summary.failures) parts.push(t('{count} failed', { count: summary.failures }))
   return parts
 }
 
@@ -3570,7 +3580,7 @@ function hydrateActivityDetails(details, { force = false } = {}) {
   const block = activityBlockForTurn(details.dataset.turnId)
   if (!block) return
   body.innerHTML = (block.displayEntries || block.entries).map(renderActivityEntry).join('')
-    + `<button class="activity-log-button" type="button" data-activity-log="${escapeHtml(details.dataset.turnId)}">${t('查看完整活动记录')}</button>`
+    + `<button class="activity-log-button" type="button" data-activity-log="${escapeHtml(details.dataset.turnId)}">${t('View full activity log')}</button>`
   body.dataset.activityEmpty = 'false'
 }
 
@@ -3587,26 +3597,26 @@ function renderActivityEntry(entry) {
   if (entry.kind === 'command') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
     const preview = activityOutputPreview(item.aggregatedOutput || '')
-    return `<div class="activity-entry command-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('运行')}</strong><code>${escapeHtml(command)}</code></header>${renderOutputPreview(preview)}</div>`
+    return `<div class="activity-entry command-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('Active')}</strong><code>${escapeHtml(command)}</code></header>${renderOutputPreview(preview)}</div>`
   }
   if (entry.kind === 'change') {
     const rows = (item.changes || []).map((change) => `<li><span>${escapeHtml(change.kind || 'update')}</span><code>${escapeHtml(change.path || '')}</code></li>`).join('')
-    return `<div class="activity-entry change-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('文件修改 · {count} 个文件', { count: (item.changes || []).length })}</strong></header><ul>${rows}</ul></div>`
+    return `<div class="activity-entry change-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('File changes · {count} files', { count: (item.changes || []).length })}</strong></header><ul>${rows}</ul></div>`
   }
   if (entry.kind === 'plan') {
     const rows = (item.plan || []).map((step) => `<li class="${escapeHtml(step.status || '')}">${escapeHtml(step.step || '')}</li>`).join('')
-    return `<div class="activity-entry plan-entry"><header><span>☷</span><strong>${t('执行计划')}</strong></header><ol class="plan-list">${rows}</ol></div>`
+    return `<div class="activity-entry plan-entry"><header><span>☷</span><strong>${t('Execution plan')}</strong></header><ol class="plan-list">${rows}</ol></div>`
   }
   if (entry.kind === 'search') {
-    return `<div class="activity-entry tool-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('网页搜索')}</strong><span>${escapeHtml(item.query || '')}</span></header></div>`
+    return `<div class="activity-entry tool-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${t('Web search')}</strong><span>${escapeHtml(item.query || '')}</span></header></div>`
   }
   if (entry.kind === 'tool') {
     const label = `${item.server || 'Tool'} · ${item.tool || item.type || 'tool'}`
     const preview = activityOutputPreview(valueText(item.result || item.error || ''))
     return `<div class="activity-entry tool-entry ${status}"><header><span>${activityEntryIcon(item.status)}</span><strong>${escapeHtml(label)}</strong></header>${renderOutputPreview(preview)}</div>`
   }
-  if (entry.kind === 'system') return `<div class="activity-entry system-entry"><span>•</span><p>${item.type === 'contextCompaction' ? t('Codex 已压缩较早的会话上下文。') : escapeHtml(item.reason || item.type || '')}</p></div>`
-  return `<div class="activity-entry unknown-entry"><span>•</span><p>${escapeHtml(item.type || t('未知'))}</p></div>`
+  if (entry.kind === 'system') return `<div class="activity-entry system-entry"><span>•</span><p>${item.type === 'contextCompaction' ? t('Codex compacted earlier conversation context.') : escapeHtml(item.reason || item.type || '')}</p></div>`
+  return `<div class="activity-entry unknown-entry"><span>•</span><p>${escapeHtml(item.type || t('Unknown'))}</p></div>`
 }
 
 function activityEntryIcon(status) {
@@ -3618,7 +3628,7 @@ function activityEntryIcon(status) {
 function renderOutputPreview(preview) {
   if (!preview?.lines?.length) return ''
   const lines = [...preview.lines]
-  if (preview.omitted && preview.splitAt != null) lines.splice(preview.splitAt, 0, t('… 省略 {count} 行', { count: preview.omitted }))
+  if (preview.omitted && preview.splitAt != null) lines.splice(preview.splitAt, 0, t('… {count} lines omitted', { count: preview.omitted }))
   return `<pre>${escapeHtml(lines.join('\n'))}</pre>`
 }
 
@@ -3630,73 +3640,73 @@ function renderRouterTurn(turn, index) {
   const decision = runtime?.decision || routerDecisionForTurn(turn, currentRouterCandidates().map((candidate) => candidate.key))
   let card = ''
   if (decision?.action === 'clarify') {
-    card = `<article class="router-card clarify"><header><span class="router-card-mark">?</span><div><strong>${t('需要确认目标')}</strong><small>${escapeHtml(decision.reason || '')}</small></div></header><p>${escapeHtml(decision.message)}</p></article>`
+    card = `<article class="router-card clarify"><header><span class="router-card-mark">?</span><div><strong>${t('Target clarification needed')}</strong><small>${escapeHtml(decision.reason || '')}</small></div></header><p>${escapeHtml(decision.message)}</p></article>`
   } else if (decision?.action === 'dispatch') {
     const targetRef = parseSessionRefKey(decision.targetSessionKey)
     const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
     const status = runtime?.status || 'routed'
     const labels = {
-      dispatching: '正在派发', running: '目标执行中', completed: '目标已完成', failed: '派发失败', routed: '已路由',
+      dispatching: 'Dispatching', running: 'Target running', completed: 'Target completed', failed: 'Dispatch failed', routed: 'Routed',
     }
     const targetLabel = target ? threadTitle(target) : decision.targetSessionKey
-    const footerLabel = status === 'completed' ? t('目标响应已完成') : t('请求已发送到目标会话')
-    const linkLabel = status === 'completed' ? t('打开响应') : t('打开会话')
+    const footerLabel = status === 'completed' ? t('The target response is complete') : t('Request sent to the target session')
+    const linkLabel = status === 'completed' ? t('Open response') : t('Open session')
     card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong>${escapeHtml(targetLabel)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${runtime?.error ? `<p class="router-card-error">${escapeHtml(runtime.error)}</p>` : ''}<footer><span>${footerLabel}</span><button type="button" data-router-target="${escapeHtml(targetRef?.id || '')}" data-router-backend="${escapeHtml(targetRef?.backend || '')}" data-router-turn="${escapeHtml(runtime?.targetTurnId || '')}">${linkLabel}</button></footer></article>`
   } else if (runtime?.status === 'failed') {
-    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t(runtime.decisionInvalid ? 'Router 决策无效' : '路由失败')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header>${runtime.decisionInvalid ? renderRouterDecisionDebug(turn) : ''}</article>`
+    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t(runtime.decisionInvalid ? 'Invalid Router decision' : 'Routing failed')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header>${runtime.decisionInvalid ? renderRouterDecisionDebug(turn) : ''}</article>`
   } else if (turn.status === 'inProgress' || state.routerPending.has(runtimeKey) || ['routing', 'dispatching'].includes(runtime?.status)) {
-    card = `<article class="router-card routing"><header><span class="router-card-mark pulse-mark">↝</span><div><strong>${t('正在选择目标会话')}</strong><small>${t('Router 正在比较会话职责')}</small></div></header></article>`
+    card = `<article class="router-card routing"><header><span class="router-card-mark pulse-mark">↝</span><div><strong>${t('Selecting a target session')}</strong><small>${t('Router is comparing session responsibilities')}</small></div></header></article>`
   } else {
-    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('Router 决策无效')}</strong><small>${t('Router 没有返回候选列表中的有效目标会话。')}</small></div></header>${renderRouterDecisionDebug(turn)}</article>`
+    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('Invalid Router decision')}</strong><small>${t('The Router did not return a valid target from the candidate list.')}</small></div></header>${renderRouterDecisionDebug(turn)}</article>`
   }
   return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
 }
 
 function renderRouterDecisionDebug(turn) {
   const raw = finalAgentText(turn).slice(0, 16 * 1024)
-  return raw ? `<details class="router-decision-debug"><summary>${t('查看原始决策')}</summary><pre>${escapeHtml(raw)}</pre></details>` : ''
+  return raw ? `<details class="router-decision-debug"><summary>${t('View raw decision')}</summary><pre>${escapeHtml(raw)}</pre></details>` : ''
 }
 
 function renderItem(item, turnId, { forkable = false } = {}) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
-    return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${escapeHtml(textFromUserContent(item.content) || t('(非文字输入)'))}</div></div>`
+    return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${escapeHtml(textFromUserContent(item.content) || t('(non-text input)'))}</div></div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
     const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
-    const favoriteLabel = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    const favoriteLabel = favorite ? 'Favorited; click to view' : 'Favorite this response'
     const forkAction = forkable
-      ? `<button class="message-fork-button" type="button" data-fork-turn="${escapeHtml(turnId || '')}" title="${t('从这里 Fork')}" aria-label="${t('从这里 Fork')}"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="4.25" cy="4" r="1.65"></circle><circle cx="4.25" cy="14" r="1.65"></circle><circle cx="13.75" cy="9" r="1.65"></circle><path d="M4.25 5.65v6.7M5.9 4h2.15a4.05 4.05 0 0 1 4.05 4.05V9"></path></svg><b>${t('从这里 Fork')}</b></button>`
+      ? `<button class="message-fork-button" type="button" data-fork-turn="${escapeHtml(turnId || '')}" title="${t('Fork from here')}" aria-label="${t('Fork from here')}"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="4.25" cy="4" r="1.65"></circle><circle cx="4.25" cy="14" r="1.65"></circle><circle cx="13.75" cy="9" r="1.65"></circle><path d="M4.25 5.65v6.7M5.9 4h2.15a4.05 4.05 0 0 1 4.05 4.05V9"></path></svg><b>${t('Fork from here')}</b></button>`
       : ''
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
       <span class="message-track-mark agent-track-mark" aria-hidden="true">${conversationTrackIcon('response')}</span>
       <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
-      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('复制内容')}" aria-label="${t('复制内容')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('复制')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? '已收藏' : '收藏'}</b></button>${forkAction}</div></div>
+      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('Copy content')}" aria-label="${t('Copy content')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('Copy')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? 'Favorited' : 'Favorites'}</b></button>${forkAction}</div></div>
     </div>`
   }
   if (type === 'reasoning') {
-    const summary = arrayText(item.summary) || arrayText(item.content) || t('{backend} 正在推理…', { backend: currentBackend().name })
-    return `<details class="reasoning" ${attrs} open><summary>推理摘要</summary><div class="markdown-body compact-markdown">${renderMarkdown(summary)}</div></details>`
+    const summary = arrayText(item.summary) || arrayText(item.content) || t('{backend} is reasoning…', { backend: currentBackend().name })
+    return `<details class="reasoning" ${attrs} open><summary>Reasoning summary</summary><div class="markdown-body compact-markdown">${renderMarkdown(summary)}</div></details>`
   }
   if (type === 'commandExecution') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
-    return `<article class="item-card" ${attrs}><header><span>${t('命令')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('Command')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
   }
   if (type === 'fileChange') {
     const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')
-    return `<article class="item-card" ${attrs}><header><span>${t('文件修改 · {count} 个文件', { count: (item.changes || []).length })}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(changes || t('等待差异内容…'))}</pre></article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('File changes · {count} files', { count: (item.changes || []).length })}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(changes || t('Waiting for diff…'))}</pre></article>`
   }
   if (type === 'planUpdate') {
     const rows = (item.plan || []).map((step) => `<li class="${escapeHtml(step.status || '')}">${escapeHtml(step.step || '')}</li>`).join('')
-    return `<article class="item-card" ${attrs}><header><span>执行计划</span><span data-no-i18n>${escapeHtml(item.explanation || '')}</span></header><ol class="plan-list" data-no-i18n>${rows}</ol></article>`
+    return `<article class="item-card" ${attrs}><header><span>Execution plan</span><span data-no-i18n>${escapeHtml(item.explanation || '')}</span></header><ol class="plan-list" data-no-i18n>${rows}</ol></article>`
   }
   if (type === 'mcpToolCall' || type === 'collabToolCall' || type === 'webSearch') {
-    const label = type === 'webSearch' ? `${t('网页搜索')} · ${item.query || ''}` : `${item.server || 'Tool'} · ${item.tool || type}`
+    const label = type === 'webSearch' ? `${t('Web search')} · ${item.query || ''}` : `${item.server || 'Tool'} · ${item.tool || type}`
     const detail = item.result || item.error || item.arguments || item.results || ''
     return `<article class="item-card" ${attrs}><header><span>${escapeHtml(label)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${detail ? `<pre>${escapeHtml(valueText(detail))}</pre>` : ''}</article>`
   }
-  if (type === 'contextCompaction') return `<div class="reasoning" ${attrs}>Codex 已压缩较早的会话上下文。</div>`
+  if (type === 'contextCompaction') return `<div class="reasoning" ${attrs}>Codex compacted earlier conversation context.</div>`
   return `<article class="item-card" ${attrs}><header><span>${escapeHtml(type)}</span></header><pre>${escapeHtml(valueText(item))}</pre></article>`
 }
 
@@ -3738,7 +3748,7 @@ function renderMarkdown(value) {
     const copy = document.createElement('button')
     copy.className = 'copy-code-button'
     copy.type = 'button'
-    copy.textContent = t('复制')
+    copy.textContent = t('Copy')
     pre.replaceWith(block)
     if (normalizedLanguage === 'mermaid') {
       block.classList.add('markdown-mermaid')
@@ -3750,16 +3760,16 @@ function renderMarkdown(value) {
       sourceToggle.className = 'mermaid-source-button'
       sourceToggle.type = 'button'
       sourceToggle.setAttribute('aria-expanded', 'false')
-      sourceToggle.textContent = t('源码')
+      sourceToggle.textContent = t('Source code')
       actions.append(sourceToggle, copy)
       header.append(label, actions)
       const canvas = document.createElement('div')
       canvas.className = 'markdown-mermaid-canvas'
       canvas.dataset.noI18n = ''
       canvas.setAttribute('role', 'img')
-      canvas.setAttribute('aria-label', t('Mermaid 图表'))
+      canvas.setAttribute('aria-label', t('Mermaid diagram'))
       canvas.setAttribute('aria-busy', 'true')
-      canvas.textContent = t('正在渲染图表…')
+      canvas.textContent = t('Rendering diagram…')
       pre.classList.add('markdown-mermaid-source')
       block.append(header, canvas, pre)
     } else if (normalizedLanguage === 'text' || normalizedLanguage === 'plaintext' || normalizedLanguage === 'txt') {
@@ -3812,12 +3822,12 @@ async function renderMermaidBlock(block, generation) {
   if (!block.isConnected || generation !== mermaidGeneration) return
   const source = block.querySelector('.markdown-mermaid-source code')?.textContent || ''
   if (source.length > MAX_MERMAID_SOURCE_CHARS) {
-    showMermaidError(block, t('图表内容过大，已显示源码。'))
+    showMermaidError(block, t('The diagram is too large; its source is shown.'))
     return
   }
   const mermaid = globalThis.mermaid
   if (!mermaid?.initialize || !mermaid?.render) {
-    showMermaidError(block, t('图表无法渲染'))
+    showMermaidError(block, t('Unable to render diagram'))
     return
   }
   const config = mermaidInitializeConfig(state.mermaid, {
@@ -3833,7 +3843,7 @@ async function renderMermaidBlock(block, generation) {
   if (!canvas) return
   block.dataset.mermaidState = 'rendering'
   canvas.setAttribute('aria-busy', 'true')
-  canvas.textContent = t('正在渲染图表…')
+  canvas.textContent = t('Rendering diagram…')
   const diagramId = `studio-mermaid-${++mermaidRenderSequence}`
   try {
     const result = await mermaid.render(diagramId, source)
@@ -3855,7 +3865,7 @@ async function renderMermaidBlock(block, generation) {
     })
   } catch (error) {
     document.getElementById(diagramId)?.remove()
-    showMermaidError(block, t('图表无法渲染'))
+    showMermaidError(block, t('Unable to render diagram'))
     reportClientError(error)
   }
 }
@@ -3875,7 +3885,7 @@ function setMermaidSourceVisible(block, visible) {
   const button = block.querySelector('.mermaid-source-button')
   if (!button) return
   button.setAttribute('aria-expanded', String(visible))
-  button.textContent = t(visible ? '隐藏源码' : '源码')
+  button.textContent = t(visible ? 'Hide source' : 'Source code')
 }
 
 function resetMermaidRendering() {
@@ -3888,7 +3898,7 @@ function resetMermaidRendering() {
     const canvas = block.querySelector('.markdown-mermaid-canvas')
     if (canvas) {
       canvas.setAttribute('aria-busy', 'true')
-      canvas.textContent = t('正在渲染图表…')
+      canvas.textContent = t('Rendering diagram…')
     }
     queueMermaidBlock(block)
   })
@@ -3911,10 +3921,10 @@ async function handleMarkdownActionClick(event) {
   try {
     await navigator.clipboard.writeText(code.textContent || '')
     const original = button.textContent
-    button.textContent = t('已复制')
+    button.textContent = t('Copied')
     setTimeout(() => { if (button.isConnected) button.textContent = original }, 1400)
   } catch {
-    toast(t('无法复制代码'), 'error')
+    toast(t('Unable to copy code'), 'error')
   }
 }
 
@@ -3987,10 +3997,10 @@ async function handleTranscriptClick(event) {
     try {
       await navigator.clipboard.writeText(content)
       copyMessageButton.classList.add('copied')
-      toast(t('已复制'))
+      toast(t('Copied'))
       setTimeout(() => { if (copyMessageButton.isConnected) copyMessageButton.classList.remove('copied') }, 1400)
     } catch {
-      toast(t('无法复制回复'), 'error')
+      toast(t('Unable to copy response'), 'error')
     }
     return
   }
@@ -4000,13 +4010,13 @@ function openActivityLog(turnId) {
   const block = activityBlockForTurn(turnId)
   if (!block) return
   activityLogContext = { turnId: String(turnId || ''), block }
-  $('#activity-log-title').textContent = t('完整活动记录')
-  $('#activity-log-subtitle').textContent = t('原始详情按项目加载，不会影响主聊天流。')
+  $('#activity-log-title').textContent = t('Full activity log')
+  $('#activity-log-subtitle').textContent = t('Raw details load per item without slowing the main chat.')
   $('#activity-log-content').innerHTML = block.entries.map((entry, index) => {
     const item = entry.item || {}
     const label = activityRawLabel(entry)
     return `<details class="activity-raw-item" data-activity-entry-index="${index}"><summary><span>${activityEntryIcon(item.status)}</span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(statusLabel(item.status || entry.status))}</small></summary><div class="activity-raw-body" data-raw-empty="true"></div></details>`
-  }).join('') || `<div class="command-empty">${t('没有活动记录')}</div>`
+  }).join('') || `<div class="command-empty">${t('No activity recorded')}</div>`
   $$('#activity-log-content .activity-raw-item').forEach((details) => details.addEventListener('toggle', () => {
     if (!details.open) return
     const body = details.querySelector('.activity-raw-body')
@@ -4021,14 +4031,14 @@ function openActivityLog(turnId) {
 
 function activityRawLabel(entry) {
   const item = entry.item || {}
-  if (entry.kind === 'command') return Array.isArray(item.command) ? item.command.join(' ') : item.command || t('命令')
-  if (entry.kind === 'reasoning') return reasoningStage(item) || t('推理摘要')
+  if (entry.kind === 'command') return Array.isArray(item.command) ? item.command.join(' ') : item.command || t('Command')
+  if (entry.kind === 'reasoning') return reasoningStage(item) || t('Reasoning summary')
   if (entry.kind === 'progress') return truncateForDisplay(item.text || '', 100)
-  if (entry.kind === 'change') return t('文件修改 · {count} 个文件', { count: item.changes?.length || 0 })
-  if (entry.kind === 'search') return `${t('网页搜索')} · ${item.query || ''}`
+  if (entry.kind === 'change') return t('File changes · {count} files', { count: item.changes?.length || 0 })
+  if (entry.kind === 'search') return `${t('Web search')} · ${item.query || ''}`
   if (entry.kind === 'tool') return `${item.server || 'Tool'} · ${item.tool || item.type || 'tool'}`
-  if (entry.kind === 'plan') return t('执行计划')
-  return item.type || t('未知')
+  if (entry.kind === 'plan') return t('Execution plan')
+  return item.type || t('Unknown')
 }
 
 function renderRawActivityEntry(entry) {
@@ -4064,12 +4074,12 @@ function renderApprovals() {
     const command = Array.isArray(params.command) ? params.command.join(' ') : params.command || params.reason || [params.permission, ...(params.patterns || [])].filter(Boolean).join(' · ') || approval.method
     const permission = approval.method === 'item/permissions/requestApproval' || approval.method === 'opencode/permission'
     return `<section class="turn"><article class="approval-card" data-approval-id="${escapeHtml(String(approval.id))}">
-      <strong>${permission ? t('{backend} 请求额外权限', { backend: currentBackend().name }) : t('{backend} 正在等待审批', { backend: currentBackend().name })}</strong>
+      <strong>${permission ? t('{backend} requests additional permission', { backend: currentBackend().name }) : t('{backend} is waiting for approval', { backend: currentBackend().name })}</strong>
       <pre>${escapeHtml(command)}${params.cwd ? `\n${escapeHtml(params.cwd)}` : ''}</pre>
       <div class="approval-actions">
-        <button class="subtle-button approval-decline" type="button">拒绝</button>
-        <button class="subtle-button approval-session" type="button">本会话允许</button>
-        <button class="primary-button approval-accept" type="button">允许本次</button>
+        <button class="subtle-button approval-decline" type="button">Decline</button>
+        <button class="subtle-button approval-session" type="button">Allow for session</button>
+        <button class="primary-button approval-accept" type="button">Allow once</button>
       </div>
     </article></section>`
   }).join('')
@@ -4099,19 +4109,19 @@ function renderUserInteractions() {
     if (interaction.method === 'item/tool/requestUserInput') {
       const questions = (params.questions || []).map((question) => renderUserInputQuestion(question)).join('')
       return `<section class="turn"><article class="approval-card interaction-card" data-interaction-id="${escapeHtml(String(interaction.id))}" data-interaction-method="${escapeHtml(interaction.method)}">
-        <strong>${t('Codex 正在等待你的输入')}</strong>
+        <strong>${t('Codex is waiting for your input')}</strong>
         <div class="interaction-fields">${questions}</div>
-        <div class="approval-actions"><button class="subtle-button interaction-cancel" type="button">${t('取消')}</button><button class="primary-button interaction-submit" type="button">${t('提交')}</button></div>
+        <div class="approval-actions"><button class="subtle-button interaction-cancel" type="button">${t('Cancel')}</button><button class="primary-button interaction-submit" type="button">${t('Submit')}</button></div>
       </article></section>`
     }
     const mode = params.mode || 'form'
     const schema = params.requestedSchema || {}
     const fields = mode === 'url' ? '' : renderElicitationSchema(schema)
     return `<section class="turn"><article class="approval-card interaction-card" data-interaction-id="${escapeHtml(String(interaction.id))}" data-interaction-method="${escapeHtml(interaction.method)}" data-url="${escapeHtml(params.url || '')}">
-      <strong>${escapeHtml(params.serverName || 'MCP')} ${t('正在等待你的输入')}</strong>
+      <strong>${escapeHtml(params.serverName || 'MCP')} ${t('is waiting for your input')}</strong>
       <p>${escapeHtml(params.message || '')}</p>
       <div class="interaction-fields">${fields}</div>
-      <div class="approval-actions"><button class="subtle-button interaction-decline" type="button">${t('拒绝')}</button>${mode === 'url' ? `<button class="subtle-button interaction-open-url" type="button">${t('打开链接')}</button>` : ''}<button class="primary-button interaction-submit" type="button">${t(mode === 'url' ? '已完成' : '提交')}</button></div>
+      <div class="approval-actions"><button class="subtle-button interaction-decline" type="button">${t('Decline')}</button>${mode === 'url' ? `<button class="subtle-button interaction-open-url" type="button">${t('Open link')}</button>` : ''}<button class="primary-button interaction-submit" type="button">${t(mode === 'url' ? 'Completed' : 'Submit')}</button></div>
     </article></section>`
   }).join('')
 }
@@ -4122,7 +4132,7 @@ function renderUserInputQuestion(question = {}) {
   const inputType = question.isSecret ? 'password' : 'text'
   const choices = options.map((option, index) => `<label class="interaction-option"><input type="radio" name="${escapeHtml(name)}" value="${escapeHtml(option.label || '')}" ${index === 0 ? 'checked' : ''}/><span><strong>${escapeHtml(option.label || '')}</strong><small>${escapeHtml(option.description || '')}</small></span></label>`).join('')
   const freeform = !options.length || question.isOther
-    ? `<input class="interaction-freeform" data-question-id="${escapeHtml(question.id || '')}" type="${inputType}" placeholder="${escapeHtml(question.isOther ? t('其他…') : t('请输入…'))}" autocomplete="${question.isSecret ? 'off' : 'on'}" />`
+    ? `<input class="interaction-freeform" data-question-id="${escapeHtml(question.id || '')}" type="${inputType}" placeholder="${escapeHtml(question.isOther ? t('Other…') : t('Enter a response…'))}" autocomplete="${question.isSecret ? 'off' : 'on'}" />`
     : ''
   return `<fieldset class="interaction-field" data-question-id="${escapeHtml(question.id || '')}" data-choice-name="${escapeHtml(name)}"><legend><span>${escapeHtml(question.header || '')}</span>${escapeHtml(question.question || '')}</legend>${choices}${freeform}</fieldset>`
 }
@@ -4149,7 +4159,7 @@ function renderElicitationSchema(schema = {}) {
     const type = property.type === 'number' || property.type === 'integer' ? 'number' : property.format === 'password' ? 'password' : ['date', 'email', 'url'].includes(property.format) ? property.format : 'text'
     const step = property.type === 'integer' ? ' step="1"' : property.type === 'number' ? ' step="any"' : ''
     return `<label class="interaction-schema-field"><span>${escapeHtml(title)}</span><input data-field-name="${escapeHtml(name)}" type="${type}" value="${escapeHtml(property.default ?? '')}"${step}${needed}/>${description}</label>`
-  }).join('') || `<p>${t('此请求不需要填写额外字段。')}</p>`
+  }).join('') || `<p>${t('This request does not require additional fields.')}</p>`
 }
 
 function answerUserInteraction(card, action) {
@@ -4167,7 +4177,7 @@ function answerUserInteraction(card, action) {
         const freeform = field.querySelector('.interaction-freeform')?.value.trim()
         const values = [freeform || selected].filter(Boolean)
         if (!values.length) {
-          toast(t('请回答所有问题'), 'error')
+          toast(t('Please answer every question'), 'error')
           return
         }
         answers[questionId] = { answers: values }
@@ -4283,7 +4293,7 @@ function handleComposerMenuClick(event) {
     event.stopPropagation()
     const option = state.composerMenu.options[Number(openFile.dataset.openFileIndex)]
     if (option && previewableFileKind(option)) openArtifact(option).catch(showError)
-    else toast('此文件类型不能在文档审阅器中打开', 'error')
+    else toast('This file type cannot be opened in the document reviewer', 'error')
     return
   }
   const option = event.target.closest('[data-composer-index]')
@@ -4305,10 +4315,10 @@ function renderComposerMenu(message = '') {
   menu.classList.remove('hidden')
   if (!options.length) {
     const empty = state.composerMenu.type === 'file'
-      ? '没有匹配文件'
+      ? 'No matching files'
       : state.composerMenu.type === 'skill'
-        ? '没有匹配技能'
-        : '没有匹配命令'
+        ? 'No matching skills'
+        : 'No matching commands'
     menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(t(message || empty))}</div>`
     return
   }
@@ -4323,7 +4333,7 @@ function renderComposerMenu(message = '') {
         : option.root
     const previewable = type === 'file' && Boolean(previewableFileKind(option))
     const openAction = type === 'file'
-      ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t(previewable ? '在审阅区打开' : '仅支持预览文本和常见图片')}"${previewable ? '' : ' disabled aria-disabled="true"'}>${t('打开')}</button>`
+      ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t(previewable ? 'Open for review' : 'Only text files and common images can be previewed')}"${previewable ? '' : ' disabled aria-disabled="true"'}>${t('Open')}</button>`
       : ''
     return `<div id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small>${openAction}</div>`
   }).join('')
@@ -4339,7 +4349,7 @@ function searchComposerFiles(trigger) {
   }
   const generation = state.composerMenu.generation + 1
   state.composerMenu = { type: 'file', trigger, options: [], selected: 0, generation }
-  renderComposerMenu('正在由 Codex App Server 搜索文件…')
+  renderComposerMenu('Searching files through Codex App Server…')
   clearTimeout(composerSearchTimer)
   composerSearchTimer = setTimeout(() => performComposerFileSearch(trigger, generation, thread.cwd), 120)
 }
@@ -4357,7 +4367,7 @@ async function performComposerFileSearch(trigger, generation, cwd) {
     renderComposerMenu()
   } catch (error) {
     if (generation !== state.composerMenu.generation) return
-    renderComposerMenu(t('文件搜索失败：{message}', { message: error.message }))
+    renderComposerMenu(t('File search failed: {message}', { message: error.message }))
   }
 }
 
@@ -4365,7 +4375,7 @@ function searchComposerSkills(trigger) {
   const cwd = selectedThread()?.cwd || ''
   const generation = state.composerMenu.generation + 1
   state.composerMenu = { type: 'skill', trigger, options: [], selected: 0, generation }
-  renderComposerMenu('正在由 Codex App Server 发现技能…')
+  renderComposerMenu('Discovering skills through Codex App Server…')
   loadSkillCatalog(cwd).then((skills) => {
     if (generation !== state.composerMenu.generation || state.composerMenu.type !== 'skill') return
     state.composerMenu.options = matchingSkills(trigger.query, skills)
@@ -4373,7 +4383,7 @@ function searchComposerSkills(trigger) {
     renderComposerMenu()
   }).catch((error) => {
     if (generation !== state.composerMenu.generation) return
-    renderComposerMenu(t('技能读取失败：{message}', { message: error.message }))
+    renderComposerMenu(t('Failed to load skills: {message}', { message: error.message }))
   })
 }
 
@@ -4463,10 +4473,10 @@ function configuredTurnOptions(options = currentTurnOptions()) {
 }
 
 async function openModelCommand() {
-  showCommandDialog('模型', '<div class="command-empty">正在从 App Server 读取模型…</div>')
+  showCommandDialog('Model', '<div class="command-empty">Loading models from App Server…</div>')
   const models = await loadBackendModels({ refresh: true })
   if (!models.length) {
-    $('#command-content').innerHTML = '<div class="command-empty">没有可用模型。</div>'
+    $('#command-content').innerHTML = '<div class="command-empty">No models are available.</div>'
     return
   }
   const currentEffort = currentTurnOptions().effort
@@ -4476,7 +4486,7 @@ async function openModelCommand() {
       ? currentEffort
       : model.defaultReasoningEffort
     const effortOptions = efforts.map((entry) => `<option value="${escapeHtml(entry.reasoningEffort)}"${entry.reasoningEffort === selectedEffort ? ' selected' : ''}>${escapeHtml(entry.reasoningEffort)}</option>`).join('')
-    return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? t(' · 默认') : ''}</small>${effortOptions ? `<select aria-label="${t('推理强度')}">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">${t('使用')}</button></div>`
+    return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? t(' · default') : ''}</small>${effortOptions ? `<select aria-label="${t('Reasoning effort')}">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">${t('Use')}</button></div>`
   }).join('')}</div>`
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-model]')
@@ -4488,7 +4498,7 @@ async function openModelCommand() {
     else delete options.effort
     $('#command-dialog').close()
     renderComposerState()
-    toast(t('已选择模型 {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
+    toast(t('Selected model {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
 }
 
@@ -4510,20 +4520,20 @@ async function loadBackendModels({ refresh = false } = {}) {
 
 function openPermissionsCommand() {
   if (state.backend === 'opencode') {
-    showCommandDialog('权限', '<div class="command-empty">OpenCode 权限由项目配置和运行时审批管理；收到权限请求时可允许一次、始终允许或拒绝。</div>')
+    showCommandDialog('Permissions', '<div class="command-empty">OpenCode permissions are managed by project configuration and runtime approvals; requests can be allowed once, always allowed, or denied.</div>')
     return
   }
   const choices = [
-    ['readOnly', '只读', '文件只读；需要操作时由 Codex 请求批准'],
-    ['workspaceWrite', '项目可写', '允许修改当前项目，网络默认关闭'],
-    ['dangerFullAccess', '完全访问', '关闭沙箱限制；仅用于可信项目'],
+    ['readOnly', 'Read only', 'Files are read only; Codex requests approval when an action is needed'],
+    ['workspaceWrite', 'Workspace write', 'Allows changes in the current project; network is disabled by default'],
+    ['dangerFullAccess', 'Full access', 'Disables sandbox restrictions; use only for trusted projects'],
   ]
-  showCommandDialog('权限', `<div class="command-list">${choices.map(([id, title, detail]) => `<button class="command-card" type="button" data-permission="${id}"><strong>${title}</strong><small>${detail}</small><span>选择</span></button>`).join('')}</div>`)
+  showCommandDialog('Permissions', `<div class="command-list">${choices.map(([id, title, detail]) => `<button class="command-card" type="button" data-permission="${id}"><strong>${title}</strong><small>${detail}</small><span>Select</span></button>`).join('')}</div>`)
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-permission]')
     if (!button) return
     const type = button.dataset.permission
-    if (type === 'dangerFullAccess' && !confirm(t('确认对后续 Turn 使用完全访问权限？'))) return
+    if (type === 'dangerFullAccess' && !confirm(t('Use full access for future turns?'))) return
     const options = currentTurnOptions()
     options.approvalPolicy = type === 'dangerFullAccess' ? 'never' : 'on-request'
     options.sandboxPolicy = type === 'workspaceWrite'
@@ -4531,7 +4541,7 @@ function openPermissionsCommand() {
       : { type }
     $('#command-dialog').close()
     renderComposerState()
-    toast('后续 Turn 权限已更新')
+    toast('Permissions updated for future turns')
   }
 }
 
@@ -4540,25 +4550,25 @@ function openStatusCommand() {
   const options = currentTurnOptions()
   const rows = [
     ['Thread', thread?.name || thread?.id || '—'],
-    ['状态', statusLabel(state.model.status)],
-    ['目录', thread?.cwd || '—'],
-    ['模型', options.model || thread?.model || t('{backend} 默认', { backend: currentBackend().name })],
-    ['推理强度', options.effort || t('{backend} 默认', { backend: currentBackend().name })],
-    ['审批策略', options.approvalPolicy || '继承会话'],
-    ['沙箱', options.sandboxPolicy?.type || '继承会话'],
-    ['Token', state.model.usage ? valueText(state.model.usage) : '暂无数据'],
+    ['Status', statusLabel(state.model.status)],
+    ['Directory', thread?.cwd || '—'],
+    ['Model', options.model || thread?.model || t('{backend} default', { backend: currentBackend().name })],
+    ['Reasoning effort', options.effort || t('{backend} default', { backend: currentBackend().name })],
+    ['Approval policy', options.approvalPolicy || 'Inherit session'],
+    ['Sandbox', options.sandboxPolicy?.type || 'Inherit session'],
+    ['Token', state.model.usage ? valueText(state.model.usage) : 'No data'],
   ]
-  showCommandDialog('会话状态', `<div class="command-summary">${rows.map(([label, value]) => `<div class="detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`)
+  showCommandDialog('Session status', `<div class="command-summary">${rows.map(([label, value]) => `<div class="detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`)
 }
 
 async function compactCurrentThread() {
-  if (state.model.activeTurnId) throw new Error('当前 Turn 仍在运行，完成或停止后才能压缩。')
+  if (state.model.activeTurnId) throw new Error('The current turn is still running. Finish or stop it before compacting.')
   await rpc('thread/compact/start', { threadId: state.selectedId })
-  toast('Codex 已开始压缩会话上下文')
+  toast('Codex started compacting the conversation')
 }
 
 async function reviewCurrentChanges() {
-  if (state.model.activeTurnId) throw new Error('当前 Turn 仍在运行，完成或停止后才能开始 Review。')
+  if (state.model.activeTurnId) throw new Error('The current turn is still running. Finish or stop it before starting review.')
   transcriptScrollFollower.reset()
   const result = await rpc('review/start', { threadId: state.selectedId, target: { type: 'uncommittedChanges' }, delivery: 'inline' })
   if (result?.turn) {
@@ -4569,27 +4579,27 @@ async function reviewCurrentChanges() {
 }
 
 function openDiffCommand() {
-  showCommandDialog('当前修改', state.model.diff
+  showCommandDialog('Current changes', state.model.diff
     ? `<pre class="command-pre">${escapeHtml(state.model.diff)}</pre>`
-    : '<div class="command-empty">当前 Turn 还没有可显示的 Diff。</div>')
+    : '<div class="command-empty">The current turn has no diff to display.</div>')
 }
 
 async function openMcpCommand() {
-  showCommandDialog('MCP Server', '<div class="command-empty">正在从 App Server 读取 MCP 状态…</div>')
+  showCommandDialog('MCP Server', '<div class="command-empty">Loading MCP status from App Server…</div>')
   const result = await rpc('mcpServerStatus/list', { limit: 100 })
   const servers = Array.isArray(result?.data) ? result.data : []
   $('#command-content').innerHTML = servers.length
-    ? `<div class="command-list">${servers.map((server) => `<div class="command-card"><strong>${escapeHtml(server.name)}</strong><small>${t('{tools} 个工具 · {resources} 个资源', { tools: Object.keys(server.tools || {}).length, resources: server.resources?.length || 0 })}</small><span>${escapeHtml(valueText(server.authStatus || 'unknown'))}</span></div>`).join('')}</div>`
-    : '<div class="command-empty">没有配置 MCP Server。</div>'
+    ? `<div class="command-list">${servers.map((server) => `<div class="command-card"><strong>${escapeHtml(server.name)}</strong><small>${t('{tools} tools · {resources} resources', { tools: Object.keys(server.tools || {}).length, resources: server.resources?.length || 0 })}</small><span>${escapeHtml(valueText(server.authStatus || 'unknown'))}</span></div>`).join('')}</div>`
+    : '<div class="command-empty">No MCP servers are configured.</div>'
 }
 
 async function openSkillsCommand() {
   const cwd = selectedThread()?.cwd
-  showCommandDialog('技能', '<div class="command-empty">正在由 App Server 发现技能…</div>')
+  showCommandDialog('Skills', '<div class="command-empty">Discovering skills through App Server…</div>')
   const skills = await loadSkillCatalog(cwd || '')
   $('#command-content').innerHTML = skills.length
-    ? `<div class="command-list">${skills.map((skill) => `<button class="command-card" type="button" data-skill-name="${escapeHtml(skill.name)}" data-skill-path="${escapeHtml(skill.path)}"><strong>$${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description || skill.shortDescription || '')}</small><span>引用</span></button>`).join('')}</div>`
-    : '<div class="command-empty">当前目录没有已启用的技能。</div>'
+    ? `<div class="command-list">${skills.map((skill) => `<button class="command-card" type="button" data-skill-name="${escapeHtml(skill.name)}" data-skill-path="${escapeHtml(skill.path)}"><strong>$${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description || skill.shortDescription || '')}</small><span>Reference</span></button>`).join('')}</div>`
+    : '<div class="command-empty">No enabled skills are available in this directory.</div>'
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-skill-name]')
     if (!button || !state.selectedId) return
@@ -4614,13 +4624,13 @@ function addPendingSkill(skill) {
 async function copyLatestAgentResponse() {
   const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
   const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
-  if (!message) throw new Error(t('当前会话还没有可复制的 {backend} 回复。', { backend: currentBackend().name }))
+  if (!message) throw new Error(t('This session has no {backend} response to copy.', { backend: currentBackend().name }))
   await navigator.clipboard.writeText(message.type === 'agentMessage' ? sessionMapVisibleText(message.text) : message.text)
-  toast(t('已复制最近一条 {backend} 回复', { backend: currentBackend().name }))
+  toast(t('Copied the latest {backend} response', { backend: currentBackend().name }))
 }
 
 async function executeSlashCommand(action) {
-  if (!state.selectedId && !['new'].includes(action)) throw new Error('请先选择一个 Codex 会话。')
+  if (!state.selectedId && !['new'].includes(action)) throw new Error('Select a Codex session first.')
   const actions = {
     model: openModelCommand,
     permissions: openPermissionsCommand,
@@ -4638,7 +4648,7 @@ async function executeSlashCommand(action) {
     delete: deleteSelectedThread,
   }
   const handler = actions[action]
-  if (!handler) throw new Error(t('尚未支持命令：/{action}', { action }))
+  if (!handler) throw new Error(t('Command is not supported yet: /{action}', { action }))
   await handler()
 }
 
@@ -4663,7 +4673,7 @@ function renderComposerState() {
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = shellMode ? t('运行命令') : isRouterThread() ? t('路由') : active && isCodexBackend(state.backend) ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   renderComposerReviewContext()
 }
@@ -4676,7 +4686,7 @@ async function sendComposer(event) {
   if (shellCommand !== null) {
     if (!shellCommand || !state.selectedId) return
     if (state.model.activeTurnId) {
-      showError(new Error('请等待当前 Turn 完成或先停止，再运行本地 Shell 命令。'))
+      showError(new Error('Wait for the current turn to finish or stop it before running a local shell command.'))
       return
     }
     const button = $('#send-message')
@@ -4687,7 +4697,7 @@ async function sendComposer(event) {
       input.value = ''
       hideComposerMenu()
       renderComposerState()
-      toast(t('Shell 命令已交给 {backend} 执行', { backend: currentBackend().name }))
+      toast(t('Shell command sent to {backend}', { backend: currentBackend().name }))
     } catch (error) { showError(error) }
     finally { button.disabled = false }
     return
@@ -4740,7 +4750,7 @@ async function sendComposer(event) {
         clientUserMessageId: randomId(),
         input: turnInput,
       })
-      toast('意见已加入当前 Turn')
+      toast('Message added to the current turn')
     } else {
       const clientUserMessageId = randomId()
       if (isCodexBackend(backend)) {
@@ -4816,7 +4826,7 @@ async function prepareSessionMapTurn() {
       developerInstructions: configuration.developerInstructions,
     })
   }
-  setSessionMapSyncState('syncing', '当前 Map 已加入本次 Turn 上下文')
+  setSessionMapSyncState('syncing', 'The current Map was added to this turn context')
 }
 
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {
@@ -4829,12 +4839,12 @@ function currentRouterCandidates() {
 }
 
 async function startRouterTurn(text) {
-  if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('Router 正在处理上一条请求。'))
+  if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('The Router is still processing the previous request.'))
   const controller = routerControllerRef(state.router)
-  if (!controller || !sessionDispatch.supports(controller.backend)) throw new Error(t('Router 后端当前不可用。'))
+  if (!controller || !sessionDispatch.supports(controller.backend)) throw new Error(t('The Router backend is currently unavailable.'))
   await refreshRouterCatalogs()
   const candidates = currentRouterCandidates()
-  if (!candidates.length) throw new Error(t('Router 没有可用的目标会话，请先打开“路由设置”。'))
+  if (!candidates.length) throw new Error(t('The Router has no available target session. Open Router settings first.'))
   const developerInstructions = routerDeveloperInstructions(candidates)
   const result = await sessionDispatch.startTurn(controller, [{ type: 'text', text }], {
     ...(isCodexBackend(controller.backend)
@@ -4843,7 +4853,7 @@ async function startRouterTurn(text) {
     outputSchema: routerDecisionSchema(candidates.map((candidate) => candidate.key)),
     turnOptions: configuredTurnOptions(),
   })
-  if (!result?.turn) throw new Error(t('Router 未能启动新的 Turn。'))
+  if (!result?.turn) throw new Error(t('The Router could not start a new turn.'))
   const turnId = String(result.turn.id || '')
   const runtimeKey = routerRuntimeKey(controller.backend, turnId)
   state.routerPending.set(runtimeKey, {
@@ -4889,15 +4899,15 @@ async function completeRouterTurn({ backend, turnId, model, turn: suppliedTurn }
     }
     const targetRef = parseSessionRefKey(decision.targetSessionKey)
     const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
-    if (!target) throw new Error(t('目标会话已不存在。'))
-    if (!sessionDispatch.supports(targetRef.backend)) throw new Error(t('目标会话的后端当前不可用。'))
+    if (!target) throw new Error(t('The target session no longer exists.'))
+    if (!sessionDispatch.supports(targetRef.backend)) throw new Error(t('The target session backend is currently unavailable.'))
     state.routerDispatches.set(runtimeKey, { status: 'dispatching', decision })
     if (isRouterThread()) renderTranscript()
     await sessionDispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
     const targetModel = await ensureSessionModel(targetRef)
-    if (targetModel.activeTurnId) throw new Error(t('“{title}”正在运行，暂时不能接收新请求。', { title: threadTitle(target) }))
+    if (targetModel.activeTurnId) throw new Error(t('“{title}” is running and cannot accept a new request yet.', { title: threadTitle(target) }))
     const result = await sessionDispatch.startTurn(targetRef, [{ type: 'text', text: decision.forwardedPrompt }])
-    if (!result?.turn) throw new Error(t('目标会话未能启动新的 Turn。'))
+    if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
     applyCodexNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
     cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
     updateLoadedThreadTimestamp(targetRef.backend, targetRef.id)
@@ -4917,7 +4927,7 @@ async function completeRouterTurn({ backend, turnId, model, turn: suppliedTurn }
   } catch (error) {
     state.routerDispatches.set(runtimeKey, { status: 'failed', error: error.message, decisionInvalid: !decisionParsed })
     if (isRouterThread()) renderTranscript()
-    toast(t('路由失败：{message}', { message: error.message }), 'error')
+    toast(t('Routing failed: {message}', { message: error.message }), 'error')
   } finally {
     if (isRouterThread()) renderComposerState()
   }
@@ -4990,7 +5000,7 @@ async function interruptTurn() {
   if (!state.selectedId || !state.model.activeTurnId) return
   try {
     await rpc('turn/interrupt', { threadId: state.selectedId, turnId: state.model.activeTurnId })
-    toast('已请求停止当前 Turn')
+    toast('Requested interruption of the current turn')
   } catch (error) { showError(error) }
 }
 
@@ -5007,7 +5017,7 @@ function closeNewThreadDialog() { $('#new-thread-dialog').close() }
 function updateNewThreadCapabilities() {
   const backend = $('#new-thread-backend').value
   const unsupported = backend === 'opencode'
-  $('#new-thread-model').placeholder = unsupported ? t('可选：provider/model') : t('使用 Codex 默认模型')
+  $('#new-thread-model').placeholder = unsupported ? t('Optional: provider/model') : t('Use the Codex default model')
   for (const id of ['new-thread-approval', 'new-thread-sandbox']) {
     const select = $(`#${id}`)
     const field = select.closest('.field')
@@ -5065,7 +5075,7 @@ async function renameSelectedThread(event) {
     closeRenameThreadDialog()
     renderThreadList()
     renderWorkspace()
-    toast('会话名称已保存')
+    toast('Session name saved')
   } catch (error) {
     errorBox.textContent = error.message
     errorBox.classList.remove('hidden')
@@ -5082,7 +5092,7 @@ async function createThread(event) {
   const name = $('#new-thread-name').value.trim()
   const cwd = $('#new-thread-cwd').value.trim()
   if (state.hostPlatform === 'windows' && !cwd.startsWith('/')) {
-    errorBox.textContent = t('Windows 客户端需要 WSL 中的 Linux 绝对路径。')
+    errorBox.textContent = t('The Windows client requires an absolute Linux path inside WSL.')
     errorBox.classList.remove('hidden')
     button.disabled = false
     return
@@ -5114,7 +5124,7 @@ async function createThread(event) {
     $('#new-thread-form').reset()
     await loadThreads()
     await selectThread(result.thread.id, { force: true, backend })
-    toast(t('{backend} 会话已创建', { backend: currentBackend().name }))
+    toast(t('{backend} session created', { backend: currentBackend().name }))
   } catch (error) {
     errorBox.textContent = error.message
     errorBox.classList.remove('hidden')
@@ -5133,7 +5143,7 @@ async function forkThread(lastTurnId = null, trigger = null) {
     const result = await rpc('thread/fork', threadForkParams(sourceThreadId, lastTurnId))
     await loadThreads()
     await selectThread(result.thread.id, { force: true, backend: sourceBackend })
-    toast(t(lastTurnId ? '已从此 Turn 创建 {backend} 会话分支' : '已创建 {backend} 会话分支', { backend: currentBackend().name }))
+    toast(t(lastTurnId ? 'Created a {backend} session fork from this turn' : '{backend} session fork created', { backend: currentBackend().name }))
   } catch (error) {
     showError(error)
     if (trigger?.isConnected) {
@@ -5148,7 +5158,7 @@ async function forkSelectedThread() {
 }
 
 async function archiveSelectedThread() {
-  if (!state.selectedId || !confirm(t('归档当前 Codex 会话？'))) return
+  if (!state.selectedId || !confirm(t('Archive the current Codex session?'))) return
   const threadId = state.selectedId
   try {
     await rpc('thread/archive', { threadId })
@@ -5158,12 +5168,12 @@ async function archiveSelectedThread() {
     state.model = createCodexViewModel()
     persistPreferences()
     await loadThreads()
-    toast('会话已归档')
+    toast('Session archived')
   } catch (error) { showError(error) }
 }
 
 async function deleteSelectedThread() {
-  if (!state.selectedId || !confirm(t('永久删除当前 Codex 会话及其持久化历史？此操作无法撤销。'))) return
+  if (!state.selectedId || !confirm(t('Permanently delete this Codex session and its stored history? This cannot be undone.'))) return
   const threadId = state.selectedId
   try {
     await rpc('thread/delete', { threadId })
@@ -5176,18 +5186,18 @@ async function deleteSelectedThread() {
     state.model = createCodexViewModel()
     persistPreferences()
     await loadThreads()
-    toast('会话已删除')
+    toast('Session deleted')
   } catch (error) { showError(error) }
 }
 
 async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' } = {}) {
   const thread = selectedThread()
-  if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
+  if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const root = String(file.root || thread?.cwd || '')
-  if (!root) throw new Error(t('当前会话没有项目目录，无法安全打开文件。'))
+  if (!root) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const path = fuzzyFileLabel(file)
   const requestedEpubCfi = String(file.epubCfi || '')
-  if (!path) throw new Error(t('文件路径为空。'))
+  if (!path) throw new Error(t('The file path is empty.'))
   if (requestedEpubCfi && state.artifact?.kind === 'epub' && state.artifact.root === root && state.artifact.path === path) {
     activateRightWorkspace('document')
     if (epubReader) await epubReader.display(requestedEpubCfi)
@@ -5202,10 +5212,10 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
     return
   }
   if (state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
-    if (!confirm(t('当前文档有尚未保存的修改，仍要打开其他文件吗？'))) return
+    if (!confirm(t('The current document has unsaved changes. Open another file anyway?'))) return
   }
   const kind = previewableFileKind(file)
-  if (!kind) throw new Error(t('此文件类型不能在文档审阅器中打开'))
+  if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
   resetArtifactSearch()
   resetArtifactOutline({ preserveOpen: true })
   activateRightWorkspace('document')
@@ -5242,7 +5252,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   if (kind === 'image') {
     const blob = await response.blob()
     if (!blob.type.startsWith('image/')) {
-      const message = t('图片响应格式无效')
+      const message = t('The image response format is invalid')
       if (state.artifact?.requestId === requestId) {
         state.artifact = { ...state.artifact, loading: false, error: message }
         renderArtifact()
@@ -5266,7 +5276,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
     const bookHash = response.headers.get('x-studio-epub-hash') || ''
     const bytes = await response.arrayBuffer()
     if (!bookHash || !bytes.byteLength) {
-      const message = t('EPUB 响应格式无效')
+      const message = t('Invalid EPUB response')
       if (state.artifact?.requestId === requestId) {
         state.artifact = { ...state.artifact, loading: false, error: message }
         renderArtifact()
@@ -5289,7 +5299,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
     state.artifactView = 'epub'
   } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
     const bytes = await response.arrayBuffer()
-    if (!bytes.byteLength) throw new Error(t('文档响应格式无效'))
+    if (!bytes.byteLength) throw new Error(t('Invalid document response'))
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
     state.artifact = {
       ...state.artifact, kind, loading: false, bytes,
@@ -5343,12 +5353,12 @@ function syncRightWorkspaceLaunchers() {
 
 async function refreshArtifact() {
   if (!state.artifact) return
-  if (state.artifact.dirty && !confirm(t('重新载入会丢失尚未保存的修改，是否继续？'))) return
+  if (state.artifact.dirty && !confirm(t('Reloading will discard unsaved changes. Continue?'))) return
   await openArtifact({ root: state.artifact.root, path: state.artifact.path }, { returnTool: state.artifact.returnTool })
 }
 
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
-  if (state.artifact?.dirty && !confirm(t('当前文档有尚未保存的修改，是否关闭？'))) return
+  if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return
   const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
   const artifactThreadKey = state.artifact?.threadKey
   $('#artifact-rail').classList.add('hidden')
@@ -5476,7 +5486,7 @@ function renderArtifactOutline() {
     const collapsed = state.artifactOutlineCollapsed.has(item.id)
     const depth = Math.min(4, item.depth)
     return `<button class="artifact-outline-row${item.id === state.artifactOutlineActiveId ? ' active' : ''}${item.contextOnly ? ' context-only' : ''}${collapsed ? ' collapsed' : ''}" style="--outline-depth:${depth}" type="button" data-outline-id="${escapeHtml(item.id)}" title="${escapeHtml(item.label)}"><span class="artifact-outline-chevron"${hasChildren ? ' data-outline-collapse="true"' : ''}>${hasChildren ? '⌄' : ''}</span><span class="artifact-outline-label">${escapeHtml(item.label)}</span></button>`
-  }).join('') : `<p class="artifact-outline-empty">${escapeHtml(t('没有匹配章节'))}</p>`
+  }).join('') : `<p class="artifact-outline-empty">${escapeHtml(t('No matching sections'))}</p>`
   scrollActiveOutlineItemIntoView()
 }
 
@@ -5560,7 +5570,7 @@ function configureTextArtifactOutline(file, content, source, { markdown, html, v
       items = normalizeDocumentOutline(headings.slice(0, 2_000).map((heading, index) => ({
         ...(items[index] || {}),
         id: items[index]?.id || `section-${index + 1}`,
-        label: heading.textContent.trim() || t('未命名章节'),
+        label: heading.textContent.trim() || t('Untitled section'),
         depth: Number(heading.tagName.slice(1)) - 1,
         target: items[index]?.target || { kind: 'text-heading', offset: 0, line: 1 },
       })))
@@ -5650,7 +5660,7 @@ async function saveArtifact({ overwrite = false } = {}) {
   if (response.status === 409 && result?.error?.code === 'workspace_file_conflict') {
     file.saving = false
     $('#artifact-save').disabled = false
-    if (confirm(t('文件已在磁盘上发生变化。是否用当前编辑内容覆盖磁盘版本？'))) {
+    if (confirm(t('The file changed on disk. Overwrite it with the current editor content?'))) {
       await saveArtifact({ overwrite: true })
     }
     return
@@ -5671,7 +5681,7 @@ async function saveArtifact({ overwrite = false } = {}) {
     editContent: result.content,
   }
   renderArtifact()
-  toast('文件已保存')
+  toast('File saved')
 }
 
 function renderArtifact() {
@@ -5692,7 +5702,7 @@ function renderArtifact() {
   $('#artifact-title').textContent = fileDisplayName(file.path)
   $('#artifact-path').textContent = file.relativePath || file.path
   const closeButton = $('#close-artifact')
-  const returnLabel = file.returnTool === 'files' ? t('返回文件') : file.returnTool === 'review' ? t('返回 Git Review') : file.returnTool === 'resources' ? t('返回资源') : t('关闭文档')
+  const returnLabel = file.returnTool === 'files' ? t('Back to Files') : file.returnTool === 'review' ? t('Back to Git Review') : file.returnTool === 'resources' ? t('Back to Resources') : t('Close document')
   closeButton.classList.toggle('returning', Boolean(file.returnTool))
   closeButton.title = returnLabel
   closeButton.setAttribute('aria-label', returnLabel)
@@ -5709,12 +5719,12 @@ function renderArtifact() {
   $('#artifact-reader-shell').classList.toggle('hidden', !ready)
   content.classList.toggle('hidden', !ready)
   $('#artifact-meta').textContent = textReady
-    ? t('{lines} 行 · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
+    ? t('{lines} lines · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
     : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
       : epubReady ? `EPUB · ${formatFileSize(file.size)}`
         : pdfReady ? `PDF · ${formatFileSize(file.size)}`
           : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : 'CSV'} · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? '图片预览不支持批注' : file.kind === 'epub' ? '选择书中文字，添加问题后交给 AI' : file.kind === 'pdf' ? '选择 PDF 文字，或按住 Shift 拖拽区域即可批注' : file.kind === 'table' ? '选择单元格即可批注' : '选择文字即可批注')
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Select a cell to comment' : 'Select text to comment')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
   const editable = textReady
@@ -5733,11 +5743,11 @@ function renderArtifact() {
   $('#artifact-search-toggle').classList.toggle('active', canSearch && state.artifactSearchOpen)
   $('#artifact-search-toggle').setAttribute('aria-expanded', String(canSearch && state.artifactSearchOpen))
   $('#artifact-search-panel').classList.toggle('hidden', !canSearch || !state.artifactSearchOpen)
-  $('#artifact-search-input').setAttribute('placeholder', t('搜索文档内容…'))
-  $('#artifact-search-prev').title = t('上一个匹配')
-  $('#artifact-search-prev').setAttribute('aria-label', t('上一个匹配'))
-  $('#artifact-search-next').title = t('下一个匹配')
-  $('#artifact-search-next').setAttribute('aria-label', t('下一个匹配'))
+  $('#artifact-search-input').setAttribute('placeholder', t('Search document content…'))
+  $('#artifact-search-prev').title = t('Previous match')
+  $('#artifact-search-prev').setAttribute('aria-label', t('Previous match'))
+  $('#artifact-search-next').title = t('Next match')
+  $('#artifact-search-next').setAttribute('aria-label', t('Next match'))
   if (!ready) {
     setArtifactOutline(file, [])
     return
@@ -5753,7 +5763,7 @@ function renderArtifact() {
     }, { once: true })
     image?.addEventListener('error', () => {
       if (state.artifact?.requestId !== file.requestId) return
-      state.artifact = { ...state.artifact, error: t('无法解码图片') }
+      state.artifact = { ...state.artifact, error: t('Unable to decode image') }
       renderArtifact()
     }, { once: true })
     renderArtifactSearchStatus()
@@ -6003,7 +6013,7 @@ async function mountArtifactEditor(file, parent, content) {
       const lines = file.editContent ? file.editContent.split('\n').length : 1
       $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
       $('#artifact-save').disabled = !file.dirty
-      $('#artifact-meta').textContent = t('{lines} 行 · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
+      $('#artifact-meta').textContent = t('{lines} lines · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
       if (isMarkdownFile(file.path) || isHtmlFile(file.path)) {
         clearTimeout(artifactOutlineRefreshTimer)
         artifactOutlineRefreshTimer = setTimeout(() => {
@@ -6041,7 +6051,7 @@ function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
-    reader.addEventListener('error', () => reject(reader.error || new Error(t('无法解码图片'))), { once: true })
+    reader.addEventListener('error', () => reject(reader.error || new Error(t('Unable to decode image'))), { once: true })
     reader.readAsDataURL(blob)
   })
 }
@@ -6181,7 +6191,7 @@ function renderArtifactSearchStatus() {
   }
   summary.textContent = total
     ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total })
-    : t('未找到匹配内容')
+    : t('No matches found')
   $('#artifact-search-prev').disabled = total === 0
   $('#artifact-search-next').disabled = total === 0
 }
@@ -6275,16 +6285,16 @@ function positionSelectionPopover(range, { allowFavorite }) {
 function openAnnotationFromSelection() {
   if (!state.pendingSelection?.quote) {
     captureTranscriptSelection()
-    if (!state.pendingSelection?.quote) return toast('请先在 Codex 输出中选择文字', 'error')
+    if (!state.pendingSelection?.quote) return toast('Select text in the Codex output first', 'error')
   }
   state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
-  if (!state.pendingAnnotation) return toast('请重新选择需要批注的文字', 'error')
+  if (!state.pendingAnnotation) return toast('Select the text to comment on again', 'error')
   $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
   $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
   $('#annotation-comment').value = ''
   $('#annotation-comment').placeholder = state.pendingAnnotation.source?.provider === 'epub'
-    ? t('例如：解释这段内容的核心含义、上下文和关键概念。')
-    : t('说明问题和期望调整，也可以直接将选中内容加入草稿。')
+    ? t('For example: explain the core meaning, context, and key concepts in this passage.')
+    : t('Describe the issue and expected change, or add the selection directly to the draft.')
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
   $('#annotation-dialog').showModal()
@@ -6294,12 +6304,12 @@ function openAnnotationFromSelection() {
 function openFavoriteFromSelection() {
   if (!state.pendingSelection?.quote) {
     captureTranscriptSelection()
-    if (!state.pendingSelection?.quote) return toast('请先在 AI 输出中选择文字', 'error')
+    if (!state.pendingSelection?.quote) return toast('Select text in the AI output first', 'error')
   }
   const thread = selectedThread()
   const turn = state.model.turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
   if (!thread || !state.pendingSelection.turnId || !state.pendingSelection.itemId) {
-    return toast('无法确定所选文字的消息位置，请在一条回复内选择', 'error')
+    return toast('The selected text could not be anchored. Select within a single response.', 'error')
   }
   state.favoriteEditMode = false
   state.pendingFavorite = {
@@ -6344,13 +6354,13 @@ function addAnnotation(event) {
   const errorBox = $('#annotation-error')
   const annotation = state.pendingAnnotation
   if (!state.selectedId || !annotation?.excerpt) {
-    errorBox.textContent = '选中内容不能为空。'
+    errorBox.textContent = 'The selected content is required.'
     errorBox.classList.remove('hidden')
     return
   }
   const drafts = currentAnnotations()
   if (drafts.length >= 32) {
-    errorBox.textContent = '每个会话最多保留 32 条批注。'
+    errorBox.textContent = 'A session can keep up to 32 comments.'
     errorBox.classList.remove('hidden')
     return
   }
@@ -6360,7 +6370,7 @@ function addAnnotation(event) {
   closeAnnotationDialog()
   renderAnnotationRail()
   renderComposerReviewContext()
-  toast('批注已加入回复草稿')
+  toast('Comment added to reply draft')
 }
 
 function openAnnotationRail() {
@@ -6382,7 +6392,7 @@ function renderAnnotationRail() {
   $('#annotation-count').textContent = drafts.length
   setWorkspaceToolCount($('#thread-comments-count'), drafts.length)
   const commentsButton = $('#open-thread-comments')
-  const commentsLabel = drafts.length ? `${t('批注')} · ${drafts.length}` : t('批注')
+  const commentsLabel = drafts.length ? `${t('Comments')} · ${drafts.length}` : t('Comments')
   commentsButton.title = commentsLabel
   commentsButton.setAttribute('aria-label', commentsLabel)
   $('#annotation-empty').classList.toggle('hidden', drafts.length > 0)
@@ -6391,7 +6401,7 @@ function renderAnnotationRail() {
   $('#insert-annotations').disabled = !drafts.length
   $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
-    <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('删除批注 {index}', { index: index + 1 })}">×</button></header>
+    <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('Delete comment {index}', { index: index + 1 })}">×</button></header>
     <blockquote>${escapeHtml(draft.excerpt)}</blockquote>${draft.note ? `<p>${escapeHtml(draft.note)}</p>` : ''}
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
@@ -6433,8 +6443,8 @@ function renderComposerReviewContext() {
   const context = $('#composer-review-context')
   context.classList.toggle('hidden', !drafts.length)
   if (!drafts.length) return
-  $('#composer-review-count').textContent = t('{count} 条批注待发送', { count: drafts.length })
-  $('#composer-review-source').textContent = t('等待加入消息')
+  $('#composer-review-count').textContent = t('{count} comments ready to send', { count: drafts.length })
+  $('#composer-review-source').textContent = t('Waiting to be added')
 }
 
 function deleteAnnotation(id) {
@@ -6447,7 +6457,7 @@ function deleteAnnotation(id) {
 }
 
 function clearAnnotations() {
-  if (!state.selectedId || !confirm(t('清空当前会话的全部批注草稿？'))) return
+  if (!state.selectedId || !confirm(t('Clear all comment drafts for this session?'))) return
   delete state.annotationDrafts[selectedStateKey()]
   delete state.annotationAdditional[selectedStateKey()]
   persistPreferences()
@@ -6468,15 +6478,15 @@ function buildAnnotationPrompt(drafts, additional = '') {
     const anchor = commentSources.promptAnchor(draft, commentProviderContext(index))
     const quote = draft.excerpt.split('\n').map((line) => `> ${line}`).join('\n')
     return t(anchor
-      ? '批注 {index}（{anchor}）\n引用：\n{quote}\n\n我的意见：\n{comment}'
-      : '批注 {index}\n引用：\n{quote}\n\n我的意见：\n{comment}', {
+      ? 'Comment {index} ({anchor})\nQuote:\n{quote}\n\nMy comment:\n{comment}'
+      : 'Comment {index}\nQuote:\n{quote}\n\nMy comment:\n{comment}', {
       index: index + 1,
       anchor,
       quote,
-      comment: draft.note || t('无补充意见'),
+      comment: draft.note || t('No additional comment'),
     })
   }).join('\n\n---\n\n')
-  const additionalBlock = additional.trim() ? t('整体补充：\n{text}', { text: additional.trim() }) : ''
+  const additionalBlock = additional.trim() ? t('Overall note:\n{text}', { text: additional.trim() }) : ''
   return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.annotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
@@ -6488,7 +6498,7 @@ function commentProviderContext(index = 0) {
   return {
     index,
     translate: t,
-    unknownLabel: t('已保存批注'),
+    unknownLabel: t('Saved comment'),
     contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
     openDocument: reopenDocumentComment,
     openEpubSource: reopenEpubComment,
@@ -6517,7 +6527,7 @@ function insertAnnotations() {
   closeAnnotationRail()
   composer.focus()
   renderComposerReviewContext()
-  toast('批注草稿已插入输入框')
+  toast('Comment draft inserted into the composer')
 }
 
 async function favoriteRequest(path, options = {}) {
@@ -6582,7 +6592,7 @@ async function exportFavorites() {
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
-  toast('收藏已导出')
+  toast('Favorites exported')
 }
 
 function handleFavoritesSearch(event) {
@@ -6596,23 +6606,23 @@ function renderFavoritesRail() {
     ? state.favorites.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId)
     : state.favorites
   const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
-  $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? '本会话收藏' : '全局收藏')
+  $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? 'Session favorites' : 'Global favorites')
   $('#export-favorites').classList.toggle('hidden', state.favoriteScope !== 'global')
   $('#favorites-count').textContent = count
   $('#favorites-badge').textContent = count > 99 ? '99+' : count
   $('#favorites-badge').classList.toggle('hidden', count === 0)
   $('#favorites-search-summary').textContent = state.favoriteQuery
-    ? t('找到 {count} 条匹配收藏', { count: visibleFavorites.length })
+    ? t('Found {count} matching favorites', { count: visibleFavorites.length })
     : state.favoriteScope === 'session'
-      ? t('{count} 条当前会话收藏', { count })
-      : t('{count} 条跨会话结构化收藏', { count })
+      ? t('{count} favorites in this session', { count })
+      : t('{count} structured favorites across sessions', { count })
   const empty = visibleFavorites.length === 0
   $('#favorites-empty').classList.toggle('hidden', !empty)
   $('#favorites-list').classList.toggle('hidden', empty)
-  $('#favorites-empty strong').textContent = state.favoriteQuery ? '没有匹配结果' : '还没有收藏'
+  $('#favorites-empty strong').textContent = state.favoriteQuery ? 'No matching results' : 'No favorites yet'
   $('#favorites-empty p').textContent = state.favoriteQuery
-    ? '试试回复中的关键词、会话名称或标签。'
-    : '将鼠标移到任意 AI 回复上，点击右上角的收藏按钮。'
+    ? 'Try keywords from the response, session name, or tags.'
+    : 'Hover over an AI response and use its favorite button.'
   $('#favorites-list').innerHTML = visibleFavorites.map((favorite) => {
     const tags = favorite.tags?.length
       ? `<div class="favorite-card-tags">${favorite.tags.slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
@@ -6626,7 +6636,7 @@ function renderFavoritesRail() {
       ${question}
       <p class="favorite-card-answer">${escapeHtml(favorite.snippet)}</p>
       ${tags}
-      <footer><span>${escapeHtml(favorite.threadTitle || t('未命名会话'))}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
+      <footer><span>${escapeHtml(favorite.threadTitle || t('Untitled session'))}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
     </button>`
   }).join('')
   renderSessionFavoriteCount()
@@ -6638,7 +6648,7 @@ function renderSessionFavoriteCount() {
     : 0
   const favoritesButton = $('#open-thread-favorites')
   setWorkspaceToolCount($('#thread-favorites-count'), count)
-  const favoritesLabel = count ? `${t('收藏')} · ${count}` : t('收藏')
+  const favoritesLabel = count ? `${t('Favorites')} · ${count}` : t('Favorites')
   favoritesButton.title = favoritesLabel
   favoritesButton.setAttribute('aria-label', favoritesLabel)
 }
@@ -6661,7 +6671,7 @@ function openFavoriteForMessage(turnId, itemId) {
   const thread = selectedThread()
   const visibleText = item?.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item?.text || ''
   if (!turn || !item || !thread || !visibleText.trim()) {
-    toast('这条回复尚未完成，暂时不能收藏', 'error')
+    toast('This response is not complete and cannot be favorited yet', 'error')
     return
   }
   state.favoriteEditMode = false
@@ -6687,17 +6697,17 @@ function openFavoriteForMessage(turnId, itemId) {
 function populateFavoriteDialog(favorite) {
   const editing = state.favoriteEditMode
   const resource = favorite.presentation === 'resource'
-  $('#favorite-dialog-title').textContent = t(editing ? '编辑收藏' : resource ? '收藏资源' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复')
-  $('#favorite-source-label').textContent = `${backendDescriptor(favorite.backend).name} · ${favorite.threadTitle || t('未命名会话')}`
-  $('#favorite-preview-label').textContent = t(resource ? '资源' : 'AI 回复')
-  $('#favorite-answer-length').textContent = t('{count} 字', { count: [...favorite.content].length.toLocaleString(getLocale()) })
+  $('#favorite-dialog-title').textContent = t(editing ? 'Edit favorite' : resource ? 'Save resource' : favorite.scope === 'selection' ? 'Favorite selection' : 'Favorite this response')
+  $('#favorite-source-label').textContent = `${backendDescriptor(favorite.backend).name} · ${favorite.threadTitle || t('Untitled session')}`
+  $('#favorite-preview-label').textContent = t(resource ? 'Resources' : 'AI response')
+  $('#favorite-answer-length').textContent = t('{count} characters', { count: [...favorite.content].length.toLocaleString(getLocale()) })
   $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
   $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)
   $('#favorite-tags').value = (favorite.tags || []).join(', ')
   $('#favorite-note').value = favorite.note || ''
   $('#favorite-include-question').checked = Boolean(favorite.question)
   $('#favorite-question-option').classList.toggle('hidden', editing && !favorite.question)
-  $('#save-favorite').textContent = t(editing ? '保存修改' : '保存到收藏')
+  $('#save-favorite').textContent = t(editing ? 'Save changes' : 'Save favorite')
   $('#favorite-error').classList.add('hidden')
   renderFavoriteQuestionOption()
   $('#favorite-dialog').showModal()
@@ -6732,7 +6742,7 @@ async function saveFavorite(event) {
   }
   const error = $('#favorite-error')
   if (!favorite.title) {
-    error.textContent = '请填写收藏标题。'
+    error.textContent = 'Enter a favorite title.'
     error.classList.remove('hidden')
     return
   }
@@ -6745,7 +6755,7 @@ async function saveFavorite(event) {
     closeFavoriteDialog()
     state.selectedFavorite = saved
     await loadFavorites()
-    toast(updating ? '收藏已更新' : '已保存到全局收藏')
+    toast(updating ? 'Favorite updated' : 'Saved to global favorites')
     if (updating) await openFavoriteDetail(saved.id)
   } catch (requestError) {
     error.textContent = requestError.message
@@ -6759,7 +6769,7 @@ async function openFavoriteDetail(id) {
   $('#favorite-detail-backend').textContent = favorite.backend
   $('#favorite-detail-backend').className = `favorite-backend-pill ${favorite.backend}`
   $('#favorite-detail-title').textContent = favorite.title
-  $('#favorite-detail-source').textContent = `${favorite.threadTitle || t('未命名会话')} · ${favorite.projectPath || t('未记录项目目录')} · ${formatFavoriteDate(favorite.createdAt)}`
+  $('#favorite-detail-source').textContent = `${favorite.threadTitle || t('Untitled session')} · ${favorite.projectPath || t('Project directory not recorded')} · ${formatFavoriteDate(favorite.createdAt)}`
   $('#favorite-detail-question-section').classList.toggle('hidden', !favorite.question)
   $('#favorite-detail-question').textContent = favorite.question || ''
   $('#favorite-detail-answer').innerHTML = renderMarkdown(favorite.content)
@@ -6776,8 +6786,8 @@ function closeFavoriteDetail() {
 
 async function copySelectedFavorite() {
   if (!state.selectedFavorite) return
-  await navigator.clipboard.writeText(favoriteCopyText(state.selectedFavorite))
-  toast('收藏内容已复制')
+  await navigator.clipboard.writeText(favoriteCopyText(state.selectedFavorite, t))
+  toast('Favorite copied')
 }
 
 function editSelectedFavorite() {
@@ -6791,11 +6801,11 @@ function editSelectedFavorite() {
 
 async function deleteSelectedFavorite() {
   const favorite = state.selectedFavorite
-  if (!favorite || !confirm(t('删除收藏“{title}”？', { title: favorite.title }))) return
+  if (!favorite || !confirm(t('Delete favorite “{title}”?', { title: favorite.title }))) return
   await favoriteRequest(`/studio/favorites/${encodeURIComponent(favorite.id)}`, { method: 'DELETE' })
   closeFavoriteDetail()
   await loadFavorites()
-  toast('收藏已删除')
+  toast('Favorite deleted')
 }
 
 async function openSelectedFavoriteSource() {
@@ -6811,12 +6821,12 @@ async function openSelectedFavoriteSource() {
     if (state.ready) await loadThreads()
   }
   if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
-    throw new Error('原会话当前不在会话列表中，可能已归档或删除。收藏内容仍然完整保留。')
+    throw new Error('The source session is not in the list and may be archived or deleted. The favorite remains intact.')
   }
   await selectThread(favorite.threadId, { force: true })
   const element = renderedItem(favorite.turnId, favorite.itemId)
   if (!element) {
-    toast('已返回原会话，但历史中没有找到原消息锚点', 'error')
+    toast('Returned to the source session, but the original message anchor was not found', 'error')
     return
   }
   transcriptScrollFollower.pause()
@@ -6831,10 +6841,10 @@ function syncFavoriteButtons() {
     const favorite = item && favoriteForSource(state.backend, state.selectedId, item.dataset.turnId, item.dataset.itemId)
     button.classList.toggle('active', Boolean(favorite))
     button.setAttribute('aria-pressed', String(Boolean(favorite)))
-    button.title = favorite ? '已收藏，点击查看' : '收藏这条回复'
+    button.title = favorite ? 'Favorited; click to view' : 'Favorite this response'
     button.setAttribute('aria-label', button.title)
     const accessibleLabel = button.querySelector('b')
-    if (accessibleLabel) accessibleLabel.textContent = favorite ? '已收藏' : '收藏'
+    if (accessibleLabel) accessibleLabel.textContent = favorite ? 'Favorited' : 'Favorites'
     item?.classList.toggle('favorited', Boolean(favorite))
   })
 }
@@ -6850,7 +6860,7 @@ function waitFor(predicate, timeoutMs) {
     const startedAt = Date.now()
     const check = () => {
       if (predicate()) resolve()
-      else if (Date.now() - startedAt >= timeoutMs) reject(new Error('等待后端切换超时'))
+      else if (Date.now() - startedAt >= timeoutMs) reject(new Error('Timed out waiting for backend switch'))
       else setTimeout(check, 80)
     }
     check()
@@ -6989,8 +6999,8 @@ function renderManagedRouterStatus() {
   const id = state.router.controllers[backend]
   const managed = state.threadsByBackend[backend]?.find((thread) => thread.id === id)
   $('#managed-router-status').textContent = managed
-    ? t('{backend} · 已创建并持续复用 · {title}', { backend: backendDescriptor(backend).name, title: threadTitle(managed) })
-    : t('{backend} · 首次保存时由 Studio 自动创建', { backend: backendDescriptor(backend).name })
+    ? t('{backend} · created and continuously reused · {title}', { backend: backendDescriptor(backend).name, title: threadTitle(managed) })
+    : t('{backend} · Studio will create it on first save', { backend: backendDescriptor(backend).name })
 }
 
 function closeRouterDialog() {
@@ -7033,16 +7043,16 @@ function renderRouterFallbacks({ capture = false } = {}) {
   const targets = routerFallbackTargets()
   const options = (selected) => {
     const known = targets.some((target) => target.key === selected)
-    return `<option value="">${t('选择 fallback 会话')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('已不可用')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backendDescriptor(backend).tag}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('未记录项目目录'))}</option>`).join('')}`
+    return `<option value="">${t('Select a fallback session')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('No longer available')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backendDescriptor(backend).tag}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('Project directory not recorded'))}</option>`).join('')}`
   }
   const container = $('#router-fallbacks')
   container.innerHTML = state.routerEditor.fallbacks.length
     ? state.routerEditor.fallbacks.map((entry, index) => `<section class="router-fallback-card" data-router-fallback-index="${index}">
-      <header><strong>${t('Fallback 目标 {index}', { index: index + 1 })}</strong><button class="icon-button router-remove-fallback" type="button" title="${t('移除 fallback')}" aria-label="${t('移除 fallback')}">×</button></header>
-      <label class="field"><span>${t('目标会话')}</span><select class="router-fallback-session">${options(entry.sessionKey)}</select></label>
-      <label class="field"><span>${t('Fallback 条件')}</span><textarea class="router-fallback-condition" rows="2">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
+      <header><strong>${t('Fallback target {index}', { index: index + 1 })}</strong><button class="icon-button router-remove-fallback" type="button" title="${t('Remove fallback')}" aria-label="${t('Remove fallback')}">×</button></header>
+      <label class="field"><span>${t('Target session')}</span><select class="router-fallback-session">${options(entry.sessionKey)}</select></label>
+      <label class="field"><span>${t('Fallback condition')}</span><textarea class="router-fallback-condition" rows="2">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
     </section>`).join('')
-    : `<div class="router-fallback-empty"><strong>${t('未配置 fallback target')}</strong><small>${t('没有精确匹配时，Router 将选择最接近的普通会话。')}</small></div>`
+    : `<div class="router-fallback-empty"><strong>${t('No fallback target configured')}</strong><small>${t('When there is no exact match, the Router will choose the closest regular session.')}</small></div>`
   container.querySelectorAll('.router-remove-fallback').forEach((button) => button.addEventListener('click', () => {
     captureRouterFallbacks()
     state.routerEditor.fallbacks.splice(Number(button.closest('.router-fallback-card').dataset.routerFallbackIndex), 1)
@@ -7065,7 +7075,7 @@ async function saveRouterSettings(event) {
   captureRouterFallbacks()
   const fallbacks = (state.routerEditor?.fallbacks || []).filter((entry) => entry.sessionKey)
   if (new Set(fallbacks.map((entry) => entry.sessionKey)).size !== fallbacks.length) {
-    $('#router-error').textContent = t('同一个会话不能重复配置为 fallback。')
+    $('#router-error').textContent = t('The same session cannot be configured as a fallback more than once.')
     $('#router-error').classList.remove('hidden')
     return
   }
@@ -7085,7 +7095,7 @@ async function saveRouterSettings(event) {
     closeRouterDialog()
     renderThreadList()
     renderWorkspace()
-    toast(t('Router 设置已保存'))
+    toast(t('Router settings saved'))
   } catch (error) {
     $('#router-error').textContent = error.message
     $('#router-error').classList.remove('hidden')
@@ -7093,9 +7103,9 @@ async function saveRouterSettings(event) {
 }
 
 async function ensureManagedRouterSession(backend = state.router.controllerBackend) {
-  if (!sessionDispatch.supports(backend)) throw new Error(t('Router 后端当前不可用。'))
+  if (!sessionDispatch.supports(backend)) throw new Error(t('The Router backend is currently unavailable.'))
   const cwd = (await loadBackendInfo(backend))?.routerWorkspace
-  if (!cwd) throw new Error(t('无法确定 Studio Router 的工作目录。'))
+  if (!cwd) throw new Error(t('Unable to determine the Studio Router working directory.'))
   const routerId = state.router.controllers[backend]
   const existing = managedRouterThread(state.threadsByBackend[backend], routerId, cwd)
   if (existing) return existing.id
@@ -7110,18 +7120,18 @@ async function ensureManagedRouterSession(backend = state.router.controllerBacke
         return recovered.id
       }
     } catch (error) {
-      throw new Error(t('无法读取已配置的 Router 会话；为避免重复创建，Studio 将保留现有 Router ID。{message}', { message: error.message }))
+      throw new Error(t('Unable to read the configured Router session. Studio will keep its existing Router ID to avoid creating a duplicate. {message}', { message: error.message }))
     }
-    throw new Error(t('已配置的 Router 会话与专用工作目录不匹配；Studio 不会自动创建替代会话。'))
+    throw new Error(t('The configured Router session does not match the dedicated workspace. Studio will not create a replacement automatically.'))
   }
-  if (!shouldCreateManagedRouter(routerId)) throw new Error(t('Router ID 已存在；Studio 不会自动创建替代会话。'))
+  if (!shouldCreateManagedRouter(routerId)) throw new Error(t('A Router ID already exists. Studio will not create a replacement automatically.'))
   const result = await dispatchBackendRpc(backend, 'thread/start', {
     cwd,
     name: 'Thread Router',
     approvalPolicy: 'never',
     sandbox: 'read-only',
   })
-  if (!result?.thread?.id) throw new Error(t('无法创建系统 Router 会话。'))
+  if (!result?.thread?.id) throw new Error(t('Unable to create the system Router session.'))
   if (isCodexBackend(backend)) await dispatchBackendRpc(backend, 'thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
   mergeThreadIntoCatalog(backend, { ...result.thread, name: 'Thread Router' })
   state.router = normalizeThreadRouter({
@@ -7163,7 +7173,7 @@ async function saveSettings(event) {
   event.preventDefault()
   const template = $('#annotation-template').value.trim()
   if (!template.includes('{{annotations}}')) {
-    $('#settings-error').textContent = '批注模板必须包含 {{annotations}}。'
+    $('#settings-error').textContent = 'The comment template must contain {{annotations}}.'
     $('#settings-error').classList.remove('hidden')
     return
   }
@@ -7171,6 +7181,7 @@ async function saveSettings(event) {
   state.annotationPromptTemplates[previousLocale] = template.slice(0, 32000)
   state.language = normalizeLanguage($('#language-select').value)
   setLanguage(state.language)
+  syncEmbeddedBrowserTranslations()
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
   state.typography = normalizeTypography({
@@ -7207,7 +7218,7 @@ async function saveSettings(event) {
   $('#settings-dialog').close()
   renderLocalizedUI()
   if (state.hostPlatform === 'windows' && JSON.stringify(state.wsl) !== previousWsl) {
-    toast(t('WSL 设置已保存，重启 Studio 后生效'))
+    toast(t('WSL settings saved. Restart Studio to apply them.'))
   }
 }
 
@@ -7222,7 +7233,7 @@ async function openEnvironmentDialog(root = selectedThread()?.cwd || '') {
   closeActionMenus()
   root = String(root || '').trim()
   if (!root) {
-    toast(t('当前会话没有项目目录。'), 'error')
+    toast(t('The current session has no project directory.'), 'error')
     return
   }
   environmentDialogRoot = root
@@ -7233,7 +7244,7 @@ async function openEnvironmentDialog(root = selectedThread()?.cwd || '') {
   $('#environment-project-root').textContent = root
   $('#environment-project-monogram').textContent = [...name][0]?.toUpperCase() || 'P'
   $('#environment-profile-status').className = 'environment-profile-status default'
-  $('#environment-profile-status').textContent = t('正在读取')
+  $('#environment-profile-status').textContent = t('Loading')
   $('#environment-error').classList.add('hidden')
   setEnvironmentDialogLoading(true)
   const dialog = $('#environment-dialog')
@@ -7279,7 +7290,7 @@ function populateEnvironmentForm(profile) {
   $('#environment-cache-variables').value = formatEnvironmentLines(profile?.cacheVariables)
   const status = $('#environment-profile-status')
   status.className = `environment-profile-status${profile?.configured ? '' : ' default'}`
-  status.textContent = t(profile?.configured ? '已配置' : '默认环境')
+  status.textContent = t(profile?.configured ? 'Configured' : 'Default environment')
   renderEnvironmentSecretNames()
   $('#environment-advanced').open = policy === 'enabled'
     || Boolean(profile?.allowedHosts?.length)
@@ -7290,8 +7301,8 @@ function populateEnvironmentForm(profile) {
 function renderEnvironmentSecretNames() {
   const names = Array.isArray(environmentDialogProfile?.secretNames) ? environmentDialogProfile.secretNames : []
   $('#environment-secret-names').innerHTML = names.length
-    ? names.map((name) => `<button class="environment-secret-chip" type="button" data-secret-name="${escapeHtml(name)}" aria-pressed="${environmentSecretRemovals.has(name)}" title="${escapeHtml(t('点击标记为删除；再次点击可撤销'))}">${escapeHtml(name)}</button>`).join('')
-    : `<span class="environment-secret-empty">${escapeHtml(t('尚未保存 Secret'))}</span>`
+    ? names.map((name) => `<button class="environment-secret-chip" type="button" data-secret-name="${escapeHtml(name)}" aria-pressed="${environmentSecretRemovals.has(name)}" title="${escapeHtml(t('Click to mark for removal; click again to undo'))}">${escapeHtml(name)}</button>`).join('')
+    : `<span class="environment-secret-empty">${escapeHtml(t('No saved secrets'))}</span>`
 }
 
 function toggleEnvironmentSecretRemoval(event) {
@@ -7324,7 +7335,7 @@ function updateEnvironmentDraftSummary() {
   $('#environment-secret-count').textContent = String(secretNames.size)
   const policy = selectedEnvironmentPolicy() === 'enabled' ? 'Enabled' : 'Restricted'
   $('#environment-advanced-summary').textContent = cacheNames.size
-    ? `${policy} · ${cacheNames.size} ${t('缓存项')}`
+    ? `${policy} · ${cacheNames.size} ${t('cache entries')}`
     : policy
 }
 
@@ -7332,18 +7343,18 @@ async function saveProjectEnvironment(event) {
   event.preventDefault()
   const button = $('#save-environment')
   button.disabled = true
-  button.textContent = t('正在保存…')
+  button.textContent = t('Saving…')
   $('#environment-error').classList.add('hidden')
   try {
     await saveEnvironmentProfile()
     closeEnvironmentDialog()
-    toast(t('项目环境已保存'))
+    toast(t('Project environment saved'))
   } catch (error) {
     $('#environment-error').textContent = error.message
     $('#environment-error').classList.remove('hidden')
   } finally {
     button.disabled = false
-    button.textContent = t('保存项目环境')
+    button.textContent = t('Save environment')
   }
 }
 
@@ -7399,7 +7410,7 @@ function renderProjectEnvironmentEntry() {
   const root = thread?.cwd || ''
   if (!action) return
   action.disabled = !root
-  action.title = t(root ? '配置当前项目的环境变量、Secret、网络与缓存' : '当前会话没有项目目录')
+  action.title = t(root ? 'Configure variables, secrets, network, and cache for this project' : 'The current session has no project directory')
   const configured = Boolean(root && state.environmentProfile?.configured && state.environmentProfile.root === root)
   $('#project-environment-indicator').classList.toggle('hidden', !configured)
 }
@@ -7417,6 +7428,7 @@ async function applyEnvironmentToCodex(root) {
 function resetSettings() {
   state.language = 'system'
   setLanguage(state.language)
+  syncEmbeddedBrowserTranslations()
   state.theme = 'light'
   state.contentWidth = 'comfortable'
   state.typography = { ...typographyDefaults }
@@ -7458,12 +7470,12 @@ function applyAppearance() {
 }
 
 function backendStatusView(backend) {
-  const status = state.backendStates[backend] || { kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接' }
+  const status = state.backendStates[backend] || { kind: 'idle', label: backendDescriptor(backend).name, caption: 'Connect on demand' }
   const info = state.backendInfos[backend]
   if (backend === state.backend) return status
-  if (info?.error) return { kind: 'error', label: '不可用', caption: info.error }
-  if (info?.reachable) return { kind: 'online', label: '可用', caption: '按需连接会话事件' }
-  return { kind: 'idle', label: '按需连接', caption: '尚未选择该后端会话' }
+  if (info?.error) return { kind: 'error', label: 'Unavailable', caption: info.error }
+  if (info?.reachable) return { kind: 'online', label: 'Available', caption: 'Session events connect on demand' }
+  return { kind: 'idle', label: 'Connect on demand', caption: 'No session from this backend has been selected yet' }
 }
 
 function openConnectionsDialog() {
@@ -7511,19 +7523,19 @@ function renderBackendDialog() {
     const status = backendStatusView(backend)
     return `<section class="about-section">
       <header>${descriptor.name}</header>
-      <div class="detail-row"><span>${t('状态')}</span><strong>${escapeHtml(t(status.label))}</strong></div>
-      <div class="detail-row"><span>${t('可执行文件')}</span><strong>${escapeHtml(info.binary || descriptor.binary)}</strong></div>
-      <div class="detail-row"><span>${t('后端版本')}</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
-      <div class="detail-row"><span>${t('协议')}</span><strong>${escapeHtml(info.protocol || descriptor.protocol)}</strong></div>
-      <div class="detail-row"><span>${t('传输')}</span><strong>${escapeHtml(info.transport || descriptor.transport)}</strong></div>
-      <div class="detail-row"><span>${t('执行环境')}</span><strong>${escapeHtml(info.executionEnvironment === 'wsl' ? `WSL · ${info.wslDistribution || t('默认 Distribution')}` : t('本机'))}</strong></div>
+      <div class="detail-row"><span>${t('Status')}</span><strong>${escapeHtml(t(status.label))}</strong></div>
+      <div class="detail-row"><span>${t('Executable')}</span><strong>${escapeHtml(info.binary || descriptor.binary)}</strong></div>
+      <div class="detail-row"><span>${t('Backend version')}</span><strong>${escapeHtml(info.backendVersion || '—')}</strong></div>
+      <div class="detail-row"><span>${t('Protocol')}</span><strong>${escapeHtml(info.protocol || descriptor.protocol)}</strong></div>
+      <div class="detail-row"><span>${t('Transport')}</span><strong>${escapeHtml(info.transport || descriptor.transport)}</strong></div>
+      <div class="detail-row"><span>${t('Execution environment')}</span><strong>${escapeHtml(info.executionEnvironment === 'wsl' ? `WSL · ${info.wslDistribution || t('Default distribution')}` : t('Local'))}</strong></div>
     </section>`
   }).join('')
   $('#backend-dialog-content').innerHTML = `<section class="about-section">
-    <header>${t('应用')}</header>
-    <div class="detail-row"><span>${t('应用')}</span><strong>${escapeHtml(appInfo.appName || 'Codex Thread Studio')}</strong></div>
-    <div class="detail-row"><span>${t('版本')}</span><strong>v${escapeHtml(appInfo.appVersion || 'unknown')}</strong></div>
-    <div class="detail-row"><span>${t('运行模式')}</span><strong>${t('本机工作区')}</strong></div>
+    <header>${t('Application')}</header>
+    <div class="detail-row"><span>${t('Application')}</span><strong>${escapeHtml(appInfo.appName || 'Codex Thread Studio')}</strong></div>
+    <div class="detail-row"><span>${t('Version')}</span><strong>v${escapeHtml(appInfo.appVersion || 'unknown')}</strong></div>
+    <div class="detail-row"><span>${t('Runtime mode')}</span><strong>${t('Local workspace')}</strong></div>
   </section>${backendSections}`
 }
 
@@ -7539,7 +7551,7 @@ function setBackendState(kind, label, caption) {
   const connection = $('#thread-connection')
   if (connection) {
     connection.className = `thread-connection ${kind}`
-    const copy = kind === 'online' ? '已连接' : kind === 'checking' ? '正在连接…' : '未连接'
+    const copy = kind === 'online' ? 'Connected' : kind === 'checking' ? 'Connecting…' : 'Disconnected'
     $('#native-connection').textContent = t(copy)
   }
   if ($('#connections-dialog').open) renderConnectionsDialog()
@@ -7558,7 +7570,7 @@ function updateSelectedThreadStatus(message) {
   renderWorkspace()
 }
 
-function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex 会话') }
+function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex session') }
 function basename(path) { return String(path || '').split(/[\\/]/).filter(Boolean).at(-1) || '' }
 function shortId(value) { const text = String(value || ''); return text.length > 12 ? `${text.slice(0, 8)}…` : text }
 function threadSourceLabel(source) {
@@ -7568,7 +7580,7 @@ function threadSourceLabel(source) {
 }
 function threadStatus(thread) { return thread?.status?.type || thread?.status || 'notLoaded' }
 function statusLabel(status) {
-  return t(({ active: '运行中', running: '运行中', inProgress: '执行中', idle: '空闲', notLoaded: '未加载', completed: '完成', interrupted: '已停止', failed: '失败', systemError: '异常', declined: '已拒绝' })[status] || status || '未知')
+  return t(({ active: 'Running', running: 'Running', inProgress: 'In progress', idle: 'Idle', notLoaded: 'Not loaded', completed: 'Done', interrupted: 'Stopped', failed: 'Failed', systemError: 'Error', declined: 'Declined' })[status] || status || 'Unknown')
 }
 function arrayText(value) {
   if (!Array.isArray(value)) return typeof value === 'string' ? value : ''

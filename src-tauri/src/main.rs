@@ -3985,9 +3985,10 @@ mod tests {
         assert!(validate_preferences(&preferences).is_err());
 
         let mut preferences = StudioPreferences::default();
-        preferences
-            .annotation_prompt_templates
-            .insert("zh-CN".to_string(), "请处理：\n{{annotations}}".to_string());
+        preferences.annotation_prompt_templates.insert(
+            "zh-CN".to_string(),
+            "\u{8bf7}\u{5904}\u{7406}:\n{{annotations}}".to_string(),
+        );
         assert!(validate_preferences(&preferences).is_ok());
         preferences.annotation_prompt_templates.insert(
             "ja-JP".to_string(),
@@ -4067,6 +4068,7 @@ mod tests {
 
     #[test]
     fn validates_thread_router_preferences() {
+        const MULTIBYTE_TEXT: &str = "\u{4f1a}";
         let mut preferences = StudioPreferences {
             router: Some(ThreadRouterPreferences {
                 thread_id: None,
@@ -4104,29 +4106,29 @@ mod tests {
             "codex:unicode-thread".to_string(),
             OpeningMessage {
                 text: String::new(),
-                responsibility: "会".repeat(4096),
+                responsibility: MULTIBYTE_TEXT.repeat(4096),
                 source: "manual".to_string(),
                 captured_at: String::new(),
                 truncated: false,
             },
         );
-        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4096);
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = MULTIBYTE_TEXT.repeat(4096);
         assert!(validate_preferences(&preferences).is_ok());
 
         preferences
             .opening_messages
             .get_mut("codex:unicode-thread")
             .unwrap()
-            .responsibility = "会".repeat(4097);
+            .responsibility = MULTIBYTE_TEXT.repeat(4097);
         assert!(validate_preferences(&preferences).is_err());
         preferences
             .opening_messages
             .get_mut("codex:unicode-thread")
             .unwrap()
-            .responsibility = "会".repeat(4096);
-        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4097);
+            .responsibility = MULTIBYTE_TEXT.repeat(4096);
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = MULTIBYTE_TEXT.repeat(4097);
         assert!(validate_preferences(&preferences).is_err());
-        preferences.router.as_mut().unwrap().fallbacks[0].condition = "会".repeat(4096);
+        preferences.router.as_mut().unwrap().fallbacks[0].condition = MULTIBYTE_TEXT.repeat(4096);
 
         preferences
             .router

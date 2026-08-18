@@ -19,7 +19,7 @@ export function createPdfCommentProvider() {
       return [anchor.filePath, `page ${anchor.page}`, anchor.rects.length && `regions ${JSON.stringify(anchor.rects)}`, anchor.documentHash && `base ${anchor.documentHash}`].filter(Boolean).join(' / ')
     },
     promptInstruction(_draft, context) {
-      return context.translate?.('PDF 摘录：请结合页码、区域和引文回答；PDF 是只读资料，不要假设可以直接修改。') || ''
+      return context.translate?.('PDF excerpt: answer using the page, region, and quote. Treat the PDF as read-only.') || ''
     },
     async reopen(draft, context) {
       await context.openPdfSource?.(normalizePdfAnchor(draft?.source?.anchor), draft?.excerpt)

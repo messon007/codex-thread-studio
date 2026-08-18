@@ -78,7 +78,7 @@ test('returns structured worker output and preserves the backend failure reason'
     () => structuredWorkerText({ status: 'failed', items: [], error: { message: backendError } }),
     /oneOf.*not permitted/u,
   )
-  assert.throws(() => structuredWorkerText({ status: 'completed', items: [] }), /没有返回结果/u)
+  assert.throws(() => structuredWorkerText({ status: 'completed', items: [] }), /returned no result/u)
 })
 
 test('extracts and hides the inline Map update envelope, including partial streaming markers', () => {
@@ -89,8 +89,8 @@ test('extracts and hides the inline Map update envelope, including partial strea
   assert.equal(sessionMapVisibleText(`${visible}\n\n${SESSION_MAP_UPDATE_START.slice(0, 18)}`), visible)
   assert.deepEqual(parseSessionMapUpdate(response), { found: true, visibleText: visible, update: payload })
   assert.deepEqual(parseSessionMapUpdate(visible), { found: false, visibleText: visible, update: null })
-  assert.throws(() => parseSessionMapUpdate(`${visible}\n${SESSION_MAP_UPDATE_START}\n{bad json}\n${SESSION_MAP_UPDATE_END}`), /有效 JSON/)
-  assert.throws(() => parseSessionMapUpdate(`${response}\ntrailing`), /回复结尾/)
+  assert.throws(() => parseSessionMapUpdate(`${visible}\n${SESSION_MAP_UPDATE_START}\n{bad json}\n${SESSION_MAP_UPDATE_END}`), /valid JSON/)
+  assert.throws(() => parseSessionMapUpdate(`${response}\ntrailing`), /end of the response/)
 })
 
 test('bootstraps only an empty unsynchronized Map and includes recent conversation context', () => {

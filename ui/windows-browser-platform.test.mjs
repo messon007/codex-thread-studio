@@ -28,8 +28,9 @@ test('Windows browser stays behind a compile-time boundary and uses published WR
 })
 
 test('trusted toolbar exposes exit, information and downloads actions without remote-page controls', () => {
-  assert.match(toolbar, /make\('退出浏览器', 'exit-browser'\)/u)
-  assert.match(toolbar, /make\('浏览器信息', 'browser-info'\)/u)
-  assert.match(toolbar, /make\('下载记录', 'browser-downloads'\)/u)
+  assert.match(toolbar, /make\(tr\('Exit browser'\), 'exit-browser'\)/u)
+  assert.match(toolbar, /make\(tr\('Browser information'\), 'browser-info'\)/u)
+  assert.match(toolbar, /make\(tr\('Downloads'\), 'browser-downloads'\)/u)
   assert.match(toolbar, /action\('open-downloads-directory'\)/u)
+  assert.match(windowsSource, /ToolbarAction::SetTranslations\(translations\)/u)
 })

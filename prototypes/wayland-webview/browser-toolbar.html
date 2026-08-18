@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en-US">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,12 +22,12 @@
 </head>
 <body>
   <div class="nav">
-    <button class="icon" data-command="back" title="后退">‹</button>
-    <button class="icon" data-command="forward" title="前进">›</button>
-    <button class="icon" data-command="reload" title="刷新">↻</button>
+    <button class="icon" data-command="back" title="Back">‹</button>
+    <button class="icon" data-command="forward" title="Forward">›</button>
+    <button class="icon" data-command="reload" title="Reload">↻</button>
   </div>
-  <input class="address" id="address" value="https://example.com" spellcheck="false" aria-label="网址">
-  <button class="comment" id="commentSelection">批注选区</button>
+  <input class="address" id="address" value="https://example.com" spellcheck="false" aria-label="Address">
+  <button class="comment" id="commentSelection">Comment on selection</button>
   <script>
     const action = (name, params = {}) => {
       const query = new URLSearchParams(params).toString();

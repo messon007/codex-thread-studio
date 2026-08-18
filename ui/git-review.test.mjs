@@ -26,5 +26,5 @@ test('review filters support staged, unstaged and path search', () => {
 test('review status gives conflicts and untracked files priority', () => {
   assert.equal(reviewFileStatus({ conflicted: true }).label, '!')
   assert.equal(reviewFileStatus({ untracked: true }).label, 'U')
-  assert.equal(reviewFileStatus({ indexStatus: 'A', worktreeStatus: ' ' }).title, '新增')
+  assert.equal(reviewFileStatus({ indexStatus: 'A', worktreeStatus: ' ' }).title, 'Added')
 })

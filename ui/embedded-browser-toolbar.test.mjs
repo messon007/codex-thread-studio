@@ -31,7 +31,7 @@ test('browser menu is the rightmost address-toolbar action', () => {
   assert.ok(comment >= 0)
   assert.ok(browserMenu > comment)
   assert.equal(browserMenu, tools.lastIndexOf('data-action='))
-  assert.match(tools, /aria-label="更多浏览器操作"/u)
+  assert.match(tools, /aria-label="More browser actions"/u)
 })
 
 test('Windows native browser menu follows the Linux GTK menu protocol', () => {
@@ -42,8 +42,8 @@ test('Windows native browser menu follows the Linux GTK menu protocol', () => {
   const paintEnd = windowsSource.indexOf('unsafe fn draw_native_menu_item', paintStart)
   const paintSource = windowsSource.slice(paintStart, paintEnd)
   const labels = [
-    '新建标签页', '重新加载', '复制当前链接', 'draw_native_zoom_row', '适应页面宽度',
-    '批注选中内容', '浏览器信息', '下载内容', '退出浏览器',
+    'New tab', 'Reload', 'Copy current link', 'draw_native_zoom_row', 'Fit page width',
+    'Comment on selection', 'Browser information', 'Downloads', 'Exit browser',
   ]
   let previous = -1
   for (const label of labels) {
@@ -52,14 +52,15 @@ test('Windows native browser menu follows the Linux GTK menu protocol', () => {
     assert.ok(index > previous, `${label} follows the Linux menu order`)
     previous = index
   }
-  assert.match(windowsSource, /"新建标签页",\s*Some\("Ctrl\+T"\)/u)
-  assert.match(windowsSource, /"重新加载",\s*Some\("Ctrl\+R"\)/u)
-  assert.match(windowsSource, /"浏览器信息",\s*Some\("›"\)/u)
-  assert.match(windowsSource, /"下载内容",\s*Some\("›"\)/u)
+  assert.match(windowsSource, /translated\(&translations, "New tab"\),\s*Some\("Ctrl\+T"\)/u)
+  assert.match(windowsSource, /translated\(&translations, "Reload"\),\s*Some\("Ctrl\+R"\)/u)
+  assert.match(windowsSource, /translated\(&translations, "Browser information"\),\s*Some\("›"\)/u)
+  assert.match(windowsSource, /translated\(&translations, "Downloads"\),\s*Some\("›"\)/u)
   assert.match(windowsSource, /draw_native_square[\s\S]*"−"[\s\S]*zoom_percent[\s\S]*"\+"/u)
-  assert.doesNotMatch(windowsSource, /关闭菜单|close-browser-menu/u)
-  assert.doesNotMatch(panelSource, /关闭菜单|close-browser-menu|overflow:\s*auto/u)
+  assert.doesNotMatch(windowsSource, /close-browser-menu/u)
+  assert.doesNotMatch(panelSource, /close-browser-menu|overflow:\s*auto/u)
   assert.match(source, /window\.__embeddedBrowserToolbar/u)
+  assert.match(source, /translations = value\?\.translations/u)
   assert.match(panelSource, /type: 'browser-panel-action'/u)
   assert.match(panelSource, /type: 'browser-panel-size'/u)
   assert.match(panelSource, /activeView\.scrollHeight/u)

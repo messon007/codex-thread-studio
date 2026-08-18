@@ -32,8 +32,8 @@ test('renders only fenced Mermaid blocks with strict bounded post-sanitization',
 
 test('keeps multilingual labels in sanitizable SVG text instead of foreignObject HTML', () => {
   const examples = [
-    'Sense[PDC / LBMS\\n采集电池与回路状态]',
-    'NoRequest --> ConstantCurrent: 充电 MOS 从断开恢复为闭合',
+    'Sense[PDC / LBMS\\n\u91C7\u96C6\u7535\u6C60\u4E0E\u56DE\u8DEF\u72B6\u6001]',
+    'NoRequest --> ConstantCurrent: \u5145\u7535 MOS \u4ECE\u65AD\u5F00\u6062\u590D\u4E3A\u95ED\u5408',
   ]
   assert.ok(examples.every((source) => /[\p{Script=Han}]/u.test(source)))
   assert.match(config, /htmlLabels: false/u)

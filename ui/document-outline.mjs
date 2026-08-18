@@ -20,7 +20,7 @@ export function extractMarkdownOutline(source) {
     occurrences.set(baseId, occurrence)
     items.push({
       id: occurrence === 1 ? baseId : `${baseId}-${occurrence}`,
-      label: label || '未命名章节',
+      label: label || 'Untitled section',
       depth: clampDepth(Number(token.depth) - 1),
       target: {
         kind: 'text-heading',
@@ -43,7 +43,7 @@ export function extractHtmlOutline(source) {
   let match
   while ((match = headingPattern.exec(value)) && items.length < MAX_OUTLINE_ITEMS) {
     if (blockedRanges.some(([start, end]) => match.index >= start && match.index < end)) continue
-    const label = boundedLabel(decodeHtml(stripMarkup(match[3]))) || '未命名章节'
+    const label = boundedLabel(decodeHtml(stripMarkup(match[3]))) || 'Untitled section'
     const idMatch = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(match[2])
     const requestedId = boundedLabel(idMatch?.[1] || idMatch?.[2] || idMatch?.[3] || '')
     const baseId = outlineSlug(requestedId || label) || `section-${items.length + 1}`
@@ -62,7 +62,7 @@ export function extractHtmlOutline(source) {
 export function normalizeDocumentOutline(items = []) {
   return withHierarchy((Array.isArray(items) ? items : []).slice(0, MAX_OUTLINE_ITEMS).map((item, index) => ({
     id: boundedLabel(item?.id) || `section-${index + 1}`,
-    label: boundedLabel(item?.label) || '未命名章节',
+    label: boundedLabel(item?.label) || 'Untitled section',
     depth: clampDepth(item?.depth),
     target: item?.target ?? null,
   })))

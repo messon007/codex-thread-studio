@@ -72,10 +72,12 @@ export function presentTurn(turn) {
   const lastAssistantIndex = findLastAssistantIndex(items)
   const blocks = []
   let activityItems = []
+  let activityIndex = 0
 
   const flushActivity = () => {
     if (!activityItems.length) return
-    blocks.push(buildActivityBlock(turn, activityItems))
+    blocks.push(buildActivityBlock(turn, activityItems, activityIndex))
+    activityIndex += 1
     activityItems = []
   }
 
@@ -108,6 +110,14 @@ export function presentTurn(turn) {
     blocks,
     source: turn,
   }
+}
+
+export function presentationActivityBlocks(presentation) {
+  return (presentation?.blocks || []).filter((block) => block.type === 'activity')
+}
+
+export function presentationActivityEntries(presentation) {
+  return presentationActivityBlocks(presentation).flatMap((block) => block.entries || [])
 }
 
 export function shouldShowTurnPlaceholder(presentation) {
@@ -224,7 +234,7 @@ function itemSignature(item) {
   ].join(':')
 }
 
-function buildActivityBlock(turn, entries) {
+function buildActivityBlock(turn, entries, activityIndex = 0) {
   const active = turn?.status === 'inProgress' || entries.some((entry) => entry.status === 'inProgress')
   const latestStage = [...entries].reverse().map((entry) => {
     if (entry.kind === 'reasoning') return reasoningStage(entry.item)
@@ -233,7 +243,7 @@ function buildActivityBlock(turn, entries) {
   }).find(Boolean) || ''
   return {
     type: 'activity',
-    id: `activity-${turn?.id || 'turn'}`,
+    id: `activity-${turn?.id || 'turn'}-${activityIndex}`,
     active,
     entries,
     displayEntries: collapseActivityEntries(entries),

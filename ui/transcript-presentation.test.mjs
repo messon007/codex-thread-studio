@@ -5,6 +5,8 @@ import {
   activityOutputPreview,
   commandKind,
   presentTurn,
+  presentationActivityBlocks,
+  presentationActivityEntries,
   reasoningStage,
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
@@ -75,6 +77,54 @@ test('keeps a progress message inside activity until a trailing final answer exi
   })
   assert.deepEqual(presentation.blocks.map((block) => block.type), ['activity'])
   assert.deepEqual(presentation.blocks[0].entries.map((entry) => entry.kind), ['progress', 'command'])
+})
+
+test('assigns unique activity blocks around a steered user message and keeps the full activity history', () => {
+  const presentation = presentTurn({
+    id: 'turn-steered',
+    status: 'completed',
+    items: [
+      { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'Start' }] },
+      { id: 'progress-1', type: 'agentMessage', phase: 'commentary', text: 'First progress' },
+      { id: 'command-1', type: 'commandExecution', command: 'first', status: 'completed' },
+      { id: 'user-2', type: 'userMessage', content: [{ type: 'text', text: 'Use another command' }] },
+      { id: 'progress-2', type: 'agentMessage', phase: 'commentary', text: 'Second progress' },
+      { id: 'command-2', type: 'commandExecution', command: 'second', status: 'completed' },
+      { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: 'Done' },
+    ],
+  })
+
+  const activities = presentationActivityBlocks(presentation)
+  assert.deepEqual(presentation.blocks.map((block) => block.type), ['user', 'activity', 'user', 'activity', 'assistant'])
+  assert.deepEqual(activities.map((block) => block.id), ['activity-turn-steered-0', 'activity-turn-steered-1'])
+  assert.deepEqual(activities.map((block) => block.sourceItemIds), [
+    ['progress-1', 'command-1'],
+    ['progress-2', 'command-2'],
+  ])
+  assert.deepEqual(presentationActivityEntries(presentation).map((entry) => entry.itemId), [
+    'progress-1', 'command-1', 'progress-2', 'command-2',
+  ])
+})
+
+test('keeps trailing system activity separate from a final answer without reusing an activity id', () => {
+  const presentation = presentTurn({
+    id: 'turn-trailing-system',
+    status: 'completed',
+    items: [
+      { id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Run it' }] },
+      { id: 'command', type: 'commandExecution', command: 'run', status: 'completed' },
+      { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: 'Done' },
+      { id: 'finish', type: 'stepFinish' },
+    ],
+  })
+
+  const activities = presentationActivityBlocks(presentation)
+  assert.deepEqual(presentation.blocks.map((block) => block.type), ['user', 'activity', 'assistant', 'activity'])
+  assert.deepEqual(activities.map((block) => block.id), [
+    'activity-turn-trailing-system-0',
+    'activity-turn-trailing-system-1',
+  ])
+  assert.deepEqual(presentationActivityEntries(presentation).map((entry) => entry.itemId), ['command', 'finish'])
 })
 
 test('output preview retains head and tail without copying the complete output', () => {

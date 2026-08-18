@@ -118,6 +118,8 @@ import {
 import {
   TranscriptPresentationCache,
   activityOutputPreview,
+  presentationActivityBlocks,
+  presentationActivityEntries,
   reasoningStage,
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
@@ -3466,7 +3468,9 @@ function patchStreamingItem(turnId, itemId) {
     return true
   }
   if (item.type === 'commandExecution') {
-    const activity = renderedActivity(turnId)
+    const block = activityBlocksForTurn(turnId)
+      .find((candidate) => candidate.sourceItemIds.includes(String(itemId || '')))
+    const activity = renderedActivity(turnId, block?.id)
     if (activity?.open) hydrateActivityDetails(activity, { force: true })
     return true
   }
@@ -3481,25 +3485,28 @@ function replaceCompletedItem(params = {}) {
   sessionResources.sync({ rebuild: true })
 }
 
-function renderedActivity(turnId) {
+function renderedActivity(turnId, activityId = '') {
   return [...$('#transcript').querySelectorAll('.work-activity[data-turn-id]')]
-    .find((element) => element.dataset.turnId === String(turnId || '')) || null
+    .find((element) => element.dataset.turnId === String(turnId || '')
+      && (!activityId || element.dataset.activityId === String(activityId))) || null
 }
 
 function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
   const section = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')]
     .find((element) => element.dataset.turnId === String(turnId || ''))
   if (!section) return false
-  const openActivity = preserveActivity && Boolean(section.querySelector('.work-activity[open]'))
+  const openActivityIds = preserveActivity
+    ? [...section.querySelectorAll('.work-activity[open]')].map((activity) => activity.dataset.activityId)
+    : []
   const entry = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
   const presentation = entry.turns.get(String(turnId || ''))?.presentation
   if (!presentation) return false
   const template = document.createElement('template')
-  template.innerHTML = renderTurn(presentation, entry.orderedIds.indexOf(String(turnId || '')), { openActivity })
+  template.innerHTML = renderTurn(presentation, entry.orderedIds.indexOf(String(turnId || '')), { openActivityIds })
   section.replaceWith(template.content)
   bindActivityDetails()
-  if (openActivity) {
-    const activity = renderedActivity(turnId)
+  for (const activityId of openActivityIds) {
+    const activity = renderedActivity(turnId, activityId)
     if (activity) hydrateActivityDetails(activity)
   }
   renderTurnNavigator()
@@ -3507,10 +3514,10 @@ function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
   return true
 }
 
-function renderTurn(presentation, index, { openActivity = false } = {}) {
+function renderTurn(presentation, index, { openActivityIds = [] } = {}) {
   if (!presentation) return ''
   const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, {
-    openActivity,
+    openActivity: openActivityIds.includes(block.id),
     forkable: isTurnForkable(presentation.source),
   })).join('')
   const placeholder = shouldShowTurnPlaceholder(presentation)
@@ -3574,16 +3581,24 @@ function bindActivityDetails() {
   })
 }
 
-function activityBlockForTurn(turnId) {
-  const presentation = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
-    .turns.get(String(turnId || ''))?.presentation
-  return presentation?.blocks.find((block) => block.type === 'activity') || null
+function activityPresentationForTurn(turnId) {
+  return transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
+    .turns.get(String(turnId || ''))?.presentation || null
+}
+
+function activityBlocksForTurn(turnId) {
+  return presentationActivityBlocks(activityPresentationForTurn(turnId))
+}
+
+function activityBlockForTurn(turnId, activityId) {
+  return activityBlocksForTurn(turnId)
+    .find((block) => block.id === String(activityId || '')) || null
 }
 
 function hydrateActivityDetails(details, { force = false } = {}) {
   const body = details.querySelector('.activity-detail-body')
   if (!body || (!force && body.dataset.activityEmpty !== 'true')) return
-  const block = activityBlockForTurn(details.dataset.turnId)
+  const block = activityBlockForTurn(details.dataset.turnId, details.dataset.activityId)
   if (!block) return
   body.innerHTML = (block.displayEntries || block.entries).map(renderActivityEntry).join('')
     + `<button class="activity-log-button" type="button" data-activity-log="${escapeHtml(details.dataset.turnId)}">${t('View full activity log')}</button>`
@@ -4154,12 +4169,12 @@ async function handleTranscriptClick(event) {
 }
 
 function openActivityLog(turnId) {
-  const block = activityBlockForTurn(turnId)
-  if (!block) return
-  activityLogContext = { turnId: String(turnId || ''), block }
+  const entries = presentationActivityEntries(activityPresentationForTurn(turnId))
+  if (!entries.length) return
+  activityLogContext = { turnId: String(turnId || ''), entries }
   $('#activity-log-title').textContent = t('Full activity log')
   $('#activity-log-subtitle').textContent = t('Raw details load per item without slowing the main chat.')
-  $('#activity-log-content').innerHTML = block.entries.map((entry, index) => {
+  $('#activity-log-content').innerHTML = entries.map((entry, index) => {
     const item = entry.item || {}
     const label = activityRawLabel(entry)
     return `<details class="activity-raw-item" data-activity-entry-index="${index}"><summary><span>${activityEntryIcon(item.status)}</span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(statusLabel(item.status || entry.status))}</small></summary><div class="activity-raw-body" data-raw-empty="true"></div></details>`
@@ -4168,7 +4183,7 @@ function openActivityLog(turnId) {
     if (!details.open) return
     const body = details.querySelector('.activity-raw-body')
     if (!body || body.dataset.rawEmpty !== 'true') return
-    const entry = activityLogContext?.block.entries[Number(details.dataset.activityEntryIndex)]
+    const entry = activityLogContext?.entries[Number(details.dataset.activityEntryIndex)]
     if (!entry) return
     body.innerHTML = renderRawActivityEntry(entry)
     body.dataset.rawEmpty = 'false'

@@ -20,6 +20,7 @@ static INTERNAL_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
 pub struct CodexAppServer {
     binary: Arc<str>,
+    prefix_args: Arc<[String]>,
     runtime: Arc<BackendRuntime>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
     events: broadcast::Sender<String>,
@@ -36,9 +37,14 @@ struct ProcessConnection {
 
 impl CodexAppServer {
     pub fn new(binary: String, runtime: BackendRuntime) -> Self {
+        Self::with_prefix(binary, Vec::new(), runtime)
+    }
+
+    pub fn with_prefix(binary: String, prefix_args: Vec<String>, runtime: BackendRuntime) -> Self {
         let (events, _) = broadcast::channel(2_048);
         Self {
             binary: Arc::from(binary),
+            prefix_args: Arc::from(prefix_args),
             runtime: Arc::new(runtime),
             process: Arc::new(Mutex::new(None)),
             events,
@@ -86,11 +92,15 @@ impl CodexAppServer {
         }
 
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut command = self.runtime.command(
-            self.binary.as_ref(),
-            &["app-server", "--stdio"],
-            &[("LOG_FORMAT", "json")],
-        );
+        let mut arguments = self
+            .prefix_args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        arguments.extend(["app-server", "--stdio"]);
+        let mut command =
+            self.runtime
+                .command(self.binary.as_ref(), &arguments, &[("LOG_FORMAT", "json")]);
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -98,7 +108,7 @@ impl CodexAppServer {
 
         let mut child = command.spawn().map_err(|error| {
             format!(
-                "failed to start `{}` app-server: {error}. Set CODEX_THREAD_STUDIO_CODEX_BIN if Codex is installed outside PATH.",
+                "failed to start `{}` app-server: {error}. Check the configured backend command or CODEX_THREAD_STUDIO_CODEX_BIN when the executable is installed outside PATH.",
                 self.binary
             )
         })?;
@@ -511,5 +521,16 @@ mod tests {
         assert!(
             validate_client_message(&json!({"id": 9, "result": {"decision": "accept"}})).is_ok()
         );
+    }
+
+    #[test]
+    fn keeps_configured_prefix_arguments_separate_from_the_binary() {
+        let server = CodexAppServer::with_prefix(
+            "custom-launcher".to_string(),
+            vec!["codex-runtime".to_string()],
+            BackendRuntime::new(std::ffi::OsString::new(), Default::default()),
+        );
+        assert_eq!(server.binary(), "custom-launcher");
+        assert_eq!(server.prefix_args.as_ref(), &["codex-runtime".to_string()]);
     }
 }

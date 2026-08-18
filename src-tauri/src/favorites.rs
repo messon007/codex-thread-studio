@@ -6,6 +6,8 @@ use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
+use crate::backend_config::valid_backend_id;
+
 pub const MAX_FAVORITE_BODY_BYTES: usize = 384 * 1024;
 const MAX_FAVORITES: usize = 2_000;
 const MAX_CONTENT_BYTES: usize = 192 * 1024;
@@ -226,8 +228,8 @@ pub fn validate(favorite: &Favorite) -> Result<(), String> {
     if favorite.id.trim().is_empty() || favorite.id.len() > 128 {
         return Err("favorite id must contain between 1 and 128 bytes".to_string());
     }
-    if !matches!(favorite.backend.as_str(), "codex" | "opencode") {
-        return Err("favorite backend must be codex or opencode".to_string());
+    if !valid_backend_id(&favorite.backend) {
+        return Err("favorite backend id is invalid".to_string());
     }
     if !matches!(favorite.scope.as_str(), "message" | "selection") {
         return Err("favorite scope must be message or selection".to_string());
@@ -609,6 +611,9 @@ mod tests {
     #[test]
     fn validates_native_source_anchors() {
         assert!(validate(&favorite("a", "Useful", "content")).is_ok());
+        let mut configured = favorite("configured", "Configured answer", "content");
+        configured.backend = "company-codex".to_string();
+        assert!(validate(&configured).is_ok());
         let mut invalid = favorite("a", "", "content");
         assert!(validate(&invalid).is_err());
         invalid = favorite("a", "Useful", "");

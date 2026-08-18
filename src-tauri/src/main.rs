@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
+mod backend_config;
 mod backend_runtime;
 mod browser_runtime;
 mod codex_app_server;
@@ -37,6 +38,7 @@ mod opencode_server;
 mod session_map;
 mod terminal_runtime;
 
+use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
 use backend_runtime::{BackendRuntime, WslSettings};
 use browser_runtime::BrowserPreferences;
 #[cfg(not(windows))]
@@ -61,6 +63,10 @@ const MAX_REVIEW_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
 #[derive(Clone)]
 struct GatewayState {
     codex: CodexAppServer,
+    codex_backends: Arc<BTreeMap<String, CodexBackendInstance>>,
+    backend_descriptors: Arc<Vec<BackendDescriptor>>,
+    backend_config_path: Arc<PathBuf>,
+    backend_config_error: Arc<Option<String>>,
     opencode: OpenCodeServer,
     preferences_path: Arc<PathBuf>,
     preferences_lock: Arc<Mutex<()>>,
@@ -74,6 +80,21 @@ struct GatewayState {
     environment_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
     embedded_browser: bool,
+}
+
+#[derive(Clone)]
+struct CodexBackendInstance {
+    command_line: String,
+    server: CodexAppServer,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendRegistryInfo {
+    backends: Vec<BackendDescriptor>,
+    config_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configuration_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -308,7 +329,7 @@ struct StudioPreferences {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackendInfo {
-    app_name: &'static str,
+    app_name: String,
     app_version: &'static str,
     binary: String,
     protocol: &'static str,
@@ -462,6 +483,7 @@ fn main() {
     let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
     let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
     let environment_path = preferences_path.with_file_name("environments.json");
+    let backend_config_path = backend_config::configuration_path(&preferences_path);
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
@@ -479,6 +501,17 @@ fn main() {
     };
     let (codex_binary, opencode_binary, runtime) =
         backend_configuration(&startup_preferences, cli_path);
+    let configured_backends = backend_config::load(&backend_config_path);
+    if let Some(error) = &configured_backends.error {
+        eprintln!("Codex Thread Studio could not load local backends: {error}");
+    }
+    let codex = CodexAppServer::new(codex_binary.clone(), runtime.clone());
+    let (codex_backends, backend_descriptors) = build_backend_registry(
+        &codex_binary,
+        codex.clone(),
+        configured_backends.backends,
+        runtime.clone(),
+    );
     if let Err(error) = favorites::initialize(&favorites_path) {
         eprintln!("Codex Thread Studio could not initialize favorites: {error}");
     }
@@ -507,7 +540,11 @@ fn main() {
     let embedded_browser = false;
     let embedded_browser_preferences = startup_preferences.browser.clone();
     let state = GatewayState {
-        codex: CodexAppServer::new(codex_binary, runtime.clone()),
+        codex,
+        codex_backends: Arc::new(codex_backends),
+        backend_descriptors: Arc::new(backend_descriptors),
+        backend_config_path: Arc::new(backend_config_path),
+        backend_config_error: Arc::new(configured_backends.error),
         opencode: OpenCodeServer::new(opencode_binary, runtime),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
@@ -584,6 +621,8 @@ fn main() {
 fn gateway_router(state: GatewayState) -> Router {
     let protected = Router::new()
         .route("/studio/codex", get(codex_info))
+        .route("/studio/backends", get(backend_registry_info))
+        .route("/studio/backend/{backend}", get(codex_instance_info))
         .route("/studio/opencode", get(opencode_info))
         .route("/studio/browser", get(browser_info))
         .route(
@@ -654,6 +693,7 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(undo_session_map),
         )
         .route("/ws/codex", get(codex_app_server_ws))
+        .route("/ws/codex/{backend}", get(codex_instance_ws))
         .route("/ws/terminal", get(terminal_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
         .route_layer(middleware::from_fn_with_state(
@@ -668,6 +708,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
         .route("/thread-fork.mjs", get(thread_fork_js))
@@ -1701,6 +1742,10 @@ async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
 }
 
+async fn backends_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/backends.mjs"))
+}
+
 async fn model_display_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/model-display.mjs"))
 }
@@ -1902,7 +1947,32 @@ async fn xterm_css() -> impl IntoResponse {
 }
 
 async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
-    let router_workspace = if state.codex.execution_environment() == "wsl" {
+    codex_backend_info(&state.codex, state.codex.binary())
+}
+
+async fn backend_registry_info(State(state): State<GatewayState>) -> Json<BackendRegistryInfo> {
+    Json(BackendRegistryInfo {
+        backends: state.backend_descriptors.as_ref().clone(),
+        config_path: state.backend_config_path.to_string_lossy().into_owned(),
+        configuration_error: state.backend_config_error.as_ref().clone(),
+    })
+}
+
+async fn codex_instance_info(
+    State(state): State<GatewayState>,
+    AxumPath(backend): AxumPath<String>,
+) -> Response<Body> {
+    let Some(instance) = state.codex_backends.get(&backend) else {
+        return json_error(StatusCode::NOT_FOUND, "configured backend was not found");
+    };
+    json_response(
+        StatusCode::OK,
+        &codex_backend_info(&instance.server, &instance.command_line).0,
+    )
+}
+
+fn codex_backend_info(server: &CodexAppServer, command_line: &str) -> axum::Json<BackendInfo> {
+    let router_workspace = if server.execution_environment() == "wsl" {
         PathBuf::from("/var/tmp/codex-thread-studio-router")
     } else {
         let workspace = studio_router_workspace_path();
@@ -1912,14 +1982,14 @@ async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
         workspace
     };
     axum::Json(BackendInfo {
-        app_name: "Codex Thread Studio",
+        app_name: "Codex Thread Studio".to_string(),
         app_version: env!("CARGO_PKG_VERSION"),
-        binary: state.codex.binary().to_string(),
+        binary: command_line.to_string(),
         protocol: "Codex App Server v2",
         transport: "stdio JSONL via Studio WebSocket",
         router_workspace: router_workspace.to_string_lossy().into_owned(),
-        execution_environment: state.codex.execution_environment(),
-        wsl_distribution: state.codex.wsl_distribution().map(str::to_string),
+        execution_environment: server.execution_environment(),
+        wsl_distribution: server.wsl_distribution().map(str::to_string),
         host_platform: std::env::consts::OS,
     })
 }
@@ -1967,6 +2037,20 @@ async fn codex_app_server_ws(
         .on_upgrade(move |socket| async move { state.codex.bridge(socket).await })
 }
 
+async fn codex_instance_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+    AxumPath(backend): AxumPath<String>,
+) -> Response<Body> {
+    let Some(instance) = state.codex_backends.get(&backend).cloned() else {
+        return json_error(StatusCode::NOT_FOUND, "configured backend was not found");
+    };
+    let protocol = state.security.websocket_protocol();
+    ws.protocols([protocol])
+        .on_upgrade(move |socket| async move { instance.server.bridge(socket).await })
+        .into_response()
+}
+
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
@@ -2011,6 +2095,7 @@ async fn put_environment_profile(
 struct ApplyEnvironmentRequest {
     root: String,
     thread_id: String,
+    backend: String,
 }
 
 async fn apply_environment_profile(
@@ -2027,8 +2112,14 @@ async fn apply_environment_profile(
             Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
         }
     };
-    match state
-        .codex
+    let Some(instance) = state.codex_backends.get(&request.backend) else {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "environment backend must be a configured Codex-compatible instance",
+        );
+    };
+    match instance
+        .server
         .request(
             "thread/resume",
             json!({
@@ -2472,31 +2563,33 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     if preferences
         .selected_backend
         .as_deref()
-        .is_some_and(|backend| !matches!(backend, "codex" | "opencode"))
+        .is_some_and(|backend| !backend_config::valid_backend_id(backend))
     {
-        return Err("selected backend must be codex or opencode".to_string());
+        return Err("selected backend id is invalid".to_string());
     }
-    if preferences.selected_threads.len() > 2
+    if preferences.selected_threads.len() > 18
         || preferences
             .selected_threads
             .iter()
             .any(|(backend, thread_id)| {
-                !matches!(backend.as_str(), "codex" | "opencode") || thread_id.len() > 256
+                !backend_config::valid_backend_id(backend) || thread_id.len() > 256
             })
     {
         return Err("selected backend threads are invalid".to_string());
     }
     if preferences.thread_activity.len() > 2048
-        || preferences.thread_activity.keys().any(|key| {
-            key.len() > 272 || !(key.starts_with("codex:") || key.starts_with("opencode:"))
-        })
+        || preferences
+            .thread_activity
+            .keys()
+            .any(|key| key.len() > 321 || !valid_router_session_key(key))
     {
         return Err("thread activity preferences are invalid".to_string());
     }
     if preferences.attention_threads.len() > 2048
-        || preferences.attention_threads.iter().any(|key| {
-            key.len() > 272 || !(key.starts_with("codex:") || key.starts_with("opencode:"))
-        })
+        || preferences
+            .attention_threads
+            .iter()
+            .any(|key| key.len() > 321 || !valid_router_session_key(key))
     {
         return Err("attention thread preferences are invalid".to_string());
     }
@@ -2684,15 +2777,7 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
 }
 
 fn valid_router_backend(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if index == 0 {
-                byte.is_ascii_lowercase()
-            } else {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-            }
-        })
+    backend_config::valid_backend_id(value)
 }
 
 fn valid_router_session_key(value: &str) -> bool {
@@ -2759,6 +2844,57 @@ fn backend_configuration(
     );
 
     (binaries.0, binaries.1, BackendRuntime::new(cli_path, wsl))
+}
+
+fn build_backend_registry(
+    codex_binary: &str,
+    codex: CodexAppServer,
+    configured: Vec<ConfiguredCodexBackend>,
+    runtime: BackendRuntime,
+) -> (
+    BTreeMap<String, CodexBackendInstance>,
+    Vec<BackendDescriptor>,
+) {
+    let mut builtins = backend_config::builtin_descriptors();
+    let opencode = builtins.pop().expect("OpenCode descriptor");
+    let codex_descriptor = builtins.pop().expect("Codex descriptor");
+    let mut instances = BTreeMap::new();
+    instances.insert(
+        "codex".to_string(),
+        CodexBackendInstance {
+            command_line: codex_binary.to_string(),
+            server: codex,
+        },
+    );
+    let mut descriptors = vec![codex_descriptor];
+    for backend in configured {
+        let command_line = display_command(&backend.command, &backend.args);
+        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone());
+        descriptors.push(backend.descriptor.clone());
+        instances.insert(
+            backend.descriptor.id.clone(),
+            CodexBackendInstance {
+                command_line,
+                server,
+            },
+        );
+    }
+    descriptors.push(opencode);
+    (instances, descriptors)
+}
+
+fn display_command(command: &str, args: &[String]) -> String {
+    std::iter::once(command)
+        .chain(args.iter().map(String::as_str))
+        .map(|part| {
+            if part.contains(char::is_whitespace) {
+                format!("{part:?}")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn augmented_cli_path() -> OsString {
@@ -2844,6 +2980,23 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    fn test_codex_backends() -> Arc<BTreeMap<String, CodexBackendInstance>> {
+        Arc::new(BTreeMap::from([(
+            "codex".to_string(),
+            CodexBackendInstance {
+                command_line: "codex".to_string(),
+                server: CodexAppServer::new(
+                    "codex".to_string(),
+                    BackendRuntime::new(OsString::new(), WslSettings::default()),
+                ),
+            },
+        )]))
+    }
+
+    fn test_backend_descriptors() -> Arc<Vec<BackendDescriptor>> {
+        Arc::new(backend_config::builtin_descriptors())
+    }
+
     fn secured_test_gateway(security: GatewaySecurity) -> GatewayState {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         GatewayState {
@@ -2851,6 +3004,10 @@ mod tests {
                 "codex".to_string(),
                 BackendRuntime::new(OsString::new(), WslSettings::default()),
             ),
+            codex_backends: test_codex_backends(),
+            backend_descriptors: test_backend_descriptors(),
+            backend_config_path: Arc::new(env::temp_dir().join("backends.json")),
+            backend_config_error: Arc::new(None),
             opencode: OpenCodeServer::new(
                 "opencode".to_string(),
                 BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -2878,6 +3035,44 @@ mod tests {
             security,
             embedded_browser: false,
         }
+    }
+
+    #[test]
+    fn builds_independent_configured_codex_instances() {
+        let runtime = BackendRuntime::new(OsString::new(), WslSettings::default());
+        let configured = ConfiguredCodexBackend {
+            descriptor: BackendDescriptor {
+                id: "work-codex".to_string(),
+                name: "Work Codex".to_string(),
+                tag: "WK".to_string(),
+                kind: "codex",
+                adapter: "codex-app-server",
+                info_path: "/studio/backend/work-codex".to_string(),
+                socket_path: "/ws/codex/work-codex".to_string(),
+                protocol: "Codex App Server v2",
+                transport: "stdio JSONL via Studio WebSocket",
+            },
+            command: "company-launcher".to_string(),
+            args: vec!["codex".to_string()],
+        };
+        let codex = CodexAppServer::new("codex".to_string(), runtime.clone());
+        let (instances, descriptors) =
+            build_backend_registry("codex", codex, vec![configured], runtime);
+
+        assert_eq!(
+            descriptors
+                .iter()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            ["codex", "work-codex", "opencode"]
+        );
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances["codex"].server.binary(), "codex");
+        assert_eq!(instances["work-codex"].server.binary(), "company-launcher");
+        assert_eq!(
+            instances["work-codex"].command_line,
+            "company-launcher codex"
+        );
     }
 
     #[test]
@@ -2965,6 +3160,10 @@ mod tests {
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
                 ),
+                codex_backends: test_codex_backends(),
+                backend_descriptors: test_backend_descriptors(),
+                backend_config_path: Arc::new(env::temp_dir().join("backends.json")),
+                backend_config_error: Arc::new(None),
                 opencode: OpenCodeServer::new(
                     "opencode".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -3000,6 +3199,7 @@ mod tests {
                 "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
+                "/backends.mjs",
                 "/model-display.mjs",
                 "/thread-catalog.mjs",
                 "/thread-fork.mjs",
@@ -3051,6 +3251,10 @@ mod tests {
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
                 ),
+                codex_backends: test_codex_backends(),
+                backend_descriptors: test_backend_descriptors(),
+                backend_config_path: Arc::new(env::temp_dir().join("backends.json")),
+                backend_config_error: Arc::new(None),
                 opencode: OpenCodeServer::new(
                     "opencode".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -3114,6 +3318,10 @@ mod tests {
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
                 ),
+                codex_backends: test_codex_backends(),
+                backend_descriptors: test_backend_descriptors(),
+                backend_config_path: Arc::new(env::temp_dir().join("backends.json")),
+                backend_config_error: Arc::new(None),
                 opencode: OpenCodeServer::new(
                     "opencode".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -3247,6 +3455,10 @@ mod tests {
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
                 ),
+                codex_backends: test_codex_backends(),
+                backend_descriptors: test_backend_descriptors(),
+                backend_config_path: Arc::new(env::temp_dir().join("backends.json")),
+                backend_config_error: Arc::new(None),
                 opencode: OpenCodeServer::new(
                     "opencode".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -3830,19 +4042,26 @@ mod tests {
             .thread_activity
             .insert("opencode:session-1".to_string(), 1_784_879_063_244);
         preferences
+            .thread_activity
+            .insert("company-codex:session-2".to_string(), 1_784_879_063_245);
+        preferences
             .attention_threads
             .push("codex:thread-1".to_string());
+        preferences.selected_backend = Some("company-codex".to_string());
+        preferences
+            .selected_threads
+            .insert("company-codex".to_string(), "session-2".to_string());
         assert!(validate_preferences(&preferences).is_ok());
 
         preferences
             .thread_activity
-            .insert("unknown:thread-1".to_string(), 1);
+            .insert("Invalid:thread-1".to_string(), 1);
         assert!(validate_preferences(&preferences).is_err());
 
-        preferences.thread_activity.remove("unknown:thread-1");
+        preferences.thread_activity.remove("Invalid:thread-1");
         preferences
             .attention_threads
-            .push("unknown:thread-1".to_string());
+            .push("Invalid:thread-1".to_string());
         assert!(validate_preferences(&preferences).is_err());
     }
 

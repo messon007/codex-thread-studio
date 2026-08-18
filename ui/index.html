@@ -514,7 +514,7 @@
           <label class="field full"><span>AI 后端</span><select id="new-thread-backend"><option value="codex">Codex</option><option value="opencode">OpenCode</option></select></label>
           <label class="field full"><span>会话名称（可选）</span><input id="new-thread-name" placeholder="例如：实现 Codex 原生界面" /></label>
           <label class="field full"><span>项目目录</span><input id="new-thread-cwd" required placeholder="/home/user/projects/project" /><small id="new-thread-cwd-help">必须是本机绝对路径。</small></label>
-          <label class="field"><span>模型（可选）</span><input id="new-thread-model" placeholder="使用 Codex 默认模型" /></label>
+          <label class="field"><span>模型（可选）</span><input id="new-thread-model" list="new-thread-model-options" placeholder="使用 Codex 默认模型" /><datalist id="new-thread-model-options"></datalist><small id="new-thread-model-help">Models come from the selected backend and are never mixed with another backend.</small></label>
           <label id="new-thread-approval-field" class="field"><span>审批策略</span><select id="new-thread-approval"><option value="on-request">按需询问</option><option value="never">从不询问</option><option value="untrusted">不可信命令询问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
           <label id="new-thread-sandbox-field" class="field full"><span>沙箱</span><select id="new-thread-sandbox"><option value="workspace-write">项目目录可写</option><option value="read-only">只读</option><option value="danger-full-access">完全访问</option></select><small class="backend-capability-note hidden">OpenCode 暂不支持此启动参数。</small></label>
           <div id="new-thread-error" class="form-error hidden"></div>

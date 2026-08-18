@@ -7,6 +7,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::backend_config::valid_backend_id;
+
 pub const MAX_MAP_BODY_BYTES: usize = 512 * 1024;
 const MAX_ITEMS: usize = 1_000;
 const MAX_RELATIONS: usize = 2_000;
@@ -654,8 +656,8 @@ fn validate_operations_request(request: &ApplyOperationsRequest) -> Result<(), S
 }
 
 fn validate_anchor(backend: &str, thread_id: &str) -> Result<(), String> {
-    if !matches!(backend, "codex" | "opencode") {
-        return Err("map backend must be codex or opencode".to_string());
+    if !valid_backend_id(backend) {
+        return Err("map backend id is invalid".to_string());
     }
     if thread_id.trim().is_empty() || thread_id.len() > 256 {
         return Err("map thread id is invalid".to_string());
@@ -1070,6 +1072,11 @@ mod tests {
                 position: 0,
             }],
         }
+    }
+
+    #[test]
+    fn accepts_configured_backend_map_anchors() {
+        assert!(validate_anchor("company-codex", "thread-1").is_ok());
     }
 
     fn cleanup(path: &Path) {

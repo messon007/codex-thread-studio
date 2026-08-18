@@ -114,17 +114,20 @@ test('creates a managed router only when no Router identity is configured', () =
 test('builds candidates across backends and excludes every Router controller', () => {
   const candidates = routerCandidates({
     controllerBackend: 'codex',
-    controllers: { codex: 'router-cx', opencode: 'router-oc' },
+    controllers: { codex: 'router-cx', 'company-codex': 'router-company', opencode: 'router-oc' },
     fallbacks: [{ sessionKey: 'codex:learn', condition: 'No regular learning session matches.' }],
   }, {
     codex: [{ id: 'router-cx' }, { id: 'learn', name: 'Books', cwd: '/work/books' }],
+    'company-codex': [{ id: 'router-company' }, { id: 'design', name: 'Company Design', cwd: '/work/design' }],
     opencode: [{ id: 'router-oc' }, { id: 'learn', name: 'OC Books', cwd: '/work/oc-books' }],
   }, {
     'codex:learn': { text: 'Read this book', responsibility: 'Learning' },
+    'company-codex:design': { responsibility: 'Design with private models' },
     'opencode:learn': { responsibility: 'OpenCode learning' },
   })
   assert.deepEqual(candidates, [
     { key: 'codex:learn', backend: 'codex', id: 'learn', title: 'Books', cwd: '/work/books', responsibility: 'Learning', fallback: 'fallback', fallbackCondition: 'No regular learning session matches.', openingMessage: 'Read this book' },
+    { key: 'company-codex:design', backend: 'company-codex', id: 'design', title: 'Company Design', cwd: '/work/design', responsibility: 'Design with private models', fallback: 'none', fallbackCondition: '', openingMessage: '' },
     { key: 'opencode:learn', backend: 'opencode', id: 'learn', title: 'OC Books', cwd: '/work/oc-books', responsibility: 'OpenCode learning', fallback: 'none', fallbackCondition: '', openingMessage: '' },
   ])
 })

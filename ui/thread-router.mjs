@@ -1,4 +1,6 @@
-export const ROUTER_BACKENDS = Object.freeze(['codex', 'opencode'])
+import { BACKEND_IDS } from './backends.mjs'
+
+export const ROUTER_BACKENDS = BACKEND_IDS
 export const DEFAULT_FALLBACK_CONDITION = 'No regular session is suitable for the user query.'
 export const ROUTER_CONTEXT_KEY = 'codex-thread-studio/thread-router'
 

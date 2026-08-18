@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import { installBackendRegistry } from './backends.mjs'
+
 import {
   catalogCountsWithAttention,
   catalogTimestamp,
@@ -18,17 +20,27 @@ const catalogs = {
     { id: 'same-id', name: 'Codex task', cwd: '/work/codex', status: 'idle', updatedAt: 20 },
     { id: 'running-cx', name: 'Running Codex', cwd: '/work/shared', status: { type: 'running' }, updatedAt: '2026-07-24T08:00:00Z' },
   ],
+  'company-codex': [
+    { id: 'same-id', name: 'Company Codex task', cwd: '/work/company', status: 'idle', updatedAt: 25 },
+  ],
   opencode: [
     { id: 'same-id', name: 'OpenCode task', cwd: '/work/opencode', status: 'idle', updatedAt: 30 },
   ],
 }
 
+test.beforeEach(() => installBackendRegistry([
+  { id: 'codex', name: 'Codex', tag: 'CX', kind: 'codex' },
+  { id: 'company-codex', name: 'Company Codex', tag: 'WK', kind: 'codex' },
+  { id: 'opencode', name: 'OpenCode', tag: 'OC', kind: 'opencode' },
+]))
+test.afterEach(() => installBackendRegistry())
+
 test('keeps equal IDs from different backends as separate sessions', () => {
   const entries = filterCatalogEntries(catalogs)
-  assert.equal(entries.length, 3)
+  assert.equal(entries.length, 4)
   assert.deepEqual(
     entries.filter(({ thread }) => thread.id === 'same-id').map(({ backend }) => backend).sort(),
-    ['codex', 'opencode'],
+    ['codex', 'company-codex', 'opencode'],
   )
 })
 
@@ -39,7 +51,7 @@ test('normalizes second and millisecond epoch timestamps for cross-backend order
 
 test('reports deck-style all, active, and attention counts', () => {
   const attention = new Set([threadCatalogKey('opencode', 'same-id')])
-  assert.deepEqual(catalogCountsWithAttention(catalogs, attention), { all: 3, active: 1, attention: 1 })
+  assert.deepEqual(catalogCountsWithAttention(catalogs, attention), { all: 4, active: 1, attention: 1 })
   assert.deepEqual(filterCatalogEntries(catalogs, { filter: 'active' }).map(({ thread }) => thread.id), ['running-cx'])
   assert.deepEqual(filterCatalogEntries(catalogs, { filter: 'attention', attention }).map(({ thread }) => thread.name), ['OpenCode task'])
 })
@@ -59,7 +71,7 @@ test('attention mode orders loaded sessions by catalog update time', () => {
 test('all and active modes keep catalog order', () => {
   assert.deepEqual(
     filterCatalogEntries(catalogs, { filter: 'all' }).map(({ backend, thread }) => `${backend}:${thread.id}`),
-    ['codex:same-id', 'codex:running-cx', 'opencode:same-id'],
+    ['codex:same-id', 'codex:running-cx', 'company-codex:same-id', 'opencode:same-id'],
   )
   assert.deepEqual(
     filterCatalogEntries(catalogs, { filter: 'active' }).map(({ backend, thread }) => `${backend}:${thread.id}`),
@@ -69,6 +81,7 @@ test('all and active modes keep catalog order', () => {
 
 test('search includes the backend tag and project directory', () => {
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'OC' }).map(({ thread }) => thread.name), ['OpenCode task'])
+  assert.deepEqual(filterCatalogEntries(catalogs, { search: 'WK' }).map(({ thread }) => thread.name), ['Company Codex task'])
   assert.deepEqual(filterCatalogEntries(catalogs, { search: '/work/codex' }).map(({ thread }) => thread.name), ['Codex task'])
 })
 
@@ -80,11 +93,11 @@ test('hides configured directories and all descendants without deleting catalog 
   assert.equal(isSessionDirectoryHidden('c:/users/rui/archive/project', hiddenDirectories), true)
   assert.deepEqual(
     filterCatalogEntries(catalogs, { hiddenDirectories }).map(({ backend, thread }) => `${backend}:${thread.id}`),
-    ['codex:running-cx', 'opencode:same-id'],
+    ['codex:running-cx', 'company-codex:same-id', 'opencode:same-id'],
   )
   assert.deepEqual(
     catalogCountsWithAttention(catalogs, new Set(), hiddenDirectories),
-    { all: 2, active: 1, attention: 0 },
+    { all: 3, active: 1, attention: 0 },
   )
 })
 
@@ -110,6 +123,7 @@ test('groups regular views by full directory and uses the last path level as the
   assert.deepEqual(groups.map(({ cwd, name }) => [cwd, name]), [
     ['/work/codex', 'codex'],
     ['/work/shared', 'shared'],
+    ['/work/company', 'company'],
     ['/work/opencode', 'opencode'],
   ])
 })

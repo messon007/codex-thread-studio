@@ -941,6 +941,12 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .connection-card { padding: 14px 15px; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--panel-soft); }
 .connection-monogram { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: var(--brand-soft); color: var(--brand); font-size: 10px; font-weight: 800; }
 .connection-card.opencode .connection-monogram { background: var(--blue-soft); color: var(--blue); }
+.backend-config-card { padding: 13px 15px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--panel); }
+.backend-config-card > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.backend-config-card strong { font-size: 11px; }.backend-config-card small { overflow: hidden; color: var(--muted); font: 9px/1.45 var(--code-font-family); text-overflow: ellipsis; white-space: nowrap; }
+.backend-config-card > span { align-self: start; padding: 4px 8px; border-radius: 999px; background: var(--green-soft); color: var(--green); font-size: 9px; font-weight: 700; }
+.backend-config-card p { grid-column: 1 / -1; margin: 3px 0 0; color: var(--faint); font-size: 9px; }
+.backend-config-card.error { border-color: color-mix(in srgb, var(--red) 28%, var(--border)); }.backend-config-card.error > span { background: var(--red-soft); color: var(--red); }.backend-config-card.error p { color: var(--red); }
 .connection-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .connection-copy strong { font-size: 12px; }.connection-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .connection-state { padding: 4px 8px; border-radius: 999px; background: var(--panel-strong); color: var(--muted); font-size: 9px; font-weight: 700; }

@@ -18,6 +18,17 @@ import {
 } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
 import {
+  BACKEND_IDS,
+  backendDescriptor,
+  backendDescriptors,
+  defaultTurnOptions,
+  emptyBackendCatalogs,
+  emptyBackendSelections,
+  installBackendRegistry,
+  isCodexBackend,
+  isSupportedBackend,
+} from './backends.mjs'
+import {
   composerTrigger,
   fuzzyFileLabel,
   previewableFileKind,
@@ -172,8 +183,8 @@ const commentSources = new CommentSourceRegistry()
   .register(createTableCommentProvider())
   .register(createBrowserCommentProvider())
 
-const sessionDispatch = new SessionDispatchRegistry()
-  .register('codex', {
+function codexDispatchAdapter() {
+  return {
     read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
     prepareTurn: (ref) => dispatchBackendRpc(ref.backend, 'thread/resume', { threadId: ref.id }),
     startTurn: (ref, input, options = {}) => dispatchBackendRpc(ref.backend, 'turn/start', {
@@ -184,7 +195,11 @@ const sessionDispatch = new SessionDispatchRegistry()
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.turnOptions || {}),
     }, options.timeoutMs),
-  })
+  }
+}
+
+const sessionDispatch = new SessionDispatchRegistry()
+  .register('codex', codexDispatchAdapter())
   .register('opencode', {
     read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
     startTurn: async (ref, input, options = {}) => {
@@ -246,26 +261,26 @@ function defaultAnnotationPrompt(locale = getLocale()) {
 
 const state = {
   backend: 'codex',
-  selectedByBackend: { codex: null, opencode: null },
+  selectedByBackend: emptyBackendSelections(),
   socket: null,
   eventSource: null,
   socketGeneration: 0,
   reconnectTimer: null,
   ready: false,
   backendInfo: null,
-  backendInfos: { codex: null, opencode: null },
-  backendModels: { codex: [], opencode: [] },
+  backendInfos: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, null])),
+  backendModels: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, []])),
+  backendRegistry: { configPath: '', configurationError: null },
   backendModelLoads: new Map(),
   hostPlatform: window.__CODEX_THREAD_STUDIO_GATEWAY__?.hostPlatform || null,
   wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
-  backendStates: {
-    codex: { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' },
-    opencode: { kind: 'idle', label: 'OpenCode', caption: '按需连接' },
-  },
+  backendStates: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, backend === 'codex'
+    ? { kind: 'checking', label: '正在启动 Codex', caption: 'App Server · stdio' }
+    : { kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接' }])),
   requestId: 0,
   pending: new Map(),
   threads: [],
-  threadsByBackend: { codex: [], opencode: [] },
+  threadsByBackend: emptyBackendCatalogs(),
   threadModels: new Map(),
   threadLoads: new Map(),
   selectedId: null,
@@ -287,7 +302,7 @@ const state = {
   desktopNotifications: false,
   appServerCapabilities: {},
   appServerInitialization: null,
-  lastAppServerGeneration: null,
+  appServerGenerations: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, null])),
   environmentProfile: null,
   browser: null,
   browserInfo: null,
@@ -502,6 +517,7 @@ function gatewayEventSource(url) {
 
 async function init() {
   bindUI()
+  await loadBackendRegistry()
   await loadPreferences()
   setLanguage(state.language)
   startTranslationObserver()
@@ -517,8 +533,52 @@ async function init() {
   // Codex metadata is not required before its WebSocket connects. OpenCode
   // loads its metadata as part of connectOpenCode(), so it is not requested
   // twice and cannot block initial catalog discovery.
-  if (state.backend === 'codex') loadBackendInfo()
+  if (isCodexBackend(state.backend)) loadBackendInfo()
   connectBackend()
+}
+
+async function loadBackendRegistry() {
+  try {
+    const response = await gatewayFetch('/studio/backends', { cache: 'no-store' })
+    if (!response.ok) throw new Error(`Backend registry HTTP ${response.status}`)
+    const registry = await response.json()
+    installBackendRegistry(registry?.backends)
+    state.backendRegistry = {
+      configPath: String(registry?.configPath || ''),
+      configurationError: registry?.configurationError ? String(registry.configurationError) : null,
+    }
+  } catch (error) {
+    installBackendRegistry()
+    state.backendRegistry = { configPath: '', configurationError: error.message }
+    console.warn('Unable to load backend registry', error)
+  }
+
+  const selections = emptyBackendSelections()
+  const catalogs = emptyBackendCatalogs()
+  state.selectedByBackend = { ...selections, ...state.selectedByBackend }
+  state.threadsByBackend = { ...catalogs, ...state.threadsByBackend }
+  state.backendInfos = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.backendInfos[backend] || null]))
+  state.backendModels = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.backendModels[backend] || []]))
+  state.appServerGenerations = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.appServerGenerations[backend] ?? null]))
+  state.backendStates = Object.fromEntries(BACKEND_IDS.map((backend) => [backend, state.backendStates[backend] || {
+    kind: 'idle', label: backendDescriptor(backend).name, caption: '按需连接',
+  }]))
+  for (const backend of BACKEND_IDS) {
+    if (isCodexBackend(backend) && !sessionDispatch.supports(backend)) {
+      sessionDispatch.register(backend, codexDispatchAdapter())
+    }
+  }
+  renderBackendChoices()
+}
+
+function renderBackendChoices() {
+  const select = $('#new-thread-backend')
+  if (!select) return
+  const selected = select.value
+  select.innerHTML = backendDescriptors()
+    .map((descriptor) => `<option value="${escapeHtml(descriptor.id)}">${escapeHtml(descriptor.name)}</option>`)
+    .join('')
+  if (isSupportedBackend(selected)) select.value = selected
 }
 
 function bindUI() {
@@ -533,7 +593,7 @@ function bindUI() {
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#cancel-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#new-thread-form').addEventListener('submit', createThread)
-  $('#new-thread-backend').addEventListener('change', updateNewThreadCapabilities)
+  $('#new-thread-backend').addEventListener('change', handleNewThreadBackendChange)
   $('#thread-search').addEventListener('input', (event) => {
     state.search = event.target.value.trim().toLowerCase()
     renderThreadList()
@@ -1100,12 +1160,6 @@ async function loadBackendInfo(backend = state.backend) {
   return state.backendInfos[backend]
 }
 
-function backendDescriptor(backend) {
-  return backend === 'opencode'
-    ? { id: 'opencode', name: 'OpenCode', nativeLabel: 'OPENCODE NATIVE', binary: 'opencode', infoPath: '/studio/opencode', protocol: 'OpenCode Server API', transport: 'HTTP + SSE' }
-    : { id: 'codex', name: 'Codex', nativeLabel: 'CODEX NATIVE', binary: 'codex', infoPath: '/studio/codex', protocol: 'Codex App Server v2', transport: 'stdio JSONL' }
-}
-
 function currentBackend() {
   return backendDescriptor(state.backend)
 }
@@ -1116,7 +1170,7 @@ function connectBackend() {
 }
 
 async function switchBackend(backend, { selectedId } = {}) {
-  if (!['codex', 'opencode'].includes(backend) || backend === state.backend) return
+  if (!isSupportedBackend(backend) || backend === state.backend) return
   const previousBackend = state.backend
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
@@ -1142,13 +1196,13 @@ async function switchBackend(backend, { selectedId } = {}) {
 
 function applyBackendCopy() {
   const descriptor = currentBackend()
-  $('#empty-mark').textContent = descriptor.id === 'codex' ? 'C' : 'O'
-  $('#tool-avatar').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
+  $('#empty-mark').textContent = descriptor.tag.slice(0, 1)
+  $('#tool-avatar').textContent = descriptor.tag
   $('#new-thread-label').textContent = t('新建会话')
   $('#native-error-title').textContent = t('{backend} Server 无法使用', { backend: descriptor.name })
   $('#empty-title').textContent = t('结构化 {backend} 工作台', { backend: descriptor.name })
-  $('#empty-description').textContent = descriptor.id === 'codex'
-    ? '消息、命令、文件修改、计划、审批和停止原因直接来自 Codex App Server。'
+  $('#empty-description').textContent = isCodexBackend(descriptor.id)
+    ? 'Messages, commands, file changes, plans, approvals, and stop reasons come from this independent Codex App Server instance.'
     : '消息、工具、文件修改、权限和停止原因直接来自 OpenCode Server，保留结构化事件。'
   $('#composer-input').placeholder = t('向 {backend} 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell', { backend: descriptor.name })
   $('#rename-thread-description').textContent = t('名称由 {backend} 持久化。', { backend: descriptor.name })
@@ -1165,10 +1219,11 @@ function connectAppServer() {
   state.ready = false
   state.socketGeneration += 1
   const generation = state.socketGeneration
-  setBackendState('checking', '正在启动 Codex', 'App Server · stdio')
+  const descriptor = currentBackend()
+  setBackendState('checking', `正在启动 ${descriptor.name}`, 'App Server · stdio')
   setNativeError(null)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
+  const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
   state.socket = socket
 
   socket.onmessage = (event) => {
@@ -1178,14 +1233,14 @@ function connectAppServer() {
   }
   socket.onerror = () => {
     if (generation !== state.socketGeneration) return
-    setBackendState('error', 'Codex 未连接', 'WebSocket 连接失败')
+    setBackendState('error', `${descriptor.name} 未连接`, 'WebSocket 连接失败')
   }
   socket.onclose = () => {
     if (generation !== state.socketGeneration) return
     state.ready = false
-    rejectPending(new Error('Codex App Server connection closed'))
-    setBackendState('error', 'Codex 已断开', '正在准备重连…')
-    setNativeError('与本机 Codex App Server 的连接已断开。')
+    rejectPending(new Error(`${descriptor.name} App Server connection closed`))
+    setBackendState('error', `${descriptor.name} 已断开`, '正在准备重连…')
+    setNativeError(`与本机 ${descriptor.name} App Server 的连接已断开。`)
     state.reconnectTimer = setTimeout(connectAppServer, 1800)
   }
 }
@@ -1316,40 +1371,43 @@ function observeCodexTurnLatency(message) {
 }
 
 function handleAppServerMessage(message) {
+  const backend = state.backend
+  const descriptor = backendDescriptor(backend)
   if (message.method === 'studio/appServer/status') {
     const status = message.params?.state
     if (status === 'ready') {
       const firstReady = !state.ready
-      const reconnecting = state.lastAppServerGeneration != null
-      const nextGeneration = message.params?.generation ?? state.lastAppServerGeneration
-      if (state.lastAppServerGeneration != null && nextGeneration !== state.lastAppServerGeneration) {
-        sessionDispatch.clearPrepared('codex')
+      const previousGeneration = state.appServerGenerations[backend]
+      const reconnecting = previousGeneration != null
+      const nextGeneration = message.params?.generation ?? previousGeneration
+      if (previousGeneration != null && nextGeneration !== previousGeneration) {
+        sessionDispatch.clearPrepared(backend)
       }
-      state.lastAppServerGeneration = nextGeneration
+      state.appServerGenerations[backend] = nextGeneration
       state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
       state.appServerInitialization = message.params?.initialization || null
       state.ready = true
-      setBackendState('online', 'Codex App Server', '原生结构化连接')
+      setBackendState('online', `${descriptor.name} App Server`, '原生结构化连接')
       $('#native-connection').textContent = '已连接'
       setNativeError(null)
       loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error))
       if (firstReady) {
         loadThreads().then(async () => {
           if (reconnecting && state.selectedId) await refreshSelectedThread({ quiet: true })
-        }).catch((error) => handleThreadCatalogFailure('codex', state.socketGeneration, error))
+        }).catch((error) => handleThreadCatalogFailure(backend, state.socketGeneration, error))
       }
     } else if (status === 'starting') {
-      setBackendState('checking', '正在启动 Codex', message.params?.binary || 'App Server')
+      setBackendState('checking', `正在启动 ${descriptor.name}`, message.params?.binary || 'App Server')
     } else if (status === 'error' || status === 'stopped') {
-      sessionDispatch.clearPrepared('codex')
+      sessionDispatch.clearPrepared(backend)
       const reason = message.params?.message || message.params?.reason || 'App Server 已停止'
-      setBackendState('error', 'Codex 不可用', reason)
+      setBackendState('error', `${descriptor.name} 不可用`, reason)
       setNativeError(reason)
     }
     return
   }
   if (message.method === 'studio/appServer/log') {
-    console.debug('codex app-server', message.params?.line)
+    console.debug(`${backend} app-server`, message.params?.line)
     return
   }
   if (message.method === 'studio/appServer/lagged') {
@@ -1358,11 +1416,11 @@ function handleAppServerMessage(message) {
       toast(t('界面错过了 {count} 条 App Server 事件', { count: skipped }), 'error')
       return
     }
-    setNativeError(t('界面错过了 {count} 条 App Server 事件，正在从 Codex 重新同步当前会话…', { count: skipped }))
+    setNativeError(`The interface missed ${skipped} App Server events and is resynchronizing the current session…`)
     refreshSelectedThread({ quiet: true }).then((refreshed) => {
       if (!refreshed) return
       setNativeError(null)
-      toast('已从 Codex 重新同步会话')
+      toast(`已从 ${descriptor.name} 重新同步会话`)
     })
     return
   }
@@ -1384,7 +1442,7 @@ function handleAppServerMessage(message) {
   }
 
   if (message.method === 'thread/started' && message.params?.thread) {
-    if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(String(message.params.thread.id))) return
+    if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(sessionRefKey(state.backend, message.params.thread.id))) return
     mergeThreadMetadata(message.params.thread)
     renderWorkspace()
     return
@@ -1397,27 +1455,28 @@ function handleAppServerMessage(message) {
     return
   }
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
+    const backend = state.backend
     const threadId = message.params?.threadId
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
-    state.threadsByBackend.codex = state.threads
+    state.threadsByBackend[backend] = state.threads
     if (message.method === 'thread/deleted') {
-      delete state.annotationDrafts[`codex:${threadId}`]
-      delete state.annotationAdditional[`codex:${threadId}`]
-      delete state.openingMessages[`codex:${threadId}`]
+      delete state.annotationDrafts[`${backend}:${threadId}`]
+      delete state.annotationAdditional[`${backend}:${threadId}`]
+      delete state.openingMessages[`${backend}:${threadId}`]
     }
-    const deletedKey = sessionRefKey('codex', threadId)
-    if (state.router.controllers.codex === threadId) {
+    const deletedKey = sessionRefKey(backend, threadId)
+    if (state.router.controllers[backend] === threadId) {
       const controllers = { ...state.router.controllers }
-      delete controllers.codex
+      delete controllers[backend]
       state.router = normalizeThreadRouter({ ...state.router, controllers })
     } else if (state.router.fallbacks.some((entry) => entry.sessionKey === deletedKey)) {
       state.router = normalizeThreadRouter({ ...state.router, fallbacks: state.router.fallbacks.filter((entry) => entry.sessionKey !== deletedKey) })
     }
-    invalidateThreadModel('codex', threadId)
+    invalidateThreadModel(backend, threadId)
     persistPreferences()
     if (state.selectedId === threadId) {
       state.selectedId = null
-      state.selectedByBackend.codex = null
+      state.selectedByBackend[backend] = null
       state.model = createCodexViewModel()
       persistPreferences()
     }
@@ -1457,7 +1516,7 @@ function handleAppServerMessage(message) {
     if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
       notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || selectedThread()?.name || '')
     }
-    markCachedModelValidated('codex', targetModel)
+    markCachedModelValidated(backend, targetModel)
     if (targetModel !== state.model) return
     renderTranscript()
     return
@@ -1466,12 +1525,12 @@ function handleAppServerMessage(message) {
   const targetModel = codexNotificationModel(message)
   if (!targetModel) return
   if (applyCodexNotification(targetModel, message)) {
-    markCachedModelValidated('codex', targetModel)
+    markCachedModelValidated(backend, targetModel)
     if (message.method === 'turn/completed') {
       const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
       notifyDesktop(t('任务已完成'), threadTitle(completedThread || { name: t('未命名会话') }))
       completeRouterTurn({
-        backend: 'codex',
+        backend,
         turnId: message.params?.turn?.id || message.params?.turnId,
         model: targetModel,
         turn: message.params?.turn,
@@ -1493,7 +1552,7 @@ function handleAppServerMessage(message) {
     updateSelectedThreadStatus(message)
     if (message.method === 'turn/completed') {
       const threadId = message.params?.threadId || message.params?.thread?.id || state.selectedId
-      processSessionMapInlineUpdate('codex', threadId, targetModel, message.params?.turn?.id).catch((error) => {
+      processSessionMapInlineUpdate(backend, threadId, targetModel, message.params?.turn?.id).catch((error) => {
         console.warn('Session Map inline update failed', error)
       })
     }
@@ -1501,14 +1560,15 @@ function handleAppServerMessage(message) {
 }
 
 async function captureOffscreenInteraction(message) {
+  const backend = state.backend
   const threadId = String(message.params?.threadId || '')
   if (!threadId) return
   const result = await rpc('thread/read', { threadId, includeTurns: true })
   const model = createCodexViewModel()
   hydrateCodexThread(model, result.thread)
   applyCodexNotification(model, message)
-  cacheThreadModel('codex', threadId, model)
-  state.attentionThreads.add(threadCatalogKey('codex', threadId))
+  cacheThreadModel(backend, threadId, model)
+  state.attentionThreads.add(threadCatalogKey(backend, threadId))
   persistPreferences()
   renderThreadList()
   notifyDesktop(t('Codex 正在等待你的输入'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
@@ -1538,18 +1598,19 @@ function captureSessionMapWorkerResponse(message) {
   state.sessionMapWorkerRequests.delete(id)
   if (message.error) return
   if (method === 'thread/start' && message.result?.thread?.id) {
-    state.hiddenCodexThreads.add(String(message.result.thread.id))
+    state.hiddenCodexThreads.add(sessionRefKey(state.backend, message.result.thread.id))
   }
   if (method === 'turn/start' && message.result?.turn?.id) {
-    state.hiddenCodexTurns.add(String(message.result.turn.id))
+    state.hiddenCodexTurns.add(routerRuntimeKey(state.backend, message.result.turn.id))
   }
 }
 
 async function handleSessionMapToolCall(message) {
+  const backend = state.backend
   const params = message.params || {}
-  const key = sessionMapKey('codex', params.threadId)
+  const key = sessionMapKey(backend, params.threadId)
   try {
-    const map = await loadSessionMap('codex', params.threadId)
+    const map = await loadSessionMap(backend, params.threadId)
     if (!map) throw new Error('This thread does not have a Session Map')
     const operations = safeAssistantOperations(params.arguments)
     if (!operations.length) throw new Error('No safe Session Map operations were provided')
@@ -1675,7 +1736,7 @@ async function refreshOpenCodeThreadList() {
 
 function rpc(method, params = {}, timeoutMs = 30_000) {
   if (state.backend === 'opencode') return openCodeRpc(method, params, timeoutMs)
-  if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Codex App Server 尚未就绪'))
+  if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error(`${currentBackend().name} App Server 尚未就绪`))
   const id = ++state.requestId
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -1689,7 +1750,7 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
 
 async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000) {
   if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs)
-  if (backend === 'codex') return codexBackgroundRpc(method, params, timeoutMs)
+  if (isCodexBackend(backend)) return codexBackgroundRpc(backend, method, params, timeoutMs)
   if (backend === 'opencode') {
     await ensureOpenCodeAvailable()
     return openCodeRpc(method, params, timeoutMs, { allowInactive: true })
@@ -1697,10 +1758,11 @@ async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_0
   throw new Error(`Unsupported session backend: ${backend}`)
 }
 
-function codexBackgroundRpc(method, params = {}, timeoutMs = 30_000) {
+function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
+    const descriptor = backendDescriptor(backend)
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
+    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
     let requested = false
     let settled = false
@@ -1727,7 +1789,7 @@ function codexBackgroundRpc(method, params = {}, timeoutMs = 30_000) {
         else finish(null, message.result)
       }
     }
-    socket.onerror = () => finish(new Error('无法连接 Codex App Server'))
+    socket.onerror = () => finish(new Error(`无法连接 ${descriptor.name} App Server`))
   })
 }
 
@@ -1781,10 +1843,11 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includ
   return normalizeOpenCodeSessions(sessions, Object.assign({}, ...statusMaps))
 }
 
-function fetchCodexCatalog(limit = 100, { routerId = null, routerWorkspace = '' } = {}) {
+function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorkspace = '' } = {}) {
   return new Promise((resolve, reject) => {
+    const descriptor = backendDescriptor(backend)
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
+    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
     const routerReadId = id - 1
     const timer = setTimeout(() => finish(new Error('Codex 会话目录请求超时')), 15_000)
@@ -1827,7 +1890,7 @@ function fetchCodexCatalog(limit = 100, { routerId = null, routerWorkspace = '' 
         finish(null, { data: recoverManagedRouterCatalog(catalog, routerId, routerWorkspace, recovered) })
       }
     }
-    socket.onerror = () => finish(new Error('无法读取 Codex 会话目录'))
+    socket.onerror = () => finish(new Error(`无法读取 ${descriptor.name} 会话目录`))
   })
 }
 
@@ -1840,10 +1903,10 @@ async function fetchBackendCatalog(backend, { includeStatuses = true } = {}) {
       ? { ...thread, status: knownStatuses.get(thread.id) }
       : thread)
   }
-  if (backend === 'codex') {
-    const info = await loadBackendInfo('codex')
-    return fetchCodexCatalog(100, {
-      routerId: state.router.controllers.codex || null,
+  if (isCodexBackend(backend)) {
+    const info = await loadBackendInfo(backend)
+    return fetchCodexCatalog(backend, 100, {
+      routerId: state.router.controllers[backend] || null,
       routerWorkspace: info?.routerWorkspace || '',
     })
   }
@@ -1887,14 +1950,15 @@ async function refreshRouterCatalogs() {
 }
 
 async function refreshInactiveCatalog() {
-  const backend = state.backend === 'codex' ? 'opencode' : 'codex'
-  try {
-    await refreshBackendCatalog(backend)
-    if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
-  } catch (error) {
-    console.warn(`Unable to refresh ${backend} catalog`, error)
-    reportClientError(new Error(`${backend} inactive session catalog failed: ${error?.message || error}`))
-  }
+  await Promise.all(BACKEND_IDS.filter((backend) => backend !== state.backend).map(async (backend) => {
+    try {
+      await refreshBackendCatalog(backend)
+      if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
+    } catch (error) {
+      console.warn(`Unable to refresh ${backend} catalog`, error)
+      reportClientError(new Error(`${backend} inactive session catalog failed: ${error?.message || error}`))
+    }
+  }))
 }
 
 function handleThreadCatalogFailure(backend, generation, error) {
@@ -2114,14 +2178,15 @@ function renderThreadList() {
     return
   }
   const renderRow = ({ backend, thread }) => {
+    const descriptor = backendDescriptor(backend)
     const status = threadStatus(thread)
     const active = backend === state.backend && thread.id === state.selectedId
-    const tag = backend === 'codex' ? 'CX' : 'OC'
+    const tag = descriptor.tag
     const router = backend === state.router.controllerBackend && isRouterSession(state.router, backend, thread.id)
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
       <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('未记录项目目录'))}">${escapeHtml(thread.cwd || t('未记录项目目录'))}</small></span>
-      <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${backend === 'codex' ? 'Codex' : 'OpenCode'}">${tag}</span></span>
+      <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${descriptor.name}">${tag}</span></span>
     </button>`
   }
   if (state.filter === 'attention') {
@@ -2199,13 +2264,14 @@ function markThreadLoaded(backend, id) {
 
 function updateCodexReplyTime(message, model = null) {
   if (message.method !== 'turn/completed') return
+  const backend = isCodexBackend(state.backend) ? state.backend : 'codex'
   const threadId = message.params?.threadId
     || message.params?.thread?.id
     || message.params?.turn?.threadId
-    || threadIdForCachedModel('codex', model)
-    || (state.backend === 'codex' ? state.selectedId : null)
+    || threadIdForCachedModel(backend, model)
+    || (state.backend === backend ? state.selectedId : null)
   if (!threadId) return
-  updateLoadedThreadTimestamp('codex', threadId)
+  updateLoadedThreadTimestamp(backend, threadId)
 }
 
 function updateOpenCodeReplyTime(payload, threadId) {
@@ -2322,18 +2388,19 @@ function threadIdForCachedModel(backend, model) {
 }
 
 function codexNotificationModel(message) {
+  const backend = isCodexBackend(state.backend) ? state.backend : 'codex'
   const params = message.params || {}
   const explicitId = params.threadId || params.thread?.id || params.turn?.threadId
-  if (explicitId && state.hiddenCodexThreads.has(String(explicitId))) return null
+  if (explicitId && state.hiddenCodexThreads.has(sessionRefKey(backend, explicitId))) return null
   if (explicitId) {
-    if (state.backend === 'codex' && state.selectedId === explicitId) return state.model
-    return state.threadModels.get(threadCatalogKey('codex', explicitId))?.model || null
+    if (state.backend === backend && state.selectedId === explicitId) return state.model
+    return state.threadModels.get(threadCatalogKey(backend, explicitId))?.model || null
   }
   const turnId = params.turnId || params.turn?.id
-  if (turnId && state.hiddenCodexTurns.has(String(turnId))) return null
+  if (turnId && state.hiddenCodexTurns.has(routerRuntimeKey(backend, turnId))) return null
   if (turnId) {
     for (const [key, cached] of state.threadModels) {
-      if (!key.startsWith('codex:')) continue
+      if (!key.startsWith(`${backend}:`)) continue
       if (cached.model.activeTurnId === turnId || cached.model.turns.some((turn) => turn.id === turnId)) return cached.model
     }
   }
@@ -2353,7 +2420,7 @@ function openCodeEventThreadId(payload) {
 function updateThreadStatusFromNotification(message) {
   if (message.method !== 'thread/status/changed') return
   const threadId = message.params?.threadId
-  const thread = state.threadsByBackend.codex.find((candidate) => candidate.id === threadId)
+  const thread = state.threadsByBackend[state.backend]?.find((candidate) => candidate.id === threadId)
   if (thread) thread.status = message.params.status
   renderThreadList()
 }
@@ -2688,19 +2755,19 @@ function renderSessionMap() {
   const emptySync = state.sessionMapSync.get(key)
   const emptyDescription = emptySync?.state === 'syncing'
     ? t('AI 正在生成初始结构…')
-    : map.backend === 'codex'
+    : isCodexBackend(map.backend)
       ? t('还没有项目。可以用 AI 生成，或手动添加。')
       : t('还没有项目，请手动添加第一项。')
   tree.innerHTML = items.length
     ? flattenSessionMap(map).map(({ item, depth }) => renderSessionMapRow(item, depth, map)).join('')
-    : `<div class="session-map-empty"><span>⌁</span><strong>${t('Map 还是空的')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${map.backend === 'codex' ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('AI 生成')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('添加')}</button></div></div>`
+    : `<div class="session-map-empty"><span>⌁</span><strong>${t('Map 还是空的')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${isCodexBackend(map.backend) ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('AI 生成')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('添加')}</button></div></div>`
 
   const progress = mapProgress(map)
   $('#session-map-progress').textContent = t('{explored}/{total} 已浏览 · {done} 完成', progress)
   $('#session-map-revision').textContent = `rev ${map.revision}`
   $('#session-map-ai-generate').textContent = items.length ? t('AI 补全') : t('AI 生成')
   $('#session-map-ai-generate').disabled = emptySync?.state === 'syncing'
-  const sync = state.sessionMapSync.get(key) || (map.backend === 'codex'
+  const sync = state.sessionMapSync.get(key) || (isCodexBackend(map.backend)
     ? { state: 'synced', message: '等待下一次对话' }
     : { state: '', message: 'OpenCode Map 当前由用户维护' })
   setSessionMapSyncState(sync.state, sync.message)
@@ -2846,7 +2913,7 @@ function openSessionMapGoalDialog() {
 async function suggestSessionMapGoal() {
   const map = selectedSessionMap()
   if (!map) return
-  if (state.backend !== 'codex') throw new Error('OpenCode 会话暂不支持 AI 重新生成目标')
+  if (!isCodexBackend(state.backend)) throw new Error('OpenCode 会话暂不支持 AI 重新生成目标')
   const button = $('#session-map-suggest-goal')
   const original = button.textContent
   button.disabled = true
@@ -2936,7 +3003,7 @@ async function deleteSessionMap() {
   const map = selectedSessionMap()
   if (!key || !map || !window.confirm(t('删除这个会话的 Map？聊天记录不会受影响。'))) return
   await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' })
-  if (map.backend === 'codex' && state.backend === 'codex' && state.ready) {
+  if (isCodexBackend(map.backend) && state.backend === map.backend && state.ready) {
     rpc('thread/resume', {
       threadId: map.threadId,
       developerInstructions: null,
@@ -2966,7 +3033,7 @@ async function generateSessionMapStructure({ key = selectedStateKey(), model = s
   const backend = separator > 0 ? key.slice(0, separator) : ''
   const map = state.sessionMaps.get(key)
   if (!map) return null
-  if (backend !== 'codex') {
+  if (!isCodexBackend(backend)) {
     if (automatic) return null
     throw new Error('OpenCode 会话暂不支持 AI 生成 Map')
   }
@@ -3007,7 +3074,7 @@ async function generateSessionMapStructure({ key = selectedStateKey(), model = s
 }
 
 async function processSessionMapInlineUpdate(backend, threadId, model, completedTurnId = null) {
-  if (backend !== 'codex' || !threadId || !model) return
+  if (!isCodexBackend(backend) || !threadId || !model) return
   const key = sessionMapKey(backend, threadId)
   const processingKey = `${key}:${completedTurnId || ''}`
   if (state.sessionMapInlineProcessing.has(processingKey)) return
@@ -3075,8 +3142,9 @@ function disposeSessionMapWorker(key) {
   const worker = state.sessionMapWorkers.dispose(key)
   if (!worker) return
   worker.chain.finally(() => {
-    if (!worker.threadId || !state.ready || state.backend !== 'codex') return
-    rpc('thread/delete', { threadId: worker.threadId }).catch((error) => {
+    const backend = worker.key.split(':', 1)[0]
+    if (!worker.threadId || !isCodexBackend(backend)) return
+    dispatchBackendRpc(backend, 'thread/delete', { threadId: worker.threadId }).catch((error) => {
       console.warn('Unable to release ephemeral Session Map worker', error)
     })
   })
@@ -3084,8 +3152,10 @@ function disposeSessionMapWorker(key) {
 
 function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }) {
   return new Promise((resolve, reject) => {
+    const backend = worker.key.split(':', 1)[0]
+    const descriptor = backendDescriptor(backend)
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex`)
+    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
     const pending = new Map()
     const buffered = []
     const hiddenModel = createCodexViewModel()
@@ -3147,7 +3217,7 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
           worker.threadId = String(hiddenThreadId)
           worker.generation = serverGeneration
         }
-        state.hiddenCodexThreads.add(String(hiddenThreadId))
+        state.hiddenCodexThreads.add(sessionRefKey(backend, hiddenThreadId))
         hiddenModel.threadId = hiddenThreadId
         const result = await request('turn/start', {
           threadId: hiddenThreadId,
@@ -3156,7 +3226,7 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
         })
         hiddenTurnId = result?.turn?.id
         if (!hiddenTurnId) throw new Error('Codex did not start the Map reconciliation turn')
-        state.hiddenCodexTurns.add(String(hiddenTurnId))
+        state.hiddenCodexTurns.add(routerRuntimeKey(backend, hiddenTurnId))
         for (const message of buffered.splice(0)) processTurnMessage(message)
       } catch (error) {
         finish(error)
@@ -3171,7 +3241,7 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
           serverGeneration = Number(message.params?.generation || 0)
           const staleThreadId = state.sessionMapWorkers.reconcileGeneration(worker, serverGeneration)
           if (staleThreadId) {
-            state.hiddenCodexThreads.delete(String(staleThreadId))
+            state.hiddenCodexThreads.delete(sessionRefKey(backend, staleThreadId))
             hiddenThreadId = null
           }
           begin()
@@ -3192,8 +3262,8 @@ function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, ou
       if (!hiddenTurnId) buffered.push(message)
       else processTurnMessage(message)
     }
-    socket.onerror = () => finish(new Error('无法连接 Codex Map 同步服务'))
-    socket.onclose = () => finish(new Error('Codex Map 同步连接已关闭'))
+    socket.onerror = () => finish(new Error(`无法连接 ${descriptor.name} Map 同步服务`))
+    socket.onclose = () => finish(new Error(`${descriptor.name} Map 同步连接已关闭`))
   })
 }
 
@@ -4371,14 +4441,14 @@ function showCommandDialog(title, content) {
 function currentTurnOptions() {
   if (!state.selectedId) return {}
   const key = selectedStateKey()
-  state.turnOptions[key] ||= {}
+  state.turnOptions[key] ||= defaultTurnOptions(state.backend)
   return state.turnOptions[key]
 }
 
 function configuredTurnOptions(options = currentTurnOptions()) {
   const result = { ...options }
   const profile = state.environmentProfile
-  if (state.backend !== 'codex' || !profile?.configured || profile.root !== selectedThread()?.cwd) return result
+  if (!isCodexBackend(state.backend) || !profile?.configured || profile.root !== selectedThread()?.cwd) return result
   const current = result.sandboxPolicy
   if (!current || current.type === 'workspaceWrite') {
     result.sandboxPolicy = {
@@ -4399,9 +4469,13 @@ async function openModelCommand() {
     $('#command-content').innerHTML = '<div class="command-empty">没有可用模型。</div>'
     return
   }
+  const currentEffort = currentTurnOptions().effort
   $('#command-content').innerHTML = `<div class="command-list">${models.map((model) => {
     const efforts = model.supportedReasoningEfforts || []
-    const effortOptions = efforts.map((entry) => `<option value="${escapeHtml(entry.reasoningEffort)}"${entry.reasoningEffort === model.defaultReasoningEffort ? ' selected' : ''}>${escapeHtml(entry.reasoningEffort)}</option>`).join('')
+    const selectedEffort = efforts.some((entry) => entry.reasoningEffort === currentEffort)
+      ? currentEffort
+      : model.defaultReasoningEffort
+    const effortOptions = efforts.map((entry) => `<option value="${escapeHtml(entry.reasoningEffort)}"${entry.reasoningEffort === selectedEffort ? ' selected' : ''}>${escapeHtml(entry.reasoningEffort)}</option>`).join('')
     return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? t(' · 默认') : ''}</small>${effortOptions ? `<select aria-label="${t('推理强度')}">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">${t('使用')}</button></div>`
   }).join('')}</div>`
   $('#command-content').onclick = (event) => {
@@ -4579,7 +4653,7 @@ function renderComposerState() {
     models: state.backendModels[state.backend],
     fallback: `${descriptor.name} default`,
   })
-  $('#composer-model-backend').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
+  $('#composer-model-backend').textContent = descriptor.tag
   $('#composer-model-name').textContent = display.label
   $('#composer-model').title = `Current model and effort: ${display.label}`
   $('#composer-model').setAttribute('aria-label', `Current model and effort: ${display.label}`)
@@ -4589,7 +4663,7 @@ function renderComposerState() {
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
-  $('#send-message').textContent = shellMode ? t('运行命令') : isRouterThread() ? t('路由') : active && state.backend === 'codex' ? '追加意见' : '发送'
+  $('#send-message').textContent = shellMode ? t('运行命令') : isRouterThread() ? t('路由') : active && isCodexBackend(state.backend) ? '追加意见' : '发送'
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   renderComposerReviewContext()
 }
@@ -4669,7 +4743,7 @@ async function sendComposer(event) {
       toast('意见已加入当前 Turn')
     } else {
       const clientUserMessageId = randomId()
-      if (backend === 'codex') {
+      if (isCodexBackend(backend)) {
         optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
         latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
         input.value = ''
@@ -4691,7 +4765,7 @@ async function sendComposer(event) {
         ...turnOptions,
       })
       if (result?.turn) {
-        if (backend === 'codex' && optimisticTurnId) {
+        if (isCodexBackend(backend) && optimisticTurnId) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)
           bindTurnLatencyTrace(latencyTrace, result.turn.id)
           markTurnLatency(latencyTrace, 'turn_start_ack')
@@ -4726,8 +4800,8 @@ async function sendComposer(event) {
 }
 
 async function prepareSessionMapTurn() {
-  if (state.backend !== 'codex' || !state.selectedId) return
-  const map = await loadSessionMap('codex', state.selectedId)
+  if (!isCodexBackend(state.backend) || !state.selectedId) return
+  const map = await loadSessionMap(state.backend, state.selectedId)
   if (!map) return
   const configuration = sessionMapTurnConfiguration(map)
   try {
@@ -4763,7 +4837,7 @@ async function startRouterTurn(text) {
   if (!candidates.length) throw new Error(t('Router 没有可用的目标会话，请先打开“路由设置”。'))
   const developerInstructions = routerDeveloperInstructions(candidates)
   const result = await sessionDispatch.startTurn(controller, [{ type: 'text', text }], {
-    ...(controller.backend === 'codex'
+    ...(isCodexBackend(controller.backend)
       ? { additionalContext: routerApplicationContext(candidates) }
       : { developerInstructions }),
     outputSchema: routerDecisionSchema(candidates.map((candidate) => candidate.key)),
@@ -4941,6 +5015,29 @@ function updateNewThreadCapabilities() {
     field.classList.toggle('capability-disabled', unsupported)
     field.querySelector('.backend-capability-note')?.classList.toggle('hidden', !unsupported)
   }
+  loadNewThreadModels(backend).catch((error) => {
+    $('#new-thread-model-help').textContent = `Unable to load ${backendDescriptor(backend).name} models: ${error.message}`
+  })
+}
+
+function handleNewThreadBackendChange() {
+  $('#new-thread-model').value = ''
+  $('#new-thread-model-options').replaceChildren()
+  updateNewThreadCapabilities()
+}
+
+async function loadNewThreadModels(backend) {
+  $('#new-thread-model-help').textContent = `Loading the independent model catalog from ${backendDescriptor(backend).name}…`
+  const result = await dispatchBackendRpc(backend, 'model/list', { limit: 100, includeHidden: false })
+  const models = Array.isArray(result?.data) ? result.data : []
+  state.backendModels[backend] = models
+  if ($('#new-thread-backend').value !== backend) return
+  $('#new-thread-model-options').innerHTML = models.map((model) => {
+    const id = model.model || model.id
+    return id ? `<option value="${escapeHtml(id)}">${escapeHtml(model.displayName || model.name || id)}</option>` : ''
+  }).join('')
+  const defaultModel = models.find((model) => model.isDefault)
+  $('#new-thread-model-help').textContent = `${backendDescriptor(backend).name} provides ${models.length} models${defaultModel ? ` · Default: ${defaultModel.model || defaultModel.id}` : ''}`
 }
 
 function openRenameThreadDialog() {
@@ -4992,12 +5089,19 @@ async function createThread(event) {
   }
   const params = {
     cwd,
-    ...(backend === 'codex' ? {
+    ...(isCodexBackend(backend) ? {
       approvalPolicy: $('#new-thread-approval').value,
       sandbox: $('#new-thread-sandbox').value,
     } : {}),
   }
   const model = $('#new-thread-model').value.trim()
+  const supportedModels = state.backendModels[backend].map((entry) => entry.model || entry.id).filter(Boolean)
+  if (model && supportedModels.length && !supportedModels.includes(model)) {
+    errorBox.textContent = `${model} is not in the current ${backendDescriptor(backend).name} model catalog.`
+    errorBox.classList.remove('hidden')
+    button.disabled = false
+    return
+  }
   if (model) params.model = model
   try {
     if (backend !== state.backend) {
@@ -6584,7 +6688,7 @@ function populateFavoriteDialog(favorite) {
   const editing = state.favoriteEditMode
   const resource = favorite.presentation === 'resource'
   $('#favorite-dialog-title').textContent = t(editing ? '编辑收藏' : resource ? '收藏资源' : favorite.scope === 'selection' ? '收藏选中内容' : '收藏这条回复')
-  $('#favorite-source-label').textContent = `${favorite.backend === 'opencode' ? 'OpenCode' : 'Codex'} · ${favorite.threadTitle || t('未命名会话')}`
+  $('#favorite-source-label').textContent = `${backendDescriptor(favorite.backend).name} · ${favorite.threadTitle || t('未命名会话')}`
   $('#favorite-preview-label').textContent = t(resource ? '资源' : 'AI 回复')
   $('#favorite-answer-length').textContent = t('{count} 字', { count: [...favorite.content].length.toLocaleString(getLocale()) })
   $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
@@ -6790,10 +6894,13 @@ async function loadPreferences() {
     agent: { enabled: false, provider: 'playwright-mcp', profile: 'persistent', approval: 'interactive', allowedOrigins: [] },
     ...(saved.browser || {}),
   }
-  state.backend = saved.selectedBackend === 'opencode' ? 'opencode' : 'codex'
-  state.selectedByBackend = {
-    codex: null,
-    opencode: null,
+  state.backend = isSupportedBackend(saved.selectedBackend) ? saved.selectedBackend : 'codex'
+  state.selectedByBackend = emptyBackendSelections()
+  for (const [backend, id] of Object.entries(saved.selectedThreads || {})) {
+    if (isSupportedBackend(backend) && typeof id === 'string' && id) state.selectedByBackend[backend] = id
+  }
+  if (!state.selectedByBackend.codex && typeof saved.selectedThread === 'string') {
+    state.selectedByBackend.codex = saved.selectedThread
   }
   state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
@@ -6926,7 +7033,7 @@ function renderRouterFallbacks({ capture = false } = {}) {
   const targets = routerFallbackTargets()
   const options = (selected) => {
     const known = targets.some((target) => target.key === selected)
-    return `<option value="">${t('选择 fallback 会话')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('已不可用')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backend === 'codex' ? 'CX' : 'OC'}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('未记录项目目录'))}</option>`).join('')}`
+    return `<option value="">${t('选择 fallback 会话')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('已不可用')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backendDescriptor(backend).tag}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('未记录项目目录'))}</option>`).join('')}`
   }
   const container = $('#router-fallbacks')
   container.innerHTML = state.routerEditor.fallbacks.length
@@ -6987,7 +7094,7 @@ async function saveRouterSettings(event) {
 
 async function ensureManagedRouterSession(backend = state.router.controllerBackend) {
   if (!sessionDispatch.supports(backend)) throw new Error(t('Router 后端当前不可用。'))
-  const cwd = (await loadBackendInfo('codex'))?.routerWorkspace
+  const cwd = (await loadBackendInfo(backend))?.routerWorkspace
   if (!cwd) throw new Error(t('无法确定 Studio Router 的工作目录。'))
   const routerId = state.router.controllers[backend]
   const existing = managedRouterThread(state.threadsByBackend[backend], routerId, cwd)
@@ -7015,7 +7122,7 @@ async function ensureManagedRouterSession(backend = state.router.controllerBacke
     sandbox: 'read-only',
   })
   if (!result?.thread?.id) throw new Error(t('无法创建系统 Router 会话。'))
-  if (backend === 'codex') await dispatchBackendRpc(backend, 'thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
+  if (isCodexBackend(backend)) await dispatchBackendRpc(backend, 'thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
   mergeThreadIntoCatalog(backend, { ...result.thread, name: 'Thread Router' })
   state.router = normalizeThreadRouter({
     ...state.router,
@@ -7298,10 +7405,10 @@ function renderProjectEnvironmentEntry() {
 }
 
 async function applyEnvironmentToCodex(root) {
-  if (state.backend !== 'codex' || !state.selectedId) return
+  if (!isCodexBackend(state.backend) || !state.selectedId) return
   const applied = await gatewayFetch('/studio/environment/apply', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, threadId: state.selectedId }),
+    body: JSON.stringify({ root, threadId: state.selectedId, backend: state.backend }),
   })
   const result = await applied.json().catch(() => null)
   if (!applied.ok) throw new Error(result?.error?.message || `HTTP ${applied.status}`)
@@ -7367,16 +7474,26 @@ function openConnectionsDialog() {
 }
 
 function renderConnectionsDialog() {
-  $('#connections-dialog-content').innerHTML = ['codex', 'opencode'].map((backend) => {
+  const configuration = state.backendRegistry
+  const configuredCount = BACKEND_IDS.filter((backend) => !['codex', 'opencode'].includes(backend)).length
+  const configCard = configuration.configPath || configuration.configurationError
+    ? `<section class="backend-config-card${configuration.configurationError ? ' error' : ''}">
+      <div><strong>Local backend configuration</strong><small data-no-i18n>${escapeHtml(configuration.configPath || 'Unavailable')}</small></div>
+      <span>${configuration.configurationError ? 'Invalid' : `${configuredCount} configured`}</span>
+      ${configuration.configurationError ? `<p>${escapeHtml(configuration.configurationError)}</p>` : '<p>Restart Studio after editing this file.</p>'}
+    </section>`
+    : ''
+  const cards = BACKEND_IDS.map((backend) => {
     const descriptor = backendDescriptor(backend)
     const status = backendStatusView(backend)
     const info = state.backendInfos[backend] || {}
-    return `<section class="connection-card ${backend}">
-      <span class="connection-monogram">${backend === 'codex' ? 'CX' : 'OC'}</span>
+    return `<section class="connection-card ${descriptor.kind}">
+      <span class="connection-monogram">${descriptor.tag}</span>
       <span class="connection-copy"><strong>${descriptor.name}</strong><small>${escapeHtml(info.binary || descriptor.binary)} · ${escapeHtml(info.transport || descriptor.transport)}</small></span>
       <span class="connection-state ${escapeHtml(status.kind)}">${escapeHtml(t(status.label))}</span>
     </section>`
   }).join('')
+  $('#connections-dialog-content').innerHTML = `${configCard}${cards}`
 }
 
 function openBackendDialog() {
@@ -7388,7 +7505,7 @@ function openBackendDialog() {
 
 function renderBackendDialog() {
   const appInfo = Object.values(state.backendInfos).find((info) => info?.appName) || {}
-  const backendSections = ['codex', 'opencode'].map((backend) => {
+  const backendSections = BACKEND_IDS.map((backend) => {
     const descriptor = backendDescriptor(backend)
     const info = state.backendInfos[backend] || {}
     const status = backendStatusView(backend)
@@ -7411,7 +7528,7 @@ function renderBackendDialog() {
 }
 
 function refreshBackendInformation() {
-  Promise.all(['codex', 'opencode'].map((backend) => loadBackendInfo(backend))).then(() => {
+  Promise.all(BACKEND_IDS.map((backend) => loadBackendInfo(backend))).then(() => {
     if ($('#connections-dialog').open) renderConnectionsDialog()
     if ($('#backend-dialog').open) renderBackendDialog()
   }).catch((error) => console.warn('Unable to refresh backend information', error))

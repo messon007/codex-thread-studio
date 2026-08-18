@@ -40,6 +40,6 @@ test('Studio starts with an empty runtime workset and adds a session after loadi
 
 test('completed replies update timestamps without changing loaded membership', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  assert.match(source, /function updateCodexReplyTime[\s\S]*message\.method !== 'turn\/completed'[\s\S]*updateLoadedThreadTimestamp\('codex'/)
+  assert.match(source, /function updateCodexReplyTime[\s\S]*message\.method !== 'turn\/completed'[\s\S]*isCodexBackend\(state\.backend\)[\s\S]*updateLoadedThreadTimestamp\(backend/)
   assert.match(source, /function updateOpenCodeReplyTime[\s\S]*payload\.type !== 'session\.idle'[\s\S]*updateLoadedThreadTimestamp\('opencode'/)
 })

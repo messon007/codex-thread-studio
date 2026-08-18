@@ -1,3 +1,5 @@
+import { BACKEND_IDS, backendSearchAliases } from './backends.mjs'
+
 const activeStatuses = new Set(['active', 'running', 'inProgress'])
 
 export function threadCatalogKey(backend, id) {
@@ -9,7 +11,7 @@ export function isActiveCatalogThread(thread) {
 }
 
 export function catalogEntries(catalogs = {}) {
-  return ['codex', 'opencode'].flatMap((backend) =>
+  return BACKEND_IDS.flatMap((backend) =>
     (catalogs[backend] || []).map((thread) => ({ backend, thread })),
   )
 }
@@ -58,7 +60,7 @@ export function filterCatalogEntries(catalogs, {
       thread.cwd,
       thread.id,
       backend,
-      backend === 'codex' ? 'cx codex' : 'oc opencode',
+      backendSearchAliases(backend),
     ].filter(Boolean).join(' ').toLowerCase().includes(query)
   })
 

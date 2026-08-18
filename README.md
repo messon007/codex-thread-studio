@@ -24,6 +24,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Stores favorites in SQLite, automatically migrates the legacy JSON library, and exports the full global library as Markdown.
 - Provides persistent Chinese/English/system-language selection, light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and language-specific annotation prompt templates.
 - Switches between isolated Codex and OpenCode session lists, remembers the selected session for each backend, and namespaces comment drafts per backend.
+- Loads additional machine-local Codex-compatible instances from `backends.json`. Each instance has an independent process, session namespace, connection, and native model catalog; private launcher configuration stays outside the repository. See [local backend instances](docs/backend-instances.md).
 - Uses installed CLIs and their existing authentication; Studio stores no model credential. The Rust layer starts OpenCode with an ephemeral password that never enters browser storage.
 - Includes a global Embedded Browser Workspace. Linux uses its native GTK/WebKitGTK container and
   Windows uses same-window WRY/WebView2 child views; remote pages are isolated from the Studio
@@ -35,7 +36,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 ```text
 Tauri WebView
   └─ Rust loopback gateway
-      ├─ WebSocket ↔ JSONL stdio ↔ codex app-server
+      ├─ WebSocket ↔ JSONL stdio ↔ one or more codex app-server instances
       └─ same-origin HTTP/SSE proxy ↔ opencode serve
 ```
 
@@ -73,6 +74,10 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-
 ```
 
 Use `CODEX_THREAD_STUDIO_OPENCODE_BIN=/absolute/path/to/opencode` when OpenCode is outside the GUI launcher's `PATH`.
+
+To run another Codex-compatible launcher only on one machine, create the local
+`backends.json` shown in [local backend instances](docs/backend-instances.md).
+The Connections dialog displays its exact path and validation status.
 
 On Windows, Studio itself is native but its AI backends run only inside WSL2; Windows `.cmd` and `.exe` backend installations are not used. Configure the distribution, Linux user, and optional backend paths in Settings, restart Studio, and enter project paths in Linux form such as `/home/user/project`.
 

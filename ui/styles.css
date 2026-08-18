@@ -327,9 +327,13 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), 0 8px 28px rgb(20 35 43 / 8%); }
 .composer.shell-mode { border-color: color-mix(in srgb, var(--amber) 65%, var(--border-strong)); background: color-mix(in srgb, var(--amber-soft) 42%, var(--panel)); }
 .composer.shell-mode:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft), 0 8px 28px rgb(20 35 43 / 8%); }
-.composer.shell-mode #composer-hint { color: var(--amber); }
 .composer textarea { width: 100%; max-height: 180px; resize: vertical; padding: 4px 6px; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.55; }
-.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }.composer-footer > span { color: var(--muted); font-size: 11px; }.composer-footer > div { display: flex; gap: 7px; }
+.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }
+.composer-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.composer-actions { flex-shrink: 0; display: flex; gap: 7px; }
+.composer-model { max-width: min(280px, 42vw); height: 27px; flex-shrink: 0; padding: 0 7px 0 5px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); }
+.composer-model-backend { min-width: 20px; height: 17px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 4px; background: var(--brand-soft); color: var(--brand); font-size: 8px; font-weight: 800; letter-spacing: .02em; }
+.composer-model strong { overflow: hidden; font: 650 10px/1 var(--code-font-family); text-overflow: ellipsis; white-space: nowrap; }
 
 /* Mature Markdown rendering: Marked + DOMPurify output with GitHub Markdown layout. */
 .markdown-body {
@@ -1034,6 +1038,8 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .turn-nav-item.active .turn-nav-indicator i { background: var(--brand); transform: scaleX(1.5); }
 
 @media (max-width: 720px) {
+  .composer-context { gap: 5px; }
+  .composer-model { max-width: min(230px, calc(100vw - 190px)); }
   .composer-option, .command-card { grid-template-columns: 1fr; gap: 4px; }
   .wsl-settings-card > .wsl-settings-header { align-items: flex-start; }
   .wsl-settings-layout { grid-template-columns: 1fr; }

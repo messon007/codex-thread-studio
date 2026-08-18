@@ -16,6 +16,7 @@ import {
   openCodeThreadFromHistory,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
+import { resolveModelDisplay } from './model-display.mjs'
 import {
   composerTrigger,
   fuzzyFileLabel,
@@ -253,6 +254,8 @@ const state = {
   ready: false,
   backendInfo: null,
   backendInfos: { codex: null, opencode: null },
+  backendModels: { codex: [], opencode: [] },
+  backendModelLoads: new Map(),
   hostPlatform: window.__CODEX_THREAD_STUDIO_GATEWAY__?.hostPlatform || null,
   wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
   backendStates: {
@@ -1206,6 +1209,7 @@ async function connectOpenCode() {
   state.ready = true
   setBackendState('online', 'OpenCode Server', '原生结构化连接')
   $('#native-connection').textContent = '已连接'
+  loadBackendModels().catch((error) => console.debug('Unable to load OpenCode models', error))
   const events = gatewayEventSource('/opencode/global/event')
   state.eventSource = events
   events.onopen = () => {
@@ -1328,6 +1332,7 @@ function handleAppServerMessage(message) {
       setBackendState('online', 'Codex App Server', '原生结构化连接')
       $('#native-connection').textContent = '已连接'
       setNativeError(null)
+      loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error))
       if (firstReady) {
         loadThreads().then(async () => {
           if (reconnecting && state.selectedId) await refreshSelectedThread({ quiet: true })
@@ -4389,8 +4394,7 @@ function configuredTurnOptions(options = currentTurnOptions()) {
 
 async function openModelCommand() {
   showCommandDialog('模型', '<div class="command-empty">正在从 App Server 读取模型…</div>')
-  const result = await rpc('model/list', { limit: 100, includeHidden: false })
-  const models = Array.isArray(result?.data) ? result.data : []
+  const models = await loadBackendModels({ refresh: true })
   if (!models.length) {
     $('#command-content').innerHTML = '<div class="command-empty">没有可用模型。</div>'
     return
@@ -4412,6 +4416,22 @@ async function openModelCommand() {
     renderComposerState()
     toast(t('已选择模型 {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
+}
+
+async function loadBackendModels({ refresh = false } = {}) {
+  const backend = state.backend
+  if (!refresh && state.backendModels[backend].length) return state.backendModels[backend]
+  if (!refresh && state.backendModelLoads.has(backend)) return state.backendModelLoads.get(backend)
+  const load = rpc('model/list', { limit: 100, includeHidden: false })
+    .then((result) => {
+      const models = Array.isArray(result?.data) ? result.data : []
+      state.backendModels[backend] = models
+      if (state.backend === backend) renderComposerState()
+      return models
+    })
+    .finally(() => state.backendModelLoads.delete(backend))
+  state.backendModelLoads.set(backend, load)
+  return load
 }
 
 function openPermissionsCommand() {
@@ -4551,6 +4571,18 @@ async function executeSlashCommand(action) {
 function renderComposerState() {
   const active = Boolean(state.model.activeTurnId)
   const options = currentTurnOptions()
+  const descriptor = currentBackend()
+  const display = resolveModelDisplay({
+    overrideModel: options.model,
+    overrideEffort: options.effort,
+    sessionModel: selectedThread()?.model,
+    models: state.backendModels[state.backend],
+    fallback: `${descriptor.name} default`,
+  })
+  $('#composer-model-backend').textContent = descriptor.id === 'codex' ? 'CX' : 'OC'
+  $('#composer-model-name').textContent = display.label
+  $('#composer-model').title = `Current model and effort: ${display.label}`
+  $('#composer-model').setAttribute('aria-label', `Current model and effort: ${display.label}`)
   const shellCommand = shellCommandFromComposer($('#composer-input').value)
   const shellMode = shellCommand !== null
   $('#composer-form').classList.toggle('shell-mode', shellMode)
@@ -4558,22 +4590,6 @@ function renderComposerState() {
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('运行命令') : isRouterThread() ? t('路由') : active && state.backend === 'codex' ? '追加意见' : '发送'
-  const details = [
-    options.model && `${options.model}${options.effort ? `/${options.effort}` : ''}`,
-    options.sandboxPolicy?.type,
-    state.pendingSkills[selectedStateKey()]?.length && t('{count} 个技能', { count: state.pendingSkills[selectedStateKey()].length }),
-    state.pendingFiles[selectedStateKey()]?.length && t('{count} 个文件', { count: state.pendingFiles[selectedStateKey()].length }),
-  ].filter(Boolean)
-  const baseHint = isRouterThread() && !shellMode
-    ? active ? 'Router 正在选择目标会话' : '请求将由 Router 派发，并在目标会话中执行'
-    : shellMode
-    ? active
-      ? 'Shell 命令需等待当前 Turn 完成'
-      : '本地 Shell · 不经过模型且不受 Turn sandbox 限制'
-    : active
-      ? state.backend === 'codex' ? '将通过 turn/steer 加入当前 Turn' : 'OpenCode 正在响应；完成或停止后可继续发送'
-      : '将通过 turn/start 开始新 Turn'
-  $('#composer-hint').textContent = `${baseHint}${!shellMode && details.length ? ` · ${details.join(' · ')}` : ''}`
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   renderComposerReviewContext()
 }

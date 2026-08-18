@@ -62,7 +62,7 @@ cargo run -p codex-thread-studio
 Build without launching:
 
 ```bash
-cargo build -p codex-thread-studio
+cargo build -p codex-thread-studio --release
 ./target/debug/codex-thread-studio
 ```
 

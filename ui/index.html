@@ -141,8 +141,13 @@
               placeholder="向 Codex 发送消息… @ 文件 · $ 技能 · / 命令 · ! Shell"
             ></textarea>
             <div class="composer-footer">
-              <span id="composer-hint">将开始一个新的 Turn</span>
-              <div>
+              <div class="composer-context">
+                <div id="composer-model" class="composer-model" aria-label="Current model and effort">
+                  <span id="composer-model-backend" class="composer-model-backend">CX</span>
+                  <strong id="composer-model-name">Codex default</strong>
+                </div>
+              </div>
+              <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">停止</button>
                 <button id="send-message" class="primary-button" type="submit">发送</button>
               </div>

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   artifactSearchAvailable,
+  artifactInlineSearchAvailable,
   createFileRangeTarget,
   findTextMatchRanges,
   fileAnnotationAnchor,
@@ -14,12 +15,14 @@ import {
   lineNumberAt,
   locateQuote,
   normalizeAnnotationTarget,
+  resolveMarkdownImagePath,
   snapshotAnnotationSelection,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
 
 const documentReviewHtml = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+const documentReviewApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 
 test('locates a selected file range and preserves nearby anchors', () => {
   const file = { path: '/work/docs/guide.md', root: '/work', hash: 'abc', content: 'one\ntwo\nthree' }
@@ -95,16 +98,36 @@ test('formats stable line anchors for annotation prompts', () => {
   )
 })
 
-test('keeps document search available in preview and source modes', () => {
+test('keeps document search available in preview, source, and edit modes', () => {
   const file = { content: '# Document', loading: false, error: '' }
   assert.equal(artifactSearchAvailable(file, 'preview'), true)
   assert.equal(artifactSearchAvailable(file, 'source'), true)
+  assert.equal(artifactSearchAvailable(file, 'edit'), true)
+  assert.equal(artifactInlineSearchAvailable(file, 'preview'), true)
+  assert.equal(artifactInlineSearchAvailable(file, 'edit'), false)
   assert.equal(artifactSearchAvailable({ ...file, loading: true }, 'source'), false)
 
   const searchPosition = documentReviewHtml.indexOf('id="artifact-search-toggle"')
   const viewPosition = documentReviewHtml.indexOf('id="artifact-view-switch"')
   assert.ok(searchPosition >= 0 && searchPosition < viewPosition)
   assert.ok(documentReviewHtml.includes('id="artifact-search-panel"'))
+})
+
+test('resolves Markdown images from the document directory without escaping the workspace', () => {
+  const file = {
+    root: '/work/project',
+    path: '/work/project/docs/guide.md',
+    relativePath: 'docs/guide.md',
+  }
+  assert.deepEqual(resolveMarkdownImagePath(file, 'images/example.jpg'), { path: 'docs/images/example.jpg' })
+  assert.deepEqual(resolveMarkdownImagePath(file, '../images/example.jpg'), { path: 'images/example.jpg' })
+  assert.deepEqual(resolveMarkdownImagePath(file, '/images/example.jpg'), { path: 'images/example.jpg' })
+  assert.deepEqual(resolveMarkdownImagePath(file, 'images/a%20b.png?raw=1#preview'), { path: 'docs/images/a b.png' })
+  assert.deepEqual(resolveMarkdownImagePath(file, 'data:image/png;base64,abc'), { embedded: 'data:image/png;base64,abc' })
+  assert.equal(resolveMarkdownImagePath(file, '../../../outside.png'), null)
+  assert.equal(resolveMarkdownImagePath(file, 'https://example.com/image.png'), null)
+  assert.match(documentReviewApp, /gatewayFetch\('\/studio\/review-image'/u)
+  assert.match(documentReviewApp, /hydrateMarkdownImages\(file, content\)/u)
 })
 
 test('document outline stays inside the document shell and uses compact header actions', () => {

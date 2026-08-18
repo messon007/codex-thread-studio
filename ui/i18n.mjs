@@ -250,6 +250,8 @@ const chinese = {
   'Document outline': '文档目录',
   'Close document outline': '关闭文档目录',
   'Search document': '搜索文档',
+  'Image unavailable': '图片无法显示',
+  'Only workspace-local, data, and blob images can be displayed': '只能显示工作区内、本地嵌入或临时 Blob 图片',
   'Filter sections…': '筛选章节…',
   'No matching sections': '没有匹配章节',
   'Untitled section': '未命名章节',
@@ -960,7 +962,7 @@ let preference = 'system'
 let locale = 'en-US'
 let observer = null
 const listeners = new Set()
-const skippedSelector = '#terminal, #thread-title, #thread-path, .thread-copy, #transcript .markdown-body, .message.user, pre, blockquote, code, .favorite-card > strong, .favorite-card-answer, .favorite-card-question, .favorite-card footer span, #favorite-source-label, #favorite-detail-source, .favorite-answer-preview, .favorite-question-preview, .favorite-question-full, #favorite-detail-title, .favorite-detail-section.answer, [data-no-i18n]'
+const skippedSelector = '#terminal, #thread-title, #thread-path, .thread-copy, #transcript .markdown-body, .artifact-content.markdown-body, .message.user, pre, blockquote, code, .favorite-card > strong, .favorite-card-answer, .favorite-card-question, .favorite-card footer span, #favorite-source-label, #favorite-detail-source, .favorite-answer-preview, .favorite-question-preview, .favorite-question-full, #favorite-detail-title, .favorite-detail-section.answer, [data-no-i18n]'
 
 export function resolveLanguage(value = preference, systemLanguage = globalThis.navigator?.language || 'en-US') {
   if (value === 'zh-CN' || value === 'en-US') return value

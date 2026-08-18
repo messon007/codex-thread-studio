@@ -54,6 +54,8 @@ test('CodeMirror stays constrained to the document rail when long lines are pres
   assert.match(styles, /\.artifact-editor-shell \{[^}]*min-width: 0;[^}]*overflow: hidden;/u)
   assert.match(editor, /'&': \{[\s\S]{0,180}width: '100%'[\s\S]{0,120}minWidth: '0'[\s\S]{0,120}maxWidth: '100%'[\s\S]{0,120}flex: '1 1 auto'/u)
   assert.match(editor, /'\.cm-scroller': \{ width: '100%', minWidth: '0', overflow: 'auto'/u)
+  assert.match(editor, /openSearchPanel/u)
+  assert.match(editor, /openSearch: \(\) => openSearchPanel\(view\)/u)
 })
 
 test('session and every right-area header share one exact divider height', () => {

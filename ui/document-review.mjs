@@ -15,8 +15,59 @@ export function artifactSearchAvailable(file, view) {
     && !file.loading
     && !file.error
     && typeof file.content === 'string'
-    && (view === 'preview' || view === 'source'),
+    && (view === 'preview' || view === 'source' || view === 'edit'),
   )
+}
+
+export function artifactInlineSearchAvailable(file, view) {
+  return artifactSearchAvailable(file, view) && view !== 'edit'
+}
+
+export function resolveMarkdownImagePath(file, source) {
+  const raw = String(source || '').trim()
+  if (!raw || raw.startsWith('#') || raw.startsWith('//')) return null
+  if (/^(?:data|blob):/iu.test(raw)) return { embedded: raw }
+  if (/^[a-z][a-z\d+.-]*:/iu.test(raw)) return null
+
+  let decoded
+  try {
+    decoded = decodeURIComponent(raw.split(/[?#]/u, 1)[0])
+  } catch {
+    return null
+  }
+  const reference = decoded.replaceAll('\\', '/')
+  if (!reference || reference.includes('\0')) return null
+
+  const root = String(file?.root || '').replaceAll('\\', '/').replace(/\/+$/u, '')
+  const absoluteDocument = String(file?.path || '').replaceAll('\\', '/')
+  const relativeDocument = String(file?.relativePath || '').replaceAll('\\', '/')
+  const rootPrefix = root ? `${root}/` : ''
+  let candidate
+
+  if (rootPrefix && absoluteDocument.startsWith(rootPrefix)) {
+    const documentPath = absoluteDocument.slice(rootPrefix.length)
+    candidate = reference.startsWith('/')
+      ? reference.slice(1)
+      : `${documentPath.slice(0, Math.max(0, documentPath.lastIndexOf('/') + 1))}${reference}`
+  } else if (relativeDocument) {
+    candidate = reference.startsWith('/')
+      ? reference.slice(1)
+      : `${relativeDocument.slice(0, Math.max(0, relativeDocument.lastIndexOf('/') + 1))}${reference}`
+  } else {
+    return null
+  }
+
+  const segments = []
+  for (const segment of candidate.split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (!segments.length) return null
+      segments.pop()
+    } else {
+      segments.push(segment)
+    }
+  }
+  return segments.length ? { path: segments.join('/') } : null
 }
 
 export function normalizeAnnotationTarget(draft = {}) {

@@ -5,6 +5,7 @@ import {
   indentWithTab,
   keymap,
   markdown,
+  openSearchPanel,
 } from './vendor/workspace-editor.mjs'
 
 const editorTheme = EditorView.theme({
@@ -34,6 +35,37 @@ const editorTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none', boxShadow: 'inset 2px 0 0 var(--brand)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--brand-soft) !important' },
   '.cm-searchMatch': { backgroundColor: 'var(--amber-soft)', outline: '1px solid var(--amber)' },
+  '.cm-panels': {
+    borderColor: 'var(--border)',
+    backgroundColor: 'var(--panel-soft)',
+    color: 'var(--muted)',
+    fontFamily: 'var(--ui-font-family)',
+    fontSize: '11px',
+  },
+  '.cm-panel.cm-search': { padding: '8px 38px 8px 10px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
+  '.cm-panel.cm-search label': { display: 'inline-flex', alignItems: 'center', gap: '4px' },
+  '.cm-panel.cm-search input': {
+    height: '28px',
+    padding: '0 8px',
+    border: '1px solid var(--border-strong)',
+    borderRadius: '7px',
+    outline: 'none',
+    backgroundColor: 'var(--panel)',
+    color: 'var(--text)',
+    font: '500 11px var(--ui-font-family)',
+  },
+  '.cm-panel.cm-search input:focus': { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px var(--brand-soft)' },
+  '.cm-panel.cm-search button': {
+    minHeight: '27px',
+    padding: '0 9px',
+    border: '1px solid var(--border)',
+    borderRadius: '7px',
+    backgroundColor: 'var(--panel)',
+    color: 'var(--muted)',
+    font: '600 10px var(--ui-font-family)',
+  },
+  '.cm-panel.cm-search button:hover': { borderColor: 'var(--border-strong)', color: 'var(--text)' },
+  '.cm-panel.cm-search [name=close]': { top: '8px', right: '10px', width: '27px', padding: '0', fontSize: '15px' },
 })
 
 export function createWorkspaceEditor({ parent, content = '', language = 'text', onChange, onSave }) {
@@ -57,6 +89,7 @@ export function createWorkspaceEditor({ parent, content = '', language = 'text',
   return {
     view,
     focus: () => view.focus(),
+    openSearch: () => openSearchPanel(view),
     value: () => view.state.doc.toString(),
     revealOffset: (offset) => {
       const anchor = Math.min(view.state.doc.length, Math.max(0, Number(offset) || 0))

@@ -389,6 +389,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .markdown-body .markdown-mermaid.show-source .markdown-mermaid-source { display: block; }
 .markdown-mermaid[data-mermaid-state="error"] .markdown-mermaid-canvas { min-height: 72px; color: var(--red); background: color-mix(in srgb, var(--red-soft) 45%, var(--panel)); }
 .markdown-table-wrap { max-width: 100%; margin: 14px 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.artifact-content .markdown-table-wrap { content-visibility: auto; contain-intrinsic-size: auto 260px; }
 .markdown-body .markdown-table-wrap table { width: max-content; min-width: 100%; margin: 0; display: table; }
 .markdown-body .markdown-table-wrap table th { font-weight: 750; }
 .markdown-body .markdown-table-wrap table tr { background: transparent; }
@@ -543,6 +544,9 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .artifact-reader-shell.compact.outline-open .artifact-outline-backdrop { display: block; }
 .artifact-content { min-width: 0; flex: 1; min-height: 0; overflow: auto; padding: 30px clamp(25px, 4vw, 54px) 56px; scroll-behavior: smooth; user-select: text; }
 .artifact-content.markdown-body { color: var(--text); font-size: 14px; line-height: 1.75; }
+.artifact-content .markdown-local-image { display: block; max-width: 100%; height: auto; margin: 14px auto; border-radius: 6px; }
+.artifact-content .markdown-local-image.loading { width: min(100%, 520px); min-height: 140px; border: 1px solid var(--border); background: linear-gradient(100deg, var(--panel-soft) 30%, color-mix(in srgb, var(--panel-soft) 68%, var(--border)) 50%, var(--panel-soft) 70%); background-size: 240% 100%; animation: markdown-image-loading 1.4s ease infinite; }
+.artifact-content .markdown-image-error { min-height: 58px; margin: 14px 0; padding: 12px 14px; display: flex; align-items: center; overflow-wrap: anywhere; border: 1px dashed color-mix(in srgb, var(--red) 42%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--red-soft) 34%, var(--panel)); color: var(--muted); font: 500 11px/1.5 var(--ui-font-family); }
 .artifact-source { margin: 0; color: var(--text); font: var(--code-font-weight) var(--code-font-size)/1.72 var(--code-font-family); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-content.editing { padding: 0; overflow: hidden; background: var(--panel); }
 .artifact-editor-shell { width: 100%; height: 100%; min-width: 0; min-height: 0; position: relative; display: flex; overflow: hidden; }
@@ -569,6 +573,7 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .artifact-search-highlight.current { background: color-mix(in srgb, var(--amber) 28%, var(--panel)); outline: 1px solid color-mix(in srgb, var(--amber) 70%, transparent); }
 .artifact-outline-target { animation: artifact-outline-target 1.25s ease-out; }
 @keyframes artifact-outline-target { 0%, 32% { background: var(--brand-soft); box-shadow: 0 0 0 7px var(--brand-soft); } 100% { background: transparent; box-shadow: 0 0 0 0 transparent; } }
+@keyframes markdown-image-loading { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 .artifact-state { flex: 1; padding: 60px 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .artifact-state > span { width: 34px; height: 34px; margin-bottom: 12px; display: grid; place-items: center; border-radius: 10px; background: var(--panel-strong); color: var(--brand); }
 .artifact-state.error > span { background: var(--red-soft); color: var(--red); font-weight: 800; }

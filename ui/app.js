@@ -41,12 +41,14 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import {
+  artifactInlineSearchAvailable,
   artifactSearchAvailable,
   createFileRangeTarget,
   fileDisplayName,
   findTextMatchRanges,
   isHtmlFile,
   isMarkdownFile,
+  resolveMarkdownImagePath,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
@@ -359,6 +361,8 @@ let artifactOutlineObserver = null
 let artifactOutlineResizeObserver = null
 let artifactOutlineLocationCleanup = null
 let artifactOutlineRefreshTimer = null
+let artifactOutlineIdleCallback = null
+let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
 const openCodeStatusReconcileTimers = new Map()
@@ -372,6 +376,8 @@ let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
+const MAX_MARKDOWN_RENDER_CACHE_BYTES = 24 * 1024 * 1024
+let markdownRenderCacheBytes = 0
 const MAX_MERMAID_SOURCE_CHARS = 100_000
 let mermaidObserver = null
 let mermaidRenderChain = Promise.resolve()
@@ -3713,10 +3719,55 @@ function renderItem(item, turnId, { forkable = false } = {}) {
 function renderMarkdown(value) {
   const source = String(value || '')
   if (!source) return ''
-  const cacheKey = `${getLocale()}\u0000${source}`
-  const cached = markdownRenderCache.get(cacheKey)
+  const cacheKey = `message\u0000${getLocale()}\u0000${source}`
+  const cached = readMarkdownRenderCache(cacheKey)
   if (cached != null) return cached
-  const dirty = marked.parse(source)
+  const rendered = renderMarkdownHtml(source)
+  writeMarkdownRenderCache(cacheKey, rendered, rendered.length * 2)
+  return rendered
+}
+
+function renderMarkdownDocument(value) {
+  const source = String(value || '')
+  if (!source) return { html: '', outline: [] }
+  const cacheKey = `document\u0000${getLocale()}\u0000${source}`
+  const cached = readMarkdownRenderCache(cacheKey)
+  if (cached != null) return cached
+  const tokens = marked.lexer(source)
+  const rendered = {
+    html: renderMarkdownHtml(source, { tokens, documentImages: true }),
+    outline: extractMarkdownOutline(source, tokens),
+  }
+  const outlineSize = rendered.outline.reduce((size, item) => size + item.id.length + item.label.length + 64, 0)
+  writeMarkdownRenderCache(cacheKey, rendered, (rendered.html.length * 2) + outlineSize)
+  return rendered
+}
+
+function readMarkdownRenderCache(key) {
+  const entry = markdownRenderCache.get(key)
+  if (!entry) return null
+  markdownRenderCache.delete(key)
+  markdownRenderCache.set(key, entry)
+  return entry.value
+}
+
+function writeMarkdownRenderCache(key, value, size) {
+  const previous = markdownRenderCache.get(key)
+  if (previous) markdownRenderCacheBytes -= previous.size
+  const boundedSize = Math.max(0, Number(size) || 0) + (key.length * 2)
+  markdownRenderCache.delete(key)
+  markdownRenderCache.set(key, { value, size: boundedSize })
+  markdownRenderCacheBytes += boundedSize
+  while (markdownRenderCacheBytes > MAX_MARKDOWN_RENDER_CACHE_BYTES && markdownRenderCache.size > 1) {
+    const oldestKey = markdownRenderCache.keys().next().value
+    const oldest = markdownRenderCache.get(oldestKey)
+    markdownRenderCache.delete(oldestKey)
+    markdownRenderCacheBytes -= oldest?.size || 0
+  }
+}
+
+function renderMarkdownHtml(source, { tokens = null, documentImages = false } = {}) {
+  const dirty = tokens ? marked.parser(tokens) : marked.parse(source)
   const clean = DOMPurify.sanitize(dirty, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ['button', 'form', 'iframe', 'object', 'embed', 'script', 'style'],
@@ -3730,6 +3781,17 @@ function renderMarkdown(value) {
     link.removeAttribute('target')
     link.rel = 'noopener noreferrer'
   })
+  if (documentImages) {
+    template.content.querySelectorAll('img').forEach((image) => {
+      const source = image.getAttribute('src') || ''
+      image.dataset.markdownImageSource = source
+      image.removeAttribute('src')
+      image.removeAttribute('srcset')
+      image.loading = 'lazy'
+      image.decoding = 'async'
+      image.classList.add('markdown-local-image', 'loading')
+    })
+  }
   template.content.querySelectorAll('input').forEach((input) => {
     if (input.type !== 'checkbox') input.remove()
     else input.disabled = true
@@ -3786,12 +3848,97 @@ function renderMarkdown(value) {
     table.replaceWith(wrapper)
     wrapper.append(table)
   })
-  const rendered = template.innerHTML
-  if (source.length <= 64_000) {
-    markdownRenderCache.set(cacheKey, rendered)
-    if (markdownRenderCache.size > 256) markdownRenderCache.delete(markdownRenderCache.keys().next().value)
+  return template.innerHTML
+}
+
+function hydrateMarkdownImages(file, content) {
+  disconnectMarkdownImageObserver()
+  const images = [...content.querySelectorAll('img[data-markdown-image-source]')]
+  if (!images.length) return
+
+  const load = (image) => {
+    artifactMarkdownImageObserver?.unobserve(image)
+    loadMarkdownImage(file, image).catch((error) => showMarkdownImageError(image, error))
   }
-  return rendered
+  if (!globalThis.IntersectionObserver) {
+    images.forEach(load)
+    return
+  }
+  artifactMarkdownImageObserver = new IntersectionObserver((entries) => {
+    entries.filter((entry) => entry.isIntersecting).forEach((entry) => load(entry.target))
+  }, { root: content, rootMargin: '600px 0px' })
+  images.forEach((image) => artifactMarkdownImageObserver.observe(image))
+}
+
+async function loadMarkdownImage(file, image) {
+  if (state.artifact !== file || !image.isConnected) return
+  const source = image.dataset.markdownImageSource || ''
+  const target = resolveMarkdownImagePath(file, source)
+  if (!target) throw new Error(t('Only workspace-local, data, and blob images can be displayed'))
+  if (target.embedded) {
+    await assignMarkdownImageSource(image, target.embedded)
+    return
+  }
+
+  file.markdownImageAssets ||= new Map()
+  let pending = file.markdownImageAssets.get(target.path)
+  if (!pending) {
+    pending = gatewayFetch('/studio/review-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: file.root, path: target.path }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        const result = await response.json().catch(() => null)
+        throw new Error(result?.error?.message || `HTTP ${response.status}`)
+      }
+      const blob = await response.blob()
+      if (!blob.type.startsWith('image/')) throw new Error(t('The image response format is invalid'))
+      const url = URL.createObjectURL(blob)
+      file.markdownImageObjectUrls ||= new Set()
+      file.markdownImageObjectUrls.add(url)
+      return url
+    })
+    file.markdownImageAssets.set(target.path, pending)
+  }
+  const url = await pending
+  if (state.artifact !== file || !image.isConnected) return
+  await assignMarkdownImageSource(image, url)
+}
+
+function assignMarkdownImageSource(image, source) {
+  return new Promise((resolve, reject) => {
+    image.addEventListener('load', () => {
+      image.classList.remove('loading')
+      resolve()
+    }, { once: true })
+    image.addEventListener('error', () => reject(new Error(t('Unable to decode image'))), { once: true })
+    image.src = source
+  })
+}
+
+function showMarkdownImageError(image, error) {
+  if (!image.isConnected) return
+  const source = image.dataset.markdownImageSource || ''
+  const fallback = document.createElement('span')
+  fallback.className = 'markdown-image-error'
+  fallback.setAttribute('role', 'note')
+  fallback.dataset.noI18n = ''
+  fallback.textContent = `${t('Image unavailable')}: ${image.alt || source}`
+  fallback.title = error?.message || String(error || '')
+  image.replaceWith(fallback)
+}
+
+function disconnectMarkdownImageObserver() {
+  artifactMarkdownImageObserver?.disconnect()
+  artifactMarkdownImageObserver = null
+}
+
+function disposeMarkdownImageAssets(file) {
+  disconnectMarkdownImageObserver()
+  file?.markdownImageObjectUrls?.forEach((url) => URL.revokeObjectURL(url))
+  file?.markdownImageObjectUrls?.clear()
+  file?.markdownImageAssets?.clear()
 }
 
 function startMermaidRendering() {
@@ -5228,6 +5375,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   disposeArtifactEditor()
   disposeEpubReader()
   disposeRichArtifactReader()
+  disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
   state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, loading: true }
   const endpoint = kind === 'image'
@@ -5365,6 +5513,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
   disposeArtifactEditor()
   disposeEpubReader()
   disposeRichArtifactReader()
+  disposeMarkdownImageAssets(state.artifact)
   resetArtifactOutline({ preserveOpen: true })
   state.artifact = null
   resetArtifactSearch()
@@ -5390,6 +5539,10 @@ function setArtifactView(view) {
 
 function toggleArtifactSearch() {
   if ($('#artifact-search-toggle').classList.contains('hidden')) return
+  if (state.artifactView === 'edit') {
+    artifactEditor?.openSearch?.()
+    return
+  }
   state.artifactSearchOpen = !state.artifactSearchOpen
   $('#artifact-search-toggle').classList.toggle('active', state.artifactSearchOpen)
   $('#artifact-search-toggle').setAttribute('aria-expanded', String(state.artifactSearchOpen))
@@ -5427,8 +5580,7 @@ function resetArtifactOutline({ preserveOpen = false } = {}) {
   disposeArtifactOutlineBindings()
   artifactOutlineResizeObserver?.disconnect()
   artifactOutlineResizeObserver = null
-  clearTimeout(artifactOutlineRefreshTimer)
-  artifactOutlineRefreshTimer = null
+  cancelArtifactOutlineWork()
   state.artifactOutlineFilter = ''
   state.artifactOutlineActiveId = ''
   state.artifactOutlineCollapsed = new Set()
@@ -5558,12 +5710,40 @@ function updateArtifactOutlineLayout() {
   shell.classList.toggle('compact', shell.clientWidth > 0 && shell.clientWidth < 680)
 }
 
-function configureTextArtifactOutline(file, content, source, { markdown, html, view }) {
+function scheduleTextArtifactOutline(file, content, source, options) {
+  cancelArtifactOutlineWork()
+  const run = () => {
+    artifactOutlineIdleCallback = null
+    if (state.artifact !== file || !content.isConnected) return
+    configureTextArtifactOutline(file, content, source, options)
+  }
+  artifactOutlineRefreshTimer = setTimeout(() => {
+    artifactOutlineRefreshTimer = null
+    if (globalThis.requestIdleCallback) {
+      artifactOutlineIdleCallback = requestIdleCallback(run, { timeout: 400 })
+    } else {
+      run()
+    }
+  }, 0)
+}
+
+function cancelArtifactOutlineWork() {
+  clearTimeout(artifactOutlineRefreshTimer)
+  artifactOutlineRefreshTimer = null
+  if (artifactOutlineIdleCallback != null && globalThis.cancelIdleCallback) {
+    cancelIdleCallback(artifactOutlineIdleCallback)
+  }
+  artifactOutlineIdleCallback = null
+}
+
+function configureTextArtifactOutline(file, content, source, { markdown, html, view, items: preparedItems = null }) {
   if (!markdown && !html) {
     setArtifactOutline(file, [])
     return
   }
-  let items = markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
+  let items = Array.isArray(preparedItems)
+    ? preparedItems
+    : markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
   if (view === 'preview') {
     const headings = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
     if (html) {
@@ -5687,6 +5867,7 @@ async function saveArtifact({ overwrite = false } = {}) {
 function renderArtifact() {
   const rail = $('#artifact-rail')
   const file = state.artifact
+  disconnectMarkdownImageObserver()
   if (!file) {
     disposeArtifactEditor()
     disposeArtifactOutlineBindings()
@@ -5738,11 +5919,12 @@ function renderArtifact() {
   $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
   $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
   const canSearch = artifactSearchAvailable(file, state.artifactView)
-  if (!canSearch) state.artifactSearchOpen = false
+  const canInlineSearch = artifactInlineSearchAvailable(file, state.artifactView)
+  if (!canInlineSearch) state.artifactSearchOpen = false
   $('#artifact-search-toggle').classList.toggle('hidden', !canSearch)
-  $('#artifact-search-toggle').classList.toggle('active', canSearch && state.artifactSearchOpen)
-  $('#artifact-search-toggle').setAttribute('aria-expanded', String(canSearch && state.artifactSearchOpen))
-  $('#artifact-search-panel').classList.toggle('hidden', !canSearch || !state.artifactSearchOpen)
+  $('#artifact-search-toggle').classList.toggle('active', canInlineSearch && state.artifactSearchOpen)
+  $('#artifact-search-toggle').setAttribute('aria-expanded', String(canInlineSearch && state.artifactSearchOpen))
+  $('#artifact-search-panel').classList.toggle('hidden', !canInlineSearch || !state.artifactSearchOpen)
   $('#artifact-search-input').setAttribute('placeholder', t('Search document content…'))
   $('#artifact-search-prev').title = t('Previous match')
   $('#artifact-search-prev').setAttribute('aria-label', t('Previous match'))
@@ -5802,8 +5984,13 @@ function renderArtifact() {
     content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
     mountArtifactEditor(file, content.firstElementChild, renderedContent).catch(showError)
   } else if (markdown && state.artifactView === 'preview') {
+    const rendered = renderMarkdownDocument(renderedContent)
     content.className = 'artifact-content markdown-body'
-    content.innerHTML = renderMarkdown(renderedContent)
+    content.innerHTML = rendered.html
+    hydrateMarkdownImages(file, content)
+    scheduleTextArtifactOutline(file, content, renderedContent, {
+      markdown, html, view: state.artifactView, items: rendered.outline,
+    })
   } else if (html && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body artifact-html-preview'
     content.innerHTML = renderStaticHtml(renderedContent)
@@ -5811,7 +5998,9 @@ function renderArtifact() {
     content.className = 'artifact-content'
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
   }
-  configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
+  if (!(markdown && state.artifactView === 'preview')) {
+    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
+  }
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
 }
@@ -5826,8 +6015,7 @@ function disposeArtifactOutlineBindings() {
   artifactOutlineObserver = null
   artifactOutlineLocationCleanup?.()
   artifactOutlineLocationCleanup = null
-  clearTimeout(artifactOutlineRefreshTimer)
-  artifactOutlineRefreshTimer = null
+  cancelArtifactOutlineWork()
 }
 
 function disposeEpubReader() {
@@ -6015,7 +6203,7 @@ async function mountArtifactEditor(file, parent, content) {
       $('#artifact-save').disabled = !file.dirty
       $('#artifact-meta').textContent = t('{lines} lines · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
       if (isMarkdownFile(file.path) || isHtmlFile(file.path)) {
-        clearTimeout(artifactOutlineRefreshTimer)
+        cancelArtifactOutlineWork()
         artifactOutlineRefreshTimer = setTimeout(() => {
           artifactOutlineRefreshTimer = null
           if (state.artifact !== file || state.artifactView !== 'edit') return
@@ -6137,7 +6325,7 @@ function clearArtifactSearchHighlights() {
 
 function applyArtifactSearchHighlights() {
   const content = $('#artifact-content')
-  if (!content || !artifactSearchAvailable(state.artifact, state.artifactView)) {
+  if (!content || !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
     clearArtifactSearchHighlights()
     return
   }
@@ -6183,7 +6371,7 @@ function renderArtifactSearchStatus() {
   const total = state.artifactSearchMatches.length
   const query = state.artifactSearch.trim()
   if (!summary) return
-  if (!query || !artifactSearchAvailable(state.artifact, state.artifactView)) {
+  if (!query || !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
     summary.textContent = ''
     $('#artifact-search-prev').disabled = true
     $('#artifact-search-next').disabled = true

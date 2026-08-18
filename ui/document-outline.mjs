@@ -3,9 +3,9 @@ import { marked } from './vendor/marked.esm.js'
 const MAX_OUTLINE_ITEMS = 2_000
 const MAX_LABEL_LENGTH = 512
 
-export function extractMarkdownOutline(source) {
+export function extractMarkdownOutline(source, parsedTokens = null) {
   const value = String(source || '')
-  const tokens = marked.lexer(value)
+  const tokens = Array.isArray(parsedTokens) ? parsedTokens : marked.lexer(value)
   const items = []
   const occurrences = new Map()
   let cursor = 0

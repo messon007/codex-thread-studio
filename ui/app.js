@@ -179,6 +179,11 @@ import {
 import { SessionDispatchRegistry } from './session-dispatch.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
+import {
+  filterSessionOccurrences,
+  localSessionOccurrences,
+  mergeSessionOccurrences,
+} from './session-search.mjs'
 
 const commentSources = new CommentSourceRegistry()
   .register(createChatCommentProvider())
@@ -278,6 +283,28 @@ const state = {
   selectedId: null,
   search: '',
   filter: 'all',
+  sessionLibrary: {
+    open: false,
+    loading: false,
+    loaded: false,
+    query: '',
+    entries: [],
+    selected: null,
+    error: '',
+    generation: 0,
+    nextCursors: {},
+    returnBackend: null,
+    returnId: null,
+  },
+  threadSearch: {
+    open: false,
+    query: '',
+    type: 'all',
+    entries: [],
+    selected: -1,
+    loading: false,
+    generation: 0,
+  },
   attentionThreads: new Set(),
   collapsedThreadGroups: new Set(),
   model: createCodexViewModel(),
@@ -358,6 +385,8 @@ let transcriptFrame = null
 const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
+let threadContentSearchTimer = null
+const threadOccurrenceSearchSupport = new Map()
 let artifactSearchTimer = null
 let artifactOutlineObserver = null
 let artifactOutlineResizeObserver = null
@@ -585,6 +614,9 @@ function bindUI() {
   $('#studio-menu-button').addEventListener('click', () => {
     toggleActionMenu('studio-menu', 'studio-menu-button')
   })
+  $('#open-archived-sessions').addEventListener('click', () => openArchivedSessions().catch(showError))
+  $('#close-archived-sessions').addEventListener('click', () => closeArchivedSessions().catch(showError))
+  $('#restore-archived-session').addEventListener('click', () => restoreArchivedSession().catch(showError))
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
@@ -592,7 +624,8 @@ function bindUI() {
   $('#new-thread-form').addEventListener('submit', createThread)
   $('#new-thread-backend').addEventListener('change', handleNewThreadBackendChange)
   $('#thread-search').addEventListener('input', (event) => {
-    state.search = event.target.value.trim().toLowerCase()
+    if (state.sessionLibrary.open) state.sessionLibrary.query = event.target.value.trim().toLowerCase()
+    else state.search = event.target.value.trim().toLowerCase()
     renderThreadList()
   })
   $$('.thread-filter').forEach((button) => button.addEventListener('click', () => {
@@ -600,6 +633,20 @@ function bindUI() {
     renderThreadList()
   }))
   $('#thread-more-button').addEventListener('click', () => toggleActionMenu('thread-more-menu', 'thread-more-button'))
+  $('#open-thread-search').addEventListener('click', openThreadContentSearch)
+  $('#close-thread-search').addEventListener('click', () => closeThreadContentSearch())
+  $('#thread-content-search-input').addEventListener('input', handleThreadContentSearchInput)
+  $('#thread-content-search-input').addEventListener('focus', () => renderThreadContentSearch())
+  $('#thread-content-search-input').addEventListener('keydown', handleThreadContentSearchKeydown)
+  $('#thread-content-search-prev').addEventListener('click', () => navigateThreadContentSearch(-1))
+  $('#thread-content-search-next').addEventListener('click', () => navigateThreadContentSearch(1))
+  $('#thread-content-search-type').addEventListener('change', (event) => {
+    state.threadSearch.type = event.target.value
+    state.threadSearch.selected = filteredThreadSearchEntries().length ? 0 : -1
+    renderThreadContentSearch()
+  })
+  $('#thread-content-search-results').addEventListener('mousedown', (event) => event.preventDefault())
+  $('#thread-content-search-results').addEventListener('click', handleThreadContentSearchResultClick)
   $('#refresh-thread').addEventListener('click', () => {
     closeActionMenus()
     refreshSelectedThread()
@@ -761,10 +808,14 @@ function bindUI() {
     if (!event.target.closest('#selection-popover, .content-menu-anchor')) hideSelectionPopover()
     if (!event.target.closest('.menu-anchor')) closeActionMenus()
     if (!event.target.closest('#session-map-item-menu, .session-map-row-menu')) closeSessionMapItemMenu()
+    if (!event.target.closest('#thread-content-search')) hideThreadContentSearchResults()
   })
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
-    if (modifier && event.key.toLowerCase() === 'n') {
+    if (modifier && event.key.toLowerCase() === 'f' && selectedThread() && !event.target.closest('.artifact-rail, .workspace-files-rail, .workspace-terminal-rail, .workspace-review-rail, .embedded-browser-rail')) {
+      event.preventDefault()
+      openThreadContentSearch()
+    } else if (modifier && event.key.toLowerCase() === 'n') {
       event.preventDefault()
       openNewThreadDialog()
     } else if (modifier && event.key.toLowerCase() === 'b') {
@@ -773,6 +824,8 @@ function bindUI() {
     } else if (event.key === '/' && !isTypingTarget(event.target)) {
       event.preventDefault()
       $('#thread-search').focus()
+    } else if (event.key === 'Escape' && state.threadSearch.open) {
+      closeThreadContentSearch()
     } else if (event.key === 'Escape') {
       const artifactWasOpen = !$('#artifact-rail').classList.contains('hidden')
       hideSelectionPopover()
@@ -1475,6 +1528,12 @@ function handleAppServerMessage(message) {
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
     const backend = state.backend
     const threadId = message.params?.threadId
+    state.sessionLibrary.loaded = false
+    if (message.method === 'thread/deleted') {
+      state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === backend && entry.thread.id === threadId))
+      if (state.sessionLibrary.selected?.backend === backend && state.sessionLibrary.selected.thread.id === threadId) state.sessionLibrary.selected = null
+    }
+    renderArchivedSessionBadge()
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
     state.threadsByBackend[backend] = state.threads
     if (message.method === 'thread/deleted') {
@@ -1500,6 +1559,13 @@ function handleAppServerMessage(message) {
     }
     renderThreadList()
     renderWorkspace()
+    return
+  }
+
+  if (message.method === 'thread/unarchived') {
+    state.sessionLibrary.loaded = false
+    renderArchivedSessionBadge()
+    if (state.sessionLibrary.open) loadArchivedSessions().catch(showError)
     return
   }
 
@@ -1808,6 +1874,7 @@ function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
       }
     }
     socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
+    socket.onclose = () => finish(new Error(t('The {backend} App Server connection closed', { backend: descriptor.name })))
   })
 }
 
@@ -1909,6 +1976,41 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
       }
     }
     socket.onerror = () => finish(new Error(t('Unable to read the {backend} session catalog', { backend: descriptor.name })))
+  })
+}
+
+function requestCodexBackend(backend, method, params = {}, timeoutMs = 15_000) {
+  return new Promise((resolve, reject) => {
+    const descriptor = backendDescriptor(backend)
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
+    const id = -(Date.now() + Math.floor(Math.random() * 100_000))
+    const timer = setTimeout(() => finish(new Error(t('{backend} request timed out', { backend: descriptor.name }))), timeoutMs)
+    let requested = false
+    const finish = (error, value) => {
+      clearTimeout(timer)
+      socket.onclose = null
+      socket.close()
+      if (error) reject(error)
+      else resolve(value)
+    }
+    socket.onmessage = (event) => {
+      let message
+      try { message = JSON.parse(event.data) } catch { return }
+      if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
+        finish(new Error(message.params?.message || t('{backend} App Server is unavailable', { backend: descriptor.name })))
+        return
+      }
+      if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
+        requested = true
+        socket.send(JSON.stringify({ id, method, params }))
+        return
+      }
+      if (message.id !== id) return
+      if (message.error) finish(new Error(message.error.message || `${method} failed`))
+      else finish(null, message.result)
+    }
+    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
   })
 }
 
@@ -2141,6 +2243,10 @@ async function loadThreads() {
   }
   renderThreadList()
   refreshInactiveCatalog()
+  if (state.sessionLibrary.open) {
+    renderWorkspace()
+    return
+  }
   const visibleThreads = sidebarThreadsForBackend(state.backend).filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
   const preferred = state.selectedId
   const recent = [...visibleThreads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
@@ -2172,7 +2278,186 @@ function visibleThreadEntries() {
   })
 }
 
+async function openArchivedSessions() {
+  closeActionMenus()
+  closeThreadContentSearch()
+  if (!state.sessionLibrary.open) {
+    state.sessionLibrary.returnBackend = state.backend
+    state.sessionLibrary.returnId = state.selectedId
+  }
+  state.sessionLibrary.open = true
+  $('#archived-sidebar-header').classList.remove('hidden')
+  $('.thread-filters').classList.add('hidden')
+  const search = $('#thread-search')
+  search.value = state.sessionLibrary.query
+  search.placeholder = t('Search archived sessions')
+  renderThreadList()
+  if (!state.sessionLibrary.loaded) await loadArchivedSessions()
+}
+
+async function closeArchivedSessions({ restoredId = null, restoredBackend = null } = {}) {
+  const returnBackend = restoredBackend || state.sessionLibrary.returnBackend || state.backend
+  const returnId = restoredId || state.sessionLibrary.returnId || state.selectedByBackend[returnBackend]
+  state.sessionLibrary.open = false
+  state.sessionLibrary.selected = null
+  state.sessionLibrary.returnBackend = null
+  state.sessionLibrary.returnId = null
+  $('#archived-sidebar-header').classList.add('hidden')
+  $('.thread-filters').classList.remove('hidden')
+  const search = $('#thread-search')
+  search.value = state.search
+  search.placeholder = t('Search sessions or paths')
+  if (returnBackend !== state.backend) {
+    await switchBackend(returnBackend, { selectedId: returnId || undefined })
+    await waitFor(() => state.backend === returnBackend && state.ready, 15_000)
+    if (returnId) await selectThread(returnId, { force: true, backend: returnBackend }).catch(showError)
+    return
+  }
+  state.selectedId = returnId || null
+  state.model = createCodexViewModel()
+  renderThreadList()
+  renderWorkspace()
+  renderTranscript()
+  if (returnId && state.threads.some((thread) => thread.id === returnId)) await selectThread(returnId, { force: true })
+  else await loadThreads()
+}
+
+async function loadArchivedSessions({ append = false } = {}) {
+  const generation = ++state.sessionLibrary.generation
+  state.sessionLibrary.loading = true
+  state.sessionLibrary.error = ''
+  renderThreadList()
+  const backends = BACKEND_IDS.filter(isCodexBackend)
+  const results = await Promise.allSettled(backends.map(async (backend) => {
+    const cursor = append ? state.sessionLibrary.nextCursors[backend] : null
+    if (append && !cursor) return { backend, data: [], nextCursor: null }
+    const result = await requestCodexBackend(backend, 'thread/list', {
+      archived: true,
+      limit: 100,
+      cursor,
+      sortKey: 'updated_at',
+      sortDirection: 'desc',
+    })
+    return { backend, data: Array.isArray(result?.data) ? result.data : [], nextCursor: result?.nextCursor || null }
+  }))
+  if (generation !== state.sessionLibrary.generation) return
+  const successful = results.filter((result) => result.status === 'fulfilled').map((result) => result.value)
+  const entries = successful.flatMap(({ backend, data }) => data.map((thread) => ({ backend, thread: { ...thread, archived: true } })))
+  const existing = append ? state.sessionLibrary.entries : []
+  const byKey = new Map([...existing, ...entries].map((entry) => [threadCatalogKey(entry.backend, entry.thread.id), entry]))
+  state.sessionLibrary.entries = [...byKey.values()].sort((left, right) => threadUpdatedAt(right.thread) - threadUpdatedAt(left.thread))
+  state.sessionLibrary.nextCursors = Object.fromEntries(successful.map(({ backend, nextCursor }) => [backend, nextCursor]))
+  state.sessionLibrary.loading = false
+  state.sessionLibrary.loaded = true
+  if (!successful.length && results.length) {
+    state.sessionLibrary.error = results.map((result) => result.reason?.message).filter(Boolean).join(' · ') || t('Unable to load archived sessions')
+  }
+  renderArchivedSessionBadge()
+  renderThreadList()
+}
+
+function archivedSessionEntries() {
+  const query = state.sessionLibrary.query
+  return state.sessionLibrary.entries.filter(({ backend, thread }) => {
+    if (isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)) return false
+    if (!query) return true
+    return [threadTitle(thread), thread.cwd, thread.id, backendDescriptor(backend).name, backendDescriptor(backend).tag]
+      .filter(Boolean).join(' ').toLowerCase().includes(query)
+  })
+}
+
+function renderArchivedSessionBadge() {
+  const badge = $('#archived-sessions-badge')
+  const count = state.sessionLibrary.entries.length
+  badge.textContent = count
+  badge.classList.toggle('hidden', !state.sessionLibrary.loaded || count === 0)
+}
+
+function renderArchivedThreadList() {
+  const list = $('#thread-list')
+  if (state.sessionLibrary.loading && !state.sessionLibrary.entries.length) {
+    list.innerHTML = `<div class="list-empty">${t('Loading archived sessions…')}</div>`
+    return
+  }
+  if (state.sessionLibrary.error && !state.sessionLibrary.entries.length) {
+    list.innerHTML = `<div class="list-empty error">${escapeHtml(state.sessionLibrary.error)}<button class="subtle-button compact" type="button" data-retry-archived>${t('Retry')}</button></div>`
+    list.querySelector('[data-retry-archived]')?.addEventListener('click', () => loadArchivedSessions().catch(showError))
+    return
+  }
+  const entries = archivedSessionEntries()
+  if (!entries.length) {
+    list.innerHTML = `<div class="list-empty">${t(state.sessionLibrary.query ? 'No matching archived sessions' : 'No archived sessions')}</div>`
+    return
+  }
+  const selected = state.sessionLibrary.selected
+  const renderRow = ({ backend, thread }) => {
+    const active = selected?.backend === backend && selected?.thread?.id === thread.id
+    const updated = threadUpdatedAt(thread)
+    const date = updated ? new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(new Date(updated)) : ''
+    return `<button class="thread-row archived${active ? ' active' : ''}" data-archived-thread-id="${escapeHtml(thread.id)}" data-backend="${escapeHtml(backend)}">
+      <span class="archived-thread-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h16v11H4zM3 4h18v4H3zM9 12h6"/></svg></span>
+      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small>${date ? `<small>${t('Archived {date}', { date })}</small>` : ''}</span>
+      <span class="backend-tag ${escapeHtml(backend)}" title="${escapeHtml(backendDescriptor(backend).name)}">${escapeHtml(backendDescriptor(backend).tag)}</span>
+    </button>`
+  }
+  list.innerHTML = groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => `<section class="thread-group" data-group-path="${escapeHtml(cwd)}">
+    <div class="thread-group-heading static" data-no-i18n title="${escapeHtml(cwd || t('Project directory not recorded'))}"><strong>${escapeHtml(name || t('Other sessions'))}</strong><span>${groupEntries.length}</span></div>
+    <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
+  </section>`).join('')
+  if (Object.values(state.sessionLibrary.nextCursors).some(Boolean)) {
+    list.insertAdjacentHTML('beforeend', `<button class="load-more-archived" type="button" data-load-more-archived>${t('Load more')}</button>`)
+  }
+  list.querySelectorAll('[data-archived-thread-id]').forEach((row) => row.addEventListener('click', () => openArchivedSession(row.dataset.backend, row.dataset.archivedThreadId).catch(showError)))
+  list.querySelector('[data-load-more-archived]')?.addEventListener('click', () => loadArchivedSessions({ append: true }).catch(showError))
+}
+
+async function openArchivedSession(backend, threadId) {
+  const entry = state.sessionLibrary.entries.find((candidate) => candidate.backend === backend && candidate.thread.id === threadId)
+  if (!entry) return
+  state.sessionLibrary.selected = entry
+  renderThreadList()
+  if (backend !== state.backend) {
+    await switchBackend(backend)
+    await waitFor(() => state.backend === backend && state.ready, 15_000)
+  }
+  if (!state.sessionLibrary.open || state.sessionLibrary.selected !== entry) return
+  const result = await rpc('thread/read', { threadId, includeTurns: true })
+  if (!state.sessionLibrary.open || state.sessionLibrary.selected !== entry) return
+  entry.thread = { ...entry.thread, ...(result.thread || {}), archived: true, turns: undefined }
+  state.selectedId = threadId
+  state.model = createCodexViewModel()
+  hydrateCodexThread(state.model, result.thread)
+  closeWorkspacePeerRails()
+  renderThreadList()
+  renderWorkspace()
+  renderTranscript()
+  $('#native-connection').textContent = t('Archived')
+}
+
+async function restoreArchivedSession() {
+  const selected = state.sessionLibrary.selected
+  if (!selected || selected.backend !== state.backend || state.selectedId !== selected.thread.id) return
+  const button = $('#restore-archived-session')
+  button.disabled = true
+  try {
+    const result = await rpc('thread/unarchive', { threadId: selected.thread.id })
+    const restored = result?.thread || selected.thread
+    state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === selected.backend && entry.thread.id === selected.thread.id))
+    state.sessionLibrary.loaded = false
+    state.selectedByBackend[selected.backend] = restored.id
+    renderArchivedSessionBadge()
+    await closeArchivedSessions({ restoredId: restored.id, restoredBackend: selected.backend })
+    toast(t('Session restored'))
+  } finally {
+    if (button.isConnected) button.disabled = false
+  }
+}
+
 function renderThreadList() {
+  if (state.sessionLibrary.open) {
+    renderArchivedThreadList()
+    return
+  }
   const list = $('#thread-list')
   const counts = catalogCountsWithAttention(sidebarThreadCatalogs(), state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
   $('#count-all').textContent = counts.all
@@ -2241,6 +2526,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
     return selectThread(id, { force: true, backend })
   }
   if (!force && state.selectedId === id) return
+  closeThreadContentSearch({ clear: true })
   closeActionMenus()
   hideComposerMenu()
   resetStreamingPatches()
@@ -2460,7 +2746,14 @@ function mergeThreadMetadata(incoming) {
 }
 
 function selectedThread() {
+  const archived = state.sessionLibrary.selected
+  if (state.sessionLibrary.open && archived?.backend === state.backend && archived.thread?.id === state.selectedId) return archived.thread
   return state.threads.find((thread) => thread.id === state.selectedId) || null
+}
+
+function isArchivedPreview() {
+  const archived = state.sessionLibrary.selected
+  return Boolean(state.sessionLibrary.open && archived?.backend === state.backend && archived.thread?.id === state.selectedId)
 }
 
 function selectedStateKey(id = state.selectedId, backend = state.backend) {
@@ -2604,23 +2897,34 @@ async function copyOpeningMessage() {
 function renderWorkspace() {
   const thread = selectedThread()
   const hasThread = Boolean(thread)
+  const archived = hasThread && isArchivedPreview()
   $('#thread-heading').classList.toggle('hidden', !hasThread)
   $('#thread-actions').classList.toggle('hidden', !hasThread)
   $('#empty-workspace').classList.toggle('hidden', hasThread)
   $('#native-workspace').classList.toggle('hidden', !hasThread)
+  $('#composer-form').classList.toggle('hidden', archived)
+  $('#archived-composer').classList.toggle('hidden', !archived)
+  $('#thread-more-button').classList.toggle('hidden', !hasThread)
+  for (const id of ['rename-thread', 'fork-thread', 'archive-thread', 'refresh-thread', 'project-environment-action', 'session-map-action', 'router-settings-action']) {
+    $(`#${id}`).classList.toggle('hidden', archived)
+  }
+  $('.thread-action-menu .menu-separator')?.classList.toggle('hidden', archived)
   workspaceTools.sync(thread)
   sessionResources.sync()
   if (!thread) {
+    closeThreadContentSearch()
     renderSessionMap()
     return
   }
   $('#thread-title').textContent = threadTitle(thread)
   $('#thread-path').textContent = thread.cwd || thread.id
-  $('#archive-thread').disabled = state.backend === 'opencode'
+  $('#archive-thread').disabled = archived || state.backend === 'opencode'
   $('#archive-thread').title = t(state.backend === 'opencode' ? 'The OpenCode backend does not support archiving yet' : 'Archive session')
-  $('#router-settings-action').classList.toggle('hidden', !isRouterThread())
-  renderProjectEnvironmentEntry()
-  renderComposerState()
+  $('#router-settings-action').classList.toggle('hidden', archived || !isRouterThread())
+  if (!archived) {
+    renderProjectEnvironmentEntry()
+    renderComposerState()
+  }
   renderAnnotationRail()
   captureOpeningMessage()
   renderSessionFavoriteCount()
@@ -3298,6 +3602,220 @@ function resetStreamingPatches() {
   if (transcriptFrame != null) cancelAnimationFrame(transcriptFrame)
   transcriptFrame = null
   dirtyStreamItems.clear()
+}
+
+function openThreadContentSearch() {
+  if (!selectedThread()) return
+  state.threadSearch.open = true
+  $('#thread-content-search').classList.remove('hidden')
+  $('#open-thread-search').setAttribute('aria-pressed', 'true')
+  $('#thread-content-search-input').value = state.threadSearch.query
+  $('#thread-content-search-type').value = state.threadSearch.type
+  renderThreadContentSearch()
+  requestAnimationFrame(() => {
+    const input = $('#thread-content-search-input')
+    input.focus()
+    input.select()
+  })
+}
+
+function closeThreadContentSearch({ clear = false } = {}) {
+  clearTimeout(threadContentSearchTimer)
+  state.threadSearch.open = false
+  state.threadSearch.loading = false
+  if (clear) {
+    state.threadSearch.query = ''
+    state.threadSearch.entries = []
+    state.threadSearch.selected = -1
+    $('#thread-content-search-input').value = ''
+  }
+  $('#thread-content-search')?.classList.add('hidden')
+  $('#open-thread-search')?.setAttribute('aria-pressed', 'false')
+  hideThreadContentSearchResults()
+  clearThreadSearchTarget()
+}
+
+function hideThreadContentSearchResults() {
+  $('#thread-content-search-results')?.classList.add('hidden')
+}
+
+function handleThreadContentSearchInput(event) {
+  state.threadSearch.query = event.target.value.trim()
+  state.threadSearch.selected = -1
+  clearTimeout(threadContentSearchTimer)
+  if (!state.threadSearch.query) {
+    state.threadSearch.entries = []
+    state.threadSearch.loading = false
+    renderThreadContentSearch()
+    return
+  }
+  state.threadSearch.loading = true
+  renderThreadContentSearch()
+  threadContentSearchTimer = setTimeout(() => performThreadContentSearch().catch((error) => {
+    state.threadSearch.loading = false
+    state.threadSearch.entries = []
+    renderThreadContentSearch(error.message)
+  }), 180)
+}
+
+async function performThreadContentSearch() {
+  const query = state.threadSearch.query
+  const threadId = state.selectedId
+  const backend = state.backend
+  if (!query || !threadId) return
+  const generation = ++state.threadSearch.generation
+  const local = localSessionOccurrences(state.model, query)
+  if (generation !== state.threadSearch.generation || query !== state.threadSearch.query || threadId !== state.selectedId || backend !== state.backend) return
+  state.threadSearch.entries = local
+  state.threadSearch.loading = false
+  state.threadSearch.selected = local.length ? 0 : -1
+  renderThreadContentSearch()
+  if (!isCodexBackend(backend) || threadOccurrenceSearchSupport.get(backend) === false) return
+  let remote = []
+  try {
+    const result = await rpc('thread/searchOccurrences', { threadId, searchTerm: query, limit: 100 })
+    remote = Array.isArray(result?.data) ? result.data : []
+    threadOccurrenceSearchSupport.set(backend, true)
+  } catch (error) {
+    if (/method (?:not found|unknown)|unsupported method|does not support/iu.test(String(error?.message || error))) {
+      threadOccurrenceSearchSupport.set(backend, false)
+    }
+    console.debug('Backend session search is unavailable; using the loaded session model', error)
+    return
+  }
+  if (generation !== state.threadSearch.generation || query !== state.threadSearch.query || threadId !== state.selectedId || backend !== state.backend) return
+  state.threadSearch.entries = mergeSessionOccurrences(remote, local)
+  state.threadSearch.selected = filteredThreadSearchEntries().length ? 0 : -1
+  renderThreadContentSearch()
+}
+
+function filteredThreadSearchEntries() {
+  return filterSessionOccurrences(state.threadSearch.entries, state.threadSearch.type)
+}
+
+function renderThreadContentSearch(error = '') {
+  const panel = $('#thread-content-search')
+  if (!state.threadSearch.open || panel.classList.contains('hidden')) return
+  const entries = filteredThreadSearchEntries()
+  const summary = $('#thread-content-search-summary')
+  summary.textContent = error
+    ? t('Search failed')
+    : state.threadSearch.loading
+      ? t('Searching…')
+      : state.threadSearch.query
+        ? t('{count} matches', { count: entries.length })
+        : ''
+  $('#thread-content-search-prev').disabled = !entries.length
+  $('#thread-content-search-next').disabled = !entries.length
+  const results = $('#thread-content-search-results')
+  if (!state.threadSearch.query || state.threadSearch.loading || error) {
+    results.innerHTML = error ? `<div class="composer-menu-empty">${escapeHtml(error)}</div>` : ''
+    results.classList.toggle('hidden', !error)
+    return
+  }
+  if (!entries.length) {
+    results.innerHTML = `<div class="composer-menu-empty">${t('No matches in this session')}</div>`
+    results.classList.remove('hidden')
+    return
+  }
+  results.innerHTML = entries.map((entry, index) => {
+    const selected = index === state.threadSearch.selected
+    const turnNumber = Math.max(1, Number(entry.turnIndex) + 1)
+    return `<div id="thread-search-option-${index}" class="thread-content-search-result${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-thread-search-index="${index}">
+      <strong>${escapeHtml(threadSearchTypeLabel(entry.type))} · ${t('Turn {index}', { index: turnNumber })}</strong>
+      <small>${highlightThreadSearchSnippet(entry)}</small>
+    </div>`
+  }).join('')
+  results.classList.remove('hidden')
+  $('#thread-content-search-input').setAttribute('aria-activedescendant', `thread-search-option-${Math.max(0, state.threadSearch.selected)}`)
+}
+
+function threadSearchTypeLabel(type) {
+  if (type === 'user') return t('User')
+  if (type === 'activity') return t('Progress and activity')
+  return t('Assistant')
+}
+
+function highlightThreadSearchSnippet(entry) {
+  const snippet = String(entry.snippet || '')
+  const start = Math.max(0, Math.min(snippet.length, Number(entry.snippetMatchRange?.start || 0)))
+  const end = Math.max(start, Math.min(snippet.length, Number(entry.snippetMatchRange?.end || start)))
+  return `${escapeHtml(snippet.slice(0, start))}<mark>${escapeHtml(snippet.slice(start, end))}</mark>${escapeHtml(snippet.slice(end))}`
+}
+
+function handleThreadContentSearchKeydown(event) {
+  const entries = filteredThreadSearchEntries()
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeThreadContentSearch()
+    return
+  }
+  if (!entries.length) return
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    const direction = event.key === 'ArrowDown' ? 1 : -1
+    state.threadSearch.selected = (state.threadSearch.selected + direction + entries.length) % entries.length
+    renderThreadContentSearch()
+    document.querySelector(`[data-thread-search-index="${state.threadSearch.selected}"]`)?.scrollIntoView({ block: 'nearest' })
+    return
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    if (event.shiftKey) navigateThreadContentSearch(-1)
+    else if (state.threadSearch.selected >= 0) selectThreadSearchEntry(state.threadSearch.selected)
+    else navigateThreadContentSearch(1)
+  }
+}
+
+function handleThreadContentSearchResultClick(event) {
+  const option = event.target.closest('[data-thread-search-index]')
+  if (!option) return
+  selectThreadSearchEntry(Number(option.dataset.threadSearchIndex))
+}
+
+function navigateThreadContentSearch(direction) {
+  const entries = filteredThreadSearchEntries()
+  if (!entries.length) return
+  state.threadSearch.selected = (state.threadSearch.selected + direction + entries.length) % entries.length
+  selectThreadSearchEntry(state.threadSearch.selected)
+}
+
+function selectThreadSearchEntry(index) {
+  const entries = filteredThreadSearchEntries()
+  const entry = entries[index]
+  if (!entry) return
+  state.threadSearch.selected = index
+  transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, entry.turnId)
+  renderTranscript()
+  let target = renderedItem(entry.turnId, entry.itemId)
+  if (!target && entry.type === 'activity') {
+    const block = activityBlocksForTurn(entry.turnId).find((candidate) => candidate.sourceItemIds.includes(String(entry.itemId || '')))
+    target = renderedActivity(entry.turnId, block?.id)
+    if (target) {
+      target.open = true
+      hydrateActivityDetails(target)
+    }
+  }
+  if (!target) target = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')].find((turn) => turn.dataset.turnId === String(entry.turnId || ''))
+  clearThreadSearchTarget()
+  if (target) {
+    target.classList.add('session-search-target')
+    transcriptScrollFollower.pause()
+    const transcript = $('#transcript')
+    const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 18
+    transcript.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  }
+  hideThreadContentSearchResults()
+  renderThreadContentSearchSummaryOnly(entries.length)
+}
+
+function renderThreadContentSearchSummaryOnly(total) {
+  const current = state.threadSearch.selected >= 0 ? state.threadSearch.selected + 1 : 0
+  $('#thread-content-search-summary').textContent = t('{current} of {total}', { current, total })
+}
+
+function clearThreadSearchTarget() {
+  $('#transcript')?.querySelectorAll('.session-search-target').forEach((element) => element.classList.remove('session-search-target'))
 }
 
 function presentationThreadKey(backend = state.backend, id = state.selectedId) {
@@ -5328,6 +5846,8 @@ async function archiveSelectedThread() {
     state.selectedId = null
     state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
+    state.sessionLibrary.loaded = false
+    renderArchivedSessionBadge()
     persistPreferences()
     await loadThreads()
     toast('Session archived')
@@ -5337,6 +5857,7 @@ async function archiveSelectedThread() {
 async function deleteSelectedThread() {
   if (!state.selectedId || !confirm(t('Permanently delete this Codex session and its stored history? This cannot be undone.'))) return
   const threadId = state.selectedId
+  const archived = isArchivedPreview()
   try {
     await rpc('thread/delete', { threadId })
     invalidateThreadModel(state.backend, threadId)
@@ -5344,10 +5865,19 @@ async function deleteSelectedThread() {
     delete state.annotationAdditional[`${state.backend}:${threadId}`]
     delete state.openingMessages[`${state.backend}:${threadId}`]
     state.selectedId = null
-    state.selectedByBackend[state.backend] = null
+    if (!archived) state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
+    if (archived) {
+      state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === state.backend && entry.thread.id === threadId))
+      state.sessionLibrary.selected = null
+      renderArchivedSessionBadge()
+    }
     persistPreferences()
-    await loadThreads()
+    if (archived) {
+      renderThreadList()
+      renderWorkspace()
+      renderTranscript()
+    } else await loadThreads()
     toast('Session deleted')
   } catch (error) { showError(error) }
 }

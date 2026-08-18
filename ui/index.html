@@ -23,6 +23,13 @@
         </header>
 
         <button id="new-thread" class="new-thread-button" type="button"><span>＋</span> <b id="new-thread-label">New session</b> <kbd>Ctrl N</kbd></button>
+        <div id="archived-sidebar-header" class="archived-sidebar-header hidden">
+          <button id="close-archived-sessions" type="button" title="Back to sessions" aria-label="Back to sessions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h10"/></svg>
+            <span>Back to sessions</span>
+          </button>
+          <strong>Archived</strong>
+        </div>
         <label class="search-box"><span>⌕</span><input id="thread-search" type="search" placeholder="Search sessions or paths" /><kbd>/</kbd></label>
         <div class="filters thread-filters" role="tablist" aria-label="Session filters">
           <button class="filter thread-filter active" type="button" role="tab" data-filter="all" aria-selected="true">All <span id="count-all">0</span></button>
@@ -40,6 +47,7 @@
             </button>
             <div id="studio-menu" class="action-menu studio-menu hidden" role="menu">
               <button id="open-favorites" type="button" role="menuitem"><span>Global favorites</span><span id="favorites-badge" class="studio-menu-count hidden">0</span></button>
+              <button id="open-archived-sessions" type="button" role="menuitem"><span>Archived sessions</span><span id="archived-sessions-badge" class="studio-menu-count archived hidden">0</span></button>
               <button id="open-browser-workspace" type="button" role="menuitem" title="Start or show browser">
                 <span>Browser</span>
                 <span id="browser-menu-status" class="browser-menu-status offline"><i></i><small>default</small></span>
@@ -67,6 +75,9 @@
           </div>
           <div id="thread-actions" class="thread-actions hidden">
             <div class="workspace-tool-launchers" role="group" aria-label="Right workspace">
+              <button id="open-thread-search" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Search session" aria-label="Search session" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+              </button>
               <button id="open-thread-comments" class="toolbar-button workspace-tool-launcher icon-only" type="button" title="Comments" aria-label="View comments" aria-pressed="false">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg>
                 <span id="thread-comments-count" class="workspace-tool-count hidden">0</span>
@@ -106,6 +117,19 @@
             </div>
           </div>
         </header>
+
+        <div id="thread-content-search" class="thread-content-search hidden" role="search">
+          <div class="thread-content-search-field">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+            <input id="thread-content-search-input" type="search" placeholder="Search this session" autocomplete="off" aria-controls="thread-content-search-results" aria-autocomplete="list" />
+            <span id="thread-content-search-summary"></span>
+          </div>
+          <button id="thread-content-search-prev" class="thread-content-search-action" type="button" title="Previous match" aria-label="Previous match">↑</button>
+          <button id="thread-content-search-next" class="thread-content-search-action" type="button" title="Next match" aria-label="Next match">↓</button>
+          <label class="thread-content-search-type"><span class="visually-hidden">Result type</span><select id="thread-content-search-type" aria-label="Result type"><option value="all">All types</option><option value="user">User messages</option><option value="assistant">Assistant responses</option><option value="activity">Progress and activity</option></select></label>
+          <button id="close-thread-search" class="thread-content-search-close" type="button" title="Close search" aria-label="Close search">×</button>
+          <div id="thread-content-search-results" class="thread-content-search-results hidden" role="listbox"></div>
+        </div>
 
         <section id="empty-workspace" class="empty-workspace">
           <div id="empty-mark" class="empty-mark">C</div>
@@ -153,6 +177,10 @@
               </div>
             </div>
           </form>
+          <div id="archived-composer" class="archived-composer hidden">
+            <div><strong>This session is archived</strong><span>Restore it to continue the conversation.</span></div>
+            <button id="restore-archived-session" type="button">Restore session</button>
+          </div>
         </section>
       </main>
 

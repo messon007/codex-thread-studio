@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#24343b" flood-opacity=".13"/></filter>
+    <style>
+      .ui{font-family:Inter,"Noto Sans",Arial,sans-serif;fill:#182326}.muted{fill:#718087}.faint{fill:#91a0a6}.tiny{font-size:10px}.small{font-size:12px}.body{font-size:14px}.label{font-size:11px;font-weight:700;letter-spacing:.08em}.title{font-size:16px;font-weight:700}.heading{font-size:19px;font-weight:760}.stroke{stroke:#d4dee2;stroke-width:1}.icon{fill:none;stroke:#53666d;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.brand{fill:#117d6c}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#edf2f4"/>
+  <text x="40" y="24" class="ui label faint">ARCHIVED SESSIONS · UI CONCEPT</text>
+  <g filter="url(#shadow)">
+    <rect x="30" y="42" width="1540" height="826" rx="18" fill="#fff"/>
+    <path d="M316 42v826" class="stroke"/><path d="M317 116h1253" class="stroke"/>
+    <!-- Sidebar -->
+    <rect x="30" y="42" width="286" height="826" rx="18" fill="#fbfcfc"/><rect x="30" y="60" width="286" height="790" fill="#fbfcfc"/>
+    <rect x="49" y="62" width="36" height="36" rx="10" fill="#147d6d"/><text x="67" y="85" text-anchor="middle" class="ui title" fill="#fff">C</text>
+    <text x="98" y="77" class="ui title">Codex Thread Studio</text><text x="98" y="94" class="ui tiny muted">CODEX DESKTOP</text>
+    <rect x="48" y="119" width="250" height="42" rx="10" fill="#138673"/><text x="65" y="145" class="ui heading" fill="#fff">＋</text><text x="92" y="144" class="ui body" fill="#fff" font-weight="700">New session</text>
+    <g transform="translate(48 176)"><rect width="250" height="34" rx="8" fill="#f1f4f5"/><path d="M16 12l-5 5 5 5M11 17h10" class="icon"/><text x="34" y="21" class="ui small muted">Back to sessions</text><text x="232" y="21" text-anchor="end" class="ui small" font-weight="700">Archived</text></g>
+    <rect x="48" y="222" width="250" height="38" rx="9" fill="#fff" class="stroke"/><circle cx="66" cy="241" r="5" fill="none" stroke="#819096"/><path d="M70 245l4 4" stroke="#819096"/><text x="82" y="245" class="ui small faint">Search archived sessions</text>
+    <path d="M30 271h286" class="stroke"/>
+    <text x="50" y="298" class="ui label muted">CODEX-THREAD-STUDIO</text><text x="285" y="298" class="ui small muted">3</text>
+    <rect x="41" y="311" width="264" height="74" rx="11" fill="#eef2f3" stroke="#cbd6d9"/>
+    <g transform="translate(50 333)"><path d="M2 5h16v13H2zM0 1h20v5H0M6 10h8" class="icon"/></g>
+    <text x="80" y="334" class="ui body" font-weight="700">Browser workspace research</text><text x="80" y="353" class="ui tiny muted">/home/rui/.../codex-thread-studio</text><text x="80" y="370" class="ui tiny faint">Archived Aug 15</text><text x="284" y="347" text-anchor="end" class="ui tiny muted" font-weight="700">CX</text>
+    <g transform="translate(50 410)"><path d="M2 5h16v13H2zM0 1h20v5H0M6 10h8" class="icon"/></g>
+    <text x="80" y="411" class="ui body" font-weight="650">Initial PDF reader design</text><text x="80" y="430" class="ui tiny muted">/home/rui/.../codex-thread-studio</text><text x="80" y="447" class="ui tiny faint">Archived Aug 11</text><text x="284" y="424" text-anchor="end" class="ui tiny muted" font-weight="700">CX</text>
+    <g transform="translate(50 487)"><path d="M2 5h16v13H2zM0 1h20v5H0M6 10h8" class="icon"/></g>
+    <text x="80" y="488" class="ui body" font-weight="650">Old router prototype</text><text x="80" y="507" class="ui tiny muted">/home/rui/.../codex-thread-studio</text><text x="80" y="524" class="ui tiny faint">Archived Jul 29</text><text x="284" y="501" text-anchor="end" class="ui tiny muted" font-weight="700">CX</text>
+    <text x="50" y="568" class="ui label muted">DOCUMENTS</text><text x="285" y="568" class="ui small muted">2</text>
+    <g transform="translate(50 592)"><path d="M2 5h16v13H2zM0 1h20v5H0M6 10h8" class="icon"/></g><text x="80" y="598" class="ui body" font-weight="650">Markdown image handling</text><text x="80" y="617" class="ui tiny muted">/home/rui/documents</text><text x="80" y="634" class="ui tiny faint">Archived Jul 22</text>
+    <!-- Local Workspace menu, shown open to expose the hidden archive entry -->
+    <g filter="url(#shadow)"><rect x="48" y="609" width="232" height="187" rx="10" fill="#fff" stroke="#cbd6d9"/><text x="64" y="638" class="ui small">Global favorites</text><rect x="245" y="622" width="22" height="18" rx="9" fill="#f4e8fa"/><text x="256" y="635" text-anchor="middle" class="ui tiny" fill="#8a4da1">8</text><text x="64" y="669" class="ui small">Archived sessions</text><rect x="245" y="655" width="22" height="18" rx="9" fill="#e8edef"/><text x="256" y="668" text-anchor="middle" class="ui tiny muted">5</text><text x="64" y="704" class="ui small">Browser</text><circle cx="255" cy="700" r="4" fill="#168674"/><path d="M58 718h212" class="stroke"/><text x="64" y="744" class="ui small">Connections &amp; accounts</text><text x="64" y="774" class="ui small">Settings</text></g>
+    <path d="M30 800h286" class="stroke"/><rect x="48" y="815" width="250" height="40" rx="9" fill="#f4f7f8"/><rect x="57" y="822" width="27" height="27" rx="8" fill="#e3f3ef"/><text x="70" y="841" text-anchor="middle" class="ui small brand">⌂</text><text x="94" y="833" class="ui small" font-weight="700">Local workspace</text><text x="94" y="847" class="ui tiny muted">Local workspace</text>
+
+    <!-- Header -->
+    <rect x="317" y="42" width="1253" height="74" rx="18" fill="#fff"/><rect x="317" y="80" width="1253" height="36" fill="#fff"/>
+    <rect x="337" y="60" width="38" height="38" rx="10" fill="#73838a"/><g transform="translate(346 68)"><path d="M2 5h16v13H2zM0 1h20v5H0M6 10h8" fill="none" stroke="#fff" stroke-width="1.5"/></g>
+    <text x="389" y="77" class="ui title">Browser workspace research</text><span/><text x="389" y="96" class="ui tiny muted">/home/rui/downloads/openresource/codex-thread-studio</text>
+    <g transform="translate(1330 62)"><rect width="34" height="34" rx="9" fill="#fff" class="stroke"/><path d="M8 9h18v12H14l-6 5z" class="icon"/></g>
+    <g transform="translate(1372 62)"><rect width="34" height="34" rx="9" fill="#fff" class="stroke"/><path d="M17 7l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" class="icon"/></g>
+    <g transform="translate(1414 62)"><rect width="34" height="34" rx="9" fill="#fff" class="stroke"/><path d="M7 10h9l3 3h9v12H7z" class="icon"/></g>
+    <g transform="translate(1456 62)"><rect width="34" height="34" rx="9" fill="#fff" class="stroke"/><circle cx="10" cy="17" r="1.5" fill="#53666d"/><circle cx="17" cy="17" r="1.5" fill="#53666d"/><circle cx="24" cy="17" r="1.5" fill="#53666d"/></g>
+
+    <!-- Transcript -->
+    <rect x="317" y="117" width="1253" height="751" fill="#f6f8f9"/>
+    <rect x="485" y="160" width="920" height="76" rx="12" fill="#fff" stroke="#e1e7e9"/><circle cx="512" cy="185" r="10" fill="#e3f3ef"/><text x="512" y="189" text-anchor="middle" class="ui tiny brand">+</text><text x="535" y="182" class="ui tiny muted">YOU · TURN 9</text><text x="535" y="207" class="ui body">Compare approaches for embedding the browser on Linux and Windows.</text>
+    <rect x="485" y="254" width="920" height="206" rx="12" fill="#fff" stroke="#e1e7e9"/><circle cx="512" cy="280" r="10" fill="#73838a"/><text x="512" y="284" text-anchor="middle" class="ui tiny" fill="#fff">CX</text><text x="535" y="278" class="ui tiny muted">ASSISTANT · AUG 15</text><text x="535" y="310" class="ui body">The maintainable architecture keeps platform-specific browser runtimes behind</text><text x="535" y="335" class="ui body">one shared workspace contract. Linux uses the Wayland runtime, while Windows</text><text x="535" y="360" class="ui body">uses WebView2 without vendoring WRY into the repository.</text>
+    <rect x="535" y="386" width="820" height="49" rx="9" fill="#f5f7f8" stroke="#e0e6e8"/><text x="551" y="406" class="ui tiny muted">DECISION</text><text x="551" y="424" class="ui small">Keep platform code isolated and share navigation, tabs, comments, and width state.</text>
+
+    <!-- Archived composer replacement: the only restore entry -->
+    <rect x="485" y="733" width="920" height="88" rx="13" fill="#eef2f3" stroke="#ccd7da"/>
+    <g transform="translate(510 757)"><path d="M2 5h18v14H2zM0 1h22v5H0M7 10h8" class="icon"/></g><text x="545" y="764" class="ui body" font-weight="700">This session is archived</text><text x="545" y="785" class="ui small muted">Restore it to continue the conversation.</text>
+    <rect x="1262" y="750" width="119" height="38" rx="9" fill="#138673"/><path d="M1278 762a8 8 0 1 1-1 8M1277 758v5h5" fill="none" stroke="#fff" stroke-width="1.6"/><text x="1330" y="774" text-anchor="middle" class="ui small" fill="#fff" font-weight="700">Restore session</text>
+
+  </g>
+</svg>

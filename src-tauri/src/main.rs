@@ -713,6 +713,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-catalog.mjs", get(thread_catalog_js))
         .route("/thread-fork.mjs", get(thread_fork_js))
         .route("/thread-workset.mjs", get(thread_workset_js))
+        .route("/session-search.mjs", get(session_search_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
         .route("/document-review.mjs", get(document_review_js))
         .route("/document-outline.mjs", get(document_outline_js))
@@ -1764,6 +1765,10 @@ async fn thread_fork_js() -> impl IntoResponse {
 
 async fn thread_workset_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-workset.mjs"))
+}
+
+async fn session_search_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-search.mjs"))
 }
 
 async fn composer_tools_js() -> impl IntoResponse {
@@ -3204,6 +3209,7 @@ mod tests {
                 "/thread-catalog.mjs",
                 "/thread-fork.mjs",
                 "/thread-workset.mjs",
+                "/session-search.mjs",
                 "/composer-tools.mjs",
                 "/document-review.mjs",
                 "/document-outline.mjs",

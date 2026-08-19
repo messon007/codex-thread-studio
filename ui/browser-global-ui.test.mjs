@@ -30,7 +30,7 @@ test('A global Browser click only shows the embedded presentation', () => {
 test('Embedded Browser selection enters the shared Comment Core flow', () => {
   assert.match(source, /browserCommentSource\(\{/)
   assert.match(source, /openEmbeddedBrowserComment\(selection\)/)
-  assert.match(source, /openAnnotationFromSelection\(\)/)
+  assert.match(source, /reviewNotes\.openCommentForSelection\(\{/)
   assert.match(source, /window\.__studioEmbeddedBrowser = Object\.freeze/)
   assert.match(source, /setWidth\(metrics\)/)
   assert.match(source, /embeddedBrowserWidthTimer = setTimeout\(persistPreferences, 250\)/)

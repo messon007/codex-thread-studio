@@ -711,8 +711,13 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
+        .route("/session-management.mjs", get(session_management_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
         .route("/thread-fork.mjs", get(thread_fork_js))
+        .route(
+            "/thread-router-controller.mjs",
+            get(thread_router_controller_js),
+        )
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/session-search.mjs", get(session_search_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
@@ -745,6 +750,18 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/favorites.mjs", get(favorites_js))
         .route("/session-map.mjs", get(session_map_js))
+        .route(
+            "/session-map-controller.mjs",
+            get(session_map_controller_js),
+        )
+        .route(
+            "/review-notes-controller.mjs",
+            get(review_notes_controller_js),
+        )
+        .route(
+            "/document-workspace-controller.mjs",
+            get(document_workspace_controller_js),
+        )
         .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/session-dispatch.mjs", get(session_dispatch_js))
@@ -1756,6 +1773,10 @@ async fn session_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-catalog.mjs"))
 }
 
+async fn session_management_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-management.mjs"))
+}
+
 async fn transcript_presentation_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/transcript-presentation.mjs"))
 }
@@ -1766,6 +1787,10 @@ async fn thread_catalog_js() -> impl IntoResponse {
 
 async fn thread_fork_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-fork.mjs"))
+}
+
+async fn thread_router_controller_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-router-controller.mjs"))
 }
 
 async fn thread_workset_js() -> impl IntoResponse {
@@ -1842,6 +1867,18 @@ async fn favorites_js() -> impl IntoResponse {
 
 async fn session_map_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-map.mjs"))
+}
+
+async fn session_map_controller_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-map-controller.mjs"))
+}
+
+async fn review_notes_controller_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/review-notes-controller.mjs"))
+}
+
+async fn document_workspace_controller_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/document-workspace-controller.mjs"))
 }
 
 async fn mermaid_config_js() -> impl IntoResponse {
@@ -3212,8 +3249,10 @@ mod tests {
                 "/backends.mjs",
                 "/model-display.mjs",
                 "/session-catalog.mjs",
+                "/session-management.mjs",
                 "/thread-catalog.mjs",
                 "/thread-fork.mjs",
+                "/thread-router-controller.mjs",
                 "/thread-workset.mjs",
                 "/session-search.mjs",
                 "/composer-tools.mjs",
@@ -3225,6 +3264,9 @@ mod tests {
                 "/session-resources-ui.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
+                "/session-map-controller.mjs",
+                "/review-notes-controller.mjs",
+                "/document-workspace-controller.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/session-dispatch.mjs",

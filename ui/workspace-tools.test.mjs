@@ -73,10 +73,11 @@ test('session and every right-area header share one exact divider height', () =>
 test('workspace tools use one right-side slot without nested tool tabs', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const sessionMap = readFileSync(new URL('./session-map-controller.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(html, /id="workspace-(?:files|terminal)-tab"/u)
   assert.match(app, /function activateRightWorkspace\(tool\)/u)
   assert.match(app, /if \(tool !== 'browser'\) \{[\s\S]{0,220}studio-action:\/\/hide-browser/u)
-  assert.match(app, /\|\| workspaceTools\.isOpen\(\)/u)
+  assert.match(sessionMap, /\|\| workspaceTools\.isOpen\(\)/u)
 })
 
 test('document actions use consistent SVG icon buttons', () => {
@@ -91,19 +92,22 @@ test('document actions use consistent SVG icon buttons', () => {
 test('session resources provide an explicit favorite action', () => {
   const resources = readFileSync(new URL('./session-resources-ui.mjs', import.meta.url), 'utf8')
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const reviewNotes = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
   assert.match(resources, /data-resource-favorite=/u)
   assert.match(resources, /favoriteResource\?\.\(resource, occurrence\)/u)
-  assert.match(app, /favoriteResource: openFavoriteForResource/u)
-  assert.match(app, /favorite\.presentation === 'resource'/u)
+  assert.match(app, /favoriteResource: \(resource, occurrence\) => reviewNotes\.openFavoriteForResource/u)
+  assert.match(reviewNotes, /favorite\.presentation === 'resource'/u)
 })
 
 test('documents opened from Files and Review keep a return destination', () => {
   const workspace = readFileSync(new URL('./workspace-tools.mjs', import.meta.url), 'utf8')
   const review = readFileSync(new URL('./git-review.mjs', import.meta.url), 'utf8')
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const documentWorkspace = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
   assert.match(workspace, /openFile\?\.\(\{ root: state\.root, path \}, \{ returnTool: 'files' \}\)/u)
   assert.match(review, /returnTool: 'review'/u)
-  assert.match(app, /workspaceTools\.open\(returnTool\)/u)
+  assert.match(app, /openWorkspaceTool: \(tool\) => workspaceTools\.open\(tool\)/u)
+  assert.match(documentWorkspace, /openWorkspaceTool\(returnTool\)/u)
 })
 
 test('workspace rails share the persisted document width and shield pointer resizing', () => {

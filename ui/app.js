@@ -25,6 +25,11 @@ import {
   turnStartParams,
 } from './session-catalog.mjs'
 import {
+  createSessionLibraryState,
+  createSessionManagementUI,
+  createThreadSearchState,
+} from './session-management.mjs'
+import {
   BACKEND_IDS,
   backendDescriptor,
   backendDescriptors,
@@ -48,73 +53,46 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import {
-  artifactInlineSearchAvailable,
-  artifactSearchAvailable,
-  createFileRangeTarget,
-  fileDisplayName,
-  findTextMatchRanges,
-  isHtmlFile,
-  isMarkdownFile,
   resolveMarkdownImagePath,
-  STATIC_HTML_FORBIDDEN_ATTRIBUTES,
-  STATIC_HTML_FORBIDDEN_TAGS,
 } from './document-review.mjs'
 import {
-  extractHtmlOutline,
   extractMarkdownOutline,
-  filterDocumentOutline,
-  normalizeDocumentOutline,
-  outlineItemForLocation,
 } from './document-outline.mjs'
 import {
   CommentSourceRegistry,
-  commentSelectionSnapshot,
-  createCommentDraft,
   normalizeCommentDrafts,
 } from './comment-core.mjs'
 import {
-  chatCommentSource,
   createChatCommentProvider,
   createDocumentCommentProvider,
-  documentCommentSource,
   legacyCommentSource,
-  relocateDocumentComment,
 } from './comment-source-providers.mjs'
 import { browserCommentSource, createBrowserCommentProvider } from './browser-comment-provider.mjs'
-import { createEpubCommentProvider, epubCommentSource } from './epub-comment-provider.mjs'
-import { createPdfCommentProvider, pdfCommentSource } from './pdf-comment-provider.mjs'
-import { createTableCommentProvider, tableCommentSource } from './table-comment-provider.mjs'
-import {
-  autoFavoriteTitle,
-  favoriteCopyText,
-  favoriteSourceKey,
-  normalizeFavoriteTags,
-  questionForTurn,
-} from './favorites.mjs'
+import { createEpubCommentProvider } from './epub-comment-provider.mjs'
+import { createPdfCommentProvider } from './pdf-comment-provider.mjs'
+import { createTableCommentProvider } from './table-comment-provider.mjs'
+import { questionForTurn } from './favorites.mjs'
 import {
   MERMAID_PREFERENCES_DEFAULTS,
   mermaidInitializeConfig,
   normalizeMermaidPreferences,
 } from './mermaid-config.mjs'
 import {
-  assistantOperationSchema,
-  bootstrapMapInput,
-  flattenSessionMap,
-  mapItemTrail,
-  mapProgress,
-  normalizeSessionMap,
-  parseSessionMapUpdate,
-  safeAssistantOperations,
-  SESSION_MAP_UPDATE_START,
-  SessionMapWorkerPool,
-  sessionMapEndpoint,
   sessionMapKey,
-  sessionMapTurnConfiguration,
   sessionMapVisibleText,
-  shouldBootstrapSessionMap,
-  structuredWorkerText,
-  visibleMapItems,
 } from './session-map.mjs'
+import {
+  createSessionMapController,
+  createSessionMapRuntimeState,
+} from './session-map-controller.mjs'
+import {
+  createReviewNotesController,
+  createReviewNotesState,
+} from './review-notes-controller.mjs'
+import {
+  createDocumentWorkspaceController,
+  createDocumentWorkspaceState,
+} from './document-workspace-controller.mjs'
 import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
@@ -138,7 +116,6 @@ import {
 
 import {
   annotationPromptDefaults,
-  formatDate as formatLocalizedDate,
   getLocale,
   migrateLocalizedTemplates,
   resolveLanguage,
@@ -165,33 +142,22 @@ import {
 } from './thread-workset.mjs'
 import {
   catalogsWithSingleRouter,
-  DEFAULT_FALLBACK_CONDITION,
   finalAgentText,
   isRouterSession,
   managedRouterThread,
   migrateLegacyResponsibilities,
   normalizeThreadRouter,
-  parseRouterDecision,
-  parseSessionRefKey,
   recoverManagedRouterCatalog,
-  routerApplicationContext,
-  routerCandidates,
-  routerControllerRef,
-  routerDecisionForTurn,
-  routerDecisionSchema,
-  routerDeveloperInstructions,
   sessionRefKey,
-  shouldCreateManagedRouter,
 } from './thread-router.mjs'
+import {
+  createThreadRouterController,
+  createThreadRouterRuntimeState,
+  routerRuntimeKey,
+} from './thread-router-controller.mjs'
 import { SessionDispatchRegistry } from './session-dispatch.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
-import {
-  filterSessionOccurrences,
-  localSessionOccurrences,
-  normalizeRemoteSessionOccurrences,
-} from './session-search.mjs'
-
 const commentSources = new CommentSourceRegistry()
   .register(createChatCommentProvider())
   .register(createDocumentCommentProvider())
@@ -290,29 +256,8 @@ const state = {
   selectedId: null,
   search: '',
   filter: 'all',
-  sessionLibrary: {
-    open: false,
-    loading: false,
-    loaded: false,
-    query: '',
-    entries: [],
-    selected: null,
-    error: '',
-    errorsByBackend: {},
-    generation: 0,
-    nextCursors: {},
-    returnBackend: null,
-    returnId: null,
-  },
-  threadSearch: {
-    open: false,
-    query: '',
-    type: 'all',
-    entries: [],
-    selected: -1,
-    loading: false,
-    generation: 0,
-  },
+  sessionLibrary: createSessionLibraryState(),
+  threadSearch: createThreadSearchState(),
   attentionThreads: new Set(),
   collapsedThreadGroups: new Set(),
   model: createCodexViewModel(),
@@ -336,72 +281,30 @@ const state = {
   embeddedBrowserVisible: false,
   embeddedBrowserLoaded: false,
   activeRightWorkspace: null,
-  annotationDrafts: {},
-  annotationAdditional: {},
+  ...createReviewNotesState(),
   annotationPromptTemplates: {},
   annotationPromptTemplate: annotationPromptDefaults['en-US'],
   openingMessages: {},
-  pendingSelection: null,
-  pendingAnnotation: null,
-  artifact: null,
-  artifactView: 'preview',
-  artifactSearch: '',
-  artifactSearchMatches: [],
-  artifactSearchIndex: -1,
-  artifactSearchOpen: false,
-  artifactOutlineOpen: false,
-  artifactOutlineFilter: '',
-  artifactOutlineActiveId: '',
-  artifactOutlineCollapsed: new Set(),
+  ...createDocumentWorkspaceState(),
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
   pendingSkills: {},
   pendingFiles: {},
-  favorites: [],
-  favoriteIndex: [],
-  favoriteTotal: 0,
-  favoriteQuery: '',
-  favoriteScope: 'global',
-  pendingFavorite: null,
-  selectedFavorite: null,
-  favoriteEditMode: false,
-  sessionMaps: new Map(),
-  sessionMapLoads: new Map(),
-  sessionMapDismissed: new Set(),
-  sessionMapSelectedItem: null,
-  sessionMapMenuItem: null,
-  sessionMapSync: new Map(),
-  sessionMapWorkerRequests: new Map(),
-  sessionMapWorkers: new SessionMapWorkerPool(),
+  ...createSessionMapRuntimeState(),
   hiddenCodexThreads: new Set(),
   hiddenCodexTurns: new Set(),
-  sessionMapBootstrapAttempts: new Set(),
-  sessionMapInlineProcessing: new Set(),
   router: normalizeThreadRouter(null),
-  routerPending: new Map(),
-  routerDispatches: new Map(),
-  routerTargetTurns: new Map(),
-  routerMonitors: new Map(),
-  routerEditor: null,
+  routerRuntime: createThreadRouterRuntimeState(),
 }
 
 let preferencesReady = false
 let preferencesWriteChain = Promise.resolve()
-let annotationPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
-let threadContentSearchTimer = null
 let codexCatalogFocusRefreshAt = 0
-const threadOccurrenceSearchSupport = new Map()
-let artifactSearchTimer = null
-let artifactOutlineObserver = null
-let artifactOutlineResizeObserver = null
-let artifactOutlineLocationCleanup = null
-let artifactOutlineRefreshTimer = null
-let artifactOutlineIdleCallback = null
 let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
 let openCodeListRefreshTimer = null
@@ -412,8 +315,6 @@ let threadCatalogErrorMessage = null
 const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
 const codexCatalogRecoveryStarted = new Set()
-let favoritesSearchTimer = null
-let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
@@ -427,15 +328,6 @@ let mermaidGeneration = 0
 let mermaidInitializedConfig = ''
 let activityLogContext = null
 let rightRailResize = null
-let artifactEditor = null
-let epubReader = null
-let epubReaderModule = null
-let epubReaderGeneration = 0
-let epubReadingStateTimer = null
-let richArtifactReader = null
-let pdfReaderModule = null
-let tableReaderModule = null
-let workspaceEditorModule = null
 let embeddedBrowserWidthTimer = null
 let environmentDialogRoot = ''
 let environmentDialogProfile = null
@@ -461,13 +353,172 @@ const sessionResources = createSessionResourcesUI({
   deactivate: (tool) => {
     if (state.activeRightWorkspace === tool) state.activeRightWorkspace = null
     syncRightWorkspaceLaunchers()
-    renderSessionMap()
+    sessionMap.render()
   },
   openResource: openSessionResource,
   openSource: openSessionResourceSource,
-  favoriteResource: openFavoriteForResource,
+  favoriteResource: (resource, occurrence) => reviewNotes.openFavoriteForResource(resource, occurrence),
   translate: t,
   notify: toast,
+})
+
+const sessionManagement = createSessionManagementUI({
+  state,
+  backend: {
+    requestCodexBackend,
+    rpc,
+    switchBackend,
+    waitFor,
+  },
+  catalog: {
+    selectThread,
+    loadThreads,
+    installBackendCatalog,
+    selectedThread,
+    threadTitle,
+  },
+  view: {
+    createViewModel: createCodexViewModel,
+    hydrateThread: hydrateCodexThread,
+    closeActionMenus,
+    closeWorkspacePeerRails,
+    renderThreadList,
+    renderWorkspace,
+    renderTranscript,
+  },
+  searchView: {
+    showTurn: (turnId) => transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, turnId),
+    renderedItem,
+    activityBlocks: activityBlocksForTurn,
+    renderedActivity,
+    hydrateActivity: hydrateActivityDetails,
+    pauseFollowing: () => transcriptScrollFollower.pause(),
+  },
+  notify: toast,
+  reportError: showError,
+})
+
+const threadRouter = createThreadRouterController({
+  state,
+  dispatch: sessionDispatch,
+  backend: {
+    dispatchRpc: dispatchBackendRpc,
+    refreshCatalogs: refreshRouterCatalogs,
+    loadBackendInfo,
+    configuredTurnOptions,
+  },
+  catalog: {
+    sidebarCatalogs: sidebarThreadCatalogs,
+    threadTitle,
+    threadStatus,
+    mergeThread: mergeThreadIntoCatalog,
+    updateLoadedThreadTimestamp,
+  },
+  model: {
+    ensureSessionModel,
+    applyNotification: applyCodexNotification,
+    cacheThreadModel,
+  },
+  view: {
+    closeActionMenus,
+    renderThreadList,
+    renderWorkspace,
+    renderTranscript,
+    renderComposerState,
+    renderItem,
+    selectThread,
+  },
+  persistPreferences,
+  notify: toast,
+})
+
+const sessionMap = createSessionMapController({
+  state,
+  transport: {
+    gatewayFetch,
+    gatewayWebSocket,
+    rpc,
+    dispatchBackendRpc,
+    sendRaw,
+  },
+  model: {
+    createViewModel: createCodexViewModel,
+    applyNotification: applyCodexNotification,
+  },
+  view: {
+    selectedStateKey,
+    activateRightWorkspace,
+    closeActionMenus,
+    toggleActionMenu,
+    closeAnnotationRail: () => reviewNotes.closeAnnotations(),
+    closeFavoritesRail: () => reviewNotes.closeFavorites(),
+    renderArtifact,
+    isResourcesOpen: () => sessionResources.isOpen(),
+    isWorkspaceOpen: () => workspaceTools.isOpen(),
+  },
+  randomId,
+  notify: toast,
+  reportError: showError,
+})
+
+const reviewNotes = createReviewNotesController({
+  state,
+  commentSources,
+  gatewayFetch,
+  randomId,
+  persistPreferences,
+  notify: toast,
+  reportError: showError,
+  view: {
+    selectedStateKey,
+    selectedThread,
+    threadTitle,
+    closeActionMenus,
+    activateRightWorkspace,
+    syncRightWorkspaceLaunchers,
+    renderArtifact,
+    renderSessionMap: () => sessionMap.render(),
+    openArtifact,
+    setArtifactView,
+    reopenEpubSource: reopenEpubComment,
+    goToPdfPage: (page) => documentWorkspace.goToPdfPage(page),
+    openBrowserUrl,
+    renderMarkdown,
+    renderedItem,
+    pauseTranscript: () => transcriptScrollFollower.pause(),
+    switchBackend,
+    waitForBackend: waitFor,
+    loadThreads,
+    selectThread,
+  },
+})
+
+const documentWorkspace = createDocumentWorkspaceController({
+  state,
+  gatewayFetch,
+  randomId,
+  persistPreferences,
+  notify: toast,
+  reportError: showError,
+  view: {
+    selectedThread,
+    selectedStateKey,
+    activateRightWorkspace,
+    hideComposerMenu,
+    closeActionMenus,
+    applyRightRailWidth,
+    renderMarkdownDocument,
+    hydrateMarkdownImages,
+    disconnectMarkdownImageObserver,
+    disposeMarkdownImageAssets,
+    hideSelection: () => reviewNotes.hideSelection(),
+    setSelection: (...args) => reviewNotes.setSelection(...args),
+    openWorkspaceTool: (tool) => workspaceTools.open(tool),
+    openResources: () => sessionResources.open(),
+    renderSessionMap: () => sessionMap.render(),
+    openBrowserUrl,
+    reportClientError,
+  },
 })
 
 document.addEventListener('DOMContentLoaded', () => init().catch(showError))
@@ -561,7 +612,7 @@ async function init() {
   applyBackendCopy()
   await loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
   syncEmbeddedBrowserTranslations()
-  await loadFavorites().catch(showError)
+  await reviewNotes.loadFavorites().catch(showError)
   // Catalog discovery is independent of the active backend connection. A
   // transient failure in one backend must not leave the whole sidebar empty
   // while the other backend is healthy.
@@ -621,43 +672,26 @@ function bindUI() {
   window.addEventListener('focus', refreshActiveCodexCatalogOnFocus)
   workspaceTools.bind()
   sessionResources.bind()
+  sessionManagement.bind()
+  threadRouter.bind()
+  sessionMap.bind()
+  reviewNotes.bind()
+  documentWorkspace.bind()
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#studio-menu-button').addEventListener('click', () => {
     toggleActionMenu('studio-menu', 'studio-menu-button')
   })
-  $('#open-archived-sessions').addEventListener('click', () => openArchivedSessions().catch(showError))
-  $('#close-archived-sessions').addEventListener('click', () => closeArchivedSessions().catch(showError))
-  $('#restore-archived-session').addEventListener('click', () => restoreArchivedSession().catch(showError))
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)
   $('#close-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#cancel-new-thread').addEventListener('click', closeNewThreadDialog)
   $('#new-thread-form').addEventListener('submit', createThread)
   $('#new-thread-backend').addEventListener('change', handleNewThreadBackendChange)
-  $('#thread-search').addEventListener('input', (event) => {
-    if (state.sessionLibrary.open) state.sessionLibrary.query = event.target.value.trim().toLowerCase()
-    else state.search = event.target.value.trim().toLowerCase()
-    renderThreadList()
-  })
   $$('.thread-filter').forEach((button) => button.addEventListener('click', () => {
     state.filter = button.dataset.filter
     renderThreadList()
   }))
   $('#thread-more-button').addEventListener('click', () => toggleActionMenu('thread-more-menu', 'thread-more-button'))
-  $('#open-thread-search').addEventListener('click', openThreadContentSearch)
-  $('#close-thread-search').addEventListener('click', () => closeThreadContentSearch())
-  $('#thread-content-search-input').addEventListener('input', handleThreadContentSearchInput)
-  $('#thread-content-search-input').addEventListener('focus', () => renderThreadContentSearch())
-  $('#thread-content-search-input').addEventListener('keydown', handleThreadContentSearchKeydown)
-  $('#thread-content-search-prev').addEventListener('click', () => navigateThreadContentSearch(-1))
-  $('#thread-content-search-next').addEventListener('click', () => navigateThreadContentSearch(1))
-  $('#thread-content-search-type').addEventListener('change', (event) => {
-    state.threadSearch.type = event.target.value
-    state.threadSearch.selected = filteredThreadSearchEntries().length ? 0 : -1
-    renderThreadContentSearch()
-  })
-  $('#thread-content-search-results').addEventListener('mousedown', (event) => event.preventDefault())
-  $('#thread-content-search-results').addEventListener('click', handleThreadContentSearchResultClick)
   $('#refresh-thread').addEventListener('click', () => {
     closeActionMenus()
     refreshSelectedThread()
@@ -675,31 +709,6 @@ function bindUI() {
   $('#environment-secrets').addEventListener('input', updateEnvironmentDraftSummary)
   $('#environment-cache-variables').addEventListener('input', updateEnvironmentDraftSummary)
   $$('input[name="environment-network-policy"]').forEach((input) => input.addEventListener('change', updateEnvironmentDraftSummary))
-  $('#router-settings-action').addEventListener('click', openRouterDialog)
-  $('#router-form').addEventListener('submit', saveRouterSettings)
-  $('#close-router-dialog').addEventListener('click', closeRouterDialog)
-  $('#cancel-router').addEventListener('click', closeRouterDialog)
-  $('#router-add-fallback').addEventListener('click', addRouterFallback)
-  $('#session-map-action').addEventListener('click', handleSessionMapAction)
-  $('#session-map-more').addEventListener('click', () => toggleActionMenu('session-map-menu', 'session-map-more'))
-  $('#close-session-map').addEventListener('click', closeSessionMapRail)
-  $('#session-map-add-root').addEventListener('click', () => openSessionMapItemDialog())
-  $('#session-map-ai-generate').addEventListener('click', () => generateSessionMapStructure().catch(showError))
-  $('#session-map-edit-goal').addEventListener('click', openSessionMapGoalDialog)
-  $('#session-map-undo').addEventListener('click', () => undoSessionMap().catch(showError))
-  $('#session-map-delete').addEventListener('click', () => deleteSessionMap().catch(showError))
-  $('#session-map-tree').addEventListener('click', handleSessionMapTreeClick)
-  $('#session-map-item-menu').addEventListener('click', handleSessionMapItemMenu)
-  $('#session-map-form').addEventListener('submit', createSessionMap)
-  $('#close-session-map-dialog').addEventListener('click', closeSessionMapDialog)
-  $('#cancel-session-map').addEventListener('click', closeSessionMapDialog)
-  $('#session-map-goal-form').addEventListener('submit', saveSessionMapGoal)
-  $('#session-map-suggest-goal').addEventListener('click', () => suggestSessionMapGoal().catch(showError))
-  $('#close-session-map-goal').addEventListener('click', () => $('#session-map-goal-dialog').close())
-  $('#cancel-session-map-goal').addEventListener('click', () => $('#session-map-goal-dialog').close())
-  $('#session-map-item-form').addEventListener('submit', saveSessionMapItem)
-  $('#close-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
-  $('#cancel-session-map-item').addEventListener('click', () => $('#session-map-item-dialog').close())
   $('#rename-thread').addEventListener('click', () => {
     closeActionMenus()
     openRenameThreadDialog()
@@ -725,32 +734,11 @@ function bindUI() {
   $('#composer-input').addEventListener('keydown', handleComposerKeydown)
   $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
-  $('#composer-review-open').addEventListener('click', openAnnotationRail)
-  $('#composer-review-insert').addEventListener('click', insertAnnotations)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
   $('#open-browser-workspace').addEventListener('click', () => openGlobalBrowser().catch(showError))
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
-  $('#transcript').addEventListener('mouseup', captureTranscriptSelection)
-  $('#artifact-content').addEventListener('mouseup', captureArtifactSelection)
   $('#artifact-content').addEventListener('click', handleTranscriptClick)
-  $('#close-artifact').addEventListener('click', closeArtifactRail)
-  $('#refresh-artifact').addEventListener('click', () => refreshArtifact().catch(showError))
-  $('#artifact-preview').addEventListener('click', () => setArtifactView('preview'))
-  $('#artifact-source').addEventListener('click', () => setArtifactView('source'))
-  $('#artifact-edit').addEventListener('click', () => setArtifactView('edit'))
-  $('#artifact-save').addEventListener('click', () => saveArtifact().catch(showError))
-  $('#artifact-outline-toggle').addEventListener('click', toggleArtifactOutline)
-  $('#artifact-outline-close').addEventListener('click', () => setArtifactOutlineOpen(false))
-  $('#artifact-outline-backdrop').addEventListener('click', () => setArtifactOutlineOpen(false))
-  $('#artifact-outline-filter').addEventListener('input', handleArtifactOutlineFilter)
-  $('#artifact-outline-filter').addEventListener('keydown', handleArtifactOutlineFilterKeydown)
-  $('#artifact-outline-list').addEventListener('click', (event) => handleArtifactOutlineClick(event).catch(showError))
-  $('#artifact-search-toggle').addEventListener('click', toggleArtifactSearch)
-  $('#artifact-search-input').addEventListener('input', handleArtifactSearchInput)
-  $('#artifact-search-input').addEventListener('keydown', handleArtifactSearchKeydown)
-  $('#artifact-search-prev').addEventListener('click', () => navigateArtifactSearch(-1))
-  $('#artifact-search-next').addEventListener('click', () => navigateArtifactSearch(1))
   for (const resizer of $$('.app-right-rail-resizer')) {
     resizer.addEventListener('pointerdown', beginRightRailResize)
     resizer.addEventListener('pointermove', continueRightRailResize)
@@ -761,42 +749,12 @@ function bindUI() {
   }
   $('#transcript').addEventListener('click', handleTranscriptClick)
   document.addEventListener('click', (event) => handleMarkdownActionClick(event).catch(reportClientError))
-  $('#open-thread-comments').addEventListener('click', openAnnotationRail)
-  $('#open-thread-favorites').addEventListener('click', () => openFavoritesRail('session'))
   window.addEventListener('resize', () => {
     scheduleTurnNavigatorSync()
     applyRightRailWidth()
     workspaceTools.resize()
-    updateArtifactOutlineLayout()
+    documentWorkspace.resize()
   })
-  document.addEventListener('keydown', handleArtifactNavigationKeydown)
-  $('#selection-popover').addEventListener('mousedown', (event) => event.preventDefault())
-  $('#selection-comment').addEventListener('click', openAnnotationFromSelection)
-  $('#selection-favorite').addEventListener('click', openFavoriteFromSelection)
-  $('#close-annotation-rail').addEventListener('click', closeAnnotationRail)
-  $('#annotation-form').addEventListener('submit', addAnnotation)
-  $('#close-annotation-dialog').addEventListener('click', closeAnnotationDialog)
-  $('#cancel-annotation').addEventListener('click', closeAnnotationDialog)
-  $('#clear-annotations').addEventListener('click', clearAnnotations)
-  $('#insert-annotations').addEventListener('click', insertAnnotations)
-  $('#annotation-additional').addEventListener('input', saveAnnotationAdditional)
-  $('#open-favorites').addEventListener('click', () => {
-    closeActionMenus()
-    openFavoritesRail('global')
-  })
-  $('#export-favorites').addEventListener('click', () => exportFavorites().catch(showError))
-  $('#close-favorites').addEventListener('click', closeFavoritesRail)
-  $('#favorites-search').addEventListener('input', handleFavoritesSearch)
-  $('#favorites-list').addEventListener('click', handleFavoriteListClick)
-  $('#favorite-form').addEventListener('submit', saveFavorite)
-  $('#close-favorite-dialog').addEventListener('click', closeFavoriteDialog)
-  $('#cancel-favorite').addEventListener('click', closeFavoriteDialog)
-  $('#favorite-include-question').addEventListener('change', renderFavoriteQuestionOption)
-  $('#close-favorite-detail').addEventListener('click', closeFavoriteDetail)
-  $('#copy-favorite').addEventListener('click', () => copySelectedFavorite().catch(showError))
-  $('#edit-favorite').addEventListener('click', editSelectedFavorite)
-  $('#delete-favorite').addEventListener('click', () => deleteSelectedFavorite().catch(showError))
-  $('#open-favorite-source').addEventListener('click', () => openSelectedFavoriteSource().catch(showError))
   $('#connections-button').addEventListener('click', openConnectionsDialog)
   $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
   $('#settings-button').addEventListener('click', () => {
@@ -816,16 +774,16 @@ function bindUI() {
   $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
 
   document.addEventListener('mousedown', (event) => {
-    if (!event.target.closest('#selection-popover, .content-menu-anchor')) hideSelectionPopover()
+    if (!event.target.closest('#selection-popover, .content-menu-anchor')) reviewNotes.hideSelection()
     if (!event.target.closest('.menu-anchor')) closeActionMenus()
-    if (!event.target.closest('#session-map-item-menu, .session-map-row-menu')) closeSessionMapItemMenu()
-    if (!event.target.closest('#thread-content-search')) hideThreadContentSearchResults()
+    if (!event.target.closest('#session-map-item-menu, .session-map-row-menu')) sessionMap.closeItemMenu()
+    if (!event.target.closest('#thread-content-search')) sessionManagement.search.hideResults()
   })
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
     if (modifier && event.key.toLowerCase() === 'f' && selectedThread() && !event.target.closest('.artifact-rail, .workspace-files-rail, .workspace-terminal-rail, .workspace-review-rail, .embedded-browser-rail')) {
       event.preventDefault()
-      openThreadContentSearch()
+      sessionManagement.search.open()
     } else if (modifier && event.key.toLowerCase() === 'n') {
       event.preventDefault()
       openNewThreadDialog()
@@ -836,15 +794,15 @@ function bindUI() {
       event.preventDefault()
       $('#thread-search').focus()
     } else if (event.key === 'Escape' && state.threadSearch.open) {
-      closeThreadContentSearch()
+      sessionManagement.search.close()
     } else if (event.key === 'Escape') {
       const artifactWasOpen = !$('#artifact-rail').classList.contains('hidden')
-      hideSelectionPopover()
+      reviewNotes.hideSelection()
       closeActionMenus()
-      closeAnnotationRail()
-      closeFavoritesRail()
+      reviewNotes.closeAnnotations()
+      reviewNotes.closeFavorites()
       sessionResources.close()
-      closeSessionMapItemMenu()
+      sessionMap.closeItemMenu()
       if (artifactWasOpen) closeArtifactRail({ restoreWorkspace: false })
       workspaceTools.close()
     }
@@ -956,62 +914,6 @@ function openSessionResourceSource(occurrence) {
   })
 }
 
-function openFavoriteForResource(resource, occurrence) {
-  const thread = selectedThread()
-  if (!thread || !occurrence?.turnId || !occurrence?.itemId) {
-    toast(t('Unable to locate the resource in its message'), 'error')
-    return
-  }
-  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(occurrence.turnId))
-  const target = resource.target?.url || resource.target?.path || resource.raw
-  const location = resource.target?.line
-    ? `${target}:${resource.target.line}${resource.target.column ? `:${resource.target.column}` : ''}`
-    : target
-  const content = resource.target?.url ? String(location) : `\`${String(location).replaceAll('`', '')}\``
-  state.favoriteEditMode = false
-  state.pendingFavorite = {
-    id: randomId(),
-    scope: 'selection',
-    backend: state.backend,
-    threadId: state.selectedId,
-    threadTitle: threadTitle(thread),
-    projectPath: thread.cwd || '',
-    turnId: String(occurrence.turnId),
-    itemId: String(occurrence.itemId),
-    title: String(resource.display || autoFavoriteTitle(location)),
-    presentation: 'resource',
-    question: turn ? questionForTurn(turn) : '',
-    content,
-    note: '',
-    tags: [],
-    createdAt: new Date().toISOString(),
-  }
-  populateFavoriteDialog(state.pendingFavorite)
-}
-
-function jumpArtifactToLine(line, column = 1) {
-  if (!state.artifact || !Number.isInteger(Number(line)) || Number(line) < 1) return
-  if (state.artifact.kind === 'text') setArtifactView('source')
-  requestAnimationFrame(() => {
-    const source = $('#artifact-content .artifact-source')
-    const node = source?.firstChild
-    if (!source || !node) return
-    const lines = String(node.textContent || '').split('\n')
-    const targetLine = Math.min(lines.length, Math.max(1, Number(line)))
-    const start = lines.slice(0, targetLine - 1).reduce((total, value) => total + value.length + 1, 0)
-    const offset = Math.min(start + Math.max(0, Number(column || 1) - 1), start + (lines[targetLine - 1]?.length || 0))
-    const lineEnd = start + (lines[targetLine - 1]?.length || 0)
-    const range = document.createRange()
-    range.setStart(node, Math.min(offset, node.length))
-    range.setEnd(node, Math.min(Math.max(offset, lineEnd), node.length))
-    const selection = window.getSelection()
-    selection.removeAllRanges()
-    selection.addRange(range)
-    const rect = range.getBoundingClientRect()
-    $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
-  })
-}
-
 function currentRightRailPixelWidth() {
   const bounds = appRightRailWidthBounds()
   return Math.round(Math.max(480, Math.min(bounds.max, bounds.available * state.rightRailWidthRatio)))
@@ -1054,7 +956,7 @@ function openEmbeddedBrowserComment(selection) {
   const excerpt = String(selection?.text || '').trim().slice(0, 16000)
   if (!excerpt) return toast(t('Select text on the web page first'), 'error')
   if (!state.selectedId) return toast(t('Select a session first'), 'error')
-  state.pendingSelection = {
+  reviewNotes.openCommentForSelection({
     quote: excerpt,
     itemId: null,
     turnId: null,
@@ -1062,8 +964,7 @@ function openEmbeddedBrowserComment(selection) {
       url: selection.url,
       title: selection.title,
     }),
-  }
-  openAnnotationFromSelection()
+  })
 }
 
 window.__studioEmbeddedBrowser = Object.freeze({
@@ -1270,7 +1171,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   renderThreadList()
   renderWorkspace()
   renderTranscript()
-  renderSessionMap()
+  sessionMap.render()
   persistPreferences()
   await loadBackendInfo()
   connectBackend()
@@ -1513,7 +1414,7 @@ function handleAppServerMessage(message) {
   }
 
   if (message.id != null && !message.method) {
-    captureSessionMapWorkerResponse(message)
+    sessionMap.captureWorkerResponse(message)
     const pending = state.pending.get(String(message.id))
     if (!pending) return
     state.pending.delete(String(message.id))
@@ -1539,12 +1440,10 @@ function handleAppServerMessage(message) {
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
     const backend = state.backend
     const threadId = message.params?.threadId
-    state.sessionLibrary.loaded = false
+    sessionManagement.archive.markStale()
     if (message.method === 'thread/deleted') {
-      state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === backend && entry.thread.id === threadId))
-      if (state.sessionLibrary.selected?.backend === backend && state.sessionLibrary.selected.thread.id === threadId) state.sessionLibrary.selected = null
+      sessionManagement.archive.remove(backend, threadId)
     }
-    renderArchivedSessionBadge()
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
     state.threadsByBackend[backend] = state.threads
     if (message.method === 'thread/deleted') {
@@ -1552,14 +1451,7 @@ function handleAppServerMessage(message) {
       delete state.annotationAdditional[`${backend}:${threadId}`]
       delete state.openingMessages[`${backend}:${threadId}`]
     }
-    const deletedKey = sessionRefKey(backend, threadId)
-    if (state.router.controllers[backend] === threadId) {
-      const controllers = { ...state.router.controllers }
-      delete controllers[backend]
-      state.router = normalizeThreadRouter({ ...state.router, controllers })
-    } else if (state.router.fallbacks.some((entry) => entry.sessionKey === deletedKey)) {
-      state.router = normalizeThreadRouter({ ...state.router, fallbacks: state.router.fallbacks.filter((entry) => entry.sessionKey !== deletedKey) })
-    }
+    threadRouter.removeSession(backend, threadId)
     invalidateThreadModel(backend, threadId)
     persistPreferences()
     if (state.selectedId === threadId) {
@@ -1574,9 +1466,7 @@ function handleAppServerMessage(message) {
   }
 
   if (message.method === 'thread/unarchived') {
-    state.sessionLibrary.loaded = false
-    renderArchivedSessionBadge()
-    if (state.sessionLibrary.open) loadArchivedSessions().catch(showError)
+    sessionManagement.archive.markStale({ reload: true })
     return
   }
 
@@ -1593,7 +1483,7 @@ function handleAppServerMessage(message) {
 
   if (message.id != null && message.method) {
     if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
-      handleSessionMapToolCall(message)
+      sessionMap.handleToolCall(message)
       return
     }
     const targetModel = codexNotificationModel(message)
@@ -1624,7 +1514,7 @@ function handleAppServerMessage(message) {
     if (message.method === 'turn/completed') {
       const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
       notifyDesktop(t('Work completed'), threadTitle(completedThread || { name: t('Untitled session') }))
-      completeRouterTurn({
+      threadRouter.completeTurn({
         backend,
         turnId: message.params?.turn?.id || message.params?.turnId,
         model: targetModel,
@@ -1647,7 +1537,7 @@ function handleAppServerMessage(message) {
     updateSelectedThreadStatus(message)
     if (message.method === 'turn/completed') {
       const threadId = message.params?.threadId || message.params?.thread?.id || state.selectedId
-      processSessionMapInlineUpdate(backend, threadId, targetModel, message.params?.turn?.id).catch((error) => {
+      sessionMap.processInlineUpdate(backend, threadId, targetModel, message.params?.turn?.id).catch((error) => {
         console.warn('Session Map inline update failed', error)
       })
     }
@@ -1686,56 +1576,6 @@ function notifyDesktop(title, body = '') {
   }
 }
 
-function captureSessionMapWorkerResponse(message) {
-  const id = String(message?.id ?? '')
-  const method = state.sessionMapWorkerRequests.get(id)
-  if (!method) return
-  state.sessionMapWorkerRequests.delete(id)
-  if (message.error) return
-  if (method === 'thread/start' && message.result?.thread?.id) {
-    state.hiddenCodexThreads.add(sessionRefKey(state.backend, message.result.thread.id))
-  }
-  if (method === 'turn/start' && message.result?.turn?.id) {
-    state.hiddenCodexTurns.add(routerRuntimeKey(state.backend, message.result.turn.id))
-  }
-}
-
-async function handleSessionMapToolCall(message) {
-  const backend = state.backend
-  const params = message.params || {}
-  const key = sessionMapKey(backend, params.threadId)
-  try {
-    const map = await loadSessionMap(backend, params.threadId)
-    if (!map) throw new Error('This thread does not have a Session Map')
-    const operations = safeAssistantOperations(params.arguments)
-    if (!operations.length) throw new Error('No safe Session Map operations were provided')
-    const updated = await applySessionMapOperations(operations, {
-      actor: 'assistant',
-      sourceTurnId: params.turnId || null,
-      key,
-    })
-    sendRaw({
-      id: message.id,
-      result: {
-        success: true,
-        contentItems: [{ type: 'inputText', text: `Session Map updated to revision ${updated.revision}.` }],
-      },
-    })
-    state.sessionMapSync.set(key, { state: 'synced', message: 'Map updated during the current turn' })
-    if (selectedStateKey() === key) renderSessionMap()
-  } catch (error) {
-    sendRaw({
-      id: message.id,
-      result: {
-        success: false,
-        contentItems: [{ type: 'inputText', text: `Session Map update rejected: ${error.message}` }],
-      },
-    })
-    state.sessionMapSync.set(key, { state: 'error', message: error.message })
-    if (selectedStateKey() === key) renderSessionMap()
-  }
-}
-
 function handleOpenCodeServerEvent(event) {
   const payload = event?.payload || event
   if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
@@ -1748,15 +1588,7 @@ function handleOpenCodeServerEvent(event) {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
     const deletedKey = sessionRefKey('opencode', deletedId)
     delete state.openingMessages[deletedKey]
-    if (state.router.controllers.opencode === deletedId) {
-      const controllers = { ...state.router.controllers }
-      delete controllers.opencode
-      state.router = normalizeThreadRouter({ ...state.router, controllers })
-      persistPreferences()
-    } else if (state.router.fallbacks.some((entry) => entry.sessionKey === deletedKey)) {
-      state.router = normalizeThreadRouter({ ...state.router, fallbacks: state.router.fallbacks.filter((entry) => entry.sessionKey !== deletedKey) })
-      persistPreferences()
-    }
+    if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
     if (deletedId && state.selectedId === deletedId) {
       state.selectedId = null
       state.selectedByBackend.opencode = null
@@ -2138,7 +1970,7 @@ async function refreshInactiveCatalog() {
     try {
       await refreshBackendCatalog(backend)
       scheduleCodexCatalogRecovery(backend)
-      if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
+      if (backend === state.router.controllerBackend) await threadRouter.ensureManagedSession(backend)
     } catch (error) {
       console.warn(`Unable to refresh ${backend} catalog`, error)
       reportClientError(new Error(`${backend} inactive session catalog failed: ${error?.message || error}`))
@@ -2304,12 +2136,12 @@ async function loadThreads() {
   setActiveThreads(Array.isArray(result?.data) ? result.data : [])
   markThreadCatalogLoaded()
   if (state.backend === state.router.controllerBackend) {
-    await ensureManagedRouterSession(state.backend).catch(showError)
+    await threadRouter.ensureManagedSession(state.backend).catch(showError)
   }
   renderThreadList()
   scheduleCodexCatalogRecovery(state.backend)
   refreshInactiveCatalog()
-  if (state.sessionLibrary.open) {
+  if (sessionManagement.archive.isOpen()) {
     renderWorkspace()
     return
   }
@@ -2344,228 +2176,9 @@ function visibleThreadEntries() {
   })
 }
 
-async function openArchivedSessions() {
-  closeActionMenus()
-  closeThreadContentSearch()
-  if (!state.sessionLibrary.open) {
-    state.sessionLibrary.returnBackend = state.backend
-    state.sessionLibrary.returnId = state.selectedId
-  }
-  state.sessionLibrary.open = true
-  $('#archived-sidebar-header').classList.remove('hidden')
-  $('.thread-filters').classList.add('hidden')
-  const search = $('#thread-search')
-  search.value = state.sessionLibrary.query
-  search.placeholder = t('Search archived sessions')
-  renderThreadList()
-  if (!state.sessionLibrary.loaded) await loadArchivedSessions()
-  else if (Object.keys(state.sessionLibrary.errorsByBackend).length) {
-    await loadArchivedSessions({ backends: Object.keys(state.sessionLibrary.errorsByBackend) })
-  }
-}
-
-async function closeArchivedSessions({ restoredId = null, restoredBackend = null } = {}) {
-  const returnBackend = restoredBackend || state.sessionLibrary.returnBackend || state.backend
-  const returnId = restoredId || state.sessionLibrary.returnId || state.selectedByBackend[returnBackend]
-  state.sessionLibrary.open = false
-  state.sessionLibrary.selected = null
-  state.sessionLibrary.returnBackend = null
-  state.sessionLibrary.returnId = null
-  $('#archived-sidebar-header').classList.add('hidden')
-  $('.thread-filters').classList.remove('hidden')
-  const search = $('#thread-search')
-  search.value = state.search
-  search.placeholder = t('Search sessions or paths')
-  if (returnBackend !== state.backend) {
-    await switchBackend(returnBackend, { selectedId: returnId || undefined })
-    await waitFor(() => state.backend === returnBackend && state.ready, 15_000)
-    if (returnId) await selectThread(returnId, { force: true, backend: returnBackend }).catch(showError)
-    return
-  }
-  state.selectedId = returnId || null
-  state.model = createCodexViewModel()
-  renderThreadList()
-  renderWorkspace()
-  renderTranscript()
-  if (returnId && state.threads.some((thread) => thread.id === returnId)) await selectThread(returnId, { force: true })
-  else await loadThreads()
-}
-
-async function loadArchivedSessions({ append = false, backends = null } = {}) {
-  const generation = ++state.sessionLibrary.generation
-  state.sessionLibrary.loading = true
-  renderThreadList()
-  const availableBackends = BACKEND_IDS.filter(isCodexBackend)
-  const requestedBackends = (Array.isArray(backends) ? backends : availableBackends)
-    .filter((backend, index, values) => availableBackends.includes(backend) && values.indexOf(backend) === index)
-    .filter((backend) => !append || state.sessionLibrary.nextCursors[backend])
-  if (!requestedBackends.length) {
-    state.sessionLibrary.loading = false
-    renderThreadList()
-    return
-  }
-  const results = await Promise.all(requestedBackends.map(async (backend) => {
-    const cursor = append ? state.sessionLibrary.nextCursors[backend] : null
-    try {
-      const result = await requestCodexBackend(backend, 'thread/list', catalogListParams('codex', {
-        archived: true,
-        limit: 100,
-        cursor,
-        sortKey: 'updated_at',
-        sortDirection: 'desc',
-      }))
-      return { backend, status: 'fulfilled', data: Array.isArray(result?.data) ? result.data : [], nextCursor: result?.nextCursor || null }
-    } catch (error) {
-      return { backend, status: 'rejected', error }
-    }
-  }))
-  if (generation !== state.sessionLibrary.generation) return
-  const successful = results.filter((result) => result.status === 'fulfilled')
-  const failed = results.filter((result) => result.status === 'rejected')
-  const entries = successful.flatMap(({ backend, data }) => data.map((thread) => ({ backend, thread: { ...thread, archived: true } })))
-  const refreshedBackends = new Set(successful.map(({ backend }) => backend))
-  const existing = append
-    ? state.sessionLibrary.entries
-    : state.sessionLibrary.entries.filter(({ backend }) => !refreshedBackends.has(backend))
-  const byKey = new Map([...existing, ...entries].map((entry) => [threadCatalogKey(entry.backend, entry.thread.id), entry]))
-  state.sessionLibrary.entries = [...byKey.values()].sort((left, right) => threadUpdatedAt(right.thread) - threadUpdatedAt(left.thread))
-  const nextCursors = { ...state.sessionLibrary.nextCursors }
-  for (const { backend, nextCursor } of successful) nextCursors[backend] = nextCursor
-  state.sessionLibrary.nextCursors = nextCursors
-  const errorsByBackend = { ...state.sessionLibrary.errorsByBackend }
-  for (const { backend } of successful) delete errorsByBackend[backend]
-  for (const { backend, error } of failed) errorsByBackend[backend] = error?.message || String(error)
-  state.sessionLibrary.errorsByBackend = errorsByBackend
-  state.sessionLibrary.error = Object.entries(errorsByBackend)
-    .map(([backend, message]) => `${backendDescriptor(backend).name}: ${message}`)
-    .join(' · ')
-  state.sessionLibrary.loading = false
-  state.sessionLibrary.loaded = true
-  renderArchivedSessionBadge()
-  renderThreadList()
-}
-
-function archivedSessionEntries() {
-  const query = state.sessionLibrary.query
-  return state.sessionLibrary.entries.filter(({ backend, thread }) => {
-    if (isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)) return false
-    if (!query) return true
-    return [threadTitle(thread), thread.cwd, thread.id, backendDescriptor(backend).name, backendDescriptor(backend).tag]
-      .filter(Boolean).join(' ').toLowerCase().includes(query)
-  })
-}
-
-function renderArchivedSessionBadge() {
-  const badge = $('#archived-sessions-badge')
-  const count = state.sessionLibrary.entries.length
-  badge.textContent = count
-  badge.classList.toggle('hidden', !state.sessionLibrary.loaded || count === 0)
-}
-
-function renderArchivedThreadList() {
-  const list = $('#thread-list')
-  if (state.sessionLibrary.loading && !state.sessionLibrary.entries.length) {
-    list.innerHTML = `<div class="list-empty">${t('Loading archived sessions…')}</div>`
-    return
-  }
-  if (state.sessionLibrary.error && !state.sessionLibrary.entries.length) {
-    list.innerHTML = `<div class="list-empty error">${escapeHtml(state.sessionLibrary.error)}<button class="subtle-button compact" type="button" data-retry-archived>${t('Retry')}</button></div>`
-    bindArchivedRetry(list)
-    return
-  }
-  const entries = archivedSessionEntries()
-  if (!entries.length) {
-    list.innerHTML = `<div class="list-empty">${t(state.sessionLibrary.query ? 'No matching archived sessions' : 'No archived sessions')}</div>`
-    return
-  }
-  const selected = state.sessionLibrary.selected
-  const errorBanner = state.sessionLibrary.error
-    ? `<div class="archive-load-error">${escapeHtml(state.sessionLibrary.error)}<button class="subtle-button compact" type="button" data-retry-archived>${t('Retry')}</button></div>`
-    : ''
-  const renderRow = ({ backend, thread }) => {
-    const active = selected?.backend === backend && selected?.thread?.id === thread.id
-    const updated = threadUpdatedAt(thread)
-    const date = updated ? new Intl.DateTimeFormat(getLocale(), { dateStyle: 'medium' }).format(new Date(updated)) : ''
-    return `<button class="thread-row archived${active ? ' active' : ''}" data-archived-thread-id="${escapeHtml(thread.id)}" data-backend="${escapeHtml(backend)}">
-      <span class="archived-thread-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h16v11H4zM3 4h18v4H3zM9 12h6"/></svg></span>
-      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small>${date ? `<small>${t('Archived {date}', { date })}</small>` : ''}</span>
-      <span class="backend-tag ${escapeHtml(backend)}" title="${escapeHtml(backendDescriptor(backend).name)}">${escapeHtml(backendDescriptor(backend).tag)}</span>
-    </button>`
-  }
-  list.innerHTML = errorBanner + groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => `<section class="thread-group" data-group-path="${escapeHtml(cwd)}">
-    <div class="thread-group-heading static" data-no-i18n title="${escapeHtml(cwd || t('Project directory not recorded'))}"><strong>${escapeHtml(name || t('Other sessions'))}</strong><span>${groupEntries.length}</span></div>
-    <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
-  </section>`).join('')
-  if (Object.values(state.sessionLibrary.nextCursors).some(Boolean)) {
-    list.insertAdjacentHTML('beforeend', `<button class="load-more-archived" type="button" data-load-more-archived>${t('Load more')}</button>`)
-  }
-  list.querySelectorAll('[data-archived-thread-id]').forEach((row) => row.addEventListener('click', () => openArchivedSession(row.dataset.backend, row.dataset.archivedThreadId).catch(showError)))
-  list.querySelector('[data-load-more-archived]')?.addEventListener('click', () => loadArchivedSessions({ append: true }).catch(showError))
-  bindArchivedRetry(list)
-}
-
-function bindArchivedRetry(container) {
-  container.querySelector('[data-retry-archived]')?.addEventListener('click', () => {
-    const failed = Object.keys(state.sessionLibrary.errorsByBackend)
-    loadArchivedSessions({ backends: failed.length ? failed : null }).catch(showError)
-  })
-}
-
-async function openArchivedSession(backend, threadId) {
-  const entry = state.sessionLibrary.entries.find((candidate) => candidate.backend === backend && candidate.thread.id === threadId)
-  if (!entry) return
-  state.sessionLibrary.selected = entry
-  renderThreadList()
-  if (backend !== state.backend) {
-    await switchBackend(backend)
-    await waitFor(() => state.backend === backend && state.ready, 15_000)
-  }
-  if (!state.sessionLibrary.open || state.sessionLibrary.selected !== entry) return
-  const result = await rpc('thread/read', { threadId, includeTurns: true })
-  if (!state.sessionLibrary.open || state.sessionLibrary.selected !== entry) return
-  entry.thread = { ...entry.thread, ...(result.thread || {}), archived: true, turns: undefined }
-  state.selectedId = threadId
-  state.model = createCodexViewModel()
-  hydrateCodexThread(state.model, result.thread)
-  closeWorkspacePeerRails()
-  renderThreadList()
-  renderWorkspace()
-  renderTranscript()
-  $('#native-connection').textContent = t('Archived')
-}
-
-async function restoreArchivedSession() {
-  const selected = state.sessionLibrary.selected
-  if (!selected || selected.backend !== state.backend || state.selectedId !== selected.thread.id) return
-  const button = $('#restore-archived-session')
-  button.disabled = true
-  try {
-    const result = await rpc('thread/unarchive', { threadId: selected.thread.id })
-    const restored = {
-      ...selected.thread,
-      ...(result?.thread || {}),
-      archived: false,
-      turns: undefined,
-    }
-    const catalog = state.threadsByBackend[selected.backend] || []
-    installBackendCatalog(selected.backend, [
-      restored,
-      ...catalog.filter((thread) => thread.id !== restored.id),
-    ])
-    state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === selected.backend && entry.thread.id === selected.thread.id))
-    state.sessionLibrary.loaded = false
-    state.selectedByBackend[selected.backend] = restored.id
-    renderArchivedSessionBadge()
-    await closeArchivedSessions({ restoredId: restored.id, restoredBackend: selected.backend })
-    toast(t('Session restored'))
-  } finally {
-    if (button.isConnected) button.disabled = false
-  }
-}
-
 function renderThreadList() {
-  if (state.sessionLibrary.open) {
-    renderArchivedThreadList()
+  if (sessionManagement.archive.isOpen()) {
+    sessionManagement.archive.renderList()
     return
   }
   const list = $('#thread-list')
@@ -2636,7 +2249,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
     return selectThread(id, { force: true, backend })
   }
   if (!force && state.selectedId === id) return
-  closeThreadContentSearch({ clear: true })
+  sessionManagement.search.close({ clear: true })
   closeActionMenus()
   hideComposerMenu()
   resetStreamingPatches()
@@ -2645,12 +2258,11 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
   setNativeError(null)
-  state.sessionMapSelectedItem = null
-  closeSessionMapItemMenu()
+  sessionMap.resetSelection()
   const key = sessionMapKey(state.backend, id)
-  const mapLoad = loadSessionMap(state.backend, id).catch((error) => {
+  const mapLoad = sessionMap.load(state.backend, id).catch((error) => {
     console.warn('Unable to load Session Map', error)
-    if (state.selectedId === id) setSessionMapSyncState('error', error.message)
+    if (state.selectedId === id) sessionMap.setSyncState('error', error.message)
   })
   const cached = freshThreadModel(state.backend, id)
   state.model = cached?.model || createCodexViewModel()
@@ -2663,13 +2275,13 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
     $('#native-connection').textContent = t('Restored from cache')
     await mapLoad
     await activateSelectedEnvironment().catch((error) => reportClientError(error))
-    maybeBootstrapSessionMap(key, state.model)
+    sessionMap.maybeBootstrap(key, state.model)
     return
   }
   await resumeThread(id)
   await mapLoad
   await activateSelectedEnvironment().catch((error) => reportClientError(error))
-  maybeBootstrapSessionMap(key, state.model)
+  sessionMap.maybeBootstrap(key, state.model)
 }
 
 function markThreadLoaded(backend, id) {
@@ -2859,8 +2471,8 @@ function mergeThreadMetadata(incoming) {
 }
 
 function selectedThread() {
-  const archived = state.sessionLibrary.selected
-  if (state.sessionLibrary.open && archived?.backend === state.backend && archived.thread?.id === state.selectedId) return archived.thread
+  const archived = sessionManagement.archive.selectedThread()
+  if (archived) return archived
   return state.threads.find((thread) => thread.id === state.selectedId) || null
 }
 
@@ -2869,8 +2481,7 @@ function threadForRef(ref) {
 }
 
 function isArchivedPreview() {
-  const archived = state.sessionLibrary.selected
-  return Boolean(state.sessionLibrary.open && archived?.backend === state.backend && archived.thread?.id === state.selectedId)
+  return sessionManagement.archive.isPreview()
 }
 
 function selectedStateKey(id = state.selectedId, backend = state.backend) {
@@ -3029,8 +2640,8 @@ function renderWorkspace() {
   workspaceTools.sync(thread)
   sessionResources.sync()
   if (!thread) {
-    closeThreadContentSearch()
-    renderSessionMap()
+    sessionManagement.search.close()
+    sessionMap.render()
     return
   }
   $('#thread-title').textContent = threadTitle(thread)
@@ -3042,677 +2653,10 @@ function renderWorkspace() {
     renderProjectEnvironmentEntry()
     renderComposerState()
   }
-  renderAnnotationRail()
+  reviewNotes.renderAnnotations()
   captureOpeningMessage()
-  renderSessionFavoriteCount()
-  renderSessionMap()
-}
-
-function selectedSessionMap() {
-  return state.sessionMaps.get(selectedStateKey()) || null
-}
-
-async function sessionMapFetch(path, { method = 'GET', body } = {}) {
-  const response = await gatewayFetch(path, {
-    method,
-    headers: body == null ? {} : { 'Content-Type': 'application/json' },
-    body: body == null ? undefined : JSON.stringify(body),
-    cache: 'no-store',
-  })
-  const value = await response.json().catch(() => null)
-  if (!response.ok) {
-    const error = new Error(value?.error?.message || `${method} ${path}: HTTP ${response.status}`)
-    error.status = response.status
-    throw error
-  }
-  return value
-}
-
-async function loadSessionMap(backend, threadId, { force = false } = {}) {
-  const key = sessionMapKey(backend, threadId)
-  if (!key) return null
-  if (!force && state.sessionMaps.has(key)) return state.sessionMaps.get(key)
-  if (state.sessionMapLoads.has(key)) return state.sessionMapLoads.get(key)
-  const load = sessionMapFetch(sessionMapEndpoint(backend, threadId))
-    .then((value) => normalizeSessionMap(value))
-    .catch((error) => {
-      if (error.status === 404) return null
-      throw error
-    })
-    .then((map) => {
-      state.sessionMaps.set(key, map)
-      if (selectedStateKey() === key) renderSessionMap()
-      return map
-    })
-    .finally(() => state.sessionMapLoads.delete(key))
-  state.sessionMapLoads.set(key, load)
-  return load
-}
-
-function handleSessionMapAction() {
-  closeActionMenus()
-  if (!state.selectedId) return
-  if (selectedSessionMap()) openSessionMapRail()
-  else openSessionMapDialog()
-}
-
-function openSessionMapDialog() {
-  if (!state.selectedId) return
-  closeActionMenus()
-  const opening = state.openingMessages[selectedStateKey()]?.text || ''
-  $('#session-map-create-goal').value = opening.length <= 500 ? opening : ''
-  $('#session-map-create-done').value = ''
-  $('#session-map-structure').value = 'hierarchy'
-  $('#session-map-create-error').classList.add('hidden')
-  $('#session-map-dialog').showModal()
-  $('#session-map-create-goal').focus()
-}
-
-function closeSessionMapDialog() {
-  $('#session-map-dialog').close()
-}
-
-async function createSessionMap(event) {
-  event.preventDefault()
-  const key = selectedStateKey()
-  if (!key || !state.selectedId) return
-  const payload = {
-    backend: state.backend,
-    threadId: state.selectedId,
-    goal: $('#session-map-create-goal').value.trim(),
-    definitionOfDone: $('#session-map-create-done').value.trim(),
-    structure: $('#session-map-structure').value,
-    items: [],
-  }
-  const errorElement = $('#session-map-create-error')
-  errorElement.classList.add('hidden')
-  try {
-    const map = normalizeSessionMap(await sessionMapFetch('/studio/session-map', { method: 'POST', body: payload }))
-    state.sessionMaps.set(key, map)
-    state.sessionMapDismissed.delete(key)
-    closeSessionMapDialog()
-    closeAnnotationRail()
-    closeFavoritesRail()
-    renderSessionMap()
-    toast('Map created')
-    generateSessionMapStructure({ key, model: state.model, automatic: true }).catch((error) => {
-      console.warn('Unable to generate initial Session Map structure', error)
-    })
-  } catch (error) {
-    errorElement.textContent = error.message
-    errorElement.classList.remove('hidden')
-  }
-}
-
-function openSessionMapRail() {
-  const key = selectedStateKey()
-  if (!key || !selectedSessionMap()) return
-  state.sessionMapDismissed.delete(key)
-  activateRightWorkspace('map')
-  renderSessionMap()
-}
-
-function closeSessionMapRail() {
-  const key = selectedStateKey()
-  if (key) state.sessionMapDismissed.add(key)
-  $('#session-map-rail').classList.add('hidden')
-  closeSessionMapItemMenu()
-  if (state.artifact) renderArtifact()
-}
-
-function renderSessionMap() {
-  const rail = $('#session-map-rail')
-  const key = selectedStateKey()
-  const map = key ? state.sessionMaps.get(key) : null
-  const hasMap = Boolean(map)
-  $('#session-map-action span').textContent = t(hasMap ? 'Open Map' : 'Create Map')
-  const anotherDockIsOpen = (state.artifact && !$('#artifact-rail').classList.contains('hidden'))
-    || !$('#annotation-rail').classList.contains('hidden')
-    || !$('#favorites-rail').classList.contains('hidden')
-    || sessionResources.isOpen()
-    || workspaceTools.isOpen()
-  if (!hasMap || state.sessionMapDismissed.has(key) || anotherDockIsOpen) {
-    rail.classList.add('hidden')
-    return
-  }
-  rail.classList.remove('hidden')
-  rail.dataset.structure = map.structure
-  $('#session-map-goal').textContent = map.goal
-  $('#session-map-definition').textContent = map.definitionOfDone
-  $('#session-map-definition').classList.toggle('hidden', !map.definitionOfDone)
-
-  const items = visibleMapItems(map)
-  if (!items.some((item) => item.id === state.sessionMapSelectedItem)) {
-    state.sessionMapSelectedItem = map.currentItemId || null
-  }
-  const trail = mapItemTrail(map, state.sessionMapSelectedItem || map.currentItemId)
-  const trailElement = $('#session-map-trail')
-  trailElement.innerHTML = trail.map((item, index) => `${index ? '<b>›</b>' : ''}<span>${escapeHtml(item.title)}</span>`).join('')
-  trailElement.classList.toggle('hidden', trail.length < 2)
-
-  const tree = $('#session-map-tree')
-  const emptySync = state.sessionMapSync.get(key)
-  const emptyDescription = emptySync?.state === 'syncing'
-    ? t('AI is generating the initial structure…')
-    : isCodexBackend(map.backend)
-      ? t('There are no items yet. Generate them with AI or add one manually.')
-      : t('There are no items yet. Add the first one manually.')
-  tree.innerHTML = items.length
-    ? flattenSessionMap(map).map(({ item, depth }) => renderSessionMapRow(item, depth, map)).join('')
-    : `<div class="session-map-empty"><span>⌁</span><strong>${t('This Map is empty')}</strong><p>${emptyDescription}</p><div class="session-map-empty-actions">${isCodexBackend(map.backend) ? `<button class="subtle-button" type="button" data-map-empty-ai${emptySync?.state === 'syncing' ? ' disabled' : ''}>${t('Generate with AI')}</button>` : ''}<button class="subtle-button" type="button" data-map-empty-add>${t('Add')}</button></div></div>`
-
-  const progress = mapProgress(map)
-  $('#session-map-progress').textContent = t('{explored}/{total} visited · {done} done', progress)
-  $('#session-map-revision').textContent = `rev ${map.revision}`
-  $('#session-map-ai-generate').textContent = items.length ? t('Complete with AI') : t('Generate with AI')
-  $('#session-map-ai-generate').disabled = emptySync?.state === 'syncing'
-  const sync = state.sessionMapSync.get(key) || (isCodexBackend(map.backend)
-    ? { state: 'synced', message: 'Waiting for the next interaction' }
-    : { state: '', message: 'OpenCode Maps are currently maintained manually' })
-  setSessionMapSyncState(sync.state, sync.message)
-}
-
-function renderSessionMapRow(item, depth, map) {
-  const selected = state.sessionMapSelectedItem === item.id
-  const current = map.currentItemId === item.id
-  const description = item.summary ? `<small data-no-i18n>${escapeHtml(item.summary)}</small>` : ''
-  return `<div class="session-map-row${current ? ' current' : ''}${selected ? ' selected' : ''}" style="--map-depth:${Math.min(depth, 12)}" data-map-item-id="${escapeHtml(item.id)}">
-    <span class="session-map-state ${escapeHtml(item.state)}" title="${escapeHtml(mapStateLabel(item.state))}" aria-label="${escapeHtml(mapStateLabel(item.state))}"></span>
-    <button class="session-map-row-main" type="button" data-map-item-select="${escapeHtml(item.id)}">
-      <span class="session-map-row-copy"><strong data-no-i18n>${escapeHtml(item.title)}</strong>${description}</span>
-    </button>
-    <button class="session-map-row-menu" type="button" data-map-item-menu="${escapeHtml(item.id)}" aria-label="Item actions">•••</button>
-  </div>`
-}
-
-function mapStateLabel(value) {
-  return ({ notStarted: 'Not started', active: 'Current', visited: 'Visited', done: 'Done', paused: 'Pause' })[value] || value
-}
-
-function setSessionMapSyncState(value, message = '') {
-  const element = $('#session-map-sync-state')
-  element.className = `session-map-sync-state ${value || ''}`
-  element.title = message || 'Map sync status'
-  const key = selectedStateKey()
-  if (key) state.sessionMapSync.set(key, { state: value, message })
-}
-
-function handleSessionMapTreeClick(event) {
-  if (event.target.closest('[data-map-empty-ai]')) {
-    generateSessionMapStructure().catch(showError)
-    return
-  }
-  if (event.target.closest('[data-map-empty-add]')) {
-    openSessionMapItemDialog()
-    return
-  }
-  const menuButton = event.target.closest('[data-map-item-menu]')
-  if (menuButton) {
-    openSessionMapItemMenu(menuButton.dataset.mapItemMenu, menuButton)
-    return
-  }
-  const selectButton = event.target.closest('[data-map-item-select]')
-  if (!selectButton) return
-  const itemId = selectButton.dataset.mapItemSelect
-  state.sessionMapSelectedItem = itemId
-  applySessionMapOperations([{ op: 'setCurrent', itemId }], { actor: 'user' }).catch(showError)
-}
-
-function openSessionMapItemMenu(itemId, anchor) {
-  const menu = $('#session-map-item-menu')
-  state.sessionMapMenuItem = itemId
-  const bounds = anchor.getBoundingClientRect()
-  menu.style.left = `${Math.max(8, Math.min(bounds.right - 145, window.innerWidth - 153))}px`
-  menu.style.top = `${Math.max(8, Math.min(bounds.bottom + 5, window.innerHeight - 305))}px`
-  menu.classList.remove('hidden')
-}
-
-function closeSessionMapItemMenu() {
-  $('#session-map-item-menu')?.classList.add('hidden')
-  state.sessionMapMenuItem = null
-}
-
-async function handleSessionMapItemMenu(event) {
-  const action = event.target.closest('[data-map-item-action]')?.dataset.mapItemAction
-  const itemId = state.sessionMapMenuItem
-  if (!action || !itemId) return
-  closeSessionMapItemMenu()
-  const map = selectedSessionMap()
-  const item = map?.items.find((candidate) => candidate.id === itemId)
-  if (!item) return
-  if (action === 'add-child') return openSessionMapItemDialog(itemId)
-  if (action === 'edit') return openSessionMapItemDialog(item.parentId, item)
-  if (action === 'archive') {
-    if (!window.confirm(t('Remove “{title}” and its children? You can undo immediately.', { title: item.title }))) return
-    return applySessionMapOperations([{ op: 'archiveItem', itemId }], { actor: 'user' }).catch(showError)
-  }
-  if (action === 'current') {
-    state.sessionMapSelectedItem = itemId
-    return applySessionMapOperations([{ op: 'setCurrent', itemId }], { actor: 'user' }).catch(showError)
-  }
-  return applySessionMapOperations([{ op: 'setState', itemId, state: action }], { actor: 'user' }).catch(showError)
-}
-
-function openSessionMapItemDialog(parentId = null, item = null) {
-  const map = selectedSessionMap()
-  if (!map) return
-  closeActionMenus()
-  closeSessionMapItemMenu()
-  $('#session-map-item-dialog-title').textContent = item ? t('Edit item') : t('Add item')
-  $('#session-map-item-id').value = item?.id || ''
-  $('#session-map-item-title').value = item?.title || ''
-  $('#session-map-item-kind').value = item?.kind || 'item'
-  $('#session-map-item-summary').value = item?.summary || ''
-  const parent = $('#session-map-item-parent')
-  parent.innerHTML = `<option value="">${t('Top level')}</option>${visibleMapItems(map)
-    .filter((candidate) => candidate.id !== item?.id)
-    .map((candidate) => `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.title)}</option>`)
-    .join('')}`
-  parent.value = item?.parentId || parentId || ''
-  parent.disabled = Boolean(item)
-  $('#session-map-item-error').classList.add('hidden')
-  $('#session-map-item-dialog').showModal()
-  $('#session-map-item-title').focus()
-}
-
-async function saveSessionMapItem(event) {
-  event.preventDefault()
-  const itemId = $('#session-map-item-id').value
-  const title = $('#session-map-item-title').value.trim()
-  const kind = $('#session-map-item-kind').value.trim() || 'item'
-  const summary = $('#session-map-item-summary').value.trim()
-  const operation = itemId
-    ? { op: 'updateItem', itemId, title, kind, summary }
-    : {
-        op: 'addItem', itemId: randomId(), parentId: $('#session-map-item-parent').value || null,
-        afterItemId: null, title, kind, summary, state: 'notStarted',
-      }
-  const errorElement = $('#session-map-item-error')
-  errorElement.classList.add('hidden')
-  try {
-    await applySessionMapOperations([operation], { actor: 'user' })
-    $('#session-map-item-dialog').close()
-  } catch (error) {
-    errorElement.textContent = error.message
-    errorElement.classList.remove('hidden')
-  }
-}
-
-function openSessionMapGoalDialog() {
-  const map = selectedSessionMap()
-  if (!map) return
-  closeActionMenus()
-  $('#session-map-goal-input').value = map.goal
-  $('#session-map-done-input').value = map.definitionOfDone
-  $('#session-map-goal-error').classList.add('hidden')
-  $('#session-map-goal-dialog').showModal()
-  $('#session-map-goal-input').focus()
-}
-
-async function suggestSessionMapGoal() {
-  const map = selectedSessionMap()
-  if (!map) return
-  if (!isCodexBackend(state.backend)) throw new Error('OpenCode sessions do not support AI goal regeneration yet')
-  const button = $('#session-map-suggest-goal')
-  const original = button.textContent
-  button.disabled = true
-  button.textContent = t('Generating…')
-  const recent = (state.model.turns || []).slice(-6).map((turn, index) => ({
-    turn: index + 1,
-    user: questionForTurn(turn).slice(0, 8_000),
-    assistant: answerForMapTurn(turn).slice(0, 12_000),
-  }))
-  try {
-    const result = await runCodexStructuredWorker({
-      key: selectedStateKey(),
-      developerInstructions: 'Infer a concise navigation goal for an existing conversation. Do not use tools or answer the user. Return only the JSON object required by the output schema. The result is a suggestion that the user will review; do not modify any state.',
-      input: `Current goal: ${map.goal}\nCurrent completion definition: ${map.definitionOfDone}\nRecent interactions: ${JSON.stringify(recent)}\nSuggest one concise goal and an observable completion definition that match the conversation's present direction.`,
-      outputSchema: {
-        type: 'object',
-        properties: {
-          goal: { type: 'string', minLength: 1, maxLength: 500 },
-          definitionOfDone: { type: 'string', maxLength: 1000 },
-        },
-        required: ['goal', 'definitionOfDone'],
-        additionalProperties: false,
-      },
-      timeoutMessage: 'AI goal generation timed out',
-    })
-    if (!result?.goal) throw new Error('AI did not return a usable goal')
-    $('#session-map-goal-input').value = result.goal
-    $('#session-map-done-input').value = result.definitionOfDone || ''
-    toast('AI suggestion filled in; review it before saving')
-  } finally {
-    button.disabled = false
-    button.textContent = original
-  }
-}
-
-async function saveSessionMapGoal(event) {
-  event.preventDefault()
-  const errorElement = $('#session-map-goal-error')
-  errorElement.classList.add('hidden')
-  try {
-    await applySessionMapOperations([{
-      op: 'setGoal',
-      goal: $('#session-map-goal-input').value.trim(),
-      definitionOfDone: $('#session-map-done-input').value.trim(),
-    }], { actor: 'user' })
-    $('#session-map-goal-dialog').close()
-  } catch (error) {
-    errorElement.textContent = error.message
-    errorElement.classList.remove('hidden')
-  }
-}
-
-async function applySessionMapOperations(operations, { actor = 'user', sourceTurnId = null, key = selectedStateKey() } = {}) {
-  const [backend, ...threadParts] = key.split(':')
-  const threadId = threadParts.join(':')
-  const map = state.sessionMaps.get(key)
-  if (!map || !backend || !threadId || !operations.length) return map
-  try {
-    const value = await sessionMapFetch(sessionMapEndpoint(backend, threadId, 'operations'), {
-      method: 'POST',
-      body: { baseRevision: map.revision, actor, sourceTurnId, operations },
-    })
-    const updated = normalizeSessionMap(value)
-    state.sessionMaps.set(key, updated)
-    if (selectedStateKey() === key) renderSessionMap()
-    return updated
-  } catch (error) {
-    if (error.status === 409) await loadSessionMap(backend, threadId, { force: true })
-    throw error
-  }
-}
-
-async function undoSessionMap() {
-  closeActionMenus()
-  const key = selectedStateKey()
-  const map = selectedSessionMap()
-  if (!key || !map) return
-  const value = await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId, 'undo'), { method: 'POST' })
-  state.sessionMaps.set(key, normalizeSessionMap(value))
-  renderSessionMap()
-  toast('Undid the latest Map update')
-}
-
-async function deleteSessionMap() {
-  closeActionMenus()
-  const key = selectedStateKey()
-  const map = selectedSessionMap()
-  if (!key || !map || !window.confirm(t('Delete this session Map? Conversation history will not be affected.'))) return
-  await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' })
-  if (isCodexBackend(map.backend) && state.backend === map.backend && state.ready) {
-    rpc('thread/resume', {
-      threadId: map.threadId,
-      developerInstructions: null,
-      dynamicTools: [],
-    }).catch((error) => console.warn('Unable to clear Session Map thread context', error))
-  }
-  state.sessionMaps.set(key, null)
-  state.sessionMapDismissed.delete(key)
-  state.sessionMapSync.delete(key)
-  state.sessionMapSelectedItem = null
-  disposeSessionMapWorker(key)
-  renderSessionMap()
-  toast('Map deleted')
-}
-
-function maybeBootstrapSessionMap(key, model) {
-  const map = state.sessionMaps.get(key)
-  if (!shouldBootstrapSessionMap(map) || state.sessionMapBootstrapAttempts.has(key)) return
-  generateSessionMapStructure({ key, model, automatic: true }).catch((error) => {
-    console.warn('Session Map initial generation failed', error)
-  })
-}
-
-async function generateSessionMapStructure({ key = selectedStateKey(), model = state.model, automatic = false } = {}) {
-  closeActionMenus()
-  const separator = key.indexOf(':')
-  const backend = separator > 0 ? key.slice(0, separator) : ''
-  const map = state.sessionMaps.get(key)
-  if (!map) return null
-  if (!isCodexBackend(backend)) {
-    if (automatic) return null
-    throw new Error('OpenCode sessions do not support AI Map generation yet')
-  }
-  if (automatic && state.sessionMapBootstrapAttempts.has(key)) return map
-  if (automatic) state.sessionMapBootstrapAttempts.add(key)
-
-  const interactions = (model?.turns || []).map((turn) => ({
-    user: questionForTurn(turn).trim(),
-    assistant: answerForMapTurn(turn),
-  })).filter((interaction) => interaction.user || interaction.assistant)
-  const sourceTurn = [...(model?.turns || [])].reverse().find((turn) => turn?.id && (questionForTurn(turn).trim() || answerForMapTurn(turn)))
-  state.sessionMapSync.set(key, { state: 'syncing', message: 'AI is generating the initial Map' })
-  if (selectedStateKey() === key) renderSessionMap()
-
-  try {
-    const result = await runCodexStructuredWorker({
-      key,
-      developerInstructions: 'You create a compact navigation Map for another conversation. Do not use tools, inspect files, or answer the user. Return only the JSON object required by the supplied output schema. Follow the safe-operation restrictions exactly.',
-      input: bootstrapMapInput(map, interactions),
-      outputSchema: assistantOperationSchema(),
-      timeoutMessage: 'AI Map generation timed out',
-    })
-    const operations = safeAssistantOperations(result)
-    if (!operations.length) throw new Error('AI did not generate any usable Map items')
-    const updated = await applySessionMapOperations(operations, {
-      actor: 'assistant',
-      sourceTurnId: sourceTurn?.id ? String(sourceTurn.id) : null,
-      key,
-    })
-    state.sessionMapSync.set(key, { state: 'synced', message: 'Map structure updated' })
-    if (selectedStateKey() === key) renderSessionMap()
-    return updated
-  } catch (error) {
-    state.sessionMapSync.set(key, { state: 'error', message: error.message })
-    if (selectedStateKey() === key) renderSessionMap()
-    throw error
-  }
-}
-
-async function processSessionMapInlineUpdate(backend, threadId, model, completedTurnId = null) {
-  if (!isCodexBackend(backend) || !threadId || !model) return
-  const key = sessionMapKey(backend, threadId)
-  const processingKey = `${key}:${completedTurnId || ''}`
-  if (state.sessionMapInlineProcessing.has(processingKey)) return
-  state.sessionMapInlineProcessing.add(processingKey)
-  try {
-    const map = await loadSessionMap(backend, threadId)
-    if (!map) return
-    const turn = completedTurnId
-      ? (model.turns || []).find((candidate) => String(candidate.id) === String(completedTurnId))
-      : [...(model.turns || [])].reverse().find((candidate) => candidate?.id)
-    if (!turn?.id || String(turn.id) === map.lastSyncedTurnId) return
-    const message = [...(turn.items || [])].reverse().find((item) =>
-      item?.type === 'agentMessage' && String(item.text || '').includes(SESSION_MAP_UPDATE_START),
-    )
-    if (!message) throw new Error(t('This response did not include a Map update block. You can run AI Complete manually.'))
-    const parsed = parseSessionMapUpdate(message.text)
-    if (!parsed.found) throw new Error(t('This response did not include a Map update block'))
-    if (parsed.update.baseRevision !== map.revision) {
-      throw new Error(t('The Map update is stale: the response used rev {responseRevision}, but the current revision is {currentRevision}', {
-        responseRevision: parsed.update.baseRevision,
-        currentRevision: map.revision,
-      }))
-    }
-    if (parsed.update.operations.length > 40) throw new Error(t('The Map update exceeds the 40-operation limit'))
-    const operations = safeAssistantOperations(parsed.update)
-    if (operations.length !== parsed.update.operations.length) throw new Error(t('The Map update contains an unsafe or unknown operation'))
-    if (operations.length) {
-      await applySessionMapOperations(operations, {
-        actor: 'assistant',
-        sourceTurnId: String(turn.id),
-        key,
-      })
-    } else {
-      map.lastSyncedTurnId = String(turn.id)
-    }
-    state.sessionMapSync.set(key, {
-      state: 'synced',
-      message: operations.length ? t('Map updated from this response') : t('This response did not require a Map change'),
-    })
-    if (selectedStateKey() === key) renderSessionMap()
-  } catch (error) {
-    state.sessionMapSync.set(key, { state: 'error', message: t(error.message) })
-    if (selectedStateKey() === key) renderSessionMap()
-    throw error
-  } finally {
-    state.sessionMapInlineProcessing.delete(processingKey)
-  }
-}
-
-function answerForMapTurn(turn) {
-  return (turn?.items || [])
-    .filter((item) => item?.type === 'agentMessage' && item.text)
-    .map((item) => sessionMapVisibleText(item.text).trim())
-    .filter(Boolean)
-    .join('\n\n')
-}
-
-function runCodexStructuredWorker({ key, developerInstructions, input, outputSchema, timeoutMessage }) {
-  return state.sessionMapWorkers.enqueue(key, (worker) =>
-    runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }),
-  )
-}
-
-function disposeSessionMapWorker(key) {
-  const worker = state.sessionMapWorkers.dispose(key)
-  if (!worker) return
-  worker.chain.finally(() => {
-    const backend = worker.key.split(':', 1)[0]
-    if (!worker.threadId || !isCodexBackend(backend)) return
-    dispatchBackendRpc(backend, 'thread/delete', { threadId: worker.threadId }).catch((error) => {
-      console.warn('Unable to release ephemeral Session Map worker', error)
-    })
-  })
-}
-
-function runCodexStructuredWorkerTurn(worker, { developerInstructions, input, outputSchema, timeoutMessage }) {
-  return new Promise((resolve, reject) => {
-    const backend = worker.key.split(':', 1)[0]
-    const descriptor = backendDescriptor(backend)
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
-    const pending = new Map()
-    const buffered = []
-    const hiddenModel = createCodexViewModel()
-    let hiddenThreadId = worker.threadId
-    let hiddenTurnId = null
-    let serverGeneration = null
-    let started = false
-    let settled = false
-    const timeout = setTimeout(() => finish(new Error(timeoutMessage || 'Codex structured task timed out')), 150_000)
-
-    const finish = (error, value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      for (const [id, request] of pending) {
-        state.sessionMapWorkerRequests.delete(id)
-        request.reject(error || new Error('Map sync connection closed'))
-      }
-      pending.clear()
-      socket.onclose = null
-      socket.close()
-      if (error) reject(error)
-      else resolve(value)
-    }
-
-    const request = (method, params) => new Promise((requestResolve, requestReject) => {
-      const id = --sessionMapRequestId
-      pending.set(String(id), { resolve: requestResolve, reject: requestReject })
-      state.sessionMapWorkerRequests.set(String(id), method)
-      socket.send(JSON.stringify({ id, method, params }))
-    })
-
-    const processTurnMessage = (message) => {
-      const messageTurnId = message.params?.turnId || message.params?.turn?.id
-      if (!hiddenTurnId || String(messageTurnId || '') !== String(hiddenTurnId)) return
-      applyCodexNotification(hiddenModel, message)
-      if (message.method !== 'turn/completed') return
-      const completedTurn = hiddenModel.turns.find((turn) => String(turn.id) === String(hiddenTurnId)) || message.params?.turn
-      try {
-        finish(null, parseStructuredJson(structuredWorkerText(completedTurn)))
-      } catch (error) {
-        finish(error)
-      }
-    }
-
-    const begin = async () => {
-      if (started || settled) return
-      started = true
-      try {
-        if (!hiddenThreadId) {
-          const thread = await request('thread/start', {
-            ephemeral: true,
-            approvalPolicy: 'never',
-            sandbox: 'read-only',
-            developerInstructions: 'You are the single reusable structured worker for one Session Map. Each turn contains authoritative task-specific instructions and state. Do not use tools, inspect files, or answer the end user. Do not rely on earlier worker turns when they conflict with the current input. Return only the JSON required by the current output schema.',
-          })
-          hiddenThreadId = thread?.thread?.id
-          if (!hiddenThreadId) throw new Error('Codex did not create the reusable Map worker')
-          worker.threadId = String(hiddenThreadId)
-          worker.generation = serverGeneration
-        }
-        state.hiddenCodexThreads.add(sessionRefKey(backend, hiddenThreadId))
-        hiddenModel.threadId = hiddenThreadId
-        const result = await request('turn/start', {
-          threadId: hiddenThreadId,
-          input: [{ type: 'text', text: `Task-specific instructions:\n${developerInstructions}\n\nAuthoritative task input:\n${input}` }],
-          outputSchema,
-        })
-        hiddenTurnId = result?.turn?.id
-        if (!hiddenTurnId) throw new Error('Codex did not start the Map reconciliation turn')
-        state.hiddenCodexTurns.add(routerRuntimeKey(backend, hiddenTurnId))
-        for (const message of buffered.splice(0)) processTurnMessage(message)
-      } catch (error) {
-        finish(error)
-      }
-    }
-
-    socket.onmessage = (event) => {
-      let message
-      try { message = JSON.parse(event.data) } catch { return }
-      if (message.method === 'studio/appServer/status') {
-        if (message.params?.state === 'ready') {
-          serverGeneration = Number(message.params?.generation || 0)
-          const staleThreadId = state.sessionMapWorkers.reconcileGeneration(worker, serverGeneration)
-          if (staleThreadId) {
-            state.hiddenCodexThreads.delete(sessionRefKey(backend, staleThreadId))
-            hiddenThreadId = null
-          }
-          begin()
-        }
-        else if (message.params?.state === 'error') finish(new Error(message.params?.message || 'Codex App Server unavailable'))
-        return
-      }
-      if (message.id != null && !message.method) {
-        captureSessionMapWorkerResponse(message)
-        const requestState = pending.get(String(message.id))
-        if (!requestState) return
-        pending.delete(String(message.id))
-        if (message.error) requestState.reject(new Error(message.error.message || JSON.stringify(message.error)))
-        else requestState.resolve(message.result)
-        return
-      }
-      if (!message.method || message.method.startsWith('studio/appServer/')) return
-      if (!hiddenTurnId) buffered.push(message)
-      else processTurnMessage(message)
-    }
-    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} Map synchronization service', { backend: descriptor.name })))
-    socket.onclose = () => finish(new Error(t('The {backend} Map synchronization connection closed', { backend: descriptor.name })))
-  })
-}
-
-function parseStructuredJson(value) {
-  const text = String(value || '').trim()
-  if (!text) throw new Error('The structured AI task returned no result')
-  const unwrapped = text.startsWith('```')
-    ? text.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')
-    : text
-  return JSON.parse(unwrapped)
+  reviewNotes.renderSessionFavoriteCount()
+  sessionMap.render()
 }
 
 function resetStreamingPatches() {
@@ -3721,228 +2665,6 @@ function resetStreamingPatches() {
   dirtyStreamItems.clear()
 }
 
-function openThreadContentSearch() {
-  if (!selectedThread()) return
-  state.threadSearch.open = true
-  $('#thread-content-search').classList.remove('hidden')
-  $('#open-thread-search').setAttribute('aria-pressed', 'true')
-  $('#thread-content-search-input').value = state.threadSearch.query
-  $('#thread-content-search-type').value = state.threadSearch.type
-  renderThreadContentSearch()
-  requestAnimationFrame(() => {
-    const input = $('#thread-content-search-input')
-    input.focus()
-    input.select()
-  })
-}
-
-function closeThreadContentSearch({ clear = false } = {}) {
-  clearTimeout(threadContentSearchTimer)
-  state.threadSearch.open = false
-  state.threadSearch.loading = false
-  if (clear) {
-    state.threadSearch.query = ''
-    state.threadSearch.entries = []
-    state.threadSearch.selected = -1
-    $('#thread-content-search-input').value = ''
-  }
-  $('#thread-content-search')?.classList.add('hidden')
-  $('#open-thread-search')?.setAttribute('aria-pressed', 'false')
-  hideThreadContentSearchResults()
-  clearThreadSearchTarget()
-}
-
-function hideThreadContentSearchResults() {
-  $('#thread-content-search-results')?.classList.add('hidden')
-}
-
-function handleThreadContentSearchInput(event) {
-  state.threadSearch.query = event.target.value.trim()
-  state.threadSearch.selected = -1
-  clearTimeout(threadContentSearchTimer)
-  if (!state.threadSearch.query) {
-    state.threadSearch.entries = []
-    state.threadSearch.loading = false
-    renderThreadContentSearch()
-    return
-  }
-  state.threadSearch.loading = true
-  renderThreadContentSearch()
-  threadContentSearchTimer = setTimeout(() => performThreadContentSearch().catch((error) => {
-    state.threadSearch.loading = false
-    state.threadSearch.entries = []
-    renderThreadContentSearch(error.message)
-  }), 180)
-}
-
-async function performThreadContentSearch() {
-  const query = state.threadSearch.query
-  const threadId = state.selectedId
-  const backend = state.backend
-  if (!query || !threadId) return
-  const generation = ++state.threadSearch.generation
-  const isCurrent = () => generation === state.threadSearch.generation
-    && query === state.threadSearch.query
-    && threadId === state.selectedId
-    && backend === state.backend
-  let entries
-  if (isCodexBackend(backend) && threadOccurrenceSearchSupport.get(backend) !== false) {
-    try {
-      const result = await rpc('thread/searchOccurrences', { threadId, searchTerm: query, limit: 100 })
-      if (!isCurrent()) return
-      threadOccurrenceSearchSupport.set(backend, true)
-      entries = normalizeRemoteSessionOccurrences(result?.data, state.model)
-    } catch (error) {
-      const unsupported = /method (?:not found|unknown)|unsupported method|does not support/iu.test(String(error?.message || error))
-      if (!unsupported) throw error
-      threadOccurrenceSearchSupport.set(backend, false)
-      console.debug('Backend session search is unavailable; using the loaded session model', error)
-    }
-  }
-  if (!entries) {
-    if (!isCurrent()) return
-    entries = localSessionOccurrences(state.model, query)
-  }
-  if (!isCurrent()) return
-  state.threadSearch.entries = entries
-  state.threadSearch.loading = false
-  state.threadSearch.selected = entries.length ? 0 : -1
-  renderThreadContentSearch()
-}
-
-function filteredThreadSearchEntries() {
-  return filterSessionOccurrences(state.threadSearch.entries, state.threadSearch.type)
-}
-
-function renderThreadContentSearch(error = '') {
-  const panel = $('#thread-content-search')
-  if (!state.threadSearch.open || panel.classList.contains('hidden')) return
-  const entries = filteredThreadSearchEntries()
-  const summary = $('#thread-content-search-summary')
-  summary.textContent = error
-    ? t('Search failed')
-    : state.threadSearch.loading
-      ? t('Searching…')
-      : state.threadSearch.query
-        ? t('{count} matches', { count: entries.length })
-        : ''
-  $('#thread-content-search-prev').disabled = !entries.length
-  $('#thread-content-search-next').disabled = !entries.length
-  const results = $('#thread-content-search-results')
-  if (!state.threadSearch.query || state.threadSearch.loading || error) {
-    results.innerHTML = error ? `<div class="composer-menu-empty">${escapeHtml(error)}</div>` : ''
-    results.classList.toggle('hidden', !error)
-    return
-  }
-  if (!entries.length) {
-    results.innerHTML = `<div class="composer-menu-empty">${t('No matches in this session')}</div>`
-    results.classList.remove('hidden')
-    return
-  }
-  results.innerHTML = entries.map((entry, index) => {
-    const selected = index === state.threadSearch.selected
-    const turnNumber = Math.max(1, Number(entry.turnIndex) + 1)
-    return `<div id="thread-search-option-${index}" class="thread-content-search-result${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-thread-search-index="${index}">
-      <strong>${escapeHtml(threadSearchTypeLabel(entry.type))} · ${t('Turn {index}', { index: turnNumber })}</strong>
-      <small>${highlightThreadSearchSnippet(entry)}</small>
-    </div>`
-  }).join('')
-  results.classList.remove('hidden')
-  $('#thread-content-search-input').setAttribute('aria-activedescendant', `thread-search-option-${Math.max(0, state.threadSearch.selected)}`)
-}
-
-function threadSearchTypeLabel(type) {
-  if (type === 'user') return t('User')
-  if (type === 'activity') return t('Progress and activity')
-  return t('Assistant')
-}
-
-function highlightThreadSearchSnippet(entry) {
-  const snippet = String(entry.snippet || '')
-  const start = Math.max(0, Math.min(snippet.length, Number(entry.snippetMatchRange?.start || 0)))
-  const end = Math.max(start, Math.min(snippet.length, Number(entry.snippetMatchRange?.end || start)))
-  return `${escapeHtml(snippet.slice(0, start))}<mark>${escapeHtml(snippet.slice(start, end))}</mark>${escapeHtml(snippet.slice(end))}`
-}
-
-function handleThreadContentSearchKeydown(event) {
-  const entries = filteredThreadSearchEntries()
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    const results = $('#thread-content-search-results')
-    if (!results.classList.contains('hidden')) {
-      hideThreadContentSearchResults()
-      return
-    }
-    closeThreadContentSearch()
-    return
-  }
-  if (!entries.length) return
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault()
-    const direction = event.key === 'ArrowDown' ? 1 : -1
-    state.threadSearch.selected = (state.threadSearch.selected + direction + entries.length) % entries.length
-    renderThreadContentSearch()
-    document.querySelector(`[data-thread-search-index="${state.threadSearch.selected}"]`)?.scrollIntoView({ block: 'nearest' })
-    return
-  }
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    if (event.shiftKey) navigateThreadContentSearch(-1)
-    else if (state.threadSearch.selected >= 0) selectThreadSearchEntry(state.threadSearch.selected)
-    else navigateThreadContentSearch(1)
-  }
-}
-
-function handleThreadContentSearchResultClick(event) {
-  const option = event.target.closest('[data-thread-search-index]')
-  if (!option) return
-  selectThreadSearchEntry(Number(option.dataset.threadSearchIndex))
-}
-
-function navigateThreadContentSearch(direction) {
-  const entries = filteredThreadSearchEntries()
-  if (!entries.length) return
-  state.threadSearch.selected = (state.threadSearch.selected + direction + entries.length) % entries.length
-  selectThreadSearchEntry(state.threadSearch.selected)
-}
-
-function selectThreadSearchEntry(index) {
-  const entries = filteredThreadSearchEntries()
-  const entry = entries[index]
-  if (!entry) return
-  state.threadSearch.selected = index
-  transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, entry.turnId)
-  renderTranscript()
-  let target = renderedItem(entry.turnId, entry.itemId)
-  if (!target && entry.type === 'activity') {
-    const block = activityBlocksForTurn(entry.turnId).find((candidate) => candidate.sourceItemIds.includes(String(entry.itemId || '')))
-    target = renderedActivity(entry.turnId, block?.id)
-    if (target) {
-      target.open = true
-      hydrateActivityDetails(target)
-    }
-  }
-  if (!target) target = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')].find((turn) => turn.dataset.turnId === String(entry.turnId || ''))
-  clearThreadSearchTarget()
-  if (target) {
-    target.classList.add('session-search-target')
-    transcriptScrollFollower.pause()
-    const transcript = $('#transcript')
-    const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 18
-    transcript.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
-  }
-  hideThreadContentSearchResults()
-  renderThreadContentSearchSummaryOnly(entries.length)
-}
-
-function renderThreadContentSearchSummaryOnly(total) {
-  const current = state.threadSearch.selected >= 0 ? state.threadSearch.selected + 1 : 0
-  $('#thread-content-search-summary').textContent = t('{current} of {total}', { current, total })
-}
-
-function clearThreadSearchTarget() {
-  $('#transcript')?.querySelectorAll('.session-search-target').forEach((element) => element.classList.remove('session-search-target'))
-}
 
 function presentationThreadKey(backend = state.backend, id = state.selectedId) {
   return threadCatalogKey(backend, id || 'none')
@@ -3967,7 +2689,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
     const turn = turnById.get(id)
     if (!turn) return ''
     const index = entry.orderedIds.indexOf(id)
-    if (isRouterThread()) return renderRouterTurn(turn, index)
+    if (isRouterThread()) return threadRouter.renderTurn(turn, index)
     return renderTurn(entry.turns.get(id)?.presentation, index)
   }).join('') + renderApprovals()
   bindApprovalButtons()
@@ -4297,41 +3019,6 @@ function renderOutputPreview(preview) {
   return `<pre>${escapeHtml(lines.join('\n'))}</pre>`
 }
 
-function renderRouterTurn(turn, index) {
-  const items = Array.isArray(turn.items) ? turn.items : []
-  const userItems = items.filter((item) => item.type === 'userMessage').map((item) => renderItem(item, turn.id)).join('')
-  const runtimeKey = routerRuntimeKey(state.backend, turn.id)
-  const runtime = state.routerDispatches.get(runtimeKey)
-  const decision = runtime?.decision || routerDecisionForTurn(turn, currentRouterCandidates().map((candidate) => candidate.key))
-  let card = ''
-  if (decision?.action === 'clarify') {
-    card = `<article class="router-card clarify"><header><span class="router-card-mark">?</span><div><strong>${t('Target clarification needed')}</strong><small>${escapeHtml(decision.reason || '')}</small></div></header><p>${escapeHtml(decision.message)}</p></article>`
-  } else if (decision?.action === 'dispatch') {
-    const targetRef = parseSessionRefKey(decision.targetSessionKey)
-    const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
-    const status = runtime?.status || 'routed'
-    const labels = {
-      dispatching: 'Dispatching', running: 'Target running', completed: 'Target completed', failed: 'Dispatch failed', routed: 'Routed',
-    }
-    const targetLabel = target ? threadTitle(target) : decision.targetSessionKey
-    const footerLabel = status === 'completed' ? t('The target response is complete') : t('Request sent to the target session')
-    const linkLabel = status === 'completed' ? t('Open response') : t('Open session')
-    card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong>${escapeHtml(targetLabel)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${runtime?.error ? `<p class="router-card-error">${escapeHtml(runtime.error)}</p>` : ''}<footer><span>${footerLabel}</span><button type="button" data-router-target="${escapeHtml(targetRef?.id || '')}" data-router-backend="${escapeHtml(targetRef?.backend || '')}" data-router-turn="${escapeHtml(runtime?.targetTurnId || '')}">${linkLabel}</button></footer></article>`
-  } else if (runtime?.status === 'failed') {
-    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t(runtime.decisionInvalid ? 'Invalid Router decision' : 'Routing failed')}</strong><small>${escapeHtml(runtime.error || '')}</small></div></header>${runtime.decisionInvalid ? renderRouterDecisionDebug(turn) : ''}</article>`
-  } else if (turn.status === 'inProgress' || state.routerPending.has(runtimeKey) || ['routing', 'dispatching'].includes(runtime?.status)) {
-    card = `<article class="router-card routing"><header><span class="router-card-mark pulse-mark">↝</span><div><strong>${t('Selecting a target session')}</strong><small>${t('Router is comparing session responsibilities')}</small></div></header></article>`
-  } else {
-    card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('Invalid Router decision')}</strong><small>${t('The Router did not return a valid target from the candidate list.')}</small></div></header>${renderRouterDecisionDebug(turn)}</article>`
-  }
-  return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
-}
-
-function renderRouterDecisionDebug(turn) {
-  const raw = finalAgentText(turn).slice(0, 16 * 1024)
-  return raw ? `<details class="router-decision-debug"><summary>${t('View raw decision')}</summary><pre>${escapeHtml(raw)}</pre></details>` : ''
-}
-
 function renderItem(item, turnId, { forkable = false } = {}) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
@@ -4339,7 +3026,7 @@ function renderItem(item, turnId, { forkable = false } = {}) {
     return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${escapeHtml(textFromUserContent(item.content) || t('(non-text input)'))}</div></div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
-    const favorite = favoriteForSource(state.backend, state.selectedId, turnId, item.id)
+    const favorite = reviewNotes.favoriteForSource(state.backend, state.selectedId, turnId, item.id)
     const favoriteLabel = favorite ? 'Favorited; click to view' : 'Favorite this response'
     const forkAction = forkable
       ? `<button class="message-fork-button" type="button" data-fork-turn="${escapeHtml(turnId || '')}" title="${t('Fork from here')}" aria-label="${t('Fork from here')}"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="4.25" cy="4" r="1.65"></circle><circle cx="4.25" cy="14" r="1.65"></circle><circle cx="13.75" cy="9" r="1.65"></circle><path d="M4.25 5.65v6.7M5.9 4h2.15a4.05 4.05 0 0 1 4.05 4.05V9"></path></svg><b>${t('Fork from here')}</b></button>`
@@ -4768,11 +3455,7 @@ async function handleTranscriptClick(event) {
   }
   const routerTarget = event.target.closest('[data-router-target]')
   if (routerTarget) {
-    await selectThread(routerTarget.dataset.routerTarget, { backend: routerTarget.dataset.routerBackend })
-    const turnId = routerTarget.dataset.routerTurn
-    if (turnId) {
-      requestAnimationFrame(() => document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`)?.scrollIntoView({ block: 'start' }))
-    }
+    await threadRouter.openTarget(routerTarget)
     return
   }
   const forkButton = event.target.closest('[data-fork-turn]')
@@ -4785,14 +3468,14 @@ async function handleTranscriptClick(event) {
   if (favoriteButton) {
     const element = favoriteButton.closest('[data-turn-id][data-item-id]')
     if (!element) return
-    const existing = favoriteForSource(
+    const existing = reviewNotes.favoriteForSource(
       state.backend,
       state.selectedId,
       element.dataset.turnId,
       element.dataset.itemId,
     )
-    if (existing) await openFavoriteDetail(existing.id)
-    else openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
+    if (existing) await reviewNotes.openFavoriteDetail(existing.id)
+    else reviewNotes.openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
     return
   }
   const copyMessageButton = event.target.closest('[data-copy-message]')
@@ -5482,7 +4165,7 @@ function renderComposerState() {
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
-  renderComposerReviewContext()
+  reviewNotes.renderComposerContext()
 }
 
 async function sendComposer(event) {
@@ -5527,7 +4210,7 @@ async function sendComposer(event) {
     button.disabled = true
     transcriptScrollFollower.reset()
     try {
-      await startRouterTurn(text)
+      await threadRouter.startTurn(text)
       input.value = ''
       hideComposerMenu()
       renderComposerState()
@@ -5571,9 +4254,9 @@ async function sendComposer(event) {
         renderComposerState()
         renderTranscript()
       }
-      await prepareSessionMapTurn().catch((error) => {
+      await sessionMap.prepareTurn().catch((error) => {
         console.warn('Unable to attach Session Map context', error)
-        setSessionMapSyncState('error', error.message)
+        sessionMap.setSyncState('error', error.message)
       })
       const result = await rpc('turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef({ backend, id: threadId }), {
         threadId,
@@ -5616,132 +4299,8 @@ async function sendComposer(event) {
   finally { button.disabled = false }
 }
 
-async function prepareSessionMapTurn() {
-  if (!isCodexBackend(state.backend) || !state.selectedId) return
-  const map = await loadSessionMap(state.backend, state.selectedId)
-  if (!map) return
-  const configuration = sessionMapTurnConfiguration(map)
-  try {
-    await rpc('thread/resume', {
-      threadId: state.selectedId,
-      ...configuration,
-    })
-  } catch (error) {
-    console.debug('Dynamic Session Map tools are unavailable; using developer context only', error)
-    await rpc('thread/resume', {
-      threadId: state.selectedId,
-      developerInstructions: configuration.developerInstructions,
-    })
-  }
-  setSessionMapSyncState('syncing', 'The current Map was added to this turn context')
-}
-
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {
-  const controller = routerControllerRef(state.router)
-  return Boolean(threadId) && controller?.backend === backend && controller.id === threadId
-}
-
-function currentRouterCandidates() {
-  return routerCandidates(state.router, routerTargetCatalogs(), state.openingMessages)
-}
-
-async function startRouterTurn(text) {
-  if (!isRouterThread() || state.model.activeTurnId) throw new Error(t('The Router is still processing the previous request.'))
-  const controller = routerControllerRef(state.router)
-  if (!controller || !sessionDispatch.supports(controller.backend)) throw new Error(t('The Router backend is currently unavailable.'))
-  await refreshRouterCatalogs()
-  const candidates = currentRouterCandidates()
-  if (!candidates.length) throw new Error(t('The Router has no available target session. Open Router settings first.'))
-  const developerInstructions = routerDeveloperInstructions(candidates)
-  const result = await sessionDispatch.startTurn(controller, [{ type: 'text', text }], {
-    ...(isCodexBackend(controller.backend)
-      ? { additionalContext: routerApplicationContext(candidates) }
-      : { developerInstructions }),
-    outputSchema: routerDecisionSchema(candidates.map((candidate) => candidate.key)),
-    turnOptions: configuredTurnOptions(),
-  })
-  if (!result?.turn) throw new Error(t('The Router could not start a new turn.'))
-  const turnId = String(result.turn.id || '')
-  const runtimeKey = routerRuntimeKey(controller.backend, turnId)
-  state.routerPending.set(runtimeKey, {
-    candidateKeys: candidates.map((candidate) => candidate.key),
-    requestedAt: Date.now(),
-  })
-  state.routerDispatches.set(runtimeKey, { status: 'routing' })
-  applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
-  cacheThreadModel(controller.backend, controller.id, state.model)
-  renderTranscript()
-  monitorRouterTurn(controller, turnId)
-}
-
-async function completeRouterTurn({ backend, turnId, model, turn: suppliedTurn }) {
-  turnId = String(turnId || '')
-  if (!turnId) return
-  const runtimeKey = routerRuntimeKey(backend, turnId)
-  const routed = state.routerTargetTurns.get(runtimeKey)
-  if (routed) {
-    const completed = model.turns?.find((turn) => String(turn.id) === turnId) || suppliedTurn
-    const existing = state.routerDispatches.get(routed.routerTurnId) || {}
-    state.routerDispatches.set(routed.routerTurnId, {
-      ...existing,
-      status: completed?.status === 'failed' ? 'failed' : 'completed',
-      error: completed?.error?.message || '',
-    })
-    state.routerTargetTurns.delete(runtimeKey)
-    if (isRouterThread()) renderTranscript()
-    return
-  }
-  const pending = state.routerPending.get(runtimeKey)
-  if (!pending) return
-  state.routerPending.delete(runtimeKey)
-  const turn = model.turns?.find((candidate) => String(candidate.id) === turnId) || suppliedTurn
-  let decisionParsed = false
-  try {
-    const decision = parseRouterDecision(finalAgentText(turn), pending.candidateKeys)
-    decisionParsed = true
-    if (decision.action === 'clarify') {
-      state.routerDispatches.set(runtimeKey, { status: 'clarify', decision })
-      if (isRouterThread()) renderTranscript()
-      return
-    }
-    const targetRef = parseSessionRefKey(decision.targetSessionKey)
-    const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
-    if (!target) throw new Error(t('The target session no longer exists.'))
-    if (!sessionDispatch.supports(targetRef.backend)) throw new Error(t('The target session backend is currently unavailable.'))
-    state.routerDispatches.set(runtimeKey, { status: 'dispatching', decision })
-    if (isRouterThread()) renderTranscript()
-    await sessionDispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
-    const targetModel = await ensureSessionModel(targetRef)
-    if (targetModel.activeTurnId) throw new Error(t('“{title}” is running and cannot accept a new request yet.', { title: threadTitle(target) }))
-    const result = await sessionDispatch.startTurn(targetRef, [{ type: 'text', text: decision.forwardedPrompt }])
-    if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
-    applyCodexNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
-    cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
-    updateLoadedThreadTimestamp(targetRef.backend, targetRef.id)
-    state.routerDispatches.set(runtimeKey, {
-      status: 'running', decision, targetTurnId: String(result.turn.id || ''),
-    })
-    state.routerTargetTurns.set(routerRuntimeKey(targetRef.backend, result.turn.id), {
-      routerTurnId: runtimeKey,
-      targetSessionKey: targetRef.key,
-    })
-    renderThreadList()
-    if (isRouterThread() || state.model === targetModel) {
-      renderWorkspace()
-      renderTranscript()
-    }
-    monitorRouterTurn(targetRef, result.turn.id)
-  } catch (error) {
-    state.routerDispatches.set(runtimeKey, { status: 'failed', error: error.message, decisionInvalid: !decisionParsed })
-    if (isRouterThread()) renderTranscript()
-    toast(t('Routing failed: {message}', { message: error.message }), 'error')
-  } finally {
-    if (isRouterThread()) renderComposerState()
-  }
-}
-
-function routerRuntimeKey(backend, turnId) {
-  return sessionRefKey(backend, String(turnId || ''))
+  return threadRouter.isThread(threadId, backend)
 }
 
 async function ensureSessionModel(ref) {
@@ -5770,37 +4329,6 @@ function mergeThreadIntoCatalog(backend, incoming) {
   if (index >= 0) catalog[index] = { ...catalog[index], ...metadata }
   else catalog.unshift(metadata)
   if (backend === state.backend) state.threads = catalog
-}
-
-function monitorRouterTurn(ref, turnId) {
-  const key = routerRuntimeKey(ref.backend, turnId)
-  if (!key || state.routerMonitors.has(key)) return
-  let failures = 0
-  const poll = async () => {
-    try {
-      const model = await ensureSessionModel(ref)
-      const turn = model.turns?.find((candidate) => String(candidate.id) === String(turnId))
-      const terminal = turn && turn.status !== 'inProgress' && model.status !== 'running'
-      if (terminal) {
-        state.routerMonitors.delete(key)
-        await completeRouterTurn({ backend: ref.backend, turnId, model, turn })
-        return
-      }
-      failures = 0
-    } catch (error) {
-      failures += 1
-      if (failures >= 5) {
-        state.routerMonitors.delete(key)
-        const routed = state.routerTargetTurns.get(key)
-        const dispatchKey = routed?.routerTurnId || key
-        state.routerDispatches.set(dispatchKey, { ...(state.routerDispatches.get(dispatchKey) || {}), status: 'failed', error: error.message })
-        if (isRouterThread()) renderTranscript()
-        return
-      }
-    }
-    state.routerMonitors.set(key, setTimeout(poll, 1_000))
-  }
-  state.routerMonitors.set(key, setTimeout(poll, 500))
 }
 
 async function interruptTurn() {
@@ -5973,8 +4501,7 @@ async function archiveSelectedThread() {
     state.selectedId = null
     state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
-    state.sessionLibrary.loaded = false
-    renderArchivedSessionBadge()
+    sessionManagement.archive.markStale()
     persistPreferences()
     await loadThreads()
     toast('Session archived')
@@ -5995,9 +4522,7 @@ async function deleteSelectedThread() {
     if (!archived) state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
     if (archived) {
-      state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === state.backend && entry.thread.id === threadId))
-      state.sessionLibrary.selected = null
-      renderArchivedSessionBadge()
+      sessionManagement.archive.remove(state.backend, threadId)
     }
     persistPreferences()
     if (archived) {
@@ -6007,133 +4532,6 @@ async function deleteSelectedThread() {
     } else await loadThreads()
     toast('Session deleted')
   } catch (error) { showError(error) }
-}
-
-async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' } = {}) {
-  const thread = selectedThread()
-  if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
-  const root = String(file.root || thread?.cwd || '')
-  if (!root) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
-  const path = fuzzyFileLabel(file)
-  const requestedEpubCfi = String(file.epubCfi || '')
-  if (!path) throw new Error(t('The file path is empty.'))
-  if (requestedEpubCfi && state.artifact?.kind === 'epub' && state.artifact.root === root && state.artifact.path === path) {
-    activateRightWorkspace('document')
-    if (epubReader) await epubReader.display(requestedEpubCfi)
-    else {
-      state.artifact.readingState = { ...(state.artifact.readingState || {}), cfi: requestedEpubCfi }
-      renderArtifact()
-    }
-    return
-  }
-  if (state.artifact?.dirty && state.artifact.root === root && state.artifact.path === path) {
-    activateRightWorkspace('document')
-    return
-  }
-  if (state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
-    if (!confirm(t('The current document has unsaved changes. Open another file anyway?'))) return
-  }
-  const kind = previewableFileKind(file)
-  if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
-  resetArtifactSearch()
-  resetArtifactOutline({ preserveOpen: true })
-  activateRightWorkspace('document')
-  hideComposerMenu()
-  closeActionMenus()
-  $('#artifact-content').classList.add('hidden')
-  $('#artifact-search-panel').classList.add('hidden')
-  $('#artifact-error').classList.add('hidden')
-  $('#artifact-loading').classList.remove('hidden')
-  disposeArtifactEditor()
-  disposeEpubReader()
-  disposeRichArtifactReader()
-  disposeMarkdownImageAssets(state.artifact)
-  const requestId = randomId()
-  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, loading: true }
-  const endpoint = kind === 'image'
-    ? '/studio/review-image'
-    : kind === 'epub' ? '/studio/review-epub'
-      : kind === 'pdf' ? '/studio/review-pdf'
-        : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
-          : '/studio/review-file'
-  const response = await gatewayFetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, path }),
-  })
-  if (!response.ok) {
-    const result = await response.json().catch(() => null)
-    const message = result?.error?.message || `HTTP ${response.status}`
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...state.artifact, loading: false, error: message }
-    renderArtifact()
-    throw new Error(message)
-  }
-  if (kind === 'image') {
-    const blob = await response.blob()
-    if (!blob.type.startsWith('image/')) {
-      const message = t('The image response format is invalid')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const imageUrl = await blobToDataUrl(blob)
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
-      return
-    }
-    state.artifact = {
-      ...state.artifact,
-      loading: false,
-      mimeType: blob.type,
-      imageUrl,
-      relativePath: path,
-      size: blob.size,
-    }
-    state.artifactView = 'image'
-  } else if (kind === 'epub') {
-    const bookHash = response.headers.get('x-studio-epub-hash') || ''
-    const bytes = await response.arrayBuffer()
-    if (!bookHash || !bytes.byteLength) {
-      const message = t('Invalid EPUB response')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const readingState = await loadEpubReadingState(root, path, bookHash)
-    if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact,
-      kind: 'epub',
-      loading: false,
-      bytes,
-      hash: bookHash,
-      relativePath: path,
-      size: bytes.byteLength,
-      readingState,
-    }
-    state.artifactView = 'epub'
-  } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
-    const bytes = await response.arrayBuffer()
-    if (!bytes.byteLength) throw new Error(t('Invalid document response'))
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact, kind, loading: false, bytes,
-      hash: response.headers.get('x-studio-content-hash') || '',
-      relativePath: path, size: bytes.byteLength,
-    }
-    state.artifactView = kind
-  } else {
-    const result = await response.json()
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, loading: false }
-    state.artifactView = kind === 'table' ? 'table' : isMarkdownFile(result.path) || isHtmlFile(result.path) ? 'preview' : 'source'
-  }
-  renderArtifact()
 }
 
 function closeWorkspacePeerRails() {
@@ -6161,7 +4559,7 @@ function activateRightWorkspace(tool) {
     setTimeout(applyRightRailWidth, 80)
   }
   closeActionMenus()
-  hideSelectionPopover()
+  reviewNotes.hideSelection()
   syncRightWorkspaceLaunchers()
 }
 
@@ -6171,1548 +4569,28 @@ function syncRightWorkspaceLaunchers() {
   $('#open-thread-resources')?.setAttribute('aria-pressed', String(!$('#resources-rail').classList.contains('hidden')))
 }
 
-async function refreshArtifact() {
-  if (!state.artifact) return
-  if (state.artifact.dirty && !confirm(t('Reloading will discard unsaved changes. Continue?'))) return
-  await openArtifact({ root: state.artifact.root, path: state.artifact.path }, { returnTool: state.artifact.returnTool })
-}
-
-function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
-  if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return
-  const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
-  const artifactThreadKey = state.artifact?.threadKey
-  $('#artifact-rail').classList.add('hidden')
-  disposeArtifactEditor()
-  disposeEpubReader()
-  disposeRichArtifactReader()
-  disposeMarkdownImageAssets(state.artifact)
-  resetArtifactOutline({ preserveOpen: true })
-  state.artifact = null
-  resetArtifactSearch()
-  hideSelectionPopover()
-  if (returnTool && artifactThreadKey === selectedStateKey()) {
-    if (returnTool === 'resources') {
-      sessionResources.open()
-      return
-    }
-    workspaceTools.open(returnTool).catch(showError)
-    return
-  }
-  if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()
-}
-
-function setArtifactView(view) {
-  if (!state.artifact || state.artifact.kind !== 'text') return
-  if (view === 'preview' && !isMarkdownFile(state.artifact.path) && !isHtmlFile(state.artifact.path)) return
-  if (!['preview', 'source', 'edit'].includes(view)) return
-  state.artifactView = view
-  renderArtifact()
-}
-
-function toggleArtifactSearch() {
-  if ($('#artifact-search-toggle').classList.contains('hidden')) return
-  if (state.artifactView === 'edit') {
-    artifactEditor?.openSearch?.()
-    return
-  }
-  state.artifactSearchOpen = !state.artifactSearchOpen
-  $('#artifact-search-toggle').classList.toggle('active', state.artifactSearchOpen)
-  $('#artifact-search-toggle').setAttribute('aria-expanded', String(state.artifactSearchOpen))
-  $('#artifact-search-panel').classList.toggle('hidden', !state.artifactSearchOpen)
-  if (state.artifactSearchOpen) requestAnimationFrame(() => $('#artifact-search-input').focus())
-}
-
-function toggleArtifactOutline() {
-  if ($('#artifact-outline-toggle').classList.contains('hidden')) return
-  setArtifactOutlineOpen(!state.artifactOutlineOpen)
-}
-
-function setArtifactOutlineOpen(open, { persist = true } = {}) {
-  state.artifactOutlineOpen = Boolean(open)
-  renderArtifactOutline()
-  if (state.artifactOutlineOpen) requestAnimationFrame(() => $('#artifact-outline-filter').focus())
-  if (persist) persistPreferences()
-}
-
-function handleArtifactNavigationKeydown(event) {
-  if (event.key !== 'Escape' || $('#artifact-rail').classList.contains('hidden')) return
-  if (state.artifactOutlineOpen && !$('#artifact-outline-toggle').classList.contains('hidden')) {
-    event.preventDefault()
-    setArtifactOutlineOpen(false)
-  } else if (state.artifactSearchOpen) {
-    event.preventDefault()
-    state.artifactSearchOpen = false
-    $('#artifact-search-panel').classList.add('hidden')
-    $('#artifact-search-toggle').classList.remove('active')
-    $('#artifact-search-toggle').setAttribute('aria-expanded', 'false')
-  }
-}
-
-function resetArtifactOutline({ preserveOpen = false } = {}) {
-  disposeArtifactOutlineBindings()
-  artifactOutlineResizeObserver?.disconnect()
-  artifactOutlineResizeObserver = null
-  cancelArtifactOutlineWork()
-  state.artifactOutlineFilter = ''
-  state.artifactOutlineActiveId = ''
-  state.artifactOutlineCollapsed = new Set()
-  if (!preserveOpen) state.artifactOutlineOpen = false
-  const filter = $('#artifact-outline-filter')
-  if (filter) filter.value = ''
-  $('#artifact-outline-list')?.replaceChildren()
-  $('#artifact-outline')?.classList.add('hidden')
-  $('#artifact-outline-toggle')?.classList.add('hidden')
-  $('#artifact-reader-shell')?.classList.remove('outline-open', 'compact')
-}
-
-function setArtifactOutline(file, items, provider = file?.outlineProvider || null) {
-  if (!file || state.artifact !== file) return
-  file.outlineItems = normalizeDocumentOutline(items)
-  file.outlineProvider = provider
-  if (state.artifactOutlineActiveId && !file.outlineItems.some((item) => item.id === state.artifactOutlineActiveId)) {
-    state.artifactOutlineActiveId = ''
-  }
-  renderArtifactOutline()
-  ensureArtifactOutlineResizeObserver()
-}
-
-function renderArtifactOutline() {
-  const file = state.artifact
-  const items = file?.outlineItems || []
-  const available = items.length > 0
-  const toggle = $('#artifact-outline-toggle')
-  const outline = $('#artifact-outline')
-  const shell = $('#artifact-reader-shell')
-  toggle.classList.toggle('hidden', !available)
-  toggle.classList.toggle('active', available && state.artifactOutlineOpen)
-  toggle.setAttribute('aria-expanded', String(available && state.artifactOutlineOpen))
-  outline.classList.toggle('hidden', !available || !state.artifactOutlineOpen)
-  shell.classList.toggle('outline-open', available && state.artifactOutlineOpen)
-  $('#artifact-outline-count').textContent = String(items.length)
-  if (!available) {
-    $('#artifact-outline-list').replaceChildren()
-    return
-  }
-  const filtered = filterDocumentOutline(items, state.artifactOutlineFilter)
-  const byId = new Map(items.map((item) => [item.id, item]))
-  const visible = state.artifactOutlineFilter.trim() ? filtered : filtered.filter((item) => {
-    let parentId = item.parentId
-    while (parentId) {
-      if (state.artifactOutlineCollapsed.has(parentId)) return false
-      parentId = byId.get(parentId)?.parentId || ''
-    }
-    return true
-  })
-  const childParents = new Set(items.map((item) => item.parentId).filter(Boolean))
-  const list = $('#artifact-outline-list')
-  list.innerHTML = visible.length ? visible.map((item) => {
-    const hasChildren = childParents.has(item.id)
-    const collapsed = state.artifactOutlineCollapsed.has(item.id)
-    const depth = Math.min(4, item.depth)
-    return `<button class="artifact-outline-row${item.id === state.artifactOutlineActiveId ? ' active' : ''}${item.contextOnly ? ' context-only' : ''}${collapsed ? ' collapsed' : ''}" style="--outline-depth:${depth}" type="button" data-outline-id="${escapeHtml(item.id)}" title="${escapeHtml(item.label)}"><span class="artifact-outline-chevron"${hasChildren ? ' data-outline-collapse="true"' : ''}>${hasChildren ? '⌄' : ''}</span><span class="artifact-outline-label">${escapeHtml(item.label)}</span></button>`
-  }).join('') : `<p class="artifact-outline-empty">${escapeHtml(t('No matching sections'))}</p>`
-  scrollActiveOutlineItemIntoView()
-}
-
-function handleArtifactOutlineFilter(event) {
-  state.artifactOutlineFilter = event.target.value
-  renderArtifactOutline()
-}
-
-async function handleArtifactOutlineFilterKeydown(event) {
-  if (event.key !== 'Enter') return
-  const first = $('#artifact-outline-list .artifact-outline-row:not(.context-only)')
-  if (!first) return
-  event.preventDefault()
-  await navigateArtifactOutlineItem(first.dataset.outlineId)
-}
-
-async function handleArtifactOutlineClick(event) {
-  const row = event.target.closest('[data-outline-id]')
-  if (!row) return
-  const id = row.dataset.outlineId
-  if (event.target.closest('[data-outline-collapse]')) {
-    if (state.artifactOutlineCollapsed.has(id)) state.artifactOutlineCollapsed.delete(id)
-    else state.artifactOutlineCollapsed.add(id)
-    renderArtifactOutline()
-    return
-  }
-  await navigateArtifactOutlineItem(id)
-}
-
-async function navigateArtifactOutlineItem(id) {
-  const file = state.artifact
-  const item = file?.outlineItems?.find((candidate) => candidate.id === id)
-  if (!item) return
-  setArtifactOutlineActive(id)
-  await file.outlineProvider?.navigate?.(item)
-  if ($('#artifact-reader-shell').classList.contains('compact')) setArtifactOutlineOpen(false, { persist: false })
-}
-
-function setArtifactOutlineActive(id) {
-  if (!id || state.artifactOutlineActiveId === id) return
-  state.artifactOutlineActiveId = id
-  $('#artifact-outline-list').querySelectorAll('[data-outline-id]').forEach((row) => row.classList.toggle('active', row.dataset.outlineId === id))
-  scrollActiveOutlineItemIntoView()
-}
-
-function scrollActiveOutlineItemIntoView() {
-  const active = [...$('#artifact-outline-list').querySelectorAll('[data-outline-id]')].find((row) => row.dataset.outlineId === state.artifactOutlineActiveId)
-  if (!active) return
-  const list = $('#artifact-outline-list')
-  const listRect = list.getBoundingClientRect()
-  const rowRect = active.getBoundingClientRect()
-  if (rowRect.top < listRect.top || rowRect.bottom > listRect.bottom) active.scrollIntoView({ block: 'nearest' })
-}
-
-function ensureArtifactOutlineResizeObserver() {
-  if (!globalThis.ResizeObserver) {
-    updateArtifactOutlineLayout()
-    return
-  }
-  if (!artifactOutlineResizeObserver) artifactOutlineResizeObserver = new ResizeObserver(updateArtifactOutlineLayout)
-  artifactOutlineResizeObserver.disconnect()
-  artifactOutlineResizeObserver.observe($('#artifact-reader-shell'))
-  updateArtifactOutlineLayout()
-}
-
-function updateArtifactOutlineLayout() {
-  const shell = $('#artifact-reader-shell')
-  if (!shell) return
-  shell.classList.toggle('compact', shell.clientWidth > 0 && shell.clientWidth < 680)
-}
-
-function scheduleTextArtifactOutline(file, content, source, options) {
-  cancelArtifactOutlineWork()
-  const run = () => {
-    artifactOutlineIdleCallback = null
-    if (state.artifact !== file || !content.isConnected) return
-    configureTextArtifactOutline(file, content, source, options)
-  }
-  artifactOutlineRefreshTimer = setTimeout(() => {
-    artifactOutlineRefreshTimer = null
-    if (globalThis.requestIdleCallback) {
-      artifactOutlineIdleCallback = requestIdleCallback(run, { timeout: 400 })
-    } else {
-      run()
-    }
-  }, 0)
-}
-
-function cancelArtifactOutlineWork() {
-  clearTimeout(artifactOutlineRefreshTimer)
-  artifactOutlineRefreshTimer = null
-  if (artifactOutlineIdleCallback != null && globalThis.cancelIdleCallback) {
-    cancelIdleCallback(artifactOutlineIdleCallback)
-  }
-  artifactOutlineIdleCallback = null
-}
-
-function configureTextArtifactOutline(file, content, source, { markdown, html, view, items: preparedItems = null }) {
-  if (!markdown && !html) {
-    setArtifactOutline(file, [])
-    return
-  }
-  let items = Array.isArray(preparedItems)
-    ? preparedItems
-    : markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
-  if (view === 'preview') {
-    const headings = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
-    if (html) {
-      items = normalizeDocumentOutline(headings.slice(0, 2_000).map((heading, index) => ({
-        ...(items[index] || {}),
-        id: items[index]?.id || `section-${index + 1}`,
-        label: heading.textContent.trim() || t('Untitled section'),
-        depth: Number(heading.tagName.slice(1)) - 1,
-        target: items[index]?.target || { kind: 'text-heading', offset: 0, line: 1 },
-      })))
-    }
-    headings.forEach((heading, index) => {
-      if (items[index]) heading.dataset.documentOutlineId = items[index].id
-    })
-  }
-  const provider = { navigate: (item) => navigateTextArtifactOutline(file, content, item, view) }
-  setArtifactOutline(file, items, provider)
-  if (view === 'preview' && items.length) bindTextArtifactOutlineLocation(content)
-  else if (items.length && !state.artifactOutlineActiveId) setArtifactOutlineActive(items[0].id)
-}
-
-function bindTextArtifactOutlineLocation(content) {
-  const headings = [...content.querySelectorAll('[data-document-outline-id]')]
-  if (!headings.length) return
-  let frame = null
-  const sync = () => {
-    frame = null
-    const threshold = content.getBoundingClientRect().top + 42
-    let active = headings[0]
-    for (const heading of headings) {
-      if (heading.getBoundingClientRect().top > threshold) break
-      active = heading
-    }
-    setArtifactOutlineActive(active.dataset.documentOutlineId)
-  }
-  const onScroll = () => {
-    if (frame != null) return
-    frame = requestAnimationFrame(sync)
-  }
-  content.addEventListener('scroll', onScroll, { passive: true })
-  artifactOutlineLocationCleanup = () => {
-    content.removeEventListener('scroll', onScroll)
-    if (frame != null) cancelAnimationFrame(frame)
-  }
-  sync()
-}
-
-async function navigateTextArtifactOutline(file, content, item, view) {
-  if (state.artifact !== file) return
-  if (view === 'preview') {
-    const heading = [...content.querySelectorAll('[data-document-outline-id]')].find((candidate) => candidate.dataset.documentOutlineId === item.id)
-    if (!heading) return
-    const targetTop = content.scrollTop + heading.getBoundingClientRect().top - content.getBoundingClientRect().top - 18
-    content.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
-    flashArtifactOutlineTarget(heading)
-    return
-  }
-  if (view === 'edit') {
-    artifactEditor?.revealOffset?.(item.target?.offset || 0)
-    return
-  }
-  const pre = content.querySelector('.artifact-source')
-  const textNode = pre?.firstChild
-  if (!textNode) return
-  const offset = Math.min(textNode.textContent.length, Math.max(0, Number(item.target?.offset) || 0))
-  const range = document.createRange()
-  range.setStart(textNode, offset)
-  range.setEnd(textNode, offset)
-  const rect = range.getBoundingClientRect()
-  const contentRect = content.getBoundingClientRect()
-  content.scrollTo({ top: Math.max(0, content.scrollTop + rect.top - contentRect.top - 18), behavior: 'auto' })
-  flashArtifactOutlineTarget(pre)
-}
-
-function flashArtifactOutlineTarget(element) {
-  element.classList.remove('artifact-outline-target')
-  void element.offsetWidth
-  element.classList.add('artifact-outline-target')
-  setTimeout(() => element.classList.remove('artifact-outline-target'), 1_300)
-}
-
-async function saveArtifact({ overwrite = false } = {}) {
-  const file = state.artifact
-  if (!file || state.artifactView !== 'edit' || !file.dirty) return
-  const content = artifactEditor?.value() ?? file.editContent ?? file.content
-  file.saving = true
-  $('#artifact-save').disabled = true
-  const response = await gatewayFetch('/studio/workspace/save', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root: file.root, path: file.path, content, expectedHash: file.hash, overwrite }),
-  })
-  const result = await response.json().catch(() => null)
-  if (response.status === 409 && result?.error?.code === 'workspace_file_conflict') {
-    file.saving = false
-    $('#artifact-save').disabled = false
-    if (confirm(t('The file changed on disk. Overwrite it with the current editor content?'))) {
-      await saveArtifact({ overwrite: true })
-    }
-    return
-  }
-  if (!response.ok) {
-    file.saving = false
-    $('#artifact-save').disabled = false
-    throw new Error(result?.error?.message || `HTTP ${response.status}`)
-  }
-  state.artifact = {
-    ...result,
-    kind: 'text',
-    requestId: file.requestId,
-    threadKey: file.threadKey,
-    returnTool: file.returnTool,
-    loading: false,
-    dirty: false,
-    editContent: result.content,
-  }
-  renderArtifact()
-  toast('File saved')
+function openArtifact(...args) {
+  return documentWorkspace.open(...args)
 }
 
 function renderArtifact() {
-  const rail = $('#artifact-rail')
-  const file = state.artifact
-  disconnectMarkdownImageObserver()
-  if (!file) {
-    disposeArtifactEditor()
-    disposeArtifactOutlineBindings()
-    rail.classList.add('hidden')
-    resetArtifactSearch()
-    return
-  }
-  disposeArtifactEditor()
-  disposeArtifactOutlineBindings()
-  disposeEpubReader()
-  applyRightRailWidth()
-  rail.classList.remove('hidden')
-  $('#artifact-title').textContent = fileDisplayName(file.path)
-  $('#artifact-path').textContent = file.relativePath || file.path
-  const closeButton = $('#close-artifact')
-  const returnLabel = file.returnTool === 'files' ? t('Back to Files') : file.returnTool === 'review' ? t('Back to Git Review') : file.returnTool === 'resources' ? t('Back to Resources') : t('Close document')
-  closeButton.classList.toggle('returning', Boolean(file.returnTool))
-  closeButton.title = returnLabel
-  closeButton.setAttribute('aria-label', returnLabel)
-  $('#artifact-loading').classList.toggle('hidden', !file.loading)
-  $('#artifact-error').classList.toggle('hidden', !file.error)
-  $('#artifact-error-message').textContent = file.error || ''
-  const textReady = !file.loading && !file.error && file.kind === 'text' && typeof file.content === 'string'
-  const imageReady = !file.loading && !file.error && file.kind === 'image' && Boolean(file.imageUrl)
-  const epubReady = !file.loading && !file.error && file.kind === 'epub' && file.bytes instanceof ArrayBuffer
-  const pdfReady = !file.loading && !file.error && file.kind === 'pdf' && file.bytes instanceof ArrayBuffer
-  const tableReady = !file.loading && !file.error && file.kind === 'table' && (file.bytes instanceof ArrayBuffer || typeof file.content === 'string')
-  const ready = textReady || imageReady || epubReady || pdfReady || tableReady
-  const content = $('#artifact-content')
-  $('#artifact-reader-shell').classList.toggle('hidden', !ready)
-  content.classList.toggle('hidden', !ready)
-  $('#artifact-meta').textContent = textReady
-    ? t('{lines} lines · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
-    : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
-      : epubReady ? `EPUB · ${formatFileSize(file.size)}`
-        : pdfReady ? `PDF · ${formatFileSize(file.size)}`
-          : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : 'CSV'} · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Select a cell to comment' : 'Select text to comment')
-  const markdown = textReady && isMarkdownFile(file.path)
-  const html = textReady && isHtmlFile(file.path)
-  const editable = textReady
-  const renderedContent = file.editContent ?? file.content
-  $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
-  $('#artifact-view-switch').classList.toggle('hidden', !editable)
-  $('#artifact-preview').disabled = !markdown && !html
-  $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
-  $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
-  $('#artifact-edit').classList.toggle('active', state.artifactView === 'edit')
-  $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
-  $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
-  const canSearch = artifactSearchAvailable(file, state.artifactView)
-  const canInlineSearch = artifactInlineSearchAvailable(file, state.artifactView)
-  if (!canInlineSearch) state.artifactSearchOpen = false
-  $('#artifact-search-toggle').classList.toggle('hidden', !canSearch)
-  $('#artifact-search-toggle').classList.toggle('active', canInlineSearch && state.artifactSearchOpen)
-  $('#artifact-search-toggle').setAttribute('aria-expanded', String(canInlineSearch && state.artifactSearchOpen))
-  $('#artifact-search-panel').classList.toggle('hidden', !canInlineSearch || !state.artifactSearchOpen)
-  $('#artifact-search-input').setAttribute('placeholder', t('Search document content…'))
-  $('#artifact-search-prev').title = t('Previous match')
-  $('#artifact-search-prev').setAttribute('aria-label', t('Previous match'))
-  $('#artifact-search-next').title = t('Next match')
-  $('#artifact-search-next').setAttribute('aria-label', t('Next match'))
-  if (!ready) {
-    setArtifactOutline(file, [])
-    return
-  }
-  if (imageReady) {
-    setArtifactOutline(file, [])
-    content.className = 'artifact-content artifact-image-preview'
-    content.innerHTML = `<div class="artifact-image-stage"><img src="${escapeHtml(file.imageUrl)}" alt="${escapeHtml(fileDisplayName(file.path))}" draggable="false" /></div>`
-    const image = content.querySelector('img')
-    image?.addEventListener('load', () => {
-      if (state.artifact?.requestId !== file.requestId) return
-      $('#artifact-meta').textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
-    }, { once: true })
-    image?.addEventListener('error', () => {
-      if (state.artifact?.requestId !== file.requestId) return
-      state.artifact = { ...state.artifact, error: t('Unable to decode image') }
-      renderArtifact()
-    }, { once: true })
-    renderArtifactSearchStatus()
-    return
-  }
-  if (epubReady) {
-    setArtifactOutline(file, file.outlineItems || [])
-    content.className = 'artifact-content artifact-epub-preview'
-    content.innerHTML = '<div class="artifact-epub-host" data-no-i18n></div>'
-    mountEpubReader(file, content.firstElementChild).catch((error) => {
-      if (state.artifact?.requestId !== file.requestId) return
-      state.artifact = { ...state.artifact, error: error.message || String(error) }
-      renderArtifact()
-    })
-    renderArtifactSearchStatus()
-    return
-  }
-  if (pdfReady) {
-    setArtifactOutline(file, file.outlineItems || [])
-    content.className = 'artifact-content artifact-pdf-preview'
-    content.innerHTML = '<div class="artifact-pdf-host" data-no-i18n></div>'
-    mountPdfReader(file, content.firstElementChild).catch(showError)
-    renderArtifactSearchStatus()
-    return
-  }
-  if (tableReady) {
-    setArtifactOutline(file, [])
-    content.className = 'artifact-content artifact-table-preview'
-    content.innerHTML = '<div class="artifact-table-host" data-no-i18n></div>'
-    mountTableReader(file, content.firstElementChild).catch(showError)
-    renderArtifactSearchStatus()
-    return
-  }
-  if (state.artifactView === 'edit') {
-    content.className = 'artifact-content editing'
-    content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
-    mountArtifactEditor(file, content.firstElementChild, renderedContent).catch(showError)
-  } else if (markdown && state.artifactView === 'preview') {
-    const rendered = renderMarkdownDocument(renderedContent)
-    content.className = 'artifact-content markdown-body'
-    content.innerHTML = rendered.html
-    hydrateMarkdownImages(file, content)
-    scheduleTextArtifactOutline(file, content, renderedContent, {
-      markdown, html, view: state.artifactView, items: rendered.outline,
-    })
-  } else if (html && state.artifactView === 'preview') {
-    content.className = 'artifact-content markdown-body artifact-html-preview'
-    content.innerHTML = renderStaticHtml(renderedContent)
-  } else {
-    content.className = 'artifact-content'
-    content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
-  }
-  if (!(markdown && state.artifactView === 'preview')) {
-    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
-  }
-  if (state.artifactSearch) applyArtifactSearchHighlights()
-  else renderArtifactSearchStatus()
+  return documentWorkspace.render()
 }
 
-function disposeArtifactEditor() {
-  artifactEditor?.destroy()
-  artifactEditor = null
+function closeArtifactRail(options) {
+  return documentWorkspace.close(options)
 }
 
-function disposeArtifactOutlineBindings() {
-  artifactOutlineObserver?.disconnect()
-  artifactOutlineObserver = null
-  artifactOutlineLocationCleanup?.()
-  artifactOutlineLocationCleanup = null
-  cancelArtifactOutlineWork()
+function setArtifactView(view) {
+  return documentWorkspace.setView(view)
 }
 
-function disposeEpubReader() {
-  epubReaderGeneration += 1
-  clearTimeout(epubReadingStateTimer)
-  epubReadingStateTimer = null
-  if (state.artifact?.kind === 'epub' && state.artifact.readingState) {
-    persistEpubReadingState(state.artifact).catch(() => {})
-  }
-  epubReader?.destroy()
-  epubReader = null
+function reopenEpubComment(anchor) {
+  return documentWorkspace.reopenEpubSource(anchor)
 }
 
-function disposeRichArtifactReader() {
-  artifactOutlineLocationCleanup?.()
-  artifactOutlineLocationCleanup = null
-  richArtifactReader?.destroy?.()
-  richArtifactReader = null
-}
-
-async function mountPdfReader(file, parent) {
-  pdfReaderModule ||= import('./pdf-reader.mjs')
-  const { createPdfReader } = await pdfReaderModule
-  if (state.artifact !== file || !parent.isConnected) return
-  const reader = await createPdfReader({
-    container: parent, bytes: file.bytes, initialPage: file.page || 1, search: state.artifactSearch,
-    translate: t,
-    onPageChange: (page) => {
-      file.page = page
-      const active = outlineItemForLocation(file.outlineItems, { page })
-      if (active) setArtifactOutlineActive(active.id)
-    },
-    onSelection: (selection) => {
-      if (state.artifact !== file || !selection.quote) return
-      state.pendingSelection = { quote: selection.quote, itemId: null, turnId: null, source: pdfCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, page: selection.page, rects: selection.rects }) }
-      positionSelectionPopover(selection.rect, { allowFavorite: false })
-    },
-  })
-  if (state.artifact !== file || !parent.isConnected) {
-    reader.destroy()
-    return
-  }
-  richArtifactReader = reader
-  const outline = reader.outline()
-  setArtifactOutline(file, outline, { navigate: (item) => reader.goToPage(item.target?.page) })
-  const active = outlineItemForLocation(outline, { page: file.page || 1 })
-  if (active) setArtifactOutlineActive(active.id)
-}
-
-async function mountTableReader(file, parent) {
-  tableReaderModule ||= import('./table-reader.mjs')
-  const { parseTabularArtifact, renderTableArtifact } = await tableReaderModule
-  if (!file.workbook) file.workbook = await parseTabularArtifact({ bytes: file.bytes, path: file.path, text: file.content })
-  if (state.artifact !== file || !parent.isConnected) return
-  richArtifactReader = renderTableArtifact({
-    container: parent, workbook: file.workbook, translate: t,
-    onSelection: (selection) => {
-      if (state.artifact !== file) return
-      state.pendingSelection = { quote: selection.quote || `[${selection.range}]`, itemId: null, turnId: null, source: tableCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, sheet: selection.sheet, range: selection.range }) }
-      positionSelectionPopover(selection.rect, { allowFavorite: false })
-    },
-  })
-}
-
-async function loadEpubReadingState(root, path, bookHash) {
-  const response = await gatewayFetch('/studio/epub/state', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, path, bookHash }),
-  })
-  if (response.status === 204) return {}
-  if (!response.ok) {
-    const result = await response.json().catch(() => null)
-    throw new Error(result?.error?.message || `HTTP ${response.status}`)
-  }
-  return response.json()
-}
-
-async function mountEpubReader(file, parent) {
-  const generation = ++epubReaderGeneration
-  epubReaderModule ||= import('./epub-reader.mjs')
-  const { createEpubReader } = await epubReaderModule
-  if (generation !== epubReaderGeneration || state.artifact !== file || !parent.isConnected) return
-  const reader = await createEpubReader({
-    container: parent,
-    bytes: file.bytes,
-    initialState: file.readingState,
-    translate: t,
-    onSelection: (selection) => captureEpubSelection(file, selection),
-    onRelocate: (readingState) => {
-      if (state.artifact !== file) return
-      file.readingState = readingState
-      const active = outlineItemForLocation(file.outlineItems, readingState.href)
-      if (active) setArtifactOutlineActive(active.id)
-      scheduleEpubReadingState(file)
-    },
-    onExternalLink: (url) => openBrowserUrl(url).catch(showError),
-  })
-  if (generation !== epubReaderGeneration || state.artifact !== file || !parent.isConnected) {
-    reader.destroy()
-    return
-  }
-  epubReader = reader
-  const outline = reader.outline()
-  setArtifactOutline(file, outline, { navigate: (item) => reader.display(item.target?.href) })
-  const active = outlineItemForLocation(outline, reader.state().href)
-  if (active) setArtifactOutlineActive(active.id)
-  file.bookTitle = reader.title
-  if (file.bookTitle) $('#artifact-title').textContent = file.bookTitle
-}
-
-function scheduleEpubReadingState(file) {
-  clearTimeout(epubReadingStateTimer)
-  epubReadingStateTimer = setTimeout(() => {
-    epubReadingStateTimer = null
-    persistEpubReadingState(file).catch((error) => reportClientError(new Error(`EPUB reading state: ${error?.message || error}`)))
-  }, 450)
-}
-
-async function persistEpubReadingState(file) {
-  if (!file?.readingState || !file.hash) return
-  const reading = file.readingState
-  const response = await gatewayFetch('/studio/epub/state', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      root: file.root,
-      path: file.path,
-      bookHash: file.hash,
-      cfi: reading.cfi || '',
-      chapterLabel: reading.chapterLabel || '',
-      progress: Number(reading.progress) || 0,
-      fontScale: Number(reading.fontScale) || 1,
-      theme: reading.theme || 'light',
-      flow: reading.flow || 'paginated',
-      tocOpen: Boolean(reading.tocOpen),
-    }),
-  })
-  if (!response.ok) {
-    const result = await response.json().catch(() => null)
-    throw new Error(result?.error?.message || `HTTP ${response.status}`)
-  }
-}
-
-function captureEpubSelection(file, selection) {
-  if (state.artifact !== file || !selection?.quote) return
-  state.pendingSelection = {
-    quote: selection.quote,
-    itemId: null,
-    turnId: null,
-    source: epubCommentSource({
-      root: file.root,
-      filePath: file.path,
-      bookHash: file.hash,
-      cfiRange: selection.cfiRange,
-      href: selection.href,
-      chapterLabel: selection.chapterLabel,
-    }),
-  }
-  positionSelectionPopover(selection.rect, { allowFavorite: false })
-}
-
-async function reopenEpubComment(anchor) {
-  await openArtifact({
-    root: anchor.root || selectedThread()?.cwd,
-    path: anchor.filePath,
-    epubCfi: anchor.cfiRange,
-  })
-}
-
-async function mountArtifactEditor(file, parent, content) {
-  workspaceEditorModule ||= import('./workspace-editor.mjs')
-  const { createWorkspaceEditor } = await workspaceEditorModule
-  if (state.artifact !== file || state.artifactView !== 'edit' || !parent.isConnected) return
-  artifactEditor = createWorkspaceEditor({
-    parent,
-    content,
-    language: file.language,
-    onSave: () => saveArtifact().catch(showError),
-    onChange: (value) => {
-      file.editContent = value
-      file.dirty = file.editContent !== file.content
-      const lines = file.editContent ? file.editContent.split('\n').length : 1
-      $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
-      $('#artifact-save').disabled = !file.dirty
-      $('#artifact-meta').textContent = t('{lines} lines · {size}', { lines, size: formatFileSize(new TextEncoder().encode(file.editContent).length) })
-      if (isMarkdownFile(file.path) || isHtmlFile(file.path)) {
-        cancelArtifactOutlineWork()
-        artifactOutlineRefreshTimer = setTimeout(() => {
-          artifactOutlineRefreshTimer = null
-          if (state.artifact !== file || state.artifactView !== 'edit') return
-          configureTextArtifactOutline(file, $('#artifact-content'), file.editContent, {
-            markdown: isMarkdownFile(file.path),
-            html: isHtmlFile(file.path),
-            view: 'edit',
-          })
-        }, 250)
-      }
-    },
-  })
-  artifactEditor.focus()
-}
-
-function renderStaticHtml(value) {
-  const clean = DOMPurify.sanitize(String(value || ''), {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: STATIC_HTML_FORBIDDEN_TAGS,
-    FORBID_ATTR: STATIC_HTML_FORBIDDEN_ATTRIBUTES,
-  })
-  const template = document.createElement('template')
-  template.innerHTML = clean
-  template.content.querySelectorAll('*').forEach((element) => {
-    for (const attribute of [...element.attributes]) {
-      if (/^on/iu.test(attribute.name)) element.removeAttribute(attribute.name)
-    }
-  })
-  return template.innerHTML
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.addEventListener('load', () => resolve(String(reader.result || '')), { once: true })
-    reader.addEventListener('error', () => reject(reader.error || new Error(t('Unable to decode image'))), { once: true })
-    reader.readAsDataURL(blob)
-  })
-}
-
-function resetArtifactSearch() {
-  state.artifactSearch = ''
-  state.artifactSearchIndex = -1
-  state.artifactSearchMatches = []
-  state.artifactSearchOpen = false
-  const searchInput = $('#artifact-search-input')
-  if (searchInput) searchInput.value = ''
-  $('#artifact-search-toolbar')?.classList.remove('hidden')
-  $('#artifact-search-panel')?.classList.add('hidden')
-  $('#artifact-search-toggle')?.classList.remove('active')
-  $('#artifact-search-toggle')?.setAttribute('aria-expanded', 'false')
-  clearArtifactSearchHighlights()
-  renderArtifactSearchStatus()
-  clearTimeout(artifactSearchTimer)
-}
-
-function handleArtifactSearchInput(event) {
-  state.artifactSearch = event.target.value
-  clearTimeout(artifactSearchTimer)
-  if (!state.artifact || !state.artifactSearch.trim()) {
-    clearArtifactSearchHighlights()
-    renderArtifactSearchStatus()
-    return
-  }
-  artifactSearchTimer = setTimeout(() => {
-    const content = $('#artifact-content')
-    if (!content || content.classList.contains('hidden')) return
-    applyArtifactSearchHighlights()
-  }, 140)
-}
-
-function handleArtifactSearchKeydown(event) {
-  if (event.key !== 'Enter') return
-  event.preventDefault()
-  if (!state.artifactSearch.trim() || state.artifactSearchMatches.length === 0) return
-  navigateArtifactSearch(event.shiftKey ? -1 : 1)
-}
-
-function handleArtifactSearchMatches(raw = '') {
-  const content = $('#artifact-content')
-  if (!content || !raw.trim()) return []
-  const query = raw.trim()
-  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.nodeValue) return NodeFilter.FILTER_SKIP
-      const parent = node.parentElement
-      if (!parent) return NodeFilter.FILTER_REJECT
-      if (parent.closest('button, .markdown-code-header, .markdown-mermaid-canvas, script, style, textarea, .artifact-search-highlight')) {
-        return NodeFilter.FILTER_REJECT
-      }
-      const mermaidSource = parent.closest('.markdown-mermaid-source')
-      if (mermaidSource && !mermaidSource.closest('.markdown-mermaid.show-source')) return NodeFilter.FILTER_REJECT
-      return NodeFilter.FILTER_ACCEPT
-    },
-  })
-
-  const matches = []
-  while (walker.nextNode()) {
-    const node = walker.currentNode
-    findTextMatchRanges(node.nodeValue, query).forEach(({ start, end }) => {
-      matches.push({ node, start, end })
-    })
-  }
-  return matches
-}
-
-function clearArtifactSearchHighlights() {
-  const content = $('#artifact-content')
-  if (!content) return
-  content.querySelectorAll('mark.artifact-search-highlight').forEach((mark) => {
-    const parent = mark.parentElement
-    if (!parent) return
-    parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
-    parent.normalize()
-  })
-  state.artifactSearchMatches = []
-  state.artifactSearchIndex = -1
-}
-
-function applyArtifactSearchHighlights() {
-  const content = $('#artifact-content')
-  if (!content || !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
-    clearArtifactSearchHighlights()
-    return
-  }
-  clearArtifactSearchHighlights()
-  const query = state.artifactSearch.trim()
-  if (!query) {
-    renderArtifactSearchStatus()
-    return
-  }
-
-  const nodeGroups = new Map()
-  handleArtifactSearchMatches(query).forEach(({ node, start, end }) => {
-    if (!nodeGroups.has(node)) nodeGroups.set(node, [])
-    nodeGroups.get(node).push([start, end])
-  })
-  nodeGroups.forEach((positions, node) => {
-    const text = node.nodeValue
-    const parent = node.parentNode
-    if (!parent) return
-    const fragment = document.createDocumentFragment()
-    let cursor = 0
-    positions.sort((a, b) => a[0] - b[0]).forEach(([start, end]) => {
-      if (start < cursor || end > text.length) return
-      if (start > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, start)))
-      const mark = document.createElement('mark')
-      mark.className = 'artifact-search-highlight'
-      mark.textContent = text.slice(start, end)
-      fragment.appendChild(mark)
-      cursor = end
-    })
-    if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)))
-    parent.replaceChild(fragment, node)
-  })
-
-  state.artifactSearchMatches = [...content.querySelectorAll('mark.artifact-search-highlight')]
-  state.artifactSearchIndex = state.artifactSearchMatches.length ? 0 : -1
-  if (state.artifactSearchMatches.length) scrollArtifactSearchToMatch(0, { behavior: 'auto' })
-  renderArtifactSearchStatus()
-}
-
-function renderArtifactSearchStatus() {
-  const summary = $('#artifact-search-summary')
-  const total = state.artifactSearchMatches.length
-  const query = state.artifactSearch.trim()
-  if (!summary) return
-  if (!query || !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
-    summary.textContent = ''
-    $('#artifact-search-prev').disabled = true
-    $('#artifact-search-next').disabled = true
-    return
-  }
-  summary.textContent = total
-    ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total })
-    : t('No matches found')
-  $('#artifact-search-prev').disabled = total === 0
-  $('#artifact-search-next').disabled = total === 0
-}
-
-function scrollArtifactSearchToMatch(index, { behavior = 'smooth' } = {}) {
-  if (!state.artifactSearchMatches.length) return
-  const current = ((index % state.artifactSearchMatches.length) + state.artifactSearchMatches.length) % state.artifactSearchMatches.length
-  state.artifactSearchIndex = current
-  state.artifactSearchMatches.forEach((match, matchIndex) => {
-    match.classList.toggle('current', matchIndex === current)
-  })
-  const target = state.artifactSearchMatches[current]
-  if (target?.isConnected) target.scrollIntoView({ behavior, block: 'center', inline: 'nearest' })
-  renderArtifactSearchStatus()
-}
-
-function navigateArtifactSearch(step) {
-  if (!state.artifactSearchMatches.length) return
-  const next = state.artifactSearchIndex < 0 ? 0 : state.artifactSearchIndex + step
-  scrollArtifactSearchToMatch(next)
-}
-
-function formatFileSize(value) {
-  const bytes = Number(value) || 0
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function captureTranscriptSelection() {
-  const selection = window.getSelection()
-  const text = selection?.toString().trim()
-  if (!text || selection.rangeCount === 0) return hideSelectionPopover()
-  const range = selection.getRangeAt(0)
-  const transcript = $('#transcript')
-  if (!transcript.contains(range.commonAncestorContainer)) return hideSelectionPopover()
-  const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-    ? range.commonAncestorContainer
-    : range.commonAncestorContainer.parentElement
-  const item = element?.closest('[data-item-id]')
-  const turn = element?.closest('[data-turn-id]')
-  state.pendingSelection = {
-    quote: text.slice(0, 16000),
-    itemId: item?.dataset.itemId || null,
-    turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
-    source: chatCommentSource({
-      itemId: item?.dataset.itemId || null,
-      turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
-    }),
-  }
-  positionSelectionPopover(range, { allowFavorite: true })
-}
-
-function captureArtifactSelection() {
-  const selection = window.getSelection()
-  const text = selection?.toString().trim()
-  if (state.artifact?.kind === 'image') return hideSelectionPopover()
-  if (!state.artifact || !text || selection.rangeCount === 0) return hideSelectionPopover()
-  const range = selection.getRangeAt(0)
-  const content = $('#artifact-content')
-  if (!content.contains(range.commonAncestorContainer)) return hideSelectionPopover()
-  let hintOffset = 0
-  if (state.artifactView === 'source') {
-    const source = content.querySelector('.artifact-source')
-    if (source) {
-      const prefix = document.createRange()
-      prefix.selectNodeContents(source)
-      prefix.setEnd(range.startContainer, range.startOffset)
-      hintOffset = prefix.toString().length
-    }
-  }
-  state.pendingSelection = {
-    quote: text.slice(0, 16000),
-    itemId: null,
-    turnId: null,
-    source: documentCommentSource(createFileRangeTarget(state.artifact, text, hintOffset)),
-  }
-  positionSelectionPopover(range, { allowFavorite: false })
-}
-
-function positionSelectionPopover(range, { allowFavorite }) {
-  const rect = typeof range?.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : range
-  if (!rect) return hideSelectionPopover()
-  const popover = $('#selection-popover')
-  popover.style.left = `${Math.min(window.innerWidth - 150, Math.max(8, rect.left + rect.width / 2 - 55))}px`
-  popover.style.top = `${Math.max(8, rect.top - 39)}px`
-  $('#selection-favorite').classList.toggle('hidden', !allowFavorite)
-  popover.classList.remove('hidden')
-}
-
-function openAnnotationFromSelection() {
-  if (!state.pendingSelection?.quote) {
-    captureTranscriptSelection()
-    if (!state.pendingSelection?.quote) return toast('Select text in the Codex output first', 'error')
-  }
-  state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
-  if (!state.pendingAnnotation) return toast('Select the text to comment on again', 'error')
-  $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
-  $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
-  $('#annotation-comment').value = ''
-  $('#annotation-comment').placeholder = state.pendingAnnotation.source?.provider === 'epub'
-    ? t('For example: explain the core meaning, context, and key concepts in this passage.')
-    : t('Describe the issue and expected change, or add the selection directly to the draft.')
-  $('#annotation-error').classList.add('hidden')
-  hideSelectionPopover(false)
-  $('#annotation-dialog').showModal()
-  setTimeout(() => $('#annotation-comment').focus(), 30)
-}
-
-function openFavoriteFromSelection() {
-  if (!state.pendingSelection?.quote) {
-    captureTranscriptSelection()
-    if (!state.pendingSelection?.quote) return toast('Select text in the AI output first', 'error')
-  }
-  const thread = selectedThread()
-  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
-  if (!thread || !state.pendingSelection.turnId || !state.pendingSelection.itemId) {
-    return toast('The selected text could not be anchored. Select within a single response.', 'error')
-  }
-  state.favoriteEditMode = false
-  state.pendingFavorite = {
-    id: randomId(),
-    scope: 'selection',
-    backend: state.backend,
-    threadId: state.selectedId,
-    threadTitle: threadTitle(thread),
-    projectPath: thread.cwd || '',
-    turnId: String(state.pendingSelection.turnId),
-    itemId: String(state.pendingSelection.itemId),
-    title: autoFavoriteTitle(state.pendingSelection.quote),
-    question: turn ? questionForTurn(turn) : '',
-    content: state.pendingSelection.quote,
-    note: '',
-    tags: [],
-    createdAt: new Date().toISOString(),
-  }
-  hideSelectionPopover(false)
-  populateFavoriteDialog(state.pendingFavorite)
-}
-
-function hideSelectionPopover(clear = true) {
-  $('#selection-popover').classList.add('hidden')
-  if (clear) state.pendingSelection = null
-}
-
-function closeAnnotationDialog() {
-  $('#annotation-dialog').close()
-  state.pendingAnnotation = null
-  state.pendingSelection = null
-  window.getSelection()?.removeAllRanges()
-}
-
-function currentAnnotations() {
-  return state.selectedId ? state.annotationDrafts[selectedStateKey()] || [] : []
-}
-
-function addAnnotation(event) {
-  event.preventDefault()
-  const comment = $('#annotation-comment').value.trim()
-  const errorBox = $('#annotation-error')
-  const annotation = state.pendingAnnotation
-  if (!state.selectedId || !annotation?.excerpt) {
-    errorBox.textContent = 'The selected content is required.'
-    errorBox.classList.remove('hidden')
-    return
-  }
-  const drafts = currentAnnotations()
-  if (drafts.length >= 32) {
-    errorBox.textContent = 'A session can keep up to 32 comments.'
-    errorBox.classList.remove('hidden')
-    return
-  }
-  const draft = createCommentDraft({ ...annotation, note: comment }, { registry: commentSources })
-  state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
-  persistPreferences()
-  closeAnnotationDialog()
-  renderAnnotationRail()
-  renderComposerReviewContext()
-  toast('Comment added to reply draft')
-}
-
-function openAnnotationRail() {
-  activateRightWorkspace('comments')
-  renderAnnotationRail()
-}
-function closeAnnotationRail() {
-  $('#annotation-rail').classList.add('hidden')
-  if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
-  syncRightWorkspaceLaunchers()
-  if ($('#favorites-rail').classList.contains('hidden')) {
-    if (state.artifact) renderArtifact()
-    else renderSessionMap()
-  }
-}
-
-function renderAnnotationRail() {
-  const drafts = currentAnnotations()
-  $('#annotation-count').textContent = drafts.length
-  setWorkspaceToolCount($('#thread-comments-count'), drafts.length)
-  const commentsButton = $('#open-thread-comments')
-  const commentsLabel = drafts.length ? `${t('Comments')} · ${drafts.length}` : t('Comments')
-  commentsButton.title = commentsLabel
-  commentsButton.setAttribute('aria-label', commentsLabel)
-  $('#annotation-empty').classList.toggle('hidden', drafts.length > 0)
-  $('#annotation-list').classList.toggle('hidden', drafts.length === 0)
-  $('#clear-annotations').disabled = !drafts.length && !state.annotationAdditional[selectedStateKey()]
-  $('#insert-annotations').disabled = !drafts.length
-  $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
-  $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
-    <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('Delete comment {index}', { index: index + 1 })}">×</button></header>
-    <blockquote>${escapeHtml(draft.excerpt)}</blockquote>${draft.note ? `<p>${escapeHtml(draft.note)}</p>` : ''}
-  </article>`).join('')
-  $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
-  $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
-  renderComposerReviewContext()
-}
-
-function annotationSourceLabel(draft, index) {
-  return commentSources.describe(draft, commentProviderContext(index))
-}
-
-async function reopenAnnotationSource(id) {
-  const draft = currentAnnotations().find((candidate) => candidate.id === id)
-  if (!draft) return
-  await commentSources.reopen(draft, commentProviderContext())
-}
-
-async function reopenDocumentComment(target, excerpt) {
-  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
-  setArtifactView('source')
-  const source = $('#artifact-content .artifact-source')
-  if (!source) return
-  const { startOffset, endOffset } = relocateDocumentComment({ anchor: target }, state.artifact, excerpt)
-  if (startOffset == null || endOffset == null || endOffset <= startOffset) return
-  const node = source.firstChild
-  if (!node) return
-  const range = document.createRange()
-  range.setStart(node, Math.min(startOffset, node.length))
-  range.setEnd(node, Math.min(endOffset, node.length))
-  const selection = window.getSelection()
-  selection.removeAllRanges()
-  selection.addRange(range)
-  const rect = range.getBoundingClientRect()
-  $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
-}
-
-function renderComposerReviewContext() {
-  const drafts = currentAnnotations()
-  const context = $('#composer-review-context')
-  context.classList.toggle('hidden', !drafts.length)
-  if (!drafts.length) return
-  $('#composer-review-count').textContent = t('{count} comments ready to send', { count: drafts.length })
-  $('#composer-review-source').textContent = t('Waiting to be added')
-}
-
-function deleteAnnotation(id) {
-  if (!state.selectedId) return
-  const key = selectedStateKey()
-  state.annotationDrafts[key] = currentAnnotations().filter((draft) => draft.id !== id)
-  if (!state.annotationDrafts[key].length) delete state.annotationDrafts[key]
-  persistPreferences()
-  renderAnnotationRail()
-}
-
-function clearAnnotations() {
-  if (!state.selectedId || !confirm(t('Clear all comment drafts for this session?'))) return
-  delete state.annotationDrafts[selectedStateKey()]
-  delete state.annotationAdditional[selectedStateKey()]
-  persistPreferences()
-  renderAnnotationRail()
-}
-
-function saveAnnotationAdditional(event) {
-  if (!state.selectedId) return
-  const value = event.target.value.slice(0, 32000)
-  if (value) state.annotationAdditional[selectedStateKey()] = value
-  else delete state.annotationAdditional[selectedStateKey()]
-  clearTimeout(annotationPersistTimer)
-  annotationPersistTimer = setTimeout(persistPreferences, 300)
-}
-
-function buildAnnotationPrompt(drafts, additional = '') {
-  const annotations = drafts.map((draft, index) => {
-    const anchor = commentSources.promptAnchor(draft, commentProviderContext(index))
-    const quote = draft.excerpt.split('\n').map((line) => `> ${line}`).join('\n')
-    return t(anchor
-      ? 'Comment {index} ({anchor})\nQuote:\n{quote}\n\nMy comment:\n{comment}'
-      : 'Comment {index}\nQuote:\n{quote}\n\nMy comment:\n{comment}', {
-      index: index + 1,
-      anchor,
-      quote,
-      comment: draft.note || t('No additional comment'),
-    })
-  }).join('\n\n---\n\n')
-  const additionalBlock = additional.trim() ? t('Overall note:\n{text}', { text: additional.trim() }) : ''
-  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.annotationPromptTemplate
-    .replaceAll('{{annotations}}', annotations)
-    .replaceAll('{{additional}}', additionalBlock)
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()].filter(Boolean).join('\n\n')
-}
-
-function commentProviderContext(index = 0) {
-  return {
-    index,
-    translate: t,
-    unknownLabel: t('Saved comment'),
-    contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
-    openDocument: reopenDocumentComment,
-    openEpubSource: reopenEpubComment,
-    openPdfSource: reopenPdfComment,
-    openTableSource: reopenTableComment,
-    openWebSource: openBrowserUrl,
-  }
-}
-
-async function reopenPdfComment(anchor) {
-  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
-  state.artifact.page = anchor.page
-  await richArtifactReader?.goToPage?.(anchor.page)
-}
-
-async function reopenTableComment(anchor) {
-  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
-}
-
-function insertAnnotations() {
-  const drafts = currentAnnotations()
-  if (!drafts.length) return
-  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[selectedStateKey()] || '')
-  const composer = $('#composer-input')
-  composer.value = [composer.value.trim(), prompt].filter(Boolean).join('\n\n')
-  closeAnnotationRail()
-  composer.focus()
-  renderComposerReviewContext()
-  toast('Comment draft inserted into the composer')
-}
-
-async function favoriteRequest(path, options = {}) {
-  const response = await gatewayFetch(path, {
-    cache: 'no-store',
-    ...options,
-    headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : options.headers,
-  })
-  const text = await response.text()
-  let value = null
-  try { value = text ? JSON.parse(text) : null } catch { value = text }
-  if (!response.ok) throw new Error(value?.error?.message || value?.message || `HTTP ${response.status}`)
-  return value
-}
-
-async function loadFavorites() {
-  const query = encodeURIComponent(state.favoriteQuery)
-  const displayLimit = state.favoriteQuery ? 300 : 2000
-  const [result, indexResult] = await Promise.all([
-    favoriteRequest(`/studio/favorites?q=${query}&limit=${displayLimit}`),
-    state.favoriteQuery
-      ? favoriteRequest('/studio/favorites?limit=2000')
-      : Promise.resolve(null),
-  ])
-  state.favorites = Array.isArray(result?.items) ? result.items : []
-  state.favoriteIndex = Array.isArray(indexResult?.items) ? indexResult.items : state.favorites
-  state.favoriteTotal = Number(result?.allTotal || 0)
-  renderFavoritesRail()
-  syncFavoriteButtons()
-}
-
-function favoriteForSource(backend, threadId, turnId, itemId) {
-  const key = favoriteSourceKey({ backend, threadId, turnId, itemId })
-  return state.favoriteIndex.find((favorite) => favorite.scope !== 'selection' && favoriteSourceKey(favorite) === key) || null
-}
-
-function openFavoritesRail(scope = 'global') {
-  state.favoriteScope = scope
-  activateRightWorkspace('favorites')
-  loadFavorites().catch(showError)
-  setTimeout(() => $('#favorites-search').focus(), 30)
-}
-
-function closeFavoritesRail() {
-  $('#favorites-rail').classList.add('hidden')
-  if (state.activeRightWorkspace === 'favorites') state.activeRightWorkspace = null
-  syncRightWorkspaceLaunchers()
-  if ($('#annotation-rail').classList.contains('hidden')) {
-    if (state.artifact) renderArtifact()
-    else renderSessionMap()
-  }
-}
-
-async function exportFavorites() {
-  const response = await gatewayFetch('/studio/favorites/export', { cache: 'no-store' })
-  if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`)
-  const url = URL.createObjectURL(await response.blob())
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'codex-thread-studio-favorites.md'
-  document.body.append(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-  toast('Favorites exported')
-}
-
-function handleFavoritesSearch(event) {
-  state.favoriteQuery = event.target.value.trim()
-  clearTimeout(favoritesSearchTimer)
-  favoritesSearchTimer = setTimeout(() => loadFavorites().catch(showError), 180)
-}
-
-function renderFavoritesRail() {
-  const visibleFavorites = state.favoriteScope === 'session' && state.selectedId
-    ? state.favorites.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId)
-    : state.favorites
-  const count = state.favoriteScope === 'session' ? visibleFavorites.length : state.favoriteTotal
-  $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? 'Session favorites' : 'Global favorites')
-  $('#export-favorites').classList.toggle('hidden', state.favoriteScope !== 'global')
-  $('#favorites-count').textContent = count
-  $('#favorites-badge').textContent = count > 99 ? '99+' : count
-  $('#favorites-badge').classList.toggle('hidden', count === 0)
-  $('#favorites-search-summary').textContent = state.favoriteQuery
-    ? t('Found {count} matching favorites', { count: visibleFavorites.length })
-    : state.favoriteScope === 'session'
-      ? t('{count} favorites in this session', { count })
-      : t('{count} structured favorites across sessions', { count })
-  const empty = visibleFavorites.length === 0
-  $('#favorites-empty').classList.toggle('hidden', !empty)
-  $('#favorites-list').classList.toggle('hidden', empty)
-  $('#favorites-empty strong').textContent = state.favoriteQuery ? 'No matching results' : 'No favorites yet'
-  $('#favorites-empty p').textContent = state.favoriteQuery
-    ? 'Try keywords from the response, session name, or tags.'
-    : 'Hover over an AI response and use its favorite button.'
-  $('#favorites-list').innerHTML = visibleFavorites.map((favorite) => {
-    const tags = favorite.tags?.length
-      ? `<div class="favorite-card-tags">${favorite.tags.slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
-      : ''
-    const question = favorite.questionSnippet
-      ? `<p class="favorite-card-question"><span>Q</span>${escapeHtml(favorite.questionSnippet)}</p>`
-      : ''
-    return `<button class="favorite-card" type="button" data-favorite-id="${escapeHtml(favorite.id)}">
-      <div class="favorite-card-top"><span class="favorite-backend-pill ${escapeHtml(favorite.backend)}">${escapeHtml(favorite.backend)}</span><time>${escapeHtml(formatFavoriteDate(favorite.createdAt))}</time></div>
-      <strong>${escapeHtml(favorite.title)}</strong>
-      ${question}
-      <p class="favorite-card-answer">${escapeHtml(favorite.snippet)}</p>
-      ${tags}
-      <footer><span>${escapeHtml(favorite.threadTitle || t('Untitled session'))}</span><span>${escapeHtml(basename(favorite.projectPath))}</span></footer>
-    </button>`
-  }).join('')
-  renderSessionFavoriteCount()
-}
-
-function renderSessionFavoriteCount() {
-  const count = state.selectedId
-    ? state.favoriteIndex.filter((favorite) => favorite.backend === state.backend && favorite.threadId === state.selectedId).length
-    : 0
-  const favoritesButton = $('#open-thread-favorites')
-  setWorkspaceToolCount($('#thread-favorites-count'), count)
-  const favoritesLabel = count ? `${t('Favorites')} · ${count}` : t('Favorites')
-  favoritesButton.title = favoritesLabel
-  favoritesButton.setAttribute('aria-label', favoritesLabel)
-}
-
-function setWorkspaceToolCount(badge, count) {
-  if (!badge) return
-  const normalized = Math.max(0, Number(count) || 0)
-  badge.textContent = normalized > 99 ? '99+' : normalized
-  badge.classList.toggle('hidden', normalized === 0)
-}
-
-function handleFavoriteListClick(event) {
-  const card = event.target.closest('[data-favorite-id]')
-  if (card) openFavoriteDetail(card.dataset.favoriteId).catch(showError)
-}
-
-function openFavoriteForMessage(turnId, itemId) {
-  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(turnId))
-  const item = turn?.items?.find((candidate) => String(candidate.id) === String(itemId))
-  const thread = selectedThread()
-  const visibleText = item?.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item?.text || ''
-  if (!turn || !item || !thread || !visibleText.trim()) {
-    toast('This response is not complete and cannot be favorited yet', 'error')
-    return
-  }
-  state.favoriteEditMode = false
-  state.pendingFavorite = {
-    id: randomId(),
-    scope: 'message',
-    backend: state.backend,
-    threadId: state.selectedId,
-    threadTitle: threadTitle(thread),
-    projectPath: thread.cwd || '',
-    turnId: String(turn.id || ''),
-    itemId: String(item.id || ''),
-    title: autoFavoriteTitle(visibleText),
-    question: questionForTurn(turn),
-    content: visibleText.trim(),
-    note: '',
-    tags: [],
-    createdAt: new Date().toISOString(),
-  }
-  populateFavoriteDialog(state.pendingFavorite)
-}
-
-function populateFavoriteDialog(favorite) {
-  const editing = state.favoriteEditMode
-  const resource = favorite.presentation === 'resource'
-  $('#favorite-dialog-title').textContent = t(editing ? 'Edit favorite' : resource ? 'Save resource' : favorite.scope === 'selection' ? 'Favorite selection' : 'Favorite this response')
-  $('#favorite-source-label').textContent = `${backendDescriptor(favorite.backend).name} · ${favorite.threadTitle || t('Untitled session')}`
-  $('#favorite-preview-label').textContent = t(resource ? 'Resources' : 'AI response')
-  $('#favorite-answer-length').textContent = t('{count} characters', { count: [...favorite.content].length.toLocaleString(getLocale()) })
-  $('#favorite-answer-preview').innerHTML = renderMarkdown(favorite.content)
-  $('#favorite-title').value = favorite.title || autoFavoriteTitle(favorite.content)
-  $('#favorite-tags').value = (favorite.tags || []).join(', ')
-  $('#favorite-note').value = favorite.note || ''
-  $('#favorite-include-question').checked = Boolean(favorite.question)
-  $('#favorite-question-option').classList.toggle('hidden', editing && !favorite.question)
-  $('#save-favorite').textContent = t(editing ? 'Save changes' : 'Save favorite')
-  $('#favorite-error').classList.add('hidden')
-  renderFavoriteQuestionOption()
-  $('#favorite-dialog').showModal()
-  setTimeout(() => $('#favorite-title').focus(), 30)
-}
-
-function renderFavoriteQuestionOption() {
-  const favorite = state.pendingFavorite
-  if (!favorite) return
-  const included = $('#favorite-include-question').checked && Boolean(favorite.question)
-  $('#favorite-question-preview').classList.toggle('hidden', !included)
-  $('#favorite-question-preview').textContent = included ? favorite.question : ''
-}
-
-function closeFavoriteDialog() {
-  $('#favorite-dialog').close()
-  state.pendingFavorite = null
-  state.favoriteEditMode = false
-  state.pendingSelection = null
-  window.getSelection()?.removeAllRanges()
-}
-
-async function saveFavorite(event) {
-  event.preventDefault()
-  if (!state.pendingFavorite) return
-  const favorite = {
-    ...state.pendingFavorite,
-    title: $('#favorite-title').value.trim(),
-    question: $('#favorite-include-question').checked ? state.pendingFavorite.question : '',
-    tags: normalizeFavoriteTags($('#favorite-tags').value),
-    note: $('#favorite-note').value.trim(),
-  }
-  const error = $('#favorite-error')
-  if (!favorite.title) {
-    error.textContent = 'Enter a favorite title.'
-    error.classList.remove('hidden')
-    return
-  }
-  try {
-    const updating = state.favoriteEditMode
-    const saved = await favoriteRequest(
-      updating ? `/studio/favorites/${encodeURIComponent(favorite.id)}` : '/studio/favorites',
-      { method: updating ? 'PUT' : 'POST', body: JSON.stringify(favorite) },
-    )
-    closeFavoriteDialog()
-    state.selectedFavorite = saved
-    await loadFavorites()
-    toast(updating ? 'Favorite updated' : 'Saved to global favorites')
-    if (updating) await openFavoriteDetail(saved.id)
-  } catch (requestError) {
-    error.textContent = requestError.message
-    error.classList.remove('hidden')
-  }
-}
-
-async function openFavoriteDetail(id) {
-  const favorite = await favoriteRequest(`/studio/favorites/${encodeURIComponent(id)}`)
-  state.selectedFavorite = favorite
-  $('#favorite-detail-backend').textContent = favorite.backend
-  $('#favorite-detail-backend').className = `favorite-backend-pill ${favorite.backend}`
-  $('#favorite-detail-title').textContent = favorite.title
-  $('#favorite-detail-source').textContent = `${favorite.threadTitle || t('Untitled session')} · ${favorite.projectPath || t('Project directory not recorded')} · ${formatFavoriteDate(favorite.createdAt)}`
-  $('#favorite-detail-question-section').classList.toggle('hidden', !favorite.question)
-  $('#favorite-detail-question').textContent = favorite.question || ''
-  $('#favorite-detail-answer').innerHTML = renderMarkdown(favorite.content)
-  $('#favorite-detail-note-section').classList.toggle('hidden', !favorite.note)
-  $('#favorite-detail-note').textContent = favorite.note || ''
-  $('#favorite-detail-tags').innerHTML = (favorite.tags || []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')
-  $('#favorite-detail-dialog').showModal()
-}
-
-function closeFavoriteDetail() {
-  $('#favorite-detail-dialog').close()
-  state.selectedFavorite = null
-}
-
-async function copySelectedFavorite() {
-  if (!state.selectedFavorite) return
-  await navigator.clipboard.writeText(favoriteCopyText(state.selectedFavorite, t))
-  toast('Favorite copied')
-}
-
-function editSelectedFavorite() {
-  if (!state.selectedFavorite) return
-  const favorite = { ...state.selectedFavorite, tags: [...(state.selectedFavorite.tags || [])] }
-  $('#favorite-detail-dialog').close()
-  state.favoriteEditMode = true
-  state.pendingFavorite = favorite
-  populateFavoriteDialog(favorite)
-}
-
-async function deleteSelectedFavorite() {
-  const favorite = state.selectedFavorite
-  if (!favorite || !confirm(t('Delete favorite “{title}”?', { title: favorite.title }))) return
-  await favoriteRequest(`/studio/favorites/${encodeURIComponent(favorite.id)}`, { method: 'DELETE' })
-  closeFavoriteDetail()
-  await loadFavorites()
-  toast('Favorite deleted')
-}
-
-async function openSelectedFavoriteSource() {
-  const favorite = state.selectedFavorite
-  if (!favorite) return
-  closeFavoriteDetail()
-  closeFavoritesRail()
-  if (state.backend !== favorite.backend) {
-    await switchBackend(favorite.backend)
-    await waitFor(() => state.ready, 12_000)
-  }
-  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
-    if (state.ready) await loadThreads()
-  }
-  if (!state.threads.some((thread) => thread.id === favorite.threadId)) {
-    throw new Error('The source session is not in the list and may be archived or deleted. The favorite remains intact.')
-  }
-  await selectThread(favorite.threadId, { force: true })
-  const element = renderedItem(favorite.turnId, favorite.itemId)
-  if (!element) {
-    toast('Returned to the source session, but the original message anchor was not found', 'error')
-    return
-  }
-  transcriptScrollFollower.pause()
-  element.classList.add('favorite-source-highlight')
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  setTimeout(() => element.classList.remove('favorite-source-highlight'), 2400)
-}
-
-function syncFavoriteButtons() {
-  $('#transcript')?.querySelectorAll('[data-favorite-message]').forEach((button) => {
-    const item = button.closest('[data-turn-id][data-item-id]')
-    const favorite = item && favoriteForSource(state.backend, state.selectedId, item.dataset.turnId, item.dataset.itemId)
-    button.classList.toggle('active', Boolean(favorite))
-    button.setAttribute('aria-pressed', String(Boolean(favorite)))
-    button.title = favorite ? 'Favorited; click to view' : 'Favorite this response'
-    button.setAttribute('aria-label', button.title)
-    const accessibleLabel = button.querySelector('b')
-    if (accessibleLabel) accessibleLabel.textContent = favorite ? 'Favorited' : 'Favorites'
-    item?.classList.toggle('favorited', Boolean(favorite))
-  })
-}
-
-function formatFavoriteDate(value) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return formatLocalizedDate(date, { year: 'numeric', month: 'short', day: 'numeric' })
+function jumpArtifactToLine(line, column) {
+  return documentWorkspace.jumpToLine(line, column)
 }
 
 function waitFor(predicate, timeoutMs) {
@@ -7840,166 +4718,6 @@ function persistPreferences() {
   })
   preferencesWriteChain = write.catch((error) => console.error('Unable to persist preferences', error))
   return write
-}
-
-function openRouterDialog() {
-  closeActionMenus()
-  state.routerEditor = {
-    fallbacks: state.router.fallbacks.map((entry) => ({ ...entry })),
-  }
-  renderManagedRouterStatus()
-  $('#router-error').classList.add('hidden')
-  renderRouterFallbacks()
-  $('#router-dialog').showModal()
-  $('.router-dialog-body').scrollTop = 0
-}
-
-function renderManagedRouterStatus() {
-  const backend = state.router.controllerBackend
-  const id = state.router.controllers[backend]
-  const managed = state.threadsByBackend[backend]?.find((thread) => thread.id === id)
-  $('#managed-router-status').textContent = managed
-    ? t('{backend} · created and continuously reused · {title}', { backend: backendDescriptor(backend).name, title: threadTitle(managed) })
-    : t('{backend} · Studio will create it on first save', { backend: backendDescriptor(backend).name })
-}
-
-function closeRouterDialog() {
-  $('#router-dialog').close()
-  state.routerEditor = null
-}
-
-function captureRouterFallbacks() {
-  if (!state.routerEditor) return
-  state.routerEditor.fallbacks = $$('#router-fallbacks .router-fallback-card').map((row) => ({
-    sessionKey: row.querySelector('.router-fallback-session').value,
-    condition: row.querySelector('.router-fallback-condition').value.trim() || DEFAULT_FALLBACK_CONDITION,
-  }))
-}
-
-function routerTargetCatalogs() {
-  return Object.fromEntries(Object.entries(sidebarThreadCatalogs()).map(([backend, threads]) => [
-    backend,
-    (threads || []).filter((thread) => !isSessionDirectoryHidden(
-      thread.cwd,
-      state.hiddenSessionDirectories,
-      state.sessionDirectoryIgnore,
-    )),
-  ]))
-}
-
-function routerFallbackTargets() {
-  const controllerKeys = new Set(Object.entries(state.router.controllers).map(([backend, id]) => sessionRefKey(backend, id)))
-  return Object.entries(routerTargetCatalogs()).flatMap(([backend, threads]) => (threads || []).flatMap((thread) => {
-    const key = sessionRefKey(backend, thread.id)
-    return key && !controllerKeys.has(key) && !thread.archived && !thread.ephemeral
-      ? [{ key, backend, thread }]
-      : []
-  }))
-}
-
-function renderRouterFallbacks({ capture = false } = {}) {
-  if (!state.routerEditor) return
-  if (capture) captureRouterFallbacks()
-  const targets = routerFallbackTargets()
-  const options = (selected) => {
-    const known = targets.some((target) => target.key === selected)
-    return `<option value="">${t('Select a fallback session')}</option>${!known && selected ? `<option value="${escapeHtml(selected)}" selected>${t('No longer available')} · ${escapeHtml(selected)}</option>` : ''}${targets.map(({ key, backend, thread }) => `<option value="${escapeHtml(key)}"${key === selected ? ' selected' : ''}>[${backendDescriptor(backend).tag}] ${escapeHtml(threadTitle(thread))} — ${escapeHtml(thread.cwd || t('Project directory not recorded'))}</option>`).join('')}`
-  }
-  const container = $('#router-fallbacks')
-  container.innerHTML = state.routerEditor.fallbacks.length
-    ? state.routerEditor.fallbacks.map((entry, index) => `<section class="router-fallback-card" data-router-fallback-index="${index}">
-      <header><strong>${t('Fallback target {index}', { index: index + 1 })}</strong><button class="icon-button router-remove-fallback" type="button" title="${t('Remove fallback')}" aria-label="${t('Remove fallback')}">×</button></header>
-      <label class="field"><span>${t('Target session')}</span><select class="router-fallback-session">${options(entry.sessionKey)}</select></label>
-      <label class="field"><span>${t('Fallback condition')}</span><textarea class="router-fallback-condition" rows="2">${escapeHtml(entry.condition || DEFAULT_FALLBACK_CONDITION)}</textarea></label>
-    </section>`).join('')
-    : `<div class="router-fallback-empty"><strong>${t('No fallback target configured')}</strong><small>${t('When there is no exact match, the Router will choose the closest regular session.')}</small></div>`
-  container.querySelectorAll('.router-remove-fallback').forEach((button) => button.addEventListener('click', () => {
-    captureRouterFallbacks()
-    state.routerEditor.fallbacks.splice(Number(button.closest('.router-fallback-card').dataset.routerFallbackIndex), 1)
-    renderRouterFallbacks()
-  }))
-  $('#router-add-fallback').disabled = state.routerEditor.fallbacks.length >= 3 || !targets.length
-}
-
-function addRouterFallback() {
-  if (!state.routerEditor || state.routerEditor.fallbacks.length >= 3) return
-  captureRouterFallbacks()
-  const used = new Set(state.routerEditor.fallbacks.map((entry) => entry.sessionKey))
-  const target = routerFallbackTargets().find((entry) => !used.has(entry.key))
-  state.routerEditor.fallbacks.push({ sessionKey: target?.key || '', condition: DEFAULT_FALLBACK_CONDITION })
-  renderRouterFallbacks()
-}
-
-async function saveRouterSettings(event) {
-  event.preventDefault()
-  captureRouterFallbacks()
-  const fallbacks = (state.routerEditor?.fallbacks || []).filter((entry) => entry.sessionKey)
-  if (new Set(fallbacks.map((entry) => entry.sessionKey)).size !== fallbacks.length) {
-    $('#router-error').textContent = t('The same session cannot be configured as a fallback more than once.')
-    $('#router-error').classList.remove('hidden')
-    return
-  }
-  const button = $('#router-form .primary-button')
-  button.disabled = true
-  $('#router-error').classList.add('hidden')
-  try {
-    const controllerBackend = state.router.controllerBackend
-    const threadId = await ensureManagedRouterSession(controllerBackend)
-    const controllers = { ...state.router.controllers, [controllerBackend]: threadId }
-    const previousRouter = state.router
-    state.router = normalizeThreadRouter({ controllerBackend, controllers, fallbacks })
-    try { await persistPreferences() } catch (error) {
-      state.router = previousRouter
-      throw error
-    }
-    closeRouterDialog()
-    renderThreadList()
-    renderWorkspace()
-    toast(t('Router settings saved'))
-  } catch (error) {
-    $('#router-error').textContent = error.message
-    $('#router-error').classList.remove('hidden')
-  } finally { button.disabled = false }
-}
-
-async function ensureManagedRouterSession(backend = state.router.controllerBackend) {
-  if (!sessionDispatch.supports(backend)) throw new Error(t('The Router backend is currently unavailable.'))
-  const cwd = (await loadBackendInfo(backend))?.routerWorkspace
-  if (!cwd) throw new Error(t('Unable to determine the Studio Router working directory.'))
-  const routerId = state.router.controllers[backend]
-  const existing = managedRouterThread(state.threadsByBackend[backend], routerId, cwd)
-  if (existing) return existing.id
-  if (routerId) {
-    try {
-      const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: routerId, includeTurns: false })
-      const recoveredCatalog = recoverManagedRouterCatalog(state.threadsByBackend[backend], routerId, cwd, result?.thread)
-      const recovered = managedRouterThread(recoveredCatalog, routerId, cwd)
-      if (recovered) {
-        state.threadsByBackend[backend] = recoveredCatalog
-        if (backend === state.backend) state.threads = recoveredCatalog
-        return recovered.id
-      }
-    } catch (error) {
-      throw new Error(t('Unable to read the configured Router session. Studio will keep its existing Router ID to avoid creating a duplicate. {message}', { message: error.message }))
-    }
-    throw new Error(t('The configured Router session does not match the dedicated workspace. Studio will not create a replacement automatically.'))
-  }
-  if (!shouldCreateManagedRouter(routerId)) throw new Error(t('A Router ID already exists. Studio will not create a replacement automatically.'))
-  const result = await dispatchBackendRpc(backend, 'thread/start', {
-    cwd,
-    name: 'Thread Router',
-    approvalPolicy: 'never',
-    sandbox: 'read-only',
-  })
-  if (!result?.thread?.id) throw new Error(t('Unable to create the system Router session.'))
-  if (isCodexBackend(backend)) await dispatchBackendRpc(backend, 'thread/name/set', { threadId: result.thread.id, name: 'Thread Router' })
-  mergeThreadIntoCatalog(backend, { ...result.thread, name: 'Thread Router' })
-  state.router = normalizeThreadRouter({
-    ...state.router,
-    controllers: { ...state.router.controllers, [backend]: result.thread.id },
-  })
-  persistPreferences()
-  return result.thread.id
 }
 
 function openSettings() {
@@ -8307,7 +5025,7 @@ function renderLocalizedUI() {
   renderThreadList()
   renderWorkspace()
   renderTranscript()
-  renderFavoritesRail()
+  reviewNotes.renderFavorites()
   if (state.artifact) renderArtifact()
 }
 

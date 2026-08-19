@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterSessionOccurrences, localSessionOccurrences, matchedSnippet, mergeSessionOccurrences } from './session-search.mjs'
+import {
+  filterSessionOccurrences,
+  localSessionOccurrences,
+  matchedSnippet,
+  mergeSessionOccurrences,
+  normalizeRemoteSessionOccurrences,
+} from './session-search.mjs'
 
 const model = {
   turns: [{
@@ -27,6 +33,30 @@ test('remote visible-message occurrences replace local message duplicates', () =
   assert.equal(merged.filter((entry) => entry.itemId === 'user-1').length, 1)
   assert.equal(merged.find((entry) => entry.itemId === 'user-1').type, 'user')
   assert.equal(merged.filter((entry) => entry.type === 'activity').length, 2)
+})
+
+test('classifies remote occurrences without scanning item text', () => {
+  const remoteModel = {
+    turns: [{
+      id: 'turn-1',
+      items: [
+        { id: 'user-1', type: 'userMessage' },
+        { id: 'tool-1', type: 'commandExecution', get aggregatedOutput() { throw new Error('text was scanned') } },
+        { id: 'answer-1', type: 'agentMessage' },
+      ],
+    }],
+  }
+  const normalized = normalizeRemoteSessionOccurrences([
+    { turnId: 'turn-1', itemId: 'answer-1', snippet: 'answer' },
+    { turnId: 'turn-1', itemId: 'user-1', snippet: 'question' },
+    { turnId: 'turn-1', itemId: 'tool-1', snippet: 'command' },
+  ], remoteModel)
+
+  assert.deepEqual(normalized.map(({ itemId, type }) => [itemId, type]), [
+    ['user-1', 'user'],
+    ['tool-1', 'activity'],
+    ['answer-1', 'assistant'],
+  ])
 })
 
 test('occurrence filters preserve the requested result type', () => {

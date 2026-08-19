@@ -52,6 +52,31 @@ export function mergeSessionOccurrences(remote = [], local = []) {
   return merged.sort((left, right) => left.turnIndex - right.turnIndex || left.itemIndex - right.itemIndex)
 }
 
+export function normalizeRemoteSessionOccurrences(remote = [], model = {}) {
+  const itemMetadata = new Map()
+  for (const [turnIndex, turn] of (Array.isArray(model?.turns) ? model.turns : []).entries()) {
+    const items = Array.isArray(turn?.items) ? turn.items : []
+    const finalAssistantIndex = findFinalAssistantIndex(items)
+    for (const [itemIndex, item] of items.entries()) {
+      itemMetadata.set(`${turn?.id || ''}:${item?.id || ''}`, {
+        type: occurrenceType(item, itemIndex, finalAssistantIndex),
+        turnIndex,
+        itemIndex,
+      })
+    }
+  }
+  return (Array.isArray(remote) ? remote : []).map((entry, remoteIndex) => {
+    const metadata = itemMetadata.get(`${entry?.turnId || ''}:${entry?.itemId || ''}`)
+    return {
+      ...entry,
+      type: metadata?.type || entry?.type || 'assistant',
+      turnIndex: metadata?.turnIndex ?? Number.MAX_SAFE_INTEGER,
+      itemIndex: metadata?.itemIndex ?? remoteIndex,
+      source: 'remote',
+    }
+  }).sort((left, right) => left.turnIndex - right.turnIndex || left.itemIndex - right.itemIndex)
+}
+
 export function filterSessionOccurrences(entries = [], type = 'all') {
   return type === 'all' ? [...entries] : entries.filter((entry) => entry.type === type)
 }

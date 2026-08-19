@@ -77,11 +77,14 @@ test('Studio applies DB catalogs and recovery only to Codex-compatible backends'
 
   assert.match(codexCatalog, /catalogListParams\('codex'/u)
   assert.doesNotMatch(openCodeCatalog, /useStateDbOnly|catalogListParams/u)
+  assert.match(openCodeCatalog, /isSessionDirectoryHidden\(cwd, state\.hiddenSessionDirectories, state\.sessionDirectoryIgnore\)/u)
   assert.match(recovery, /isCodexBackend\(backend\)/u)
   assert.match(recovery, /dispatchBackendRpc\(backend, 'thread\/list', \{ limit: 100 \}\)/u)
   assert.ok(recovery.indexOf("dispatchBackendRpc(backend, 'thread/list'") < recovery.indexOf('refreshBackendCatalog(backend)'))
+  assert.match(recovery, /codexCatalogRecoveryStarted\.delete\(backend\)/u)
   assert.match(focusRefresh, /!isCodexBackend\(backend\)/u)
   assert.match(focusRefresh, /refreshBackendCatalog\(backend\)/u)
+  assert.match(focusRefresh, /scheduleCodexCatalogRecovery\(backend\)/u)
 })
 
 test('Studio binds canonical cwd to Codex turns without changing the OpenCode adapter', () => {

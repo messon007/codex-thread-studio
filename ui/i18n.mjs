@@ -946,6 +946,7 @@ const chinese = {
   'Resynchronized the session from {backend}': '已从 {backend} 重新同步会话',
   '{backend} App Server is not ready': '{backend} App Server 尚未就绪',
   'Unable to connect to the {backend} App Server': '无法连接 {backend} App Server',
+  'The {backend} App Server connection closed': '{backend} App Server 连接已关闭',
   'Unable to read the {backend} session catalog': '无法读取 {backend} 会话目录',
   'Unable to connect to the {backend} Map synchronization service': '无法连接 {backend} Map 同步服务',
   'The {backend} Map synchronization connection closed': '{backend} Map 同步连接已关闭',

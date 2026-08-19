@@ -26,10 +26,42 @@ test('archive catalog and restore use native Codex protocol methods', () => {
   assert.match(app, /BACKEND_IDS\.filter\(isCodexBackend\)/u)
 })
 
+test('archived previews disable per-turn forks as well as header actions', () => {
+  assert.match(app, /forkable: !isArchivedPreview\(\) && isTurnForkable/u)
+  assert.match(app, /if \(forkButton\) \{\s+if \(isArchivedPreview\(\)\) return/u)
+  assert.match(app, /if \(!sourceThreadId \|\| isArchivedPreview\(\)\) return/u)
+})
+
+test('archive loading retains per-backend failures and pagination state', () => {
+  assert.match(app, /errorsByBackend: \{\}/u)
+  assert.match(app, /const nextCursors = \{ \.\.\.state\.sessionLibrary\.nextCursors \}/u)
+  assert.match(app, /errorsByBackend\[backend\] = error\?\.message/u)
+  assert.match(app, /loadArchivedSessions\(\{ backends: failed\.length \? failed : null \}\)/u)
+  assert.match(app, /socket\.onclose = \(\) => finish\(new Error\(t\('The \{backend\} App Server connection closed'/u)
+})
+
+test('restored sessions are installed before the bounded live catalog reload', () => {
+  const restore = app.slice(
+    app.indexOf('async function restoreArchivedSession('),
+    app.indexOf('function renderThreadList('),
+  )
+  assert.ok(restore.indexOf('installBackendCatalog(selected.backend') < restore.indexOf('closeArchivedSessions({ restoredId:'))
+})
+
 test('session search is a middle-workspace surface with shared suggestion styling', () => {
   assert.match(html, /id="open-thread-search"/u)
   assert.match(html, /id="thread-content-search-results"[^>]*role="listbox"/u)
   assert.match(app, /addEventListener\('focus', \(\) => renderThreadContentSearch\(\)\)/u)
   assert.match(styles, /\.thread-content-search-results[^}]*var\(--shadow-md\)/u)
   assert.match(styles, /\.thread-content-search-result:hover, \.thread-content-search-result\.selected[^}]*var\(--brand-soft\)/u)
+})
+
+test('session search prefers backend results and Escape closes the popup first', () => {
+  const search = app.slice(
+    app.indexOf('async function performThreadContentSearch('),
+    app.indexOf('function filteredThreadSearchEntries('),
+  )
+  assert.ok(search.indexOf("rpc('thread/searchOccurrences'") < search.indexOf('localSessionOccurrences(state.model, query)'))
+  assert.match(search, /normalizeRemoteSessionOccurrences/u)
+  assert.match(app, /if \(!results\.classList\.contains\('hidden'\)\) \{\s+hideThreadContentSearchResults\(\)\s+return/u)
 })

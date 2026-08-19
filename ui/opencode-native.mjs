@@ -32,6 +32,28 @@ export async function collectOpenCodeRootSessions(fetchPage, requestedPageSize =
   return sessions
 }
 
+export async function fetchOpenCodeDirectoryStatuses(directories, fetchStatus, requestedConcurrency = 6) {
+  const queue = [...new Set((Array.isArray(directories) ? directories : []).filter(Boolean))]
+  if (!queue.length) return {}
+  const concurrency = Math.max(1, Math.min(queue.length, Number(requestedConcurrency) || 6))
+  const results = new Array(queue.length)
+  let nextIndex = 0
+
+  const worker = async () => {
+    while (nextIndex < queue.length) {
+      const index = nextIndex
+      nextIndex += 1
+      try {
+        results[index] = await fetchStatus(queue[index])
+      } catch {
+        results[index] = {}
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  return Object.assign({}, ...results)
+}
+
 export function normalizeOpenCodeSessions(sessions, statuses = {}) {
   return (Array.isArray(sessions) ? sessions : []).map((session) => ({
     id: session.id,

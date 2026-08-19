@@ -12,6 +12,7 @@ import {
 import {
   applyOpenCodeEvent,
   collectOpenCodeRootSessions,
+  fetchOpenCodeDirectoryStatuses,
   normalizeOpenCodeSessions,
   openCodeModelList,
   openCodeThreadFromHistory,
@@ -188,7 +189,7 @@ import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './env
 import {
   filterSessionOccurrences,
   localSessionOccurrences,
-  mergeSessionOccurrences,
+  normalizeRemoteSessionOccurrences,
 } from './session-search.mjs'
 
 const commentSources = new CommentSourceRegistry()
@@ -297,6 +298,7 @@ const state = {
     entries: [],
     selected: null,
     error: '',
+    errorsByBackend: {},
     generation: 0,
     nextCursors: {},
     returnBackend: null,
@@ -1938,11 +1940,14 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includ
     return openCodeFetch(`/experimental/session?${query}`, options)
   }, limit)
   if (!includeStatuses) return normalizeOpenCodeSessions(sessions, {})
-  const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
-  const statusMaps = await Promise.all(directories.map((cwd) =>
-    openCodeFetch(withDirectory('/session/status', cwd), options).catch(() => ({})),
-  ))
-  return normalizeOpenCodeSessions(sessions, Object.assign({}, ...statusMaps))
+  const directories = [...new Set((sessions || []).map((session) => session.directory).filter((cwd) =>
+    cwd && !isSessionDirectoryHidden(cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore),
+  ))]
+  const statuses = await fetchOpenCodeDirectoryStatuses(
+    directories,
+    (cwd) => openCodeFetch(withDirectory('/session/status', cwd), options),
+  )
+  return normalizeOpenCodeSessions(sessions, statuses)
 }
 
 function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorkspace = '' } = {}) {
@@ -2004,7 +2009,10 @@ function requestCodexBackend(backend, method, params = {}, timeoutMs = 15_000) {
     const id = -(Date.now() + Math.floor(Math.random() * 100_000))
     const timer = setTimeout(() => finish(new Error(t('{backend} request timed out', { backend: descriptor.name }))), timeoutMs)
     let requested = false
+    let settled = false
     const finish = (error, value) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       socket.onclose = null
       socket.close()
@@ -2028,6 +2036,7 @@ function requestCodexBackend(backend, method, params = {}, timeoutMs = 15_000) {
       else finish(null, message.result)
     }
     socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
+    socket.onclose = () => finish(new Error(t('The {backend} App Server connection closed', { backend: descriptor.name })))
   })
 }
 
@@ -2075,6 +2084,7 @@ function scheduleCodexCatalogRecovery(backend) {
       await dispatchBackendRpc(backend, 'thread/list', { limit: 100 })
       await refreshBackendCatalog(backend)
     } catch (error) {
+      codexCatalogRecoveryStarted.delete(backend)
       console.warn(`Unable to recover ${backend} session catalog`, error)
     }
   })
@@ -2090,6 +2100,7 @@ async function refreshActiveCodexCatalogOnFocus() {
   const previousCwd = threadForRef({ backend, id: selectedId })?.cwd || ''
   try {
     await refreshBackendCatalog(backend)
+    scheduleCodexCatalogRecovery(backend)
     if (state.backend !== backend || state.selectedId !== selectedId) return
     const currentCwd = threadForRef({ backend, id: selectedId })?.cwd || ''
     if (currentCwd !== previousCwd) {
@@ -2348,6 +2359,9 @@ async function openArchivedSessions() {
   search.placeholder = t('Search archived sessions')
   renderThreadList()
   if (!state.sessionLibrary.loaded) await loadArchivedSessions()
+  else if (Object.keys(state.sessionLibrary.errorsByBackend).length) {
+    await loadArchivedSessions({ backends: Object.keys(state.sessionLibrary.errorsByBackend) })
+  }
 }
 
 async function closeArchivedSessions({ restoredId = null, restoredBackend = null } = {}) {
@@ -2377,36 +2391,56 @@ async function closeArchivedSessions({ restoredId = null, restoredBackend = null
   else await loadThreads()
 }
 
-async function loadArchivedSessions({ append = false } = {}) {
+async function loadArchivedSessions({ append = false, backends = null } = {}) {
   const generation = ++state.sessionLibrary.generation
   state.sessionLibrary.loading = true
-  state.sessionLibrary.error = ''
   renderThreadList()
-  const backends = BACKEND_IDS.filter(isCodexBackend)
-  const results = await Promise.allSettled(backends.map(async (backend) => {
+  const availableBackends = BACKEND_IDS.filter(isCodexBackend)
+  const requestedBackends = (Array.isArray(backends) ? backends : availableBackends)
+    .filter((backend, index, values) => availableBackends.includes(backend) && values.indexOf(backend) === index)
+    .filter((backend) => !append || state.sessionLibrary.nextCursors[backend])
+  if (!requestedBackends.length) {
+    state.sessionLibrary.loading = false
+    renderThreadList()
+    return
+  }
+  const results = await Promise.all(requestedBackends.map(async (backend) => {
     const cursor = append ? state.sessionLibrary.nextCursors[backend] : null
-    if (append && !cursor) return { backend, data: [], nextCursor: null }
-    const result = await requestCodexBackend(backend, 'thread/list', catalogListParams('codex', {
-      archived: true,
-      limit: 100,
-      cursor,
-      sortKey: 'updated_at',
-      sortDirection: 'desc',
-    }))
-    return { backend, data: Array.isArray(result?.data) ? result.data : [], nextCursor: result?.nextCursor || null }
+    try {
+      const result = await requestCodexBackend(backend, 'thread/list', catalogListParams('codex', {
+        archived: true,
+        limit: 100,
+        cursor,
+        sortKey: 'updated_at',
+        sortDirection: 'desc',
+      }))
+      return { backend, status: 'fulfilled', data: Array.isArray(result?.data) ? result.data : [], nextCursor: result?.nextCursor || null }
+    } catch (error) {
+      return { backend, status: 'rejected', error }
+    }
   }))
   if (generation !== state.sessionLibrary.generation) return
-  const successful = results.filter((result) => result.status === 'fulfilled').map((result) => result.value)
+  const successful = results.filter((result) => result.status === 'fulfilled')
+  const failed = results.filter((result) => result.status === 'rejected')
   const entries = successful.flatMap(({ backend, data }) => data.map((thread) => ({ backend, thread: { ...thread, archived: true } })))
-  const existing = append ? state.sessionLibrary.entries : []
+  const refreshedBackends = new Set(successful.map(({ backend }) => backend))
+  const existing = append
+    ? state.sessionLibrary.entries
+    : state.sessionLibrary.entries.filter(({ backend }) => !refreshedBackends.has(backend))
   const byKey = new Map([...existing, ...entries].map((entry) => [threadCatalogKey(entry.backend, entry.thread.id), entry]))
   state.sessionLibrary.entries = [...byKey.values()].sort((left, right) => threadUpdatedAt(right.thread) - threadUpdatedAt(left.thread))
-  state.sessionLibrary.nextCursors = Object.fromEntries(successful.map(({ backend, nextCursor }) => [backend, nextCursor]))
+  const nextCursors = { ...state.sessionLibrary.nextCursors }
+  for (const { backend, nextCursor } of successful) nextCursors[backend] = nextCursor
+  state.sessionLibrary.nextCursors = nextCursors
+  const errorsByBackend = { ...state.sessionLibrary.errorsByBackend }
+  for (const { backend } of successful) delete errorsByBackend[backend]
+  for (const { backend, error } of failed) errorsByBackend[backend] = error?.message || String(error)
+  state.sessionLibrary.errorsByBackend = errorsByBackend
+  state.sessionLibrary.error = Object.entries(errorsByBackend)
+    .map(([backend, message]) => `${backendDescriptor(backend).name}: ${message}`)
+    .join(' · ')
   state.sessionLibrary.loading = false
   state.sessionLibrary.loaded = true
-  if (!successful.length && results.length) {
-    state.sessionLibrary.error = results.map((result) => result.reason?.message).filter(Boolean).join(' · ') || t('Unable to load archived sessions')
-  }
   renderArchivedSessionBadge()
   renderThreadList()
 }
@@ -2436,7 +2470,7 @@ function renderArchivedThreadList() {
   }
   if (state.sessionLibrary.error && !state.sessionLibrary.entries.length) {
     list.innerHTML = `<div class="list-empty error">${escapeHtml(state.sessionLibrary.error)}<button class="subtle-button compact" type="button" data-retry-archived>${t('Retry')}</button></div>`
-    list.querySelector('[data-retry-archived]')?.addEventListener('click', () => loadArchivedSessions().catch(showError))
+    bindArchivedRetry(list)
     return
   }
   const entries = archivedSessionEntries()
@@ -2445,6 +2479,9 @@ function renderArchivedThreadList() {
     return
   }
   const selected = state.sessionLibrary.selected
+  const errorBanner = state.sessionLibrary.error
+    ? `<div class="archive-load-error">${escapeHtml(state.sessionLibrary.error)}<button class="subtle-button compact" type="button" data-retry-archived>${t('Retry')}</button></div>`
+    : ''
   const renderRow = ({ backend, thread }) => {
     const active = selected?.backend === backend && selected?.thread?.id === thread.id
     const updated = threadUpdatedAt(thread)
@@ -2455,7 +2492,7 @@ function renderArchivedThreadList() {
       <span class="backend-tag ${escapeHtml(backend)}" title="${escapeHtml(backendDescriptor(backend).name)}">${escapeHtml(backendDescriptor(backend).tag)}</span>
     </button>`
   }
-  list.innerHTML = groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => `<section class="thread-group" data-group-path="${escapeHtml(cwd)}">
+  list.innerHTML = errorBanner + groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => `<section class="thread-group" data-group-path="${escapeHtml(cwd)}">
     <div class="thread-group-heading static" data-no-i18n title="${escapeHtml(cwd || t('Project directory not recorded'))}"><strong>${escapeHtml(name || t('Other sessions'))}</strong><span>${groupEntries.length}</span></div>
     <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
   </section>`).join('')
@@ -2464,6 +2501,14 @@ function renderArchivedThreadList() {
   }
   list.querySelectorAll('[data-archived-thread-id]').forEach((row) => row.addEventListener('click', () => openArchivedSession(row.dataset.backend, row.dataset.archivedThreadId).catch(showError)))
   list.querySelector('[data-load-more-archived]')?.addEventListener('click', () => loadArchivedSessions({ append: true }).catch(showError))
+  bindArchivedRetry(list)
+}
+
+function bindArchivedRetry(container) {
+  container.querySelector('[data-retry-archived]')?.addEventListener('click', () => {
+    const failed = Object.keys(state.sessionLibrary.errorsByBackend)
+    loadArchivedSessions({ backends: failed.length ? failed : null }).catch(showError)
+  })
 }
 
 async function openArchivedSession(backend, threadId) {
@@ -2496,7 +2541,17 @@ async function restoreArchivedSession() {
   button.disabled = true
   try {
     const result = await rpc('thread/unarchive', { threadId: selected.thread.id })
-    const restored = result?.thread || selected.thread
+    const restored = {
+      ...selected.thread,
+      ...(result?.thread || {}),
+      archived: false,
+      turns: undefined,
+    }
+    const catalog = state.threadsByBackend[selected.backend] || []
+    installBackendCatalog(selected.backend, [
+      restored,
+      ...catalog.filter((thread) => thread.id !== restored.id),
+    ])
     state.sessionLibrary.entries = state.sessionLibrary.entries.filter((entry) => !(entry.backend === selected.backend && entry.thread.id === selected.thread.id))
     state.sessionLibrary.loaded = false
     state.selectedByBackend[selected.backend] = restored.id
@@ -3726,28 +3781,32 @@ async function performThreadContentSearch() {
   const backend = state.backend
   if (!query || !threadId) return
   const generation = ++state.threadSearch.generation
-  const local = localSessionOccurrences(state.model, query)
-  if (generation !== state.threadSearch.generation || query !== state.threadSearch.query || threadId !== state.selectedId || backend !== state.backend) return
-  state.threadSearch.entries = local
-  state.threadSearch.loading = false
-  state.threadSearch.selected = local.length ? 0 : -1
-  renderThreadContentSearch()
-  if (!isCodexBackend(backend) || threadOccurrenceSearchSupport.get(backend) === false) return
-  let remote = []
-  try {
-    const result = await rpc('thread/searchOccurrences', { threadId, searchTerm: query, limit: 100 })
-    remote = Array.isArray(result?.data) ? result.data : []
-    threadOccurrenceSearchSupport.set(backend, true)
-  } catch (error) {
-    if (/method (?:not found|unknown)|unsupported method|does not support/iu.test(String(error?.message || error))) {
+  const isCurrent = () => generation === state.threadSearch.generation
+    && query === state.threadSearch.query
+    && threadId === state.selectedId
+    && backend === state.backend
+  let entries
+  if (isCodexBackend(backend) && threadOccurrenceSearchSupport.get(backend) !== false) {
+    try {
+      const result = await rpc('thread/searchOccurrences', { threadId, searchTerm: query, limit: 100 })
+      if (!isCurrent()) return
+      threadOccurrenceSearchSupport.set(backend, true)
+      entries = normalizeRemoteSessionOccurrences(result?.data, state.model)
+    } catch (error) {
+      const unsupported = /method (?:not found|unknown)|unsupported method|does not support/iu.test(String(error?.message || error))
+      if (!unsupported) throw error
       threadOccurrenceSearchSupport.set(backend, false)
+      console.debug('Backend session search is unavailable; using the loaded session model', error)
     }
-    console.debug('Backend session search is unavailable; using the loaded session model', error)
-    return
   }
-  if (generation !== state.threadSearch.generation || query !== state.threadSearch.query || threadId !== state.selectedId || backend !== state.backend) return
-  state.threadSearch.entries = mergeSessionOccurrences(remote, local)
-  state.threadSearch.selected = filteredThreadSearchEntries().length ? 0 : -1
+  if (!entries) {
+    if (!isCurrent()) return
+    entries = localSessionOccurrences(state.model, query)
+  }
+  if (!isCurrent()) return
+  state.threadSearch.entries = entries
+  state.threadSearch.loading = false
+  state.threadSearch.selected = entries.length ? 0 : -1
   renderThreadContentSearch()
 }
 
@@ -3809,6 +3868,11 @@ function handleThreadContentSearchKeydown(event) {
   const entries = filteredThreadSearchEntries()
   if (event.key === 'Escape') {
     event.preventDefault()
+    const results = $('#thread-content-search-results')
+    if (!results.classList.contains('hidden')) {
+      hideThreadContentSearchResults()
+      return
+    }
     closeThreadContentSearch()
     return
   }
@@ -4098,7 +4162,7 @@ function renderTurn(presentation, index, { openActivityIds = [] } = {}) {
   if (!presentation) return ''
   const content = presentation.blocks.map((block) => renderPresentationBlock(block, presentation.id, {
     openActivity: openActivityIds.includes(block.id),
-    forkable: isTurnForkable(presentation.source),
+    forkable: !isArchivedPreview() && isTurnForkable(presentation.source),
   })).join('')
   const placeholder = shouldShowTurnPlaceholder(presentation)
     ? `<div class="work-placeholder"><span class="message-track-mark" aria-hidden="true">${conversationTrackIcon('working')}</span><span>${t('{backend} is preparing this turn…', { backend: currentBackend().name })}</span></div>`
@@ -4713,6 +4777,7 @@ async function handleTranscriptClick(event) {
   }
   const forkButton = event.target.closest('[data-fork-turn]')
   if (forkButton) {
+    if (isArchivedPreview()) return
     await forkThread(forkButton.dataset.forkTurn, forkButton)
     return
   }
@@ -5876,7 +5941,7 @@ async function createThread(event) {
 async function forkThread(lastTurnId = null, trigger = null) {
   const sourceThreadId = state.selectedId
   const sourceBackend = state.backend
-  if (!sourceThreadId) return
+  if (!sourceThreadId || isArchivedPreview()) return
   if (trigger) {
     trigger.disabled = true
     trigger.classList.add('busy')

@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   applyOpenCodeEvent,
   collectOpenCodeRootSessions,
+  fetchOpenCodeDirectoryStatuses,
   normalizeOpenCodeSessions,
   openCodeModelList,
   openCodeThreadFromHistory,
@@ -48,6 +49,25 @@ test('stops safely when an older OpenCode server ignores the cursor', async () =
 
   assert.deepEqual(sessions.map(({ id }) => id), ['ses-2', 'ses-1'])
   assert.equal(calls, 2)
+})
+
+test('bounds OpenCode directory status request concurrency', async () => {
+  let active = 0
+  let peak = 0
+  const statuses = await fetchOpenCodeDirectoryStatuses(
+    ['/work/a', '/work/b', '/work/c', '/work/d', '/work/e', '/work/a'],
+    async (directory) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 2))
+      active -= 1
+      return { [directory]: { type: 'idle' } }
+    },
+    2,
+  )
+
+  assert.equal(peak, 2)
+  assert.deepEqual(Object.keys(statuses).sort(), ['/work/a', '/work/b', '/work/c', '/work/d', '/work/e'])
 })
 
 test('normalizes sessions and busy status', () => {

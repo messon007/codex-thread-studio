@@ -1289,7 +1289,7 @@ async fn load_git_status(
         ));
     }
     #[cfg(not(windows))]
-    let root = fs::canonicalize(requested_root)
+    let requested_root = fs::canonicalize(requested_root)
         .map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
@@ -1299,7 +1299,24 @@ async fn load_git_status(
         .to_string_lossy()
         .into_owned();
     #[cfg(windows)]
-    let root = requested_root.to_owned();
+    let requested_root = requested_root.to_owned();
+    let root_arguments = git_review::repository_root_arguments(&requested_root);
+    let root_output = run_git(state, &root_arguments, true)
+        .await
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
+    if !root_output.status.success() {
+        let message = bounded_command_stderr(&root_output.stderr);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            if message.is_empty() {
+                "project directory is not a Git repository".to_owned()
+            } else {
+                format!("unable to inspect Git repository: {message}")
+            },
+        ));
+    }
+    let root = git_review::parse_repository_root(&root_output.stdout)
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
     let arguments = git_review::status_arguments(&root);
     let output = run_git(state, &arguments, true)
         .await

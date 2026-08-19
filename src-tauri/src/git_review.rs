@@ -173,6 +173,27 @@ pub fn status_arguments(root: &str) -> Vec<String> {
     .collect()
 }
 
+pub fn repository_root_arguments(root: &str) -> Vec<String> {
+    [
+        "--literal-pathspecs",
+        "-C",
+        root,
+        "rev-parse",
+        "--show-toplevel",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+pub fn parse_repository_root(output: &[u8]) -> Result<String, String> {
+    let root = String::from_utf8_lossy(output).trim().to_owned();
+    if root.is_empty() || root.contains('\0') || root.contains('\n') || root.contains('\r') {
+        return Err("git returned an invalid repository root".to_owned());
+    }
+    Ok(root)
+}
+
 pub fn diff_arguments(root: &str, path: &str, scope: GitDiffScope, untracked: bool) -> Vec<String> {
     let mut arguments = [
         "--literal-pathspecs",
@@ -385,6 +406,42 @@ mod tests {
                 "-report.csv",
             ]
         );
+    }
+
+    #[test]
+    fn resolves_repository_root_before_using_status_paths() {
+        let repository = TestRepository::new();
+        std::fs::create_dir_all(repository.path().join("src/nested")).unwrap();
+        std::fs::write(repository.path().join("src/nested/example.txt"), "before\n").unwrap();
+        repository.git(&["add", "--", "src/nested/example.txt"]);
+        repository.git(&["commit", "-m", "baseline"]);
+        std::fs::write(repository.path().join("src/nested/example.txt"), "after\n").unwrap();
+
+        let nested = repository.path().join("src");
+        let nested = nested.to_string_lossy().into_owned();
+        let root_output = repository.run_arguments(&repository_root_arguments(&nested));
+        assert!(root_output.status.success());
+        let root = parse_repository_root(&root_output.stdout).unwrap();
+        assert_eq!(Path::new(&root), repository.path());
+
+        let status_output = repository.run_arguments(&status_arguments(&root));
+        assert!(status_output.status.success());
+        let status = parse_status(root.clone(), &status_output.stdout).unwrap();
+        let file = status
+            .files
+            .iter()
+            .find(|file| file.path == "src/nested/example.txt")
+            .unwrap();
+        assert!(file.unstaged);
+
+        let diff_output = repository.run_arguments(&diff_arguments(
+            &root,
+            &file.path,
+            GitDiffScope::Unstaged,
+            false,
+        ));
+        assert!(diff_output.status.success());
+        assert!(String::from_utf8_lossy(&diff_output.stdout).contains("+after"));
     }
 
     #[test]

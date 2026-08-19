@@ -3,11 +3,52 @@ import test from 'node:test'
 
 import {
   applyOpenCodeEvent,
+  collectOpenCodeRootSessions,
   normalizeOpenCodeSessions,
   openCodeModelList,
   openCodeThreadFromHistory,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
+
+test('loads every root session with OpenCode cursor pagination', async () => {
+  const calls = []
+  const pages = [
+    [
+      { id: 'ses-3', directory: '/work/visible', time: { updated: 30 } },
+      { id: 'ses-2', directory: '/work/hidden', time: { updated: 20 } },
+    ],
+    [{ id: 'ses-1', directory: '/work/visible', time: { updated: 10 } }],
+  ]
+  const sessions = await collectOpenCodeRootSessions(async (params) => {
+    calls.push(params)
+    return pages.shift()
+  }, 2)
+
+  assert.deepEqual(sessions.map(({ id, directory }) => [id, directory]), [
+    ['ses-3', '/work/visible'],
+    ['ses-2', '/work/hidden'],
+    ['ses-1', '/work/visible'],
+  ])
+  assert.deepEqual(calls, [
+    { limit: 2, archived: false, roots: true },
+    { limit: 2, archived: false, roots: true, cursor: 20 },
+  ])
+})
+
+test('stops safely when an older OpenCode server ignores the cursor', async () => {
+  const page = [
+    { id: 'ses-2', time: { updated: 20 } },
+    { id: 'ses-1', time: { updated: 10 } },
+  ]
+  let calls = 0
+  const sessions = await collectOpenCodeRootSessions(async () => {
+    calls += 1
+    return page
+  }, 2)
+
+  assert.deepEqual(sessions.map(({ id }) => id), ['ses-2', 'ses-1'])
+  assert.equal(calls, 2)
+})
 
 test('normalizes sessions and busy status', () => {
   const sessions = normalizeOpenCodeSessions([{ id: 'ses-1', title: 'Demo', directory: '/tmp/demo' }], { 'ses-1': { type: 'busy' } })

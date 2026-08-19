@@ -1,3 +1,37 @@
+export async function collectOpenCodeRootSessions(fetchPage, requestedPageSize = 100) {
+  const pageSize = Math.max(1, Math.min(100, Number(requestedPageSize) || 100))
+  const sessions = []
+  const seenIds = new Set()
+  const seenCursors = new Set()
+  let cursor = null
+
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const page = await fetchPage({
+      limit: pageSize,
+      archived: false,
+      roots: true,
+      ...(cursor == null ? {} : { cursor }),
+    })
+    if (!Array.isArray(page) || page.length === 0) break
+
+    let added = 0
+    for (const session of page) {
+      if (!session?.id || seenIds.has(session.id)) continue
+      seenIds.add(session.id)
+      sessions.push(session)
+      added += 1
+    }
+    if (page.length < pageSize || added === 0) break
+
+    const nextCursor = Number(page.at(-1)?.time?.updated)
+    if (!Number.isFinite(nextCursor) || seenCursors.has(nextCursor)) break
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  }
+
+  return sessions
+}
+
 export function normalizeOpenCodeSessions(sessions, statuses = {}) {
   return (Array.isArray(sessions) ? sessions : []).map((session) => ({
     id: session.id,

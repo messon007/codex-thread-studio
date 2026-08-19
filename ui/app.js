@@ -11,12 +11,18 @@ import {
 } from './codex-native.mjs'
 import {
   applyOpenCodeEvent,
+  collectOpenCodeRootSessions,
   normalizeOpenCodeSessions,
   openCodeModelList,
   openCodeThreadFromHistory,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
+import {
+  catalogListParams,
+  mergeCatalogMetadata,
+  turnStartParams,
+} from './session-catalog.mjs'
 import {
   BACKEND_IDS,
   backendDescriptor,
@@ -197,14 +203,14 @@ function codexDispatchAdapter() {
   return {
     read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
     prepareTurn: (ref) => dispatchBackendRpc(ref.backend, 'thread/resume', { threadId: ref.id }),
-    startTurn: (ref, input, options = {}) => dispatchBackendRpc(ref.backend, 'turn/start', {
+    startTurn: (ref, input, options = {}) => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams('codex', threadForRef(ref), {
       threadId: ref.id,
       clientUserMessageId: options.clientUserMessageId || randomId(),
       input,
       ...(options.additionalContext ? { additionalContext: options.additionalContext } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.turnOptions || {}),
-    }, options.timeoutMs),
+    }), options.timeoutMs),
   }
 }
 
@@ -386,6 +392,7 @@ const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
 let threadContentSearchTimer = null
+let codexCatalogFocusRefreshAt = 0
 const threadOccurrenceSearchSupport = new Map()
 let artifactSearchTimer = null
 let artifactOutlineObserver = null
@@ -402,6 +409,7 @@ let threadCatalogRetryAttempt = 0
 let threadCatalogErrorMessage = null
 const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
+const codexCatalogRecoveryStarted = new Set()
 let favoritesSearchTimer = null
 let sessionMapRequestId = -8_500_000
 const transcriptScrollFollower = createTranscriptScrollFollower()
@@ -608,6 +616,7 @@ function renderBackendChoices() {
 }
 
 function bindUI() {
+  window.addEventListener('focus', refreshActiveCodexCatalogOnFocus)
   workspaceTools.bind()
   sessionResources.bind()
   $('#new-thread').addEventListener('click', openNewThreadDialog)
@@ -1919,7 +1928,15 @@ async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includ
     }
   }
   const options = { timeoutMs: 30_000, allowInactive }
-  const sessions = await openCodeFetch(`/experimental/session?limit=${limit}&archived=false`, options)
+  const sessions = await collectOpenCodeRootSessions(({ limit: pageLimit, archived, roots, cursor }) => {
+    const query = new URLSearchParams({
+      limit: String(pageLimit),
+      archived: String(archived),
+      roots: String(roots),
+    })
+    if (cursor != null) query.set('cursor', String(cursor))
+    return openCodeFetch(`/experimental/session?${query}`, options)
+  }, limit)
   if (!includeStatuses) return normalizeOpenCodeSessions(sessions, {})
   const directories = [...new Set((sessions || []).map((session) => session.directory).filter(Boolean))]
   const statusMaps = await Promise.all(directories.map((cwd) =>
@@ -1954,7 +1971,7 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
       }
       if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
         requested = true
-        socket.send(JSON.stringify({ id, method: 'thread/list', params: { limit } }))
+        socket.send(JSON.stringify({ id, method: 'thread/list', params: catalogListParams('codex', { limit }) }))
         return
       }
       if (message.id === id) {
@@ -2048,6 +2065,42 @@ async function refreshBackendCatalog(backend, { includeStatuses = true } = {}) {
   return refresh
 }
 
+function scheduleCodexCatalogRecovery(backend) {
+  if (!isCodexBackend(backend) || codexCatalogRecoveryStarted.has(backend)) return
+  codexCatalogRecoveryStarted.add(backend)
+  queueMicrotask(async () => {
+    try {
+      // The default list path scans rollout files and repairs the state index.
+      // Its response may contain creation-time metadata, so never install it.
+      await dispatchBackendRpc(backend, 'thread/list', { limit: 100 })
+      await refreshBackendCatalog(backend)
+    } catch (error) {
+      console.warn(`Unable to recover ${backend} session catalog`, error)
+    }
+  })
+}
+
+async function refreshActiveCodexCatalogOnFocus() {
+  const backend = state.backend
+  if (!state.ready || !isCodexBackend(backend)) return
+  const now = Date.now()
+  if (now - codexCatalogFocusRefreshAt < 2_000) return
+  codexCatalogFocusRefreshAt = now
+  const selectedId = state.selectedId
+  const previousCwd = threadForRef({ backend, id: selectedId })?.cwd || ''
+  try {
+    await refreshBackendCatalog(backend)
+    if (state.backend !== backend || state.selectedId !== selectedId) return
+    const currentCwd = threadForRef({ backend, id: selectedId })?.cwd || ''
+    if (currentCwd !== previousCwd) {
+      renderWorkspace()
+      renderComposerState()
+    }
+  } catch (error) {
+    console.debug(`Unable to refresh ${backend} catalog after focus`, error)
+  }
+}
+
 function installBackendCatalog(backend, threads) {
   state.threadsByBackend[backend] = threads
   if (backend === state.backend) state.threads = threads
@@ -2073,6 +2126,7 @@ async function refreshInactiveCatalog() {
   await Promise.all(BACKEND_IDS.filter((backend) => backend !== state.backend).map(async (backend) => {
     try {
       await refreshBackendCatalog(backend)
+      scheduleCodexCatalogRecovery(backend)
       if (backend === state.router.controllerBackend) await ensureManagedRouterSession(backend)
     } catch (error) {
       console.warn(`Unable to refresh ${backend} catalog`, error)
@@ -2235,13 +2289,14 @@ function rejectPending(error) {
 }
 
 async function loadThreads() {
-  const result = await rpc('thread/list', { limit: 100 })
+  const result = await rpc('thread/list', catalogListParams(backendDescriptor(state.backend).kind, { limit: 100 }))
   setActiveThreads(Array.isArray(result?.data) ? result.data : [])
   markThreadCatalogLoaded()
   if (state.backend === state.router.controllerBackend) {
     await ensureManagedRouterSession(state.backend).catch(showError)
   }
   renderThreadList()
+  scheduleCodexCatalogRecovery(state.backend)
   refreshInactiveCatalog()
   if (state.sessionLibrary.open) {
     renderWorkspace()
@@ -2331,13 +2386,13 @@ async function loadArchivedSessions({ append = false } = {}) {
   const results = await Promise.allSettled(backends.map(async (backend) => {
     const cursor = append ? state.sessionLibrary.nextCursors[backend] : null
     if (append && !cursor) return { backend, data: [], nextCursor: null }
-    const result = await requestCodexBackend(backend, 'thread/list', {
+    const result = await requestCodexBackend(backend, 'thread/list', catalogListParams('codex', {
       archived: true,
       limit: 100,
       cursor,
       sortKey: 'updated_at',
       sortDirection: 'desc',
-    })
+    }))
     return { backend, data: Array.isArray(result?.data) ? result.data : [], nextCursor: result?.nextCursor || null }
   }))
   if (generation !== state.sessionLibrary.generation) return
@@ -2739,7 +2794,10 @@ function hydrateOpenCodeModelMetadata(thread) {
 function mergeThreadMetadata(incoming) {
   if (!incoming?.id) return
   const index = state.threads.findIndex((thread) => thread.id === incoming.id)
-  if (index >= 0) state.threads[index] = { ...state.threads[index], ...incoming, turns: undefined }
+  if (index >= 0) state.threads[index] = {
+    ...mergeCatalogMetadata(backendDescriptor(state.backend).kind, state.threads[index], incoming),
+    turns: undefined,
+  }
   else state.threads.unshift({ ...incoming, turns: undefined })
   state.threadsByBackend[state.backend] = state.threads
   renderThreadList()
@@ -2749,6 +2807,10 @@ function selectedThread() {
   const archived = state.sessionLibrary.selected
   if (state.sessionLibrary.open && archived?.backend === state.backend && archived.thread?.id === state.selectedId) return archived.thread
   return state.threads.find((thread) => thread.id === state.selectedId) || null
+}
+
+function threadForRef(ref) {
+  return state.threadsByBackend[ref?.backend]?.find((thread) => thread.id === ref?.id) || null
 }
 
 function isArchivedPreview() {
@@ -5448,12 +5510,12 @@ async function sendComposer(event) {
         console.warn('Unable to attach Session Map context', error)
         setSessionMapSyncState('error', error.message)
       })
-      const result = await rpc('turn/start', {
+      const result = await rpc('turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef({ backend, id: threadId }), {
         threadId,
         clientUserMessageId,
         input: turnInput,
         ...turnOptions,
-      })
+      }))
       if (result?.turn) {
         if (isCodexBackend(backend) && optimisticTurnId) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)

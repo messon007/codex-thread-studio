@@ -710,6 +710,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/opencode-native.mjs", get(opencode_native_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
+        .route("/session-catalog.mjs", get(session_catalog_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
         .route("/thread-fork.mjs", get(thread_fork_js))
         .route("/thread-workset.mjs", get(thread_workset_js))
@@ -1749,6 +1750,10 @@ async fn backends_js() -> impl IntoResponse {
 
 async fn model_display_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/model-display.mjs"))
+}
+
+async fn session_catalog_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-catalog.mjs"))
 }
 
 async fn transcript_presentation_js() -> impl IntoResponse {
@@ -3206,6 +3211,7 @@ mod tests {
                 "/opencode-native.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
+                "/session-catalog.mjs",
                 "/thread-catalog.mjs",
                 "/thread-fork.mjs",
                 "/thread-workset.mjs",
@@ -3243,6 +3249,30 @@ mod tests {
                     response.status(),
                     StatusCode::OK,
                     "missing route for {path}"
+                );
+            }
+
+            let app_source = include_str!("../../ui/app.js");
+            for module in app_source.lines().filter_map(|line| {
+                let start = line.find("from './")? + "from '.".len();
+                let remainder = &line[start..];
+                let end = remainder.find('\'')?;
+                Some(remainder[..end].to_string())
+            }) {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(&module)
+                            .body(Body::empty())
+                            .expect("module request"),
+                    )
+                    .await
+                    .expect("imported module response");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::OK,
+                    "missing route for imported module {module}"
                 );
             }
         });

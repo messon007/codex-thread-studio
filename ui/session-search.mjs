@@ -1,6 +1,12 @@
 const MAX_SEARCHABLE_TEXT = 200_000
 const SNIPPET_CONTEXT = 82
 
+export function isUnsupportedOccurrenceSearchError(error) {
+  if (Number(error?.code) === -32601) return true
+  const message = String(error?.message || error || '')
+  return /method (?:not found|unknown)|unsupported(?: method)?|does not support|not supported/iu.test(message)
+}
+
 export function localSessionOccurrences(model, searchTerm, { includeMessages = true, includeActivity = true } = {}) {
   const query = String(searchTerm || '').trim()
   if (!query) return []

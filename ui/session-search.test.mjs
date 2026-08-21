@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   filterSessionOccurrences,
+  isUnsupportedOccurrenceSearchError,
   localSessionOccurrences,
   matchedSnippet,
   mergeSessionOccurrences,
@@ -19,6 +20,13 @@ const model = {
     ],
   }],
 }
+
+test('recognizes unavailable backend occurrence search variants', () => {
+  assert.equal(isUnsupportedOccurrenceSearchError(new Error('thread/SearchOccurrences not supported yet')), true)
+  assert.equal(isUnsupportedOccurrenceSearchError(new Error('Method not found')), true)
+  assert.equal(isUnsupportedOccurrenceSearchError({ code: -32601, message: 'Unknown RPC method' }), true)
+  assert.equal(isUnsupportedOccurrenceSearchError(new Error('App Server connection closed')), false)
+})
 
 test('local session search classifies visible messages and activity', () => {
   const entries = localSessionOccurrences(model, 'working directory')

@@ -3,6 +3,7 @@ import { getLocale, t } from './i18n.mjs'
 import { catalogListParams } from './session-catalog.mjs'
 import {
   filterSessionOccurrences,
+  isUnsupportedOccurrenceSearchError,
   localSessionOccurrences,
   normalizeRemoteSessionOccurrences,
 } from './session-search.mjs'
@@ -373,8 +374,7 @@ export function createSessionManagementUI({
           occurrenceSearchSupport.set(backend, true)
           entries = normalizeRemoteSessionOccurrences(result?.data, state.model)
         } catch (error) {
-          const unsupported = /method (?:not found|unknown)|unsupported method|does not support/iu.test(String(error?.message || error))
-          if (!unsupported) throw error
+          if (!isUnsupportedOccurrenceSearchError(error)) throw error
           occurrenceSearchSupport.set(backend, false)
           console.debug('Backend session search is unavailable; using the loaded session model', error)
         }

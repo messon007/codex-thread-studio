@@ -42,7 +42,6 @@ export function createDocumentWorkspaceController({
   gatewayFetch,
   view,
   randomId,
-  persistPreferences,
   notify = () => {},
   reportError = console.error,
 }) {
@@ -72,8 +71,6 @@ export function createDocumentWorkspaceController({
   const toast = notify
   const showError = reportError
   let artifactSearchTimer = null
-  let artifactOutlineObserver = null
-  let artifactOutlineResizeObserver = null
   let artifactOutlineLocationCleanup = null
   let artifactOutlineRefreshTimer = null
   let artifactOutlineIdleCallback = null
@@ -135,7 +132,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   const kind = previewableFileKind(file)
   if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
   resetArtifactSearch()
-  resetArtifactOutline({ preserveOpen: true })
+  resetArtifactOutline()
   activateRightWorkspace('document')
   hideComposerMenu()
   closeActionMenus()
@@ -250,7 +247,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
   disposeEpubReader()
   disposeRichArtifactReader()
   disposeMarkdownImageAssets(state.artifact)
-  resetArtifactOutline({ preserveOpen: true })
+  resetArtifactOutline()
   state.artifact = null
   resetArtifactSearch()
   hideSelection()
@@ -291,11 +288,10 @@ function toggleArtifactOutline() {
   setArtifactOutlineOpen(!state.artifactOutlineOpen)
 }
 
-function setArtifactOutlineOpen(open, { persist = true } = {}) {
+function setArtifactOutlineOpen(open) {
   state.artifactOutlineOpen = Boolean(open)
   renderArtifactOutline()
   if (state.artifactOutlineOpen) requestAnimationFrame(() => $('#artifact-outline-filter').focus())
-  if (persist) persistPreferences()
 }
 
 function handleArtifactNavigationKeydown(event) {
@@ -312,21 +308,19 @@ function handleArtifactNavigationKeydown(event) {
   }
 }
 
-function resetArtifactOutline({ preserveOpen = false } = {}) {
+function resetArtifactOutline() {
   disposeArtifactOutlineBindings()
-  artifactOutlineResizeObserver?.disconnect()
-  artifactOutlineResizeObserver = null
   cancelArtifactOutlineWork()
   state.artifactOutlineFilter = ''
   state.artifactOutlineActiveId = ''
   state.artifactOutlineCollapsed = new Set()
-  if (!preserveOpen) state.artifactOutlineOpen = false
+  state.artifactOutlineOpen = false
   const filter = $('#artifact-outline-filter')
   if (filter) filter.value = ''
   $('#artifact-outline-list')?.replaceChildren()
   $('#artifact-outline')?.classList.add('hidden')
   $('#artifact-outline-toggle')?.classList.add('hidden')
-  $('#artifact-reader-shell')?.classList.remove('outline-open', 'compact')
+  $('#artifact-reader-shell')?.classList.remove('outline-open')
 }
 
 function setArtifactOutline(file, items, provider = file?.outlineProvider || null) {
@@ -337,7 +331,6 @@ function setArtifactOutline(file, items, provider = file?.outlineProvider || nul
     state.artifactOutlineActiveId = ''
   }
   renderArtifactOutline()
-  ensureArtifactOutlineResizeObserver()
 }
 
 function renderArtifactOutline() {
@@ -410,7 +403,6 @@ async function navigateArtifactOutlineItem(id) {
   if (!item) return
   setArtifactOutlineActive(id)
   await file.outlineProvider?.navigate?.(item)
-  if ($('#artifact-reader-shell').classList.contains('compact')) setArtifactOutlineOpen(false, { persist: false })
 }
 
 function setArtifactOutlineActive(id) {
@@ -428,23 +420,6 @@ function scrollActiveOutlineItemIntoView() {
   const rowRect = active.getBoundingClientRect()
   if (rowRect.top < listRect.top) list.scrollTop -= listRect.top - rowRect.top
   else if (rowRect.bottom > listRect.bottom) list.scrollTop += rowRect.bottom - listRect.bottom
-}
-
-function ensureArtifactOutlineResizeObserver() {
-  if (!globalThis.ResizeObserver) {
-    updateArtifactOutlineLayout()
-    return
-  }
-  if (!artifactOutlineResizeObserver) artifactOutlineResizeObserver = new ResizeObserver(updateArtifactOutlineLayout)
-  artifactOutlineResizeObserver.disconnect()
-  artifactOutlineResizeObserver.observe($('#artifact-reader-shell'))
-  updateArtifactOutlineLayout()
-}
-
-function updateArtifactOutlineLayout() {
-  const shell = $('#artifact-reader-shell')
-  if (!shell) return
-  shell.classList.toggle('compact', shell.clientWidth > 0 && shell.clientWidth < 680)
 }
 
 function scheduleTextArtifactOutline(file, content, source, options) {
@@ -748,8 +723,6 @@ function disposeArtifactEditor() {
 }
 
 function disposeArtifactOutlineBindings() {
-  artifactOutlineObserver?.disconnect()
-  artifactOutlineObserver = null
   artifactOutlineLocationCleanup?.()
   artifactOutlineLocationCleanup = null
   cancelArtifactOutlineWork()
@@ -1184,7 +1157,6 @@ function formatFileSize(value) {
     refresh: refreshArtifact,
     render: renderArtifact,
     reopenEpubSource: reopenEpubComment,
-    resize: updateArtifactOutlineLayout,
     save: saveArtifact,
     setView: setArtifactView,
   }

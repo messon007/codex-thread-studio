@@ -497,7 +497,6 @@ const documentWorkspace = createDocumentWorkspaceController({
   state,
   gatewayFetch,
   randomId,
-  persistPreferences,
   notify: toast,
   reportError: showError,
   view: {
@@ -753,7 +752,6 @@ function bindUI() {
     scheduleTurnNavigatorSync()
     applyRightRailWidth()
     workspaceTools.resize()
-    documentWorkspace.resize()
   })
   $('#connections-button').addEventListener('click', openConnectionsDialog)
   $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
@@ -4629,7 +4627,6 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
-  state.artifactOutlineOpen = Boolean(saved.artifactOutlineOpen)
   state.desktopNotifications = Boolean(saved.desktopNotifications)
   state.browser = {
     enabled: true,
@@ -4694,7 +4691,6 @@ function preferencesSnapshot() {
     typography: state.typography,
     mermaid: state.mermaid,
     markdown: state.markdown,
-    artifactOutlineOpen: state.artifactOutlineOpen,
     desktopNotifications: state.desktopNotifications,
     browser: state.browser,
     selectedThread: state.selectedByBackend.codex,

@@ -19,8 +19,19 @@ test('Document Workspace state factories isolate search and outline state', () =
 
 test('Document outline keeps active-row scrolling inside its own list', () => {
   const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  const scroll = source.slice(source.indexOf('function scrollActiveOutlineItemIntoView()'), source.indexOf('function ensureArtifactOutlineResizeObserver()'))
+  const scroll = source.slice(source.indexOf('function scrollActiveOutlineItemIntoView()'), source.indexOf('function scheduleTextArtifactOutline('))
 
   assert.match(scroll, /list\.scrollTop/u)
   assert.doesNotMatch(scroll, /scrollIntoView/u)
+})
+
+test('Document outline is transient and remains open after chapter navigation', () => {
+  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
+  const navigate = source.slice(source.indexOf('async function navigateArtifactOutlineItem('), source.indexOf('function setArtifactOutlineActive('))
+
+  assert.doesNotMatch(source, /ResizeObserver/u)
+  assert.doesNotMatch(source, /classList\.contains\('compact'\)/u)
+  assert.doesNotMatch(source, /resize: updateArtifactOutlineLayout/u)
+  assert.doesNotMatch(navigate, /setArtifactOutlineOpen/u)
+  assert.match(source, /function resetArtifactOutline\(\)[\s\S]*state\.artifactOutlineOpen = false/u)
 })

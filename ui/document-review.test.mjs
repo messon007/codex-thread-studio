@@ -23,6 +23,7 @@ import {
 
 const documentReviewHtml = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const documentReviewApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+const documentReviewStyles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
 test('locates a selected file range and preserves nearby anchors', () => {
   const file = { path: '/work/docs/guide.md', root: '/work', hash: 'abc', content: 'one\ntwo\nthree' }
@@ -130,12 +131,17 @@ test('resolves Markdown images from the document directory without escaping the 
   assert.match(documentReviewApp, /hydrateMarkdownImages\(file, content\)/u)
 })
 
-test('document outline stays inside the document shell and uses compact header actions', () => {
+test('document outline stays inside the document shell as a wide overlay drawer', () => {
   const shellPosition = documentReviewHtml.indexOf('id="artifact-reader-shell"')
   const outlinePosition = documentReviewHtml.indexOf('id="artifact-outline"')
   const contentPosition = documentReviewHtml.indexOf('id="artifact-content"')
   assert.ok(documentReviewHtml.includes('id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden"'))
   assert.ok(shellPosition >= 0 && shellPosition < outlinePosition && outlinePosition < contentPosition)
+  assert.match(documentReviewStyles, /\.artifact-reader-shell\.outline-open \.artifact-outline-backdrop \{ display: block; \}/u)
+  assert.match(documentReviewStyles, /\.artifact-outline \{ width: min\(420px, calc\(100% - 20px\)\);[\s\S]*position: absolute;/u)
+  assert.match(documentReviewStyles, /font: 550 12px\/1\.45 var\(--ui-font-family\)/u)
+  assert.doesNotMatch(documentReviewStyles, /artifact-reader-shell\.compact/u)
+  assert.doesNotMatch(documentReviewApp, /artifactOutlineOpen:/u)
 })
 
 test('static HTML preview blocks executable and externally loaded content', () => {

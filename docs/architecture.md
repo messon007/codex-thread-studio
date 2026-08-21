@@ -79,6 +79,8 @@ Session Resources builds a disposable per-Thread index from only the latest Turn
 
 The composer is a structured App Server client rather than a terminal command parser:
 
+- Local images are signature-checked and encoded as bounded data URLs so the same input works with native Codex, Windows/WSL Codex, and OpenCode without exposing a general filesystem upload endpoint. Codex receives structured `image` UserInput; OpenCode receives its native `{type: "file", mime, filename, url}` part. Router turns receive the same image inputs and forward them unchanged to the selected target session.
+
 - `@query` invokes `fuzzyFileSearch` with the active Thread working directory and inserts the chosen relative path.
 - `$query` filters skills returned by `skills/list`; choosing one inserts `$skill-name` and queues a structured `skill` UserInput containing its App Server path.
 - A composer value beginning with `!` calls `thread/shellCommand`. App Server evaluates the remainder with the Thread shell and publishes the resulting structured Items. Per the protocol, this user-invoked command runs with local user access and does not inherit the model Turn sandbox.

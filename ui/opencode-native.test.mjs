@@ -97,6 +97,20 @@ test('groups assistant parts under their user interaction', () => {
   assert.equal(thread.messageTurns['msg-agent'], 'msg-user')
 })
 
+test('preserves image file parts as structured user images', () => {
+  const url = 'data:image/png;base64,iVBORw0KGgo='
+  const thread = openCodeThreadFromHistory({ id: 'ses-image', directory: '/tmp/demo' }, [
+    { info: { id: 'msg-user', role: 'user' }, parts: [
+      { id: 'p1', type: 'text', text: 'inspect this' },
+      { id: 'p2', type: 'file', mime: 'image/png', filename: 'image.png', url },
+    ] },
+  ], { type: 'idle' })
+  assert.deepEqual(thread.turns[0].items[0].content, [
+    { type: 'text', text: 'inspect this' },
+    { type: 'image', url },
+  ])
+})
+
 test('keeps structured OpenCode output readable in native history', () => {
   const decision = { action: 'dispatch', targetSessionKey: 'codex:one' }
   const thread = openCodeThreadFromHistory({ id: 'ses-1', directory: '/tmp/demo' }, [
@@ -147,6 +161,24 @@ test('keeps streamed user parts as user messages', () => {
   assert.equal(partUpdate.turnId, 'msg-user')
   assert.equal(model.turns[0].items[0].type, 'userMessage')
   assert.equal(model.turns[0].items[0].content[0].text, 'hello')
+})
+
+test('groups streamed user image parts with their prompt', () => {
+  const model = { turns: [], activeTurnId: null, status: 'idle', approvals: [], messageTurns: {} }
+  const url = 'data:image/png;base64,iVBORw0KGgo='
+  applyOpenCodeEvent(model, { type: 'message.updated', properties: { info: { id: 'msg-user', sessionID: 'ses-1', role: 'user' } } }, 'ses-1')
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'text', sessionID: 'ses-1', messageID: 'msg-user', type: 'text', text: 'inspect' } } }, 'ses-1')
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'image', sessionID: 'ses-1', messageID: 'msg-user', type: 'file', mime: 'image/png', url } } }, 'ses-1')
+  assert.equal(model.turns[0].items.length, 1)
+  assert.deepEqual(model.turns[0].items[0].content, [{ type: 'text', text: 'inspect' }, { type: 'image', url }])
+})
+
+test('keeps multiple streamed user text parts in event order', () => {
+  const model = { turns: [], activeTurnId: null, status: 'idle', approvals: [], messageTurns: {} }
+  applyOpenCodeEvent(model, { type: 'message.updated', properties: { info: { id: 'msg-user', sessionID: 'ses-1', role: 'user' } } }, 'ses-1')
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'first', sessionID: 'ses-1', messageID: 'msg-user', type: 'text', text: 'first' } } }, 'ses-1')
+  applyOpenCodeEvent(model, { type: 'message.part.updated', properties: { part: { id: 'second', sessionID: 'ses-1', messageID: 'msg-user', type: 'text', text: 'second' } } }, 'ses-1')
+  assert.deepEqual(model.turns[0].items[0].content, [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }])
 })
 
 test('normalizes configured providers without loading the complete catalog', () => {

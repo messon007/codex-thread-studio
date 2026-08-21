@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::backend_runtime::{BackendRuntime, RuntimeChild};
 
-const MAX_PROXY_BODY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PROXY_BODY_BYTES: usize = 32 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 

@@ -1,3 +1,5 @@
+import { safeImageUrl } from './composer-images.mjs'
+
 export async function collectOpenCodeRootSessions(fetchPage, requestedPageSize = 100) {
   const pageSize = Math.max(1, Math.min(100, Number(requestedPageSize) || 100))
   const sessions = []
@@ -186,7 +188,9 @@ export function applyOpenCodeEvent(model, event, selectedSessionId) {
   if (type === 'message.part.updated') {
     const part = properties.part || {}
     const turn = ensureTurn(model, model.messageTurns?.[part.messageID] || model.activeTurnId)
-    upsertItem(turn, openCodePartToItem(part, model.messageRoles?.[part.messageID] || 'assistant'))
+    const role = model.messageRoles?.[part.messageID] || 'assistant'
+    if (role === 'user') upsertOpenCodeUserPart(turn, part)
+    else upsertItem(turn, openCodePartToItem(part, role))
     return { handled: true, kind: 'full', sessionId, type, turnId: turn.id }
   }
   if (type === 'message.part.delta') {
@@ -251,8 +255,22 @@ export function splitOpenCodeModel(value) {
 
 function userContentFromPart(part) {
   if (part?.type === 'text') return [{ type: 'text', text: part.text || '' }]
+  if (part?.type === 'file' && String(part.mime || '').startsWith('image/') && safeImageUrl(part.url)) {
+    return [{ type: 'image', url: part.url }]
+  }
   if (part?.type === 'file') return [{ type: 'text', text: `@${part.filename || part.url || part.path || 'file'}` }]
   return []
+}
+
+function upsertOpenCodeUserPart(turn, part) {
+  const additions = userContentFromPart(part)
+  if (!additions.length) return
+  const id = part.messageID || turn.id || 'user-message'
+  const item = turn.items.find((candidate) => candidate.type === 'userMessage') || { id, type: 'userMessage', content: [] }
+  item.studioUserParts ||= {}
+  item.studioUserParts[part.id || `${part.type}-${Object.keys(item.studioUserParts).length}`] = additions
+  item.content = Object.values(item.studioUserParts).flat()
+  upsertItem(turn, item)
 }
 
 function structuredOutputItem(info) {

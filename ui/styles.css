@@ -365,13 +365,31 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), 0 8px 28px rgb(20 35 43 / 8%); }
 .composer.shell-mode { border-color: color-mix(in srgb, var(--amber) 65%, var(--border-strong)); background: color-mix(in srgb, var(--amber-soft) 42%, var(--panel)); }
 .composer.shell-mode:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft), 0 8px 28px rgb(20 35 43 / 8%); }
+.composer.image-drop-active { border-color: var(--brand); background: color-mix(in srgb, var(--brand-soft) 42%, var(--panel)); box-shadow: 0 0 0 3px var(--brand-soft), 0 8px 28px rgb(20 35 43 / 8%); }
 .composer textarea { width: 100%; max-height: 180px; resize: vertical; padding: 4px 6px; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.55; }
+.composer-images { margin: 0 0 7px; padding: 2px; display: flex; gap: 7px; overflow-x: auto; scrollbar-width: thin; }
+.composer-image { width: 72px; height: 58px; position: relative; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
+.composer-image img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.composer-image button { width: 19px; height: 19px; position: absolute; top: 3px; right: 3px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 55%); border-radius: 50%; background: rgb(20 27 31 / 76%); color: #fff; cursor: pointer; font: 700 13px/1 var(--ui-font-family); }
+.composer-image button:hover { background: var(--red); }
+.composer-image small { max-width: calc(100% - 6px); position: absolute; right: 3px; bottom: 3px; left: 3px; overflow: hidden; padding: 2px 4px; border-radius: 4px; background: rgb(20 27 31 / 72%); color: #fff; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }
 .composer-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .composer-actions { flex-shrink: 0; display: flex; gap: 7px; }
+.composer-icon-button { width: 27px; height: 27px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); cursor: pointer; }
+.composer-icon-button:hover { border-color: var(--brand); color: var(--brand); }
+.composer-icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.composer-icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
 .composer-model { max-width: min(280px, 42vw); height: 27px; flex-shrink: 0; padding: 0 7px 0 5px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); }
 .composer-model-backend { min-width: 20px; height: 17px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 4px; background: var(--brand-soft); color: var(--brand); font-size: 8px; font-weight: 800; letter-spacing: .02em; }
 .composer-model strong { overflow: hidden; font: 650 10px/1 var(--code-font-family); text-overflow: ellipsis; white-space: nowrap; }
+.message.user .message-content { min-width: 0; }
+.message-user-images { max-width: min(520px, 100%); margin: 0 0 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 7px; }
+.message-user-image { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-soft); }
+.message-user-image img { width: 100%; max-height: 260px; display: block; object-fit: contain; background: color-mix(in srgb, var(--panel-soft) 86%, #000); }
+.message-user-image figcaption { overflow: hidden; padding: 5px 7px; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.message-user-image.local { min-height: 54px; padding: 10px; display: flex; align-items: center; }
+.message-user-image.local figcaption { padding: 0; white-space: normal; overflow-wrap: anywhere; }
 .archived-composer { width: calc(100% - var(--workspace-gutter) - var(--workspace-gutter)); max-width: var(--content-max-width); min-height: 82px; margin: 0 auto 18px; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel-soft); }
 .archived-composer > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .archived-composer strong { font-size: 12px; }.archived-composer span { color: var(--muted); font-size: 10px; }

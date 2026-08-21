@@ -53,6 +53,15 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 import {
+  MAX_COMPOSER_IMAGES,
+  MAX_COMPOSER_IMAGE_TOTAL_BYTES,
+  composerImageInputs,
+  formatImageSize,
+  openCodeImagePart,
+  prepareComposerImage,
+  userImagesFromContent,
+} from './composer-images.mjs'
+import {
   resolveMarkdownImagePath,
 } from './document-review.mjs'
 import {
@@ -291,6 +300,7 @@ const state = {
   turnOptions: {},
   pendingSkills: {},
   pendingFiles: {},
+  pendingImages: {},
   ...createSessionMapRuntimeState(),
   hiddenCodexThreads: new Set(),
   hiddenCodexTurns: new Set(),
@@ -731,6 +741,17 @@ function bindUI() {
   $('#composer-form').addEventListener('submit', sendComposer)
   $('#composer-input').addEventListener('input', handleComposerInput)
   $('#composer-input').addEventListener('keydown', handleComposerKeydown)
+  $('#composer-add-image').addEventListener('click', () => $('#composer-image-input').click())
+  $('#composer-image-input').addEventListener('change', (event) => {
+    addComposerImages(event.target.files).catch(showError)
+    event.target.value = ''
+  })
+  $('#composer-input').addEventListener('paste', handleComposerImagePaste)
+  $('#composer-images').addEventListener('click', removeComposerImage)
+  $('#composer-form').addEventListener('dragenter', handleComposerImageDrag)
+  $('#composer-form').addEventListener('dragover', handleComposerImageDrag)
+  $('#composer-form').addEventListener('dragleave', handleComposerImageDragLeave)
+  $('#composer-form').addEventListener('drop', handleComposerImageDrop)
   $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
@@ -2049,13 +2070,21 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
     const model = splitOpenCodeModel(params.model)
     const skill = params.input?.find((item) => item?.type === 'skill')
     if (skill?.name) {
+      if (params.input?.some((item) => item?.type === 'image' || item?.type === 'localImage')) {
+        throw new Error(t('OpenCode cannot combine a skill command with image attachments. Remove the skill or images and try again.'))
+      }
       return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), {
         method: 'POST',
         body: { command: skill.name, arguments: text, agent: 'build' },
         timeoutMs: Math.max(timeoutMs, 300_000),
       })
     }
-    const parts = [{ type: 'text', text }, ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart)]
+    const imageParts = (params.input || []).map(openCodeImagePart).filter(Boolean)
+    const parts = [
+      ...(text ? [{ type: 'text', text }] : []),
+      ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart),
+      ...imageParts,
+    ]
     await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/prompt_async`, directory), {
       method: 'POST',
       body: {
@@ -3021,7 +3050,9 @@ function renderItem(item, turnId, { forkable = false } = {}) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
-    return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${escapeHtml(textFromUserContent(item.content) || t('(non-text input)'))}</div></div>`
+    const text = textFromUserContent(item.content)
+    const images = renderUserMessageImages(item.content)
+    return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${images}${text ? `<div>${escapeHtml(text)}</div>` : (!images ? escapeHtml(t('(non-text input)')) : '')}</div></div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
     const favorite = reviewNotes.favoriteForSource(state.backend, state.selectedId, turnId, item.id)
@@ -3058,6 +3089,15 @@ function renderItem(item, turnId, { forkable = false } = {}) {
   }
   if (type === 'contextCompaction') return `<div class="reasoning" ${attrs}>Codex compacted earlier conversation context.</div>`
   return `<article class="item-card" ${attrs}><header><span>${escapeHtml(type)}</span></header><pre>${escapeHtml(valueText(item))}</pre></article>`
+}
+
+function renderUserMessageImages(content) {
+  const images = userImagesFromContent(content)
+  if (!images.length) return ''
+  const rows = images.map((image) => image.kind === 'url'
+    ? `<figure class="message-user-image"><img src="${escapeHtml(image.source)}" alt="${escapeHtml(t(image.label))}" loading="lazy" /><figcaption>${escapeHtml(t(image.label))}</figcaption></figure>`
+    : `<figure class="message-user-image local"><figcaption>${escapeHtml(image.label)}</figcaption></figure>`)
+  return `<div class="message-user-images">${rows.join('')}</div>`
 }
 
 function renderMarkdown(value) {
@@ -4158,12 +4198,98 @@ function renderComposerState() {
   const shellCommand = shellCommandFromComposer($('#composer-input').value)
   const shellMode = shellCommand !== null
   $('#composer-form').classList.toggle('shell-mode', shellMode)
+  renderComposerImages()
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
+  $('#composer-add-image').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode')
   reviewNotes.renderComposerContext()
+}
+
+function renderComposerImages() {
+  const container = $('#composer-images')
+  const images = state.pendingImages[selectedStateKey()] || []
+  const signature = `${selectedStateKey()}|${images.map((image) => image.id).join('|')}`
+  if (container.dataset.signature === signature) return
+  container.dataset.signature = signature
+  container.classList.toggle('hidden', !images.length)
+  container.innerHTML = images.map((image) => `<figure class="composer-image" title="${escapeHtml(`${image.name} · ${formatImageSize(image.size)}`)}">
+    <img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.name)}" />
+    <button type="button" data-remove-composer-image="${escapeHtml(image.id)}" title="${t('Remove image')}" aria-label="${t('Remove image')}">×</button>
+    <small>${escapeHtml(image.name)}</small>
+  </figure>`).join('')
+}
+
+async function addComposerImages(fileList) {
+  if (!state.selectedId) return
+  const files = [...(fileList || [])].filter((file) =>
+    file?.type?.startsWith('image/') || !file?.type || /\.(?:png|jpe?g|webp|gif)$/iu.test(String(file?.name || '')),
+  )
+  if (!files.length) return
+  const key = selectedStateKey()
+  const current = state.pendingImages[key] ||= []
+  const available = MAX_COMPOSER_IMAGES - current.length
+  if (available <= 0) throw new Error(t('You can attach up to {count} images.', { count: MAX_COMPOSER_IMAGES }))
+  if (files.length > available) toast(t('Only the first {count} images were attached.', { count: available }), 'warning')
+  const prepared = []
+  let preparedBytes = current.reduce((total, image) => total + Number(image.size || 0), 0)
+  for (const file of files.slice(0, available)) {
+    try {
+      const image = await prepareComposerImage(file)
+      if (preparedBytes + image.size > MAX_COMPOSER_IMAGE_TOTAL_BYTES) {
+        throw new Error('Image attachments must be 20 MiB or smaller in total.')
+      }
+      prepared.push(image)
+      preparedBytes += image.size
+    } catch (error) {
+      throw new Error(t(error.message))
+    }
+  }
+  if (selectedStateKey() !== key) return
+  const destination = state.pendingImages[key] ||= []
+  const remaining = Math.max(0, MAX_COMPOSER_IMAGES - destination.length)
+  if (prepared.length > remaining) toast(t('Only the first {count} images were attached.', { count: remaining }), 'warning')
+  let destinationBytes = destination.reduce((total, image) => total + Number(image.size || 0), 0)
+  const accepted = prepared.slice(0, remaining).filter((image) => {
+    if (destinationBytes + image.size > MAX_COMPOSER_IMAGE_TOTAL_BYTES) return false
+    destinationBytes += image.size
+    return true
+  })
+  if (accepted.length < Math.min(prepared.length, remaining)) throw new Error(t('Image attachments must be 20 MiB or smaller in total.'))
+  destination.push(...accepted)
+  renderComposerState()
+}
+
+function removeComposerImage(event) {
+  const button = event.target.closest('[data-remove-composer-image]')
+  if (!button) return
+  const key = selectedStateKey()
+  state.pendingImages[key] = (state.pendingImages[key] || []).filter((image) => image.id !== button.dataset.removeComposerImage)
+  renderComposerState()
+}
+
+function handleComposerImagePaste(event) {
+  const files = [...(event.clipboardData?.files || [])].filter((file) => file.type?.startsWith('image/'))
+  if (files.length) addComposerImages(files).catch(showError)
+}
+
+function handleComposerImageDrag(event) {
+  if (![...(event.dataTransfer?.types || [])].includes('Files')) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+  $('#composer-form').classList.add('image-drop-active')
+}
+
+function handleComposerImageDragLeave(event) {
+  if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.classList.remove('image-drop-active')
+}
+
+function handleComposerImageDrop(event) {
+  event.preventDefault()
+  event.currentTarget.classList.remove('image-drop-active')
+  addComposerImages(event.dataTransfer?.files).catch(showError)
 }
 
 async function sendComposer(event) {
@@ -4202,14 +4328,19 @@ async function sendComposer(event) {
     }
     return
   }
-  if (!text || !state.selectedId) return
+  if (!state.selectedId) return
+  const stateKey = selectedStateKey()
+  const pendingImages = [...(state.pendingImages[stateKey] || [])]
+  const imageInputs = composerImageInputs(pendingImages)
+  if (!text && !imageInputs.length) return
   if (isRouterThread()) {
     const button = $('#send-message')
     button.disabled = true
     transcriptScrollFollower.reset()
     try {
-      await threadRouter.startTurn(text)
+      await threadRouter.startTurn(text, imageInputs)
       input.value = ''
+      state.pendingImages[stateKey] = []
       hideComposerMenu()
       renderComposerState()
     } catch (error) { showError(error) }
@@ -4219,10 +4350,9 @@ async function sendComposer(event) {
   const backend = state.backend
   const threadId = state.selectedId
   const targetModel = state.model
-  const stateKey = selectedStateKey(threadId, backend)
   const skillInputs = [...(state.pendingSkills[stateKey] || [])]
   const fileInputs = [...(state.pendingFiles[stateKey] || [])]
-  const turnInput = [{ type: 'text', text }, ...skillInputs, ...fileInputs]
+  const turnInput = [...(text ? [{ type: 'text', text }] : []), ...imageInputs, ...skillInputs, ...fileInputs]
   const turnOptions = configuredTurnOptions()
   const button = $('#send-message')
   button.disabled = true
@@ -4247,6 +4377,7 @@ async function sendComposer(event) {
         input.value = ''
         state.pendingSkills[stateKey] = []
         state.pendingFiles[stateKey] = []
+        state.pendingImages[stateKey] = []
         composerCleared = true
         hideComposerMenu()
         renderComposerState()
@@ -4277,6 +4408,7 @@ async function sendComposer(event) {
       input.value = ''
       state.pendingSkills[stateKey] = []
       state.pendingFiles[stateKey] = []
+      state.pendingImages[stateKey] = []
     }
     hideComposerMenu()
     renderComposerState()
@@ -4290,6 +4422,7 @@ async function sendComposer(event) {
       if (!input.value.trim()) input.value = text
       if (!(state.pendingSkills[stateKey] || []).length) state.pendingSkills[stateKey] = skillInputs
       if (!(state.pendingFiles[stateKey] || []).length) state.pendingFiles[stateKey] = fileInputs
+      if (!(state.pendingImages[stateKey] || []).length) state.pendingImages[stateKey] = pendingImages
       renderComposerState()
     }
     showError(error)

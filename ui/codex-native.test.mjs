@@ -109,6 +109,23 @@ test('reconciles an optimistic user message with the authoritative turn', () => 
   assert.equal(model.turns[0].items[0].studioOptimistic, undefined)
 })
 
+test('does not reconcile different image-only optimistic messages', () => {
+  const model = createCodexViewModel()
+  const pendingId = beginOptimisticCodexTurn(model, {
+    clientUserMessageId: 'client-image',
+    input: [{ type: 'image', url: 'data:image/png;base64,AAAA' }],
+  })
+  reconcileOptimisticCodexTurn(model, pendingId, { id: 'turn-image', status: 'inProgress', items: [] })
+  applyCodexNotification(model, {
+    method: 'item/started',
+    params: {
+      turnId: 'turn-image',
+      item: { id: 'server-image', type: 'userMessage', content: [{ type: 'image', url: 'data:image/png;base64,BBBB' }] },
+    },
+  })
+  assert.equal(model.turns[0].items.filter((item) => item.type === 'userMessage').length, 2)
+})
+
 test('rolls back an optimistic turn without disturbing a server turn', () => {
   const model = createCodexViewModel()
   const pendingId = beginOptimisticCodexTurn(model, {

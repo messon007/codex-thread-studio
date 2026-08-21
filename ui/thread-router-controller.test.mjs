@@ -95,6 +95,15 @@ test('Router controller refreshes candidates before starting a structured routin
   for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
 })
 
+test('Router keeps image attachments with the routing request', async () => {
+  const { calls, controller, state } = controllerFixture()
+  const image = { type: 'image', url: 'data:image/png;base64,AAAA' }
+  await controller.startTurn('Inspect this screenshot', [image])
+  assert.deepEqual(calls[1].input, [{ type: 'text', text: 'Inspect this screenshot' }, image])
+  assert.deepEqual(state.routerRuntime.pending.get('codex:route-turn').attachments, [image])
+  for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
+})
+
 test('removing a session repairs Router controllers and fallback references', () => {
   const { controller, state } = controllerFixture({
     state: {

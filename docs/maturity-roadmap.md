@@ -33,7 +33,7 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 
 ### Rich composer and tool interaction
 
-- [ ] Local image input and image preview through structured `localImage` input.
+- [x] Local PNG/JPEG/WebP/GIF input from the picker, clipboard, or drag-and-drop, with bounded previews and structured `image`/OpenCode file parts.
 - [x] `item/tool/requestUserInput` questions and MCP elicitation forms, using the installed App Server schema contract.
 - [ ] App and plugin discovery/invocation, including structured mention inputs.
 - [ ] Subagent/thread tree navigation and active-agent switching.

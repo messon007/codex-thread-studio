@@ -14,7 +14,7 @@ use crate::backend_runtime::BackendRuntime;
 use crate::backend_runtime::RuntimeFile;
 
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
-const MAX_CLIENT_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CLIENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 static INTERNAL_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]

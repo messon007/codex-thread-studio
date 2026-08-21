@@ -101,7 +101,7 @@ export function createThreadRouterController({
     return routerCandidates(state.router, targetCatalogs(), state.openingMessages)
   }
 
-  async function startTurn(text) {
+  async function startTurn(text, attachments = []) {
     if (!isThread() || state.model.activeTurnId) throw new Error(t('The Router is still processing the previous request.'))
     const controller = routerControllerRef(state.router)
     if (!controller || !dispatch.supports(controller.backend)) throw new Error(t('The Router backend is currently unavailable.'))
@@ -109,7 +109,9 @@ export function createThreadRouterController({
     const candidates = currentCandidates()
     if (!candidates.length) throw new Error(t('The Router has no available target session. Open Router settings first.'))
     const developerInstructions = routerDeveloperInstructions(candidates)
-    const result = await dispatch.startTurn(controller, [{ type: 'text', text }], {
+    const imageInputs = (Array.isArray(attachments) ? attachments : []).filter((item) => item?.type === 'image' || item?.type === 'localImage')
+    const controllerInput = [...(text ? [{ type: 'text', text }] : []), ...imageInputs]
+    const result = await dispatch.startTurn(controller, controllerInput, {
       ...(isCodexBackend(controller.backend)
         ? { additionalContext: routerApplicationContext(candidates) }
         : { developerInstructions }),
@@ -122,6 +124,7 @@ export function createThreadRouterController({
     runtime.pending.set(key, {
       candidateKeys: candidates.map((candidate) => candidate.key),
       requestedAt: Date.now(),
+      attachments: imageInputs,
     })
     runtime.dispatches.set(key, { status: 'routing' })
     applyNotification(state.model, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
@@ -169,7 +172,10 @@ export function createThreadRouterController({
       await dispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
       const targetModel = await ensureSessionModel(targetRef)
       if (targetModel.activeTurnId) throw new Error(t('“{title}” is running and cannot accept a new request yet.', { title: threadTitle(target) }))
-      const result = await dispatch.startTurn(targetRef, [{ type: 'text', text: decision.forwardedPrompt }])
+      const result = await dispatch.startTurn(targetRef, [
+        { type: 'text', text: decision.forwardedPrompt },
+        ...(pending.attachments || []),
+      ])
       if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
       applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
       cacheThreadModel(targetRef.backend, targetRef.id, targetModel)

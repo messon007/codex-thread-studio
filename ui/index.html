@@ -155,6 +155,7 @@
               <button id="composer-review-open" type="button">View</button>
               <button id="composer-review-insert" type="button">Insert</button>
             </div>
+            <div id="composer-images" class="composer-images hidden" aria-label="Attached images"></div>
             <textarea
               id="composer-input"
               rows="3"
@@ -166,6 +167,10 @@
             ></textarea>
             <div class="composer-footer">
               <div class="composer-context">
+                <input id="composer-image-input" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+                <button id="composer-add-image" class="composer-icon-button" type="button" title="Attach images" aria-label="Attach images">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 10.8 11.9 5.4a3 3 0 0 1 4.2 4.2l-6.8 6.8a4.5 4.5 0 0 1-6.4-6.4l7-7a2.8 2.8 0 0 1 4 4l-6.8 6.8a1.25 1.25 0 0 1-1.8-1.8l5.8-5.8"/></svg>
+                </button>
                 <div id="composer-model" class="composer-model" aria-label="Current model and effort">
                   <span id="composer-model-backend" class="composer-model-backend">CX</span>
                   <strong id="composer-model-name">Codex default</strong>

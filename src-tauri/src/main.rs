@@ -721,6 +721,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/thread-workset.mjs", get(thread_workset_js))
         .route("/session-search.mjs", get(session_search_js))
         .route("/composer-tools.mjs", get(composer_tools_js))
+        .route("/composer-images.mjs", get(composer_images_js))
         .route("/document-review.mjs", get(document_review_js))
         .route("/document-outline.mjs", get(document_outline_js))
         .route("/environment-profile.mjs", get(environment_profile_js))
@@ -1820,6 +1821,10 @@ async fn session_search_js() -> impl IntoResponse {
 
 async fn composer_tools_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-tools.mjs"))
+}
+
+async fn composer_images_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/composer-images.mjs"))
 }
 
 async fn document_review_js() -> impl IntoResponse {
@@ -3273,6 +3278,7 @@ mod tests {
                 "/thread-workset.mjs",
                 "/session-search.mjs",
                 "/composer-tools.mjs",
+                "/composer-images.mjs",
                 "/document-review.mjs",
                 "/document-outline.mjs",
                 "/epub-reader.mjs",

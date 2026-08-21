@@ -251,7 +251,23 @@ function sameUserMessage(left, right) {
   if (left?.type !== 'userMessage' || right?.type !== 'userMessage') return false
   if (left.clientId && right.clientId) return left.clientId === right.clientId
   return Boolean(left.studioOptimistic || right.studioOptimistic)
-    && textFromUserContent(left.content) === textFromUserContent(right.content)
+    && sameUserContent(left.content, right.content)
+}
+
+function sameUserContent(left, right) {
+  const leftItems = Array.isArray(left) ? left : []
+  const rightItems = Array.isArray(right) ? right : []
+  if (leftItems.length !== rightItems.length) return false
+  return leftItems.every((item, index) => {
+    const other = rightItems[index]
+    if (item?.type !== other?.type) return false
+    if (item?.type === 'text') return (item.text || '') === (other.text || '')
+    if (item?.type === 'image') return (item.url || '') === (other.url || '')
+    if (item?.type === 'localImage') return (item.path || '') === (other.path || '')
+    if (item?.type === 'skill') return (item.name || '') === (other.name || '') && (item.path || '') === (other.path || '')
+    if (item?.type === 'file') return (item.path || '') === (other.path || '') && (item.root || '') === (other.root || '')
+    return true
+  })
 }
 
 function ensureItem(model, turnId, itemId, type) {

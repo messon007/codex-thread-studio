@@ -66,6 +66,7 @@ export function createReviewNotesController({
     openBrowserUrl,
     renderMarkdown,
     renderedItem,
+    setComposerValue,
     pauseTranscript,
     switchBackend,
     waitForBackend,
@@ -464,7 +465,7 @@ function insertAnnotations() {
   if (!drafts.length) return
   const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[selectedStateKey()] || '')
   const composer = $('#composer-input')
-  composer.value = [composer.value.trim(), prompt].filter(Boolean).join('\n\n')
+  setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
   closeAnnotationRail()
   composer.focus()
   renderComposerReviewContext()

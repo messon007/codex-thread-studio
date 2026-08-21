@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   composerTrigger,
+  createComposerDraftStore,
   isPreviewableImageFile,
   isPreviewableTextFile,
   matchingSkills,
@@ -15,6 +16,24 @@ import {
   shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
+
+test('keeps composer drafts isolated by backend and session', () => {
+  const drafts = createComposerDraftStore()
+  assert.equal(drafts.switchTo('codex:thread-a', ''), '')
+  drafts.update('codex:thread-a', 'draft A')
+  assert.equal(drafts.switchTo('opencode:thread-a', 'draft A'), '')
+  drafts.update('opencode:thread-a', 'draft OpenCode')
+  assert.equal(drafts.switchTo('codex:thread-a', 'draft OpenCode'), 'draft A')
+})
+
+test('discarding the visible composer draft does not restore its DOM value', () => {
+  const drafts = createComposerDraftStore()
+  drafts.switchTo('codex:deleted', '')
+  drafts.update('codex:deleted', 'do not restore')
+  drafts.discard('codex:deleted')
+  assert.equal(drafts.switchTo('', 'do not restore'), '')
+  assert.equal(drafts.value('codex:deleted'), '')
+})
 
 test('detects slash commands only at the beginning of the composer', () => {
   assert.deepEqual(composerTrigger('/mod'), { type: 'slash', query: 'mod', start: 0, end: 4 })

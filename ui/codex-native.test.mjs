@@ -10,6 +10,7 @@ import {
   resolveCodexApproval,
   resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
+  selectedThreadStatusChange,
   textFromUserContent,
 } from './codex-native.mjs'
 
@@ -31,6 +32,21 @@ test('assembles streamed structured items and completion state', () => {
   assert.equal(model.turns[0].items[0].text, 'hello')
   assert.equal(model.activeTurnId, null)
   assert.equal(model.status, 'idle')
+})
+
+test('only the selected thread status notification requests workspace synchronization', () => {
+  assert.equal(selectedThreadStatusChange({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'thread-1', delta: 'hello' },
+  }, 'thread-1'), null)
+  assert.equal(selectedThreadStatusChange({
+    method: 'thread/status/changed',
+    params: { threadId: 'thread-2', status: { type: 'active' } },
+  }, 'thread-1'), null)
+  assert.deepEqual(selectedThreadStatusChange({
+    method: 'thread/status/changed',
+    params: { threadId: 'thread-1', status: { type: 'active' } },
+  }, 'thread-1'), { type: 'active' })
 })
 
 test('keeps structured user-input requests visible until they are answered', () => {

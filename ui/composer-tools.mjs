@@ -60,6 +60,40 @@ export function fuzzyFileLabel(file) {
   return String(file.path || file.file_name || '')
 }
 
+export function createComposerDraftStore() {
+  const drafts = new Map()
+  let visibleKey = null
+
+  function write(key, value) {
+    const normalizedKey = String(key || '')
+    if (!normalizedKey) return
+    const text = String(value || '')
+    if (text) drafts.set(normalizedKey, text)
+    else drafts.delete(normalizedKey)
+  }
+
+  return {
+    switchTo(key, currentValue = '') {
+      const nextKey = String(key || '')
+      if (visibleKey === nextKey) return String(currentValue || '')
+      write(visibleKey, currentValue)
+      visibleKey = nextKey
+      return drafts.get(nextKey) || ''
+    },
+    update(key, value) {
+      write(key, value)
+    },
+    value(key) {
+      return drafts.get(String(key || '')) || ''
+    },
+    discard(key) {
+      const normalizedKey = String(key || '')
+      drafts.delete(normalizedKey)
+      if (visibleKey === normalizedKey) visibleKey = null
+    },
+  }
+}
+
 const PREVIEWABLE_TEXT_EXTENSIONS = new Set([
   'adoc', 'asciidoc', 'bash', 'bat', 'c', 'cc', 'cfg', 'cjs', 'cmake', 'conf', 'cpp', 'cs', 'css',
   'csv', 'cxx', 'd2', 'diff', 'dist', 'editorconfig', 'env', 'example', 'fish', 'gitattributes', 'gitignore', 'go', 'gql', 'gradle', 'graphql',

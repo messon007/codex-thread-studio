@@ -170,6 +170,12 @@ export function applyCodexNotification(model, message) {
   return false
 }
 
+export function selectedThreadStatusChange(message, selectedThreadId) {
+  if (message?.method !== 'thread/status/changed') return null
+  if (String(message.params?.threadId || '') !== String(selectedThreadId || '')) return null
+  return message.params?.status ?? null
+}
+
 export function resolveCodexApproval(model, requestId) {
   model.approvals = model.approvals.filter((approval) => String(approval.id) !== String(requestId))
 }

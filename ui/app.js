@@ -7,6 +7,7 @@ import {
   resolveCodexApproval,
   resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
+  selectedThreadStatusChange,
   textFromUserContent,
 } from './codex-native.mjs'
 import {
@@ -42,6 +43,7 @@ import {
 } from './backends.mjs'
 import {
   composerTrigger,
+  createComposerDraftStore,
   fuzzyFileLabel,
   matchingSkills,
   matchingSlashCommands,
@@ -326,6 +328,7 @@ const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
 const codexCatalogRecoveryStarted = new Set()
 const transcriptScrollFollower = createTranscriptScrollFollower()
+const composerDrafts = createComposerDraftStore()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
 const MAX_MARKDOWN_RENDER_CACHE_BYTES = 24 * 1024 * 1024
@@ -495,6 +498,7 @@ const reviewNotes = createReviewNotesController({
     openBrowserUrl,
     renderMarkdown,
     renderedItem,
+    setComposerValue: setCurrentComposerValue,
     pauseTranscript: () => transcriptScrollFollower.pause(),
     switchBackend,
     waitForBackend: waitFor,
@@ -1471,6 +1475,7 @@ function handleAppServerMessage(message) {
       delete state.openingMessages[`${backend}:${threadId}`]
     }
     threadRouter.removeSession(backend, threadId)
+    discardComposerSessionState(backend, threadId)
     invalidateThreadModel(backend, threadId)
     persistPreferences()
     if (state.selectedId === threadId) {
@@ -1607,6 +1612,7 @@ function handleOpenCodeServerEvent(event) {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
     const deletedKey = sessionRefKey('opencode', deletedId)
     delete state.openingMessages[deletedKey]
+    discardComposerSessionState('opencode', deletedId)
     if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
     if (deletedId && state.selectedId === deletedId) {
       state.selectedId = null
@@ -2515,6 +2521,36 @@ function selectedStateKey(id = state.selectedId, backend = state.backend) {
   return id ? `${backend}:${id}` : ''
 }
 
+function syncComposerDraft() {
+  const input = $('#composer-input')
+  if (!input) return
+  const value = composerDrafts.switchTo(selectedStateKey(), input.value)
+  if (input.value === value) return
+  input.value = value
+  input.setSelectionRange(value.length, value.length)
+}
+
+function setComposerDraftValue(key, value) {
+  const normalized = String(value || '')
+  composerDrafts.update(key, normalized)
+  if (key !== selectedStateKey()) return
+  const input = $('#composer-input')
+  input.value = normalized
+}
+
+function setCurrentComposerValue(value) {
+  setComposerDraftValue(selectedStateKey(), value)
+}
+
+function discardComposerSessionState(backend, threadId) {
+  const key = selectedStateKey(threadId, backend)
+  if (!key) return
+  composerDrafts.discard(key)
+  delete state.pendingSkills[key]
+  delete state.pendingFiles[key]
+  delete state.pendingImages[key]
+}
+
 function captureOpeningMessage() {
   const key = selectedStateKey()
   if (!key || state.openingMessages[key]?.text) return
@@ -2650,6 +2686,7 @@ async function copyOpeningMessage() {
 }
 
 function renderWorkspace() {
+  syncComposerDraft()
   const thread = selectedThread()
   const hasThread = Boolean(thread)
   const archived = hasThread && isArchivedPreview()
@@ -3759,6 +3796,7 @@ async function answerApproval(id, decision) {
 
 function handleComposerInput() {
   const input = $('#composer-input')
+  composerDrafts.update(selectedStateKey(), input.value)
   renderComposerState()
   if (shellCommandFromComposer(input.value) !== null) {
     hideComposerMenu()
@@ -3939,7 +3977,7 @@ function selectComposerOption(index) {
   const input = $('#composer-input')
   if (state.composerMenu.type === 'file') {
     const replacement = replaceComposerTrigger(input.value, trigger, selectedFileReference(option))
-    input.value = replacement.value
+    setCurrentComposerValue(replacement.value)
     input.setSelectionRange(replacement.cursor, replacement.cursor)
     if (state.backend === 'opencode' && state.selectedId) {
       const key = selectedStateKey()
@@ -3952,7 +3990,7 @@ function selectComposerOption(index) {
   }
   if (state.composerMenu.type === 'skill') {
     const replacement = replaceComposerTrigger(input.value, trigger, selectedSkillReference(option))
-    input.value = replacement.value
+    setCurrentComposerValue(replacement.value)
     input.setSelectionRange(replacement.cursor, replacement.cursor)
     addPendingSkill(option)
     hideComposerMenu()
@@ -3961,7 +3999,7 @@ function selectComposerOption(index) {
     return
   }
   const replacement = replaceComposerTrigger(input.value, trigger, '')
-  input.value = replacement.value
+  setCurrentComposerValue(replacement.value)
   hideComposerMenu()
   executeSlashCommand(option.action).catch(showError)
 }
@@ -4133,7 +4171,7 @@ async function openSkillsCommand() {
     if (!button || !state.selectedId) return
     addPendingSkill({ name: button.dataset.skillName, path: button.dataset.skillPath })
     const input = $('#composer-input')
-    input.value = `${input.value}${input.value && !input.value.endsWith(' ') ? ' ' : ''}$${button.dataset.skillName} `
+    setCurrentComposerValue(`${input.value}${input.value && !input.value.endsWith(' ') ? ' ' : ''}$${button.dataset.skillName} `)
     $('#command-dialog').close()
     renderComposerState()
     input.focus()
@@ -4296,6 +4334,7 @@ async function sendComposer(event) {
   event.preventDefault()
   const input = $('#composer-input')
   const text = input.value.trim()
+  const initialStateKey = selectedStateKey()
   const shellCommand = shellCommandFromComposer(input.value)
   if (shellCommand !== null) {
     if (!shellCommand || !state.selectedId) return
@@ -4308,7 +4347,7 @@ async function sendComposer(event) {
     transcriptScrollFollower.reset()
     try {
       await rpc('thread/shellCommand', { threadId: state.selectedId, command: shellCommand }, 120_000)
-      input.value = ''
+      setComposerDraftValue(initialStateKey, '')
       hideComposerMenu()
       renderComposerState()
       toast(t('Shell command sent to {backend}', { backend: currentBackend().name }))
@@ -4319,7 +4358,7 @@ async function sendComposer(event) {
   const slashName = text.match(/^\/([\w-]+)$/)?.[1]
   const slash = slashName && matchingSlashCommands(slashName).find((command) => command.name === slashName)
   if (slash) {
-    input.value = ''
+    setComposerDraftValue(initialStateKey, '')
     hideComposerMenu()
     try {
       await executeSlashCommand(slash.action)
@@ -4339,7 +4378,7 @@ async function sendComposer(event) {
     transcriptScrollFollower.reset()
     try {
       await threadRouter.startTurn(text, imageInputs)
-      input.value = ''
+      setComposerDraftValue(stateKey, '')
       state.pendingImages[stateKey] = []
       hideComposerMenu()
       renderComposerState()
@@ -4374,7 +4413,7 @@ async function sendComposer(event) {
       if (isCodexBackend(backend)) {
         optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
         latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
-        input.value = ''
+        setComposerDraftValue(stateKey, '')
         state.pendingSkills[stateKey] = []
         state.pendingFiles[stateKey] = []
         state.pendingImages[stateKey] = []
@@ -4405,7 +4444,7 @@ async function sendComposer(event) {
       }
     }
     if (!composerCleared) {
-      input.value = ''
+      setComposerDraftValue(stateKey, '')
       state.pendingSkills[stateKey] = []
       state.pendingFiles[stateKey] = []
       state.pendingImages[stateKey] = []
@@ -4418,12 +4457,12 @@ async function sendComposer(event) {
       finishTurnLatencyTrace(latencyTrace, 'failed')
       if (targetModel === state.model) renderTranscript()
     }
-    if (composerCleared && state.backend === backend && state.selectedId === threadId) {
-      if (!input.value.trim()) input.value = text
+    if (composerCleared) {
+      if (!composerDrafts.value(stateKey).trim()) setComposerDraftValue(stateKey, text)
       if (!(state.pendingSkills[stateKey] || []).length) state.pendingSkills[stateKey] = skillInputs
       if (!(state.pendingFiles[stateKey] || []).length) state.pendingFiles[stateKey] = fileInputs
       if (!(state.pendingImages[stateKey] || []).length) state.pendingImages[stateKey] = pendingImages
-      renderComposerState()
+      if (state.backend === backend && state.selectedId === threadId) renderComposerState()
     }
     showError(error)
   }
@@ -4628,6 +4667,7 @@ async function archiveSelectedThread() {
   const threadId = state.selectedId
   try {
     await rpc('thread/archive', { threadId })
+    discardComposerSessionState(state.backend, threadId)
     invalidateThreadModel(state.backend, threadId)
     state.selectedId = null
     state.selectedByBackend[state.backend] = null
@@ -4649,6 +4689,7 @@ async function deleteSelectedThread() {
     delete state.annotationDrafts[`${state.backend}:${threadId}`]
     delete state.annotationAdditional[`${state.backend}:${threadId}`]
     delete state.openingMessages[`${state.backend}:${threadId}`]
+    discardComposerSessionState(state.backend, threadId)
     state.selectedId = null
     if (!archived) state.selectedByBackend[state.backend] = null
     state.model = createCodexViewModel()
@@ -5273,7 +5314,9 @@ function setNativeError(message) {
 function updateSelectedThreadStatus(message) {
   const thread = selectedThread()
   if (!thread) return
-  if (message.method === 'thread/status/changed' && message.params?.threadId === thread.id) thread.status = message.params.status
+  const status = selectedThreadStatusChange(message, thread.id)
+  if (status == null) return
+  thread.status = status
   renderWorkspace()
 }
 

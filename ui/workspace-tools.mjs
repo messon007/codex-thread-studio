@@ -113,7 +113,6 @@ export function createWorkspaceTools({
     element('workspace-root-name').textContent = workspaceRootName(state.root)
     element('workspace-terminal-cwd').textContent = state.root
     element('workspace-file-filter').value = state.filter
-    if (activeTool === 'files') ensureDirectory(state, '').then(() => renderFileTree(state))
     if (activeTool === 'terminal') renderTerminal(state)
     if (activeTool === 'review') gitReview.render()
     syncButtons()

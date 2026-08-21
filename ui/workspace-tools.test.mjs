@@ -3,10 +3,33 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  createWorkspaceTools,
   safeWorkspaceRelativePath,
   workspaceRootName,
   workspaceStateKey,
 } from './workspace-tools.mjs'
+
+function mockElement(initialClasses = []) {
+  const classes = new Set(initialClasses)
+  let html = ''
+  return {
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      contains: (name) => classes.has(name),
+      toggle: (name, force) => force ? classes.add(name) : classes.delete(name),
+    },
+    setAttribute() {},
+    textContent: '',
+    value: '',
+    innerHTMLWrites: 0,
+    get innerHTML() { return html },
+    set innerHTML(value) {
+      html = value
+      this.innerHTMLWrites += 1
+    },
+  }
+}
 
 test('workspace tools keep file paths relative to the session root', () => {
   assert.equal(safeWorkspaceRelativePath('./docs/README.md'), 'docs/README.md')
@@ -26,6 +49,47 @@ test('workspace state keeps terminal lifecycle isolated per session and backend'
 test('workspace root name supports Unix and Windows paths', () => {
   assert.equal(workspaceRootName('/home/rui/project/'), 'project')
   assert.equal(workspaceRootName('C:\\Users\\rui\\project'), 'project')
+})
+
+test('session status synchronization does not replace an already loaded file tree', async () => {
+  const previousDocument = globalThis.document
+  const elements = Object.fromEntries([
+    'workspace-tools-rail',
+    'workspace-files-pane',
+    'workspace-terminal-pane',
+    'workspace-review-pane',
+    'open-workspace-files',
+    'open-workspace-terminal',
+    'open-workspace-review',
+    'workspace-tools-path',
+    'workspace-root-name',
+    'workspace-terminal-cwd',
+    'workspace-file-filter',
+    'workspace-tools-title',
+    'workspace-file-tree',
+  ].map((id) => [id, mockElement(id === 'workspace-tools-rail' ? ['hidden'] : [])]))
+  globalThis.document = { getElementById: (id) => elements[id] || null }
+
+  try {
+    const thread = { id: 'thread-a', cwd: '/home/rui/project' }
+    const tools = createWorkspaceTools({
+      getThread: () => thread,
+      getBackend: () => 'codex',
+      gatewayFetch: async () => ({
+        ok: true,
+        json: async () => ({ entries: [{ kind: 'file', name: 'README.md', path: 'README.md', size: 10 }] }),
+      }),
+    })
+
+    await tools.open('files')
+    const writesAfterLoad = elements['workspace-file-tree'].innerHTMLWrites
+    tools.sync(thread)
+    await Promise.resolve()
+
+    assert.equal(elements['workspace-file-tree'].innerHTMLWrites, writesAfterLoad)
+  } finally {
+    globalThis.document = previousDocument
+  }
 })
 
 test('workspace tool launchers remain visible in narrow windows', () => {

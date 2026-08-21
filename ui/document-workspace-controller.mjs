@@ -1,4 +1,4 @@
-import { fuzzyFileLabel, previewableFileKind } from './composer-tools.mjs'
+import { fuzzyFileLabel, reviewableFileKind } from './composer-tools.mjs'
 import {
   artifactInlineSearchAvailable,
   artifactSearchAvailable,
@@ -129,7 +129,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   if (state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
     if (!confirm(t('The current document has unsaved changes. Open another file anyway?'))) return
   }
-  const kind = previewableFileKind(file)
+  const kind = reviewableFileKind(file)
   if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
   resetArtifactSearch()
   resetArtifactOutline()

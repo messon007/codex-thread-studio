@@ -62,7 +62,7 @@ export function fuzzyFileLabel(file) {
 
 const PREVIEWABLE_TEXT_EXTENSIONS = new Set([
   'adoc', 'asciidoc', 'bash', 'bat', 'c', 'cc', 'cfg', 'cjs', 'cmake', 'conf', 'cpp', 'cs', 'css',
-  'csv', 'cxx', 'diff', 'dist', 'editorconfig', 'env', 'example', 'fish', 'gitattributes', 'gitignore', 'go', 'gql', 'gradle', 'graphql',
+  'csv', 'cxx', 'd2', 'diff', 'dist', 'editorconfig', 'env', 'example', 'fish', 'gitattributes', 'gitignore', 'go', 'gql', 'gradle', 'graphql',
   'groovy', 'h', 'hpp', 'htm', 'html', 'ini', 'java', 'js', 'json', 'json5', 'jsonc', 'jsonl', 'jsx',
   'in', 'kt', 'kts', 'less', 'lock', 'log', 'lua', 'md', 'mdown', 'mjs', 'mk', 'mkd', 'ndjson', 'npmrc', 'nvmrc', 'patch',
   'markdown', 'php', 'properties', 'proto', 'ps1', 'py', 'pyi', 'rb', 'rs', 'rst', 'sass', 'scss', 'sh', 'sql',
@@ -76,6 +76,13 @@ const PREVIEWABLE_TEXT_NAMES = new Set([
 ])
 
 const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['gif', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
+
+const KNOWN_BINARY_EXTENSIONS = new Set([
+  '7z', 'a', 'apk', 'avi', 'avif', 'bin', 'bmp', 'bz2', 'class', 'db', 'deb', 'dll', 'dmg',
+  'doc', 'docx', 'eot', 'exe', 'flac', 'gz', 'ico', 'iso', 'jar', 'mov', 'mp3', 'mp4', 'o',
+  'obj', 'ogg', 'otf', 'parquet', 'ppt', 'pptx', 'rar', 'rpm', 'so', 'sqlite', 'sqlite3',
+  'tar', 'tif', 'tiff', 'ttf', 'wav', 'webm', 'woff', 'woff2', 'xls', 'xz', 'zip', 'zst',
+])
 
 export function isPreviewableTextFile(file) {
   const path = fuzzyFileLabel(file).replaceAll('\\', '/')
@@ -102,6 +109,16 @@ export function previewableFileKind(file) {
   if (isPreviewableImageFile(file)) return 'image'
   if (isPreviewableTextFile(file)) return 'text'
   return null
+}
+
+export function reviewableFileKind(file) {
+  const kind = previewableFileKind(file)
+  if (kind) return kind
+  const path = fuzzyFileLabel(file).replaceAll('\\', '/')
+  const name = path.split('/').filter(Boolean).pop()?.toLowerCase() || ''
+  if (!name) return null
+  const extension = name.includes('.') ? name.split('.').pop() : ''
+  return KNOWN_BINARY_EXTENSIONS.has(extension) ? null : 'text'
 }
 
 export function selectedFileReference(file) {

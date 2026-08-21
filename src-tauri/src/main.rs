@@ -854,7 +854,7 @@ async fn read_review_file(
             .read_wsl_file(&request.root, &request.path, MAX_REVIEW_FILE_BYTES)
             .await
         {
-            Ok(file) => match String::from_utf8(file.content) {
+            Ok(file) => match decode_review_text(file.content) {
                 Ok(content) => {
                     let response = ReviewFileResponse {
                         root: file.root,
@@ -872,10 +872,7 @@ async fn read_review_file(
                     };
                     json_response(StatusCode::OK, &response)
                 }
-                Err(_) => json_error(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    "only UTF-8 text files can be reviewed",
-                ),
+                Err(message) => json_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, message),
             },
             Err(error) => {
                 let status = match error.kind() {
@@ -1653,12 +1650,8 @@ fn load_review_file(
             format!("unable to read file: {error}"),
         )
     })?;
-    let content = String::from_utf8(bytes).map_err(|_| {
-        (
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "only UTF-8 text files can be reviewed".to_string(),
-        )
-    })?;
+    let content = decode_review_text(bytes)
+        .map_err(|message| (StatusCode::UNSUPPORTED_MEDIA_TYPE, message.to_string()))?;
 
     let relative_path = path
         .strip_prefix(&root)
@@ -1679,6 +1672,29 @@ fn load_review_file(
         language: review_language(&path).to_string(),
         content,
     })
+}
+
+fn decode_review_text(bytes: Vec<u8>) -> Result<String, &'static str> {
+    let content = String::from_utf8(bytes).map_err(|_| "only UTF-8 text files can be reviewed")?;
+    if content.contains('\0') {
+        return Err("file contains NUL bytes and cannot be reviewed as text");
+    }
+
+    let mut character_count = 0_usize;
+    let mut suspicious_controls = 0_usize;
+    for character in content.chars() {
+        character_count += 1;
+        if character.is_control()
+            && !matches!(character, '\n' | '\r' | '\t' | '\u{000c}' | '\u{001b}')
+        {
+            suspicious_controls += 1;
+        }
+    }
+    let allowed_controls = (character_count / 100).max(2);
+    if suspicious_controls > allowed_controls {
+        return Err("file contains too many control characters to be reviewed as text");
+    }
+    Ok(content)
 }
 
 fn resolve_review_path(
@@ -3794,6 +3810,16 @@ mod tests {
         let outside = base.join("outside.md");
         fs::create_dir_all(root.join("docs")).expect("create review fixture");
         fs::write(root.join("docs/guide.md"), "# Guide\n\nHello\n").expect("write review file");
+        fs::write(root.join("docs/diagram.customdsl"), "node -> target\n")
+            .expect("write unknown text format");
+        fs::write(root.join("docs/nul.customdsl"), b"node\0target").expect("write NUL fixture");
+        fs::write(
+            root.join("docs/control.customdsl"),
+            b"text\x01\x02\x03\x04payload",
+        )
+        .expect("write control fixture");
+        fs::write(root.join("docs/invalid.customdsl"), b"text\xffpayload")
+            .expect("write invalid UTF-8 fixture");
         fs::write(&outside, "private").expect("write outside file");
 
         let file = load_review_file(&ReviewFileRequest {
@@ -3806,6 +3832,29 @@ mod tests {
         assert_eq!(file.line_count, 3);
         assert!(file.hash.starts_with("fnv1a64:"));
 
+        let unknown_text = load_review_file(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "docs/diagram.customdsl".to_string(),
+        })
+        .expect("read unknown text format");
+        assert_eq!(unknown_text.content, "node -> target\n");
+        assert_eq!(unknown_text.language, "text");
+
+        for path in [
+            "docs/nul.customdsl",
+            "docs/control.customdsl",
+            "docs/invalid.customdsl",
+        ] {
+            let rejected = load_review_file(&ReviewFileRequest {
+                root: root.to_string_lossy().into_owned(),
+                path: path.to_string(),
+            });
+            assert!(matches!(
+                rejected,
+                Err((StatusCode::UNSUPPORTED_MEDIA_TYPE, _))
+            ));
+        }
+
         let escaped = load_review_file(&ReviewFileRequest {
             root: root.to_string_lossy().into_owned(),
             path: outside.to_string_lossy().into_owned(),
@@ -3813,6 +3862,10 @@ mod tests {
         assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
 
         fs::remove_file(root.join("docs/guide.md")).ok();
+        fs::remove_file(root.join("docs/diagram.customdsl")).ok();
+        fs::remove_file(root.join("docs/nul.customdsl")).ok();
+        fs::remove_file(root.join("docs/control.customdsl")).ok();
+        fs::remove_file(root.join("docs/invalid.customdsl")).ok();
         fs::remove_file(&outside).ok();
         fs::remove_dir(root.join("docs")).ok();
         fs::remove_dir(&root).ok();

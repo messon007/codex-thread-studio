@@ -9,6 +9,7 @@ import {
   matchingSlashCommands,
   replaceComposerTrigger,
   previewableFileKind,
+  reviewableFileKind,
   selectedFileReference,
   selectedSkillReference,
   shellCommandFromComposer,
@@ -53,11 +54,19 @@ test('filters slash commands and formats file references', () => {
 })
 
 test('enables document preview only for known text file types', () => {
-  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt']) {
+  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt', 'benchmarks/cases/01-layered-pipeline.d2']) {
     assert.equal(isPreviewableTextFile({ path }), true, path)
   }
   for (const path of ['image.png', 'diagram.svg', 'archive.zip', 'program.exe', 'data.bin', 'unknown']) {
     assert.equal(isPreviewableTextFile({ path }), false, path)
+  }
+})
+
+test('lets the UTF-8 review endpoint decide unknown text formats without opening known binaries', () => {
+  assert.equal(reviewableFileKind({ path: 'design/system.customdsl' }), 'text')
+  assert.equal(reviewableFileKind({ path: 'scripts/tool' }), 'text')
+  for (const path of ['archive.zip', 'program.exe', 'document.docx', 'database.sqlite3']) {
+    assert.equal(reviewableFileKind({ path }), null, path)
   }
 })
 

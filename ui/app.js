@@ -43,10 +43,10 @@ import {
 import {
   composerTrigger,
   fuzzyFileLabel,
-  previewableFileKind,
   matchingSkills,
   matchingSlashCommands,
   replaceComposerTrigger,
+  reviewableFileKind,
   selectedFileReference,
   selectedSkillReference,
   shellCommandFromComposer,
@@ -349,7 +349,7 @@ const workspaceTools = createWorkspaceTools({
   getThread: selectedThread,
   getBackend: () => state.backend,
   openFile: (file, context = {}) => openArtifact(file, { returnTool: context.returnTool }),
-  canOpenFile: (file) => Boolean(previewableFileKind(file)),
+  canOpenFile: (file) => Boolean(reviewableFileKind(file)),
   closePeerRails: closeWorkspacePeerRails,
   translate: t,
   notify: toast,
@@ -906,7 +906,7 @@ async function openSessionResource(resource) {
     await workspaceTools.reveal(target.path)
     return
   }
-  if (!previewableFileKind({ path: target.path })) {
+  if (!reviewableFileKind({ path: target.path })) {
     await workspaceTools.reveal(target.path)
     toast(t('This file type cannot be previewed; it has been revealed in Files.'))
     return
@@ -3820,7 +3820,7 @@ function handleComposerMenuClick(event) {
   if (openFile) {
     event.stopPropagation()
     const option = state.composerMenu.options[Number(openFile.dataset.openFileIndex)]
-    if (option && previewableFileKind(option)) openArtifact(option).catch(showError)
+    if (option && reviewableFileKind(option)) openArtifact(option).catch(showError)
     else toast('This file type cannot be opened in the document reviewer', 'error')
     return
   }
@@ -3859,7 +3859,7 @@ function renderComposerMenu(message = '') {
       : type === 'skill'
         ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
         : option.root
-    const previewable = type === 'file' && Boolean(previewableFileKind(option))
+    const previewable = type === 'file' && Boolean(reviewableFileKind(option))
     const openAction = type === 'file'
       ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t(previewable ? 'Open for review' : 'Only text files and common images can be previewed')}"${previewable ? '' : ' disabled aria-disabled="true"'}>${t('Open')}</button>`
       : ''

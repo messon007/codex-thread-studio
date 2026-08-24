@@ -134,7 +134,12 @@ import {
   startTranslationObserver,
   t,
 } from './i18n.mjs'
-import { createTranscriptScrollFollower } from './transcript-scroll.mjs'
+import {
+  createTranscriptContentObserver,
+  createTranscriptScrollFollower,
+  distanceFromBottom,
+  shouldFollowLatestOnReturn,
+} from './transcript-scroll.mjs'
 import { createWorkspaceTools } from './workspace-tools.mjs'
 import { createSessionResourcesUI } from './session-resources-ui.mjs'
 import { rightRailWidthBounds } from './right-rail-layout.mjs'
@@ -328,6 +333,7 @@ const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
 const codexCatalogRecoveryStarted = new Set()
 const transcriptScrollFollower = createTranscriptScrollFollower()
+const transcriptContentObserver = createTranscriptContentObserver({ onResize: handleTranscriptContentResize })
 const composerDrafts = createComposerDraftStore()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
@@ -345,6 +351,7 @@ let embeddedBrowserWidthTimer = null
 let environmentDialogRoot = ''
 let environmentDialogProfile = null
 const environmentSecretRemovals = new Set()
+let pendingTranscriptViewRestore = null
 
 const workspaceTools = createWorkspaceTools({
   gatewayFetch,
@@ -1178,6 +1185,7 @@ function connectBackend() {
 async function switchBackend(backend, { selectedId } = {}) {
   if (!isSupportedBackend(backend) || backend === state.backend) return
   const previousBackend = state.backend
+  captureTranscriptViewState()
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
   state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
@@ -1188,6 +1196,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   state.threads = state.threadsByBackend[backend]
   state.model = freshThreadModel(backend, state.selectedId)?.model || createCodexViewModel()
   if (state.selectedId) state.model.threadId = state.selectedId
+  prepareTranscriptViewForSelection()
   state.backendInfo = state.backendInfos[backend]
   state.ready = false
   applyBackendCopy()
@@ -2286,7 +2295,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   closeActionMenus()
   hideComposerMenu()
   resetStreamingPatches()
-  transcriptScrollFollower.reset()
+  captureTranscriptViewState()
   if (state.artifact?.threadKey !== sessionMapKey(state.backend, id)) closeArtifactRail({ restoreMap: false })
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
@@ -2300,6 +2309,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   const cached = freshThreadModel(state.backend, id)
   state.model = cached?.model || createCodexViewModel()
   state.model.threadId = id
+  prepareTranscriptViewForSelection()
   persistPreferences()
   renderThreadList()
   renderWorkspace()
@@ -2738,6 +2748,89 @@ function currentPresentationEntry() {
   return transcriptPresentationCache.get(presentationThreadKey(), state.model)
 }
 
+function transcriptReadingAnchor(container = $('#transcript')) {
+  const containerRect = container.getBoundingClientRect()
+  const turns = [...container.querySelectorAll('.turn[data-turn-id]')]
+  const turn = turns.find((candidate) => candidate.getBoundingClientRect().bottom > containerRect.top + 1)
+    || turns.at(-1)
+  if (!turn) return { turnId: '', offset: 0 }
+  return {
+    turnId: turn.dataset.turnId || '',
+    offset: turn.getBoundingClientRect().top - containerRect.top,
+  }
+}
+
+function transcriptReadingTurnId(container = $('#transcript')) {
+  const containerRect = container.getBoundingClientRect()
+  const marker = containerRect.top + Math.min(container.clientHeight * 0.28, 160)
+  const positions = [...container.querySelectorAll('.turn[data-turn-id]')]
+    .map((turn) => ({ id: turn.dataset.turnId, top: turn.getBoundingClientRect().top }))
+  return activeTurnAtMarker(positions, marker, distanceFromBottom(container) < 8) || ''
+}
+
+function captureTranscriptViewState() {
+  if (!state.selectedId) return
+  const key = presentationThreadKey()
+  if (pendingTranscriptViewRestore?.key === key) return
+  const container = $('#transcript')
+  const entry = currentPresentationEntry()
+  const anchor = transcriptReadingAnchor(container)
+  const readingTurnId = transcriptReadingTurnId(container)
+  const bottomDistance = distanceFromBottom(container)
+  transcriptPresentationCache.setScrollState(key, {
+    scrollTop: container.scrollTop,
+    anchorTurnId: anchor.turnId,
+    anchorOffset: anchor.offset,
+    followOnReturn: shouldFollowLatestOnReturn({
+      orderedTurnIds: entry.orderedIds,
+      readingTurnId,
+      bottomDistance,
+    }),
+  })
+}
+
+function prepareTranscriptViewForSelection() {
+  if (!state.selectedId) {
+    pendingTranscriptViewRestore = null
+    transcriptScrollFollower.reset()
+    return
+  }
+  const key = presentationThreadKey()
+  const saved = transcriptPresentationCache.scrollState(key)
+  if (saved && !saved.followOnReturn) {
+    pendingTranscriptViewRestore = { key, ...saved }
+    transcriptScrollFollower.pause()
+  } else {
+    pendingTranscriptViewRestore = null
+    transcriptScrollFollower.reset()
+  }
+}
+
+function restoreTranscriptView(container = $('#transcript')) {
+  if (!state.selectedId || transcriptScrollFollower.following) return false
+  const key = presentationThreadKey()
+  const saved = pendingTranscriptViewRestore?.key === key
+    ? pendingTranscriptViewRestore
+    : transcriptPresentationCache.scrollState(key)
+  if (!saved) return false
+  const anchor = saved.anchorTurnId
+    ? [...container.querySelectorAll('.turn[data-turn-id]')]
+      .find((turn) => turn.dataset.turnId === saved.anchorTurnId)
+    : null
+  if (anchor) {
+    const containerRect = container.getBoundingClientRect()
+    container.scrollTop += anchor.getBoundingClientRect().top - containerRect.top - Number(saved.anchorOffset || 0)
+    if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+    return true
+  }
+  if (!saved.anchorTurnId && Number.isFinite(saved.scrollTop)) {
+    container.scrollTop = saved.scrollTop
+    if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+    return true
+  }
+  return false
+}
+
 function renderTranscript({ preserveScroll = false, previousHeight = 0, previousTop = 0 } = {}) {
   if (!state.selectedId) return
   resetStreamingPatches()
@@ -2756,11 +2849,14 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
     if (isRouterThread()) return threadRouter.renderTurn(turn, index)
     return renderTurn(entry.turns.get(id)?.presentation, index)
   }).join('') + renderApprovals()
+  observeTranscriptContent()
   bindApprovalButtons()
   bindActivityDetails()
   renderTurnNavigator()
-  if (preserveScroll) container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
-  else followTranscriptOutput()
+  if (preserveScroll) {
+    container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
+    captureTranscriptViewState()
+  } else if (!restoreTranscriptView(container)) followTranscriptOutput()
   captureOpeningMessage()
   sessionResources.sync({ rebuild: true })
 }
@@ -2768,7 +2864,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
 function handleTranscriptScroll() {
   const transcript = $('#transcript')
   transcriptScrollFollower.handleScroll(transcript)
-  if (state.selectedId) transcriptPresentationCache.setScrollTop(presentationThreadKey(), transcript.scrollTop)
+  captureTranscriptViewState()
   scheduleTurnNavigatorSync()
 }
 
@@ -2776,6 +2872,15 @@ function followTranscriptOutput() {
   if (!transcriptScrollFollower.following) return
   const transcript = $('#transcript')
   transcript.scrollTop = transcript.scrollHeight
+  scheduleTurnNavigatorSync()
+}
+
+function observeTranscriptContent() {
+  transcriptContentObserver.observe($('#transcript'))
+}
+
+function handleTranscriptContentResize() {
+  if (!restoreTranscriptView()) followTranscriptOutput()
   scheduleTurnNavigatorSync()
 }
 
@@ -2934,6 +3039,7 @@ function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
   const template = document.createElement('template')
   template.innerHTML = renderTurn(presentation, entry.orderedIds.indexOf(String(turnId || '')), { openActivityIds })
   section.replaceWith(template.content)
+  observeTranscriptContent()
   bindActivityDetails()
   for (const activityId of openActivityIds) {
     const activity = renderedActivity(turnId, activityId)

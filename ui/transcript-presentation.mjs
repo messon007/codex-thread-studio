@@ -17,6 +17,7 @@ export class TranscriptPresentationCache {
         historyWindow: this.visibleTurns,
         visibleStart: Math.max(0, (model?.turns?.length || 0) - this.visibleTurns),
         scrollTop: null,
+        scrollState: null,
       }
       this.threads.set(key, entry)
     }
@@ -35,6 +36,18 @@ export class TranscriptPresentationCache {
   setScrollTop(threadKey, scrollTop) {
     const entry = this.threads.get(String(threadKey || ''))
     if (entry) entry.scrollTop = Number.isFinite(scrollTop) ? scrollTop : null
+  }
+
+  setScrollState(threadKey, scrollState) {
+    const entry = this.threads.get(String(threadKey || ''))
+    if (!entry) return
+    entry.scrollState = scrollState ? { ...scrollState } : null
+    entry.scrollTop = Number.isFinite(scrollState?.scrollTop) ? scrollState.scrollTop : null
+  }
+
+  scrollState(threadKey) {
+    const state = this.threads.get(String(threadKey || ''))?.scrollState
+    return state ? { ...state } : null
   }
 
   updateTurn(threadKey, model, turnId) {

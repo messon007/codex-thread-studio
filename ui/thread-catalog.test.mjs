@@ -156,3 +156,16 @@ test('session selection renders a valid cache before performing a first history 
   assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id)'))
   assert.doesNotMatch(selectThread, /thread\/unsubscribe/)
 })
+
+test('session switches prepare their own transcript position before rendering cached content', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const selectStart = source.indexOf('async function selectThread(')
+  const selectEnd = source.indexOf('\nfunction markThreadLoaded', selectStart)
+  const selectThread = source.slice(selectStart, selectEnd)
+  const backendStart = source.indexOf('async function switchBackend(')
+  const backendEnd = source.indexOf('\nfunction applyBackendCopy', backendStart)
+  const switchBackend = source.slice(backendStart, backendEnd)
+
+  assert.ok(selectThread.indexOf('prepareTranscriptViewForSelection()') < selectThread.indexOf('renderTranscript()'))
+  assert.ok(switchBackend.indexOf('prepareTranscriptViewForSelection()') < switchBackend.indexOf('renderTranscript()'))
+})

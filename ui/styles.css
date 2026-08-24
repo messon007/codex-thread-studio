@@ -237,7 +237,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 
 .native-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--panel); position: relative; }
 .text-button { padding: 5px 8px; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; }.text-button:hover { background: var(--panel-strong); color: var(--text); }
-.transcript { flex: 1; min-height: 0; overflow: auto; padding: 24px var(--workspace-gutter) 36px; scroll-behavior: smooth; }
+.transcript { flex: 1; min-height: 0; overflow: auto; padding: 24px var(--workspace-gutter) 36px; }
 .turn { width: 100%; max-width: var(--content-max-width); margin: 0 auto; padding: 0 0 22px; }
 .turn + .turn { padding-top: 22px; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .turn-separator { display: none; }

@@ -219,3 +219,23 @@ test('keeps the rendered history window bounded until the user loads earlier tur
   cache.showEarlier('thread', model, 2)
   assert.equal(entry.visibleStart, 0)
 })
+
+test('keeps per-session reading positions in the in-memory presentation cache', () => {
+  const cache = new TranscriptPresentationCache()
+  cache.get('codex:first', { turns: [] })
+  cache.get('codex:second', { turns: [] })
+  cache.setScrollState('codex:first', {
+    scrollTop: 640,
+    anchorTurnId: 'turn-3',
+    anchorOffset: -24,
+    followOnReturn: false,
+  })
+
+  assert.deepEqual(cache.scrollState('codex:first'), {
+    scrollTop: 640,
+    anchorTurnId: 'turn-3',
+    anchorOffset: -24,
+    followOnReturn: false,
+  })
+  assert.equal(cache.scrollState('codex:second'), null)
+})

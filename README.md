@@ -87,6 +87,30 @@ wsl -d Ubuntu -- bash -lc 'codex --version; opencode --version'
 cargo run --package codex-thread-studio
 ```
 
+### Experimental remote Linux workspace
+
+The `feature/ssh-remote-studio` prototype can run the complete Studio gateway on Linux and
+display it in a Windows browser through an SSH tunnel. Sessions, Files, Git, Terminal, and
+document reads execute on Linux; content is transferred on demand instead of mounting or
+synchronizing the project directory.
+
+Start the headless server on Linux:
+
+```bash
+./target/release/codex-thread-studio --serve --listen 127.0.0.1:38080
+```
+
+Then create the tunnel from Windows PowerShell:
+
+```powershell
+ssh -N -L 38080:127.0.0.1:38080 user@linux-host
+```
+
+Keep that terminal open and open the tokenized loopback URL printed by the server. The server
+refuses non-loopback listeners, so it is reachable only through the authenticated SSH session.
+Use the same local and remote port because the gateway validates the browser origin. See
+[Remote Studio over SSH](docs/remote-studio.md) for the current scope and security boundary.
+
 ## Verification
 
 ```bash

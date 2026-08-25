@@ -111,6 +111,10 @@ impl GatewaySecurity {
         format!("{WEBSOCKET_PROTOCOL_PREFIX}{}", self.token)
     }
 
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
     pub fn initialization_script(&self) -> String {
         let origin = serde_json::to_string(&self.expected_origin).expect("origin is JSON text");
         let token = serde_json::to_string(&self.token).expect("gateway token is JSON text");

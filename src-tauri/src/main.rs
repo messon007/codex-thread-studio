@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -59,6 +59,12 @@ const MAX_EDIT_FILE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_REVIEW_FILE_BYTES: u64 = MAX_EDIT_FILE_BYTES as u64;
 const MAX_REVIEW_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_REVIEW_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
+const DEFAULT_REMOTE_STUDIO_ADDR: &str = "127.0.0.1:38080";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ServeOptions {
+    listen: SocketAddr,
+}
 
 #[derive(Clone)]
 struct GatewayState {
@@ -438,6 +444,20 @@ struct WorkspaceConflictError {
 
 fn main() {
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+    match parse_serve_options(&arguments) {
+        Ok(Some(options)) => {
+            if let Err(error) = run_remote_server(options) {
+                eprintln!("Codex Thread Studio remote server failed: {error}");
+                std::process::exit(2);
+            }
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("Codex Thread Studio remote server configuration is invalid: {error}");
+            std::process::exit(2);
+        }
+    }
     #[cfg(all(target_os = "linux", debug_assertions))]
     if dev_capture::requested(&arguments) {
         match dev_capture::run_cli(&arguments) {
@@ -477,50 +497,6 @@ fn main() {
         std::process::exit(2);
     }
 
-    let cli_path = augmented_cli_path();
-    let preferences_path = studio_preferences_path();
-    let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
-    let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
-    let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
-    let environment_path = preferences_path.with_file_name("environments.json");
-    let backend_config_path = backend_config::configuration_path(&preferences_path);
-    if let Err(error) = migrate_legacy_preferences(&preferences_path) {
-        eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
-    }
-    let startup_preferences = match load_preferences(&preferences_path) {
-        Ok(preferences) => {
-            if let Err(error) = save_preferences(&preferences_path, &preferences) {
-                eprintln!("Codex Thread Studio could not write default settings: {error}");
-            }
-            preferences
-        }
-        Err(error) => {
-            eprintln!("Codex Thread Studio could not load startup settings: {error}");
-            StudioPreferences::default()
-        }
-    };
-    let (codex_binary, opencode_binary, runtime) =
-        backend_configuration(&startup_preferences, cli_path);
-    let configured_backends = backend_config::load(&backend_config_path);
-    if let Some(error) = &configured_backends.error {
-        eprintln!("Codex Thread Studio could not load local backends: {error}");
-    }
-    let codex = CodexAppServer::new(codex_binary.clone(), runtime.clone());
-    let (codex_backends, backend_descriptors) = build_backend_registry(
-        &codex_binary,
-        codex.clone(),
-        configured_backends.backends,
-        runtime.clone(),
-    );
-    if let Err(error) = favorites::initialize(&favorites_path) {
-        eprintln!("Codex Thread Studio could not initialize favorites: {error}");
-    }
-    if let Err(error) = session_map::initialize(&session_maps_path) {
-        eprintln!("Codex Thread Studio could not initialize session maps: {error}");
-    }
-    if let Err(error) = epub_reader::initialize(&epub_reading_path) {
-        eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
-    }
     let gateway_listener = TcpListener::bind("127.0.0.1:0")
         .expect("failed to reserve a local Codex Thread Studio gateway port");
     gateway_listener
@@ -538,27 +514,8 @@ fn main() {
     let embedded_browser = embedded_browser_windows::is_supported();
     #[cfg(not(any(target_os = "linux", windows)))]
     let embedded_browser = false;
+    let (state, startup_preferences) = initialize_gateway(security, embedded_browser);
     let embedded_browser_preferences = startup_preferences.browser.clone();
-    let state = GatewayState {
-        codex,
-        codex_backends: Arc::new(codex_backends),
-        backend_descriptors: Arc::new(backend_descriptors),
-        backend_config_path: Arc::new(backend_config_path),
-        backend_config_error: Arc::new(configured_backends.error),
-        opencode: OpenCodeServer::new(opencode_binary, runtime),
-        preferences_path: Arc::new(preferences_path),
-        preferences_lock: Arc::new(Mutex::new(())),
-        favorites_path: Arc::new(favorites_path),
-        favorites_lock: Arc::new(Mutex::new(())),
-        session_maps_path: Arc::new(session_maps_path),
-        session_maps_lock: Arc::new(Mutex::new(())),
-        epub_reading_path: Arc::new(epub_reading_path),
-        epub_reading_lock: Arc::new(Mutex::new(())),
-        environment_path: Arc::new(environment_path),
-        environment_lock: Arc::new(Mutex::new(())),
-        security,
-        embedded_browser,
-    };
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -616,6 +573,146 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("failed to run Codex Thread Studio desktop application");
+}
+
+fn parse_serve_options(arguments: &[OsString]) -> Result<Option<ServeOptions>, String> {
+    if !arguments.iter().any(|argument| argument == "--serve") {
+        return Ok(None);
+    }
+
+    let mut listen = DEFAULT_REMOTE_STUDIO_ADDR
+        .parse::<SocketAddr>()
+        .expect("the default remote Studio address is valid");
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].to_str() {
+            Some("--serve") => index += 1,
+            Some("--listen") => {
+                let value = arguments
+                    .get(index + 1)
+                    .and_then(|argument| argument.to_str())
+                    .ok_or_else(|| "--listen requires an IP address and port".to_string())?;
+                listen = value.parse::<SocketAddr>().map_err(|_| {
+                    format!("--listen must be an IP address and port, got {value:?}")
+                })?;
+                index += 2;
+            }
+            Some(argument) => {
+                return Err(format!("unsupported option in server mode: {argument}"));
+            }
+            None => return Err("server options must be valid UTF-8".to_string()),
+        }
+    }
+
+    if !listen.ip().is_loopback() {
+        return Err(
+            "--listen must use a loopback address; connect through an SSH tunnel".to_string(),
+        );
+    }
+    Ok(Some(ServeOptions { listen }))
+}
+
+fn run_remote_server(options: ServeOptions) -> Result<(), String> {
+    let listener = TcpListener::bind(options.listen)
+        .map_err(|error| format!("unable to bind {}: {error}", options.listen))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("unable to configure the server socket: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("unable to read the server address: {error}"))?;
+    let origin = format!("http://{address}");
+    let security = GatewaySecurity::new(origin.clone());
+    let access_url = format!("{origin}/?token={}", security.token());
+    let (state, _) = initialize_gateway(security, false);
+    let router = gateway_router(state);
+
+    println!("Codex Thread Studio remote server is listening on {origin}");
+    println!("Forward the same port over SSH, then open: {access_url}");
+    println!("The embedded browser is unavailable in remote browser mode; workspace files, Git, and terminals run on this host.");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("unable to start the asynchronous runtime: {error}"))?;
+    runtime.block_on(async move {
+        let listener = tokio::net::TcpListener::from_std(listener)
+            .map_err(|error| format!("unable to start the server listener: {error}"))?;
+        axum::serve(listener, router)
+            .await
+            .map_err(|error| format!("server stopped: {error}"))
+    })
+}
+
+fn initialize_gateway(
+    security: GatewaySecurity,
+    embedded_browser: bool,
+) -> (GatewayState, StudioPreferences) {
+    let cli_path = augmented_cli_path();
+    let preferences_path = studio_preferences_path();
+    let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
+    let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
+    let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
+    let environment_path = preferences_path.with_file_name("environments.json");
+    let backend_config_path = backend_config::configuration_path(&preferences_path);
+    if let Err(error) = migrate_legacy_preferences(&preferences_path) {
+        eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
+    }
+    let startup_preferences = match load_preferences(&preferences_path) {
+        Ok(preferences) => {
+            if let Err(error) = save_preferences(&preferences_path, &preferences) {
+                eprintln!("Codex Thread Studio could not write default settings: {error}");
+            }
+            preferences
+        }
+        Err(error) => {
+            eprintln!("Codex Thread Studio could not load startup settings: {error}");
+            StudioPreferences::default()
+        }
+    };
+    let (codex_binary, opencode_binary, runtime) =
+        backend_configuration(&startup_preferences, cli_path);
+    let configured_backends = backend_config::load(&backend_config_path);
+    if let Some(error) = &configured_backends.error {
+        eprintln!("Codex Thread Studio could not load local backends: {error}");
+    }
+    let codex = CodexAppServer::new(codex_binary.clone(), runtime.clone());
+    let (codex_backends, backend_descriptors) = build_backend_registry(
+        &codex_binary,
+        codex.clone(),
+        configured_backends.backends,
+        runtime.clone(),
+    );
+    if let Err(error) = favorites::initialize(&favorites_path) {
+        eprintln!("Codex Thread Studio could not initialize favorites: {error}");
+    }
+    if let Err(error) = session_map::initialize(&session_maps_path) {
+        eprintln!("Codex Thread Studio could not initialize session maps: {error}");
+    }
+    if let Err(error) = epub_reader::initialize(&epub_reading_path) {
+        eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
+    }
+    let state = GatewayState {
+        codex,
+        codex_backends: Arc::new(codex_backends),
+        backend_descriptors: Arc::new(backend_descriptors),
+        backend_config_path: Arc::new(backend_config_path),
+        backend_config_error: Arc::new(configured_backends.error),
+        opencode: OpenCodeServer::new(opencode_binary, runtime),
+        preferences_path: Arc::new(preferences_path),
+        preferences_lock: Arc::new(Mutex::new(())),
+        favorites_path: Arc::new(favorites_path),
+        favorites_lock: Arc::new(Mutex::new(())),
+        session_maps_path: Arc::new(session_maps_path),
+        session_maps_lock: Arc::new(Mutex::new(())),
+        epub_reading_path: Arc::new(epub_reading_path),
+        epub_reading_lock: Arc::new(Mutex::new(())),
+        environment_path: Arc::new(environment_path),
+        environment_lock: Arc::new(Mutex::new(())),
+        security,
+        embedded_browser,
+    };
+    (state, startup_preferences)
 }
 
 fn gateway_router(state: GatewayState) -> Router {
@@ -704,6 +801,7 @@ fn gateway_router(state: GatewayState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/bootstrap-errors.js", get(bootstrap_errors_js))
+        .route("/remote-bootstrap.js", get(remote_bootstrap_js))
         .route("/app.js", get(app_js))
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
@@ -841,6 +939,29 @@ async fn index() -> impl IntoResponse {
         ],
         Html(include_str!("../../ui/index.html")),
     )
+}
+
+async fn remote_bootstrap_js() -> impl IntoResponse {
+    let host_platform =
+        serde_json::to_string(std::env::consts::OS).expect("host platform is JSON text");
+    javascript_owned(format!(
+        r#"(() => {{
+  if (window.__CODEX_THREAD_STUDIO_GATEWAY__) return;
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const query = new URLSearchParams(window.location.search);
+  const token = fragment.get('token') || query.get('token') || '';
+  if (!/^[a-f0-9]{{32}}$/u.test(token)) return;
+  Object.defineProperty(window, '__CODEX_THREAD_STUDIO_GATEWAY__', {{
+    value: Object.freeze({{ token, hostPlatform: {host_platform}, remote: true }}),
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  }});
+  query.delete('token');
+  const remaining = query.toString();
+  window.history.replaceState(null, '', `${{window.location.pathname}}${{remaining ? `?${{remaining}}` : ''}}`);
+}})();"#
+    ))
 }
 
 async fn read_review_file(
@@ -2001,6 +2122,16 @@ fn javascript(source: &'static str) -> impl IntoResponse {
     )
 }
 
+fn javascript_owned(source: String) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        source,
+    )
+}
+
 async fn styles_css() -> impl IntoResponse {
     (
         [
@@ -3065,6 +3196,43 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    #[test]
+    fn remote_server_options_default_to_a_fixed_loopback_port() {
+        assert_eq!(
+            parse_serve_options(&[OsString::from("--serve")]),
+            Ok(Some(ServeOptions {
+                listen: "127.0.0.1:38080".parse().expect("test address"),
+            }))
+        );
+        assert_eq!(
+            parse_serve_options(&[
+                OsString::from("--serve"),
+                OsString::from("--listen"),
+                OsString::from("[::1]:45200"),
+            ]),
+            Ok(Some(ServeOptions {
+                listen: "[::1]:45200".parse().expect("test address"),
+            }))
+        );
+    }
+
+    #[test]
+    fn remote_server_options_reject_network_exposure_and_unknown_flags() {
+        let exposed = parse_serve_options(&[
+            OsString::from("--serve"),
+            OsString::from("--listen"),
+            OsString::from("0.0.0.0:45100"),
+        ]);
+        assert!(exposed
+            .expect_err("non-loopback listener must be rejected")
+            .contains("loopback"));
+
+        let unknown = parse_serve_options(&[OsString::from("--serve"), OsString::from("--public")]);
+        assert!(unknown
+            .expect_err("unknown server flag must be rejected")
+            .contains("unsupported option"));
+    }
+
     fn test_codex_backends() -> Arc<BTreeMap<String, CodexBackendInstance>> {
         Arc::new(BTreeMap::from([(
             "codex".to_string(),
@@ -3280,6 +3448,7 @@ mod tests {
             for path in [
                 "/",
                 "/bootstrap-errors.js",
+                "/remote-bootstrap.js",
                 "/app.js",
                 "/i18n.mjs",
                 "/codex-native.mjs",
@@ -3332,6 +3501,25 @@ mod tests {
                     "missing route for {path}"
                 );
             }
+
+            let bootstrap = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/remote-bootstrap.js")
+                        .body(Body::empty())
+                        .expect("bootstrap request"),
+                )
+                .await
+                .expect("remote bootstrap response");
+            let bootstrap = axum::body::to_bytes(bootstrap.into_body(), 16 * 1024)
+                .await
+                .expect("remote bootstrap body");
+            let bootstrap = std::str::from_utf8(&bootstrap).expect("UTF-8 bootstrap");
+            assert!(bootstrap.contains("fragment.get('token')"));
+            assert!(bootstrap.contains("query.get('token')"));
+            assert!(bootstrap.contains("remote: true"));
+            assert!(bootstrap.contains(std::env::consts::OS));
 
             let app_source = include_str!("../../ui/app.js");
             for module in app_source.lines().filter_map(|line| {

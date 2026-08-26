@@ -30,9 +30,9 @@
   --code-bg: #f1f4f5;
   --shadow-sm: 0 1px 2px rgb(20 35 43 / 5%);
   --shadow-md: 0 12px 34px rgb(20 35 43 / 10%);
-  --ui-font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --ui-font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --ui-font-weight: 500;
-  --workspace-font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --workspace-font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --workspace-font-size: 14px;
   --code-font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   --code-font-size: 14px;

@@ -113,7 +113,8 @@ struct TypographyPreferences {
 }
 
 fn default_workspace_font_family() -> String {
-    "Ubuntu, \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif".to_string()
+    "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif"
+        .to_string()
 }
 
 fn default_workspace_font_size() -> f64 {

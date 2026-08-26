@@ -239,10 +239,16 @@ marked.setOptions({
 const $ = (selector) => document.querySelector(selector)
 const $$ = (selector) => [...document.querySelectorAll(selector)]
 
+const defaultUiFontFamily = '"Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif'
+const legacyDefaultUiFontFamilies = new Set([
+  'Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
+  'Inter, "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
+])
+
 const typographyDefaults = Object.freeze({
-  uiFontFamily: 'Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
+  uiFontFamily: defaultUiFontFamily,
   uiFontWeight: 500,
-  workspaceFontFamily: 'Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif',
+  workspaceFontFamily: defaultUiFontFamily,
   workspaceFontSize: 14,
   codeFontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
   codeFontSize: 14,
@@ -5028,7 +5034,7 @@ async function loadPreferences() {
   }
   state.sidebarCollapsed = Boolean(saved.sidebarCollapsed)
   state.rightRailWidthRatio = normalizeRightRailWidthRatio(saved.rightRailWidthRatio ?? saved.artifactWidthRatio)
-  state.typography = normalizeTypography({ ...typographyDefaults, ...(saved.typography || {}) })
+  state.typography = normalizeTypography({ ...typographyDefaults, ...migrateDefaultFontFamilies(saved.typography) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
   state.desktopNotifications = Boolean(saved.desktopNotifications)
@@ -5590,6 +5596,13 @@ function normalizeTypography(value) {
     codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : 400,
     highContrast: Boolean(value.highContrast),
   }
+}
+
+function migrateDefaultFontFamilies(value) {
+  const typography = value && typeof value === 'object' ? { ...value } : {}
+  if (legacyDefaultUiFontFamilies.has(typography.uiFontFamily)) typography.uiFontFamily = defaultUiFontFamily
+  if (legacyDefaultUiFontFamilies.has(typography.workspaceFontFamily)) typography.workspaceFontFamily = defaultUiFontFamily
+  return typography
 }
 
 function normalizeContentWidth(value) {

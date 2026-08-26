@@ -708,6 +708,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/selection-translation.mjs", get(selection_translation_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
@@ -1793,6 +1794,10 @@ async fn codex_native_js() -> impl IntoResponse {
 
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn selection_translation_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/selection-translation.mjs"))
 }
 
 async fn backends_js() -> impl IntoResponse {
@@ -3284,6 +3289,7 @@ mod tests {
                 "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
+                "/selection-translation.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
                 "/session-catalog.mjs",

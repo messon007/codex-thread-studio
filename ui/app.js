@@ -125,6 +125,13 @@ import {
   openCodeForkBody,
   threadForkParams,
 } from './thread-fork.mjs'
+import {
+  SELECTION_TRANSLATION_INSTRUCTIONS,
+  SELECTION_TRANSLATION_SCHEMA,
+  selectionTranslationInput,
+  translationCacheKey,
+  translationTurnState,
+} from './selection-translation.mjs'
 
 import {
   annotationPromptDefaults,
@@ -312,6 +319,9 @@ const state = {
   ...createSessionMapRuntimeState(),
   hiddenCodexThreads: new Set(),
   hiddenCodexTurns: new Set(),
+  hiddenUtilityThreads: new Set(),
+  hiddenUtilityThreadNames: new Set(),
+  selectionTranslationCache: new Map(),
   router: normalizeThreadRouter(null),
   routerRuntime: createThreadRouterRuntimeState(),
 }
@@ -512,6 +522,7 @@ const reviewNotes = createReviewNotesController({
     waitForBackend: waitFor,
     loadThreads,
     selectThread,
+    translateSelection: translateSelectionWithCurrentBackend,
   },
 })
 
@@ -925,6 +936,109 @@ async function openSessionResource(resource) {
   }
   await openArtifact({ root: target.workspaceRoot, path: target.path }, { returnTool: 'resources' })
   if (target.line) jumpArtifactToLine(target.line, target.column)
+}
+
+async function translateSelectionWithCurrentBackend(value) {
+  const text = String(value || '').trim().slice(0, 16_000)
+  if (!text) throw new Error(t('Select text to translate first'))
+  if (!state.ready || !state.selectedId) throw new Error(t('The current backend is not ready for translation'))
+
+  const backend = state.backend
+  const generation = state.socketGeneration
+  const cwd = selectedThread()?.cwd || ''
+  const options = { ...currentTurnOptions() }
+  const model = options.model || selectedThread()?.model || ''
+  const cacheKey = translationCacheKey({ backend, model, effort: options.effort, text })
+  const cached = state.selectionTranslationCache.get(cacheKey)
+  if (cached) {
+    state.selectionTranslationCache.delete(cacheKey)
+    state.selectionTranslationCache.set(cacheKey, cached)
+    return cached
+  }
+
+  const utilityName = `Studio translation ${randomId()}`
+  state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
+  let threadId = ''
+  try {
+    const started = await rpc('thread/start', {
+      cwd,
+      ...(model ? { model } : {}),
+      ...(isCodexBackend(backend) ? {
+        ephemeral: true,
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        developerInstructions: SELECTION_TRANSLATION_INSTRUCTIONS,
+      } : { name: utilityName }),
+    }, 30_000)
+    threadId = String(started?.thread?.id || '')
+    if (!threadId) throw new Error(t('The current backend did not create a translation task'))
+    markUtilityThreadHidden(backend, threadId)
+    ensureTranslationBackend(backend, generation)
+
+    const turnStarted = await rpc('turn/start', {
+      threadId,
+      cwd,
+      input: [{ type: 'text', text: selectionTranslationInput(text) }],
+      ...(!isCodexBackend(backend) ? { developerInstructions: SELECTION_TRANSLATION_INSTRUCTIONS } : {}),
+      outputSchema: SELECTION_TRANSLATION_SCHEMA,
+      ...(model ? { model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
+    }, 150_000)
+    if (isCodexBackend(backend) && turnStarted?.turn?.id) {
+      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnStarted.turn.id))
+    }
+
+    const deadline = Date.now() + 150_000
+    while (Date.now() < deadline) {
+      ensureTranslationBackend(backend, generation)
+      const result = await rpc('thread/read', {
+        threadId,
+        includeTurns: true,
+        ...(!isCodexBackend(backend) ? { cwd } : {}),
+      }, 30_000)
+      const translation = translationTurnState(result?.thread)
+      if (translation.status === 'completed') {
+        state.selectionTranslationCache.set(cacheKey, translation.translation)
+        while (state.selectionTranslationCache.size > 64) {
+          state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
+        }
+        return translation.translation
+      }
+      if (translation.status === 'failed') throw new Error(t(translation.error))
+      await new Promise((resolve) => setTimeout(resolve, 350))
+    }
+    throw new Error(t('Translation timed out'))
+  } finally {
+    if (threadId) {
+      dispatchBackendRpc(backend, 'thread/delete', {
+        threadId,
+        ...(!isCodexBackend(backend) ? { cwd } : {}),
+      }, 15_000).catch((error) => {
+        console.warn('Unable to remove the hidden translation session', error)
+      })
+    }
+  }
+}
+
+function ensureTranslationBackend(backend, generation) {
+  if (state.backend !== backend || state.socketGeneration !== generation || !state.ready) {
+    throw new Error(t('Translation stopped because the current backend changed'))
+  }
+}
+
+function markUtilityThreadHidden(backend, threadId) {
+  const key = sessionRefKey(backend, threadId)
+  state.hiddenUtilityThreads.add(key)
+  if (isCodexBackend(backend)) state.hiddenCodexThreads.add(key)
+}
+
+function hiddenUtilityThread(backend, thread) {
+  const id = String(thread?.id || '')
+  const name = String(thread?.name || thread?.title || '')
+  return Boolean(
+    (id && state.hiddenUtilityThreads.has(sessionRefKey(backend, id)))
+    || (name && state.hiddenUtilityThreadNames.has(`${backend}:${name}`)),
+  )
 }
 
 function openSessionResourceSource(occurrence) {
@@ -1470,6 +1584,8 @@ function handleAppServerMessage(message) {
     renderWorkspace()
     return
   }
+  if ((message.method === 'thread/archived' || message.method === 'thread/deleted')
+    && hiddenUtilityThread(state.backend, { id: message.params?.threadId })) return
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
     const backend = state.backend
     const threadId = message.params?.threadId
@@ -1613,6 +1729,12 @@ function notifyDesktop(title, body = '') {
 function handleOpenCodeServerEvent(event) {
   const payload = event?.payload || event
   if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
+  const eventThreadId = openCodeEventThreadId(payload)
+  const eventThread = payload.properties?.info || { id: eventThreadId }
+  if (hiddenUtilityThread('opencode', eventThread)) {
+    if (eventThreadId) markUtilityThreadHidden('opencode', eventThreadId)
+    return
+  }
   if (payload.type === 'server.connected') {
     scheduleOpenCodeListRefresh()
     return
@@ -1634,7 +1756,6 @@ function handleOpenCodeServerEvent(event) {
     invalidateThreadModel('opencode', deletedId)
     return
   }
-  const eventThreadId = openCodeEventThreadId(payload)
   if (eventThreadId && openCodeCompletionSignal(payload)) scheduleOpenCodeStatusReconciliation(eventThreadId)
   updateOpenCodeReplyTime(payload, eventThreadId)
   const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
@@ -1980,8 +2101,9 @@ async function refreshActiveCodexCatalogOnFocus() {
 }
 
 function installBackendCatalog(backend, threads) {
-  state.threadsByBackend[backend] = threads
-  if (backend === state.backend) state.threads = threads
+  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(backend, thread))
+  state.threadsByBackend[backend] = visible
+  if (backend === state.backend) state.threads = visible
   renderThreadList()
 }
 
@@ -2197,8 +2319,9 @@ async function loadThreads() {
 }
 
 function setActiveThreads(threads) {
-  state.threads = threads
-  state.threadsByBackend[state.backend] = threads
+  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(state.backend, thread))
+  state.threads = visible
+  state.threadsByBackend[state.backend] = visible
 }
 
 function sidebarThreadsForBackend(backend) {

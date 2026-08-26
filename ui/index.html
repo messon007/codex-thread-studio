@@ -144,6 +144,7 @@
           <nav id="turn-navigator" class="turn-navigator hidden" aria-label="Turn navigation for the current session"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
           <div id="selection-popover" class="selection-popover hidden">
             <button id="selection-comment" type="button">Comments</button>
+            <button id="selection-translate" type="button">Translate</button>
             <button id="selection-favorite" type="button">Favorites</button>
           </div>
 
@@ -466,6 +467,18 @@
         <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>Your comment (optional)</span><textarea id="annotation-comment" rows="5" placeholder="Describe the issue and expected change, or add the selection directly to the draft."></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
         <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Add to draft</button></footer>
       </form>
+    </dialog>
+
+    <dialog id="selection-translation-dialog" class="dialog selection-translation-dialog" aria-labelledby="selection-translation-title">
+      <header class="dialog-header">
+        <div><span class="eyebrow">AI TRANSLATION</span><h2 id="selection-translation-title">Translate to Chinese</h2><p id="selection-translation-backend">Translated by the current backend.</p></div>
+        <button id="close-selection-translation" class="icon-button" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="selection-translation-body">
+        <section class="selection-translation-source"><header>Selected text</header><div id="selection-translation-source" data-no-i18n></div></section>
+        <section class="selection-translation-result"><header>Chinese translation</header><div id="selection-translation-loading" class="selection-translation-loading"><span class="artifact-spinner"></span><span>Translating with the current backend…</span></div><div id="selection-translation-output" class="selection-translation-output hidden" data-no-i18n></div><div id="selection-translation-error" class="form-error hidden"></div></section>
+      </div>
+      <footer class="dialog-footer"><button id="done-selection-translation" class="subtle-button" type="button">Close</button><button id="copy-selection-translation" class="primary-button" type="button" disabled>Copy translation</button></footer>
     </dialog>
 
     <dialog id="thread-info-dialog" class="dialog thread-info-dialog">

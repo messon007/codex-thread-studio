@@ -72,6 +72,7 @@ export function createReviewNotesController({
     waitForBackend,
     loadThreads,
     selectThread,
+    translateSelection,
   } = view
   const $ = (selector) => document.querySelector(selector)
   const $$ = (selector) => [...document.querySelectorAll(selector)]
@@ -83,6 +84,7 @@ export function createReviewNotesController({
   const reopenEpubComment = reopenEpubSource
   let annotationPersistTimer = null
   let favoritesSearchTimer = null
+  let translationGeneration = 0
 
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
@@ -93,7 +95,12 @@ export function createReviewNotesController({
     $('#open-thread-favorites')?.addEventListener('click', () => openFavoritesRail('session'))
     $('#selection-popover')?.addEventListener('mousedown', (event) => event.preventDefault())
     $('#selection-comment')?.addEventListener('click', openAnnotationFromSelection)
+    $('#selection-translate')?.addEventListener('click', () => openTranslationFromSelection().catch(showError))
     $('#selection-favorite')?.addEventListener('click', openFavoriteFromSelection)
+    $('#close-selection-translation')?.addEventListener('click', closeSelectionTranslation)
+    $('#done-selection-translation')?.addEventListener('click', closeSelectionTranslation)
+    $('#selection-translation-dialog')?.addEventListener('close', resetSelectionTranslation)
+    $('#copy-selection-translation')?.addEventListener('click', () => copySelectionTranslation().catch(showError))
     $('#close-annotation-rail')?.addEventListener('click', closeAnnotationRail)
     $('#annotation-form')?.addEventListener('submit', addAnnotation)
     $('#close-annotation-dialog')?.addEventListener('click', closeAnnotationDialog)
@@ -218,10 +225,67 @@ function positionSelectionPopover(range, { allowFavorite }) {
   const rect = typeof range?.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : range
   if (!rect) return hideSelectionPopover()
   const popover = $('#selection-popover')
-  popover.style.left = `${Math.min(window.innerWidth - 150, Math.max(8, rect.left + rect.width / 2 - 55))}px`
-  popover.style.top = `${Math.max(8, rect.top - 39)}px`
   $('#selection-favorite').classList.toggle('hidden', !allowFavorite)
   popover.classList.remove('hidden')
+  const width = popover.offsetWidth || 190
+  const height = popover.offsetHeight || 34
+  popover.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2))}px`
+  popover.style.top = `${Math.max(8, rect.top - height - 7)}px`
+}
+
+async function openTranslationFromSelection() {
+  if (!state.pendingSelection?.quote) {
+    captureTranscriptSelection()
+    if (!state.pendingSelection?.quote) return toast(t('Select text to translate first'), 'error')
+  }
+  const quote = String(state.pendingSelection.quote).slice(0, 16_000)
+  const generation = ++translationGeneration
+  const dialog = $('#selection-translation-dialog')
+  $('#selection-translation-source').textContent = quote
+  $('#selection-translation-backend').textContent = t('Translated by the current backend: {backend}', { backend: backendDescriptor(state.backend).name })
+  $('#selection-translation-output').textContent = ''
+  $('#selection-translation-output').classList.add('hidden')
+  $('#selection-translation-error').textContent = ''
+  $('#selection-translation-error').classList.add('hidden')
+  $('#selection-translation-loading').classList.remove('hidden')
+  $('#copy-selection-translation').disabled = true
+  hideSelectionPopover(false)
+  if (dialog.open) dialog.close()
+  dialog.showModal()
+  dialog.setAttribute('aria-busy', 'true')
+  try {
+    const translation = await translateSelection(quote)
+    if (generation !== translationGeneration || !dialog.open) return
+    $('#selection-translation-output').textContent = translation
+    $('#selection-translation-output').classList.remove('hidden')
+    $('#copy-selection-translation').disabled = false
+  } catch (error) {
+    if (generation !== translationGeneration || !dialog.open) return
+    $('#selection-translation-error').textContent = t(error?.message || 'Translation failed')
+    $('#selection-translation-error').classList.remove('hidden')
+  } finally {
+    if (generation === translationGeneration && dialog.open) {
+      $('#selection-translation-loading').classList.add('hidden')
+      dialog.setAttribute('aria-busy', 'false')
+    }
+  }
+}
+
+function closeSelectionTranslation() {
+  $('#selection-translation-dialog').close()
+}
+
+function resetSelectionTranslation() {
+  translationGeneration += 1
+  state.pendingSelection = null
+  window.getSelection()?.removeAllRanges()
+}
+
+async function copySelectionTranslation() {
+  const translation = $('#selection-translation-output').textContent || ''
+  if (!translation) return
+  await navigator.clipboard.writeText(translation)
+  toast(t('Translation copied'))
 }
 
 function openAnnotationFromSelection() {

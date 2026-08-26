@@ -15,6 +15,7 @@ import {
   collectOpenCodeRootSessions,
   fetchOpenCodeDirectoryStatuses,
   normalizeOpenCodeSessions,
+  openCodeMessageId,
   openCodeModelList,
   openCodeThreadFromHistory,
   splitOpenCodeModel,
@@ -210,7 +211,7 @@ const sessionDispatch = new SessionDispatchRegistry()
   .register('opencode', {
     read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
     startTurn: async (ref, input, options = {}) => {
-      const clientUserMessageId = options.clientUserMessageId || randomId()
+      const clientUserMessageId = openCodeMessageId(options.clientUserMessageId || randomId())
       await dispatchBackendRpc(ref.backend, 'turn/start', {
         threadId: ref.id,
         clientUserMessageId,
@@ -2227,7 +2228,7 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
       method: 'POST',
       body: {
         parts,
-        ...(params.clientUserMessageId ? { messageID: params.clientUserMessageId } : {}),
+        ...(params.clientUserMessageId ? { messageID: openCodeMessageId(params.clientUserMessageId) } : {}),
         ...(model ? { model } : {}),
         ...(params.developerInstructions ? { system: params.developerInstructions } : {}),
         ...(params.outputSchema ? { format: { type: 'json_schema', schema: params.outputSchema, retryCount: 2 } } : {}),

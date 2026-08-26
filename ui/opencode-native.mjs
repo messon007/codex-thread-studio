@@ -253,6 +253,12 @@ export function splitOpenCodeModel(value) {
   return providerID && model.length ? { providerID, modelID: model.join('/') } : null
 }
 
+export function openCodeMessageId(value) {
+  const id = String(value || '').trim()
+  if (!id || id.startsWith('msg')) return id
+  return `msg_${id}`
+}
+
 function userContentFromPart(part) {
   if (part?.type === 'text') return [{ type: 'text', text: part.text || '' }]
   if (part?.type === 'file' && String(part.mime || '').startsWith('image/') && safeImageUrl(part.url)) {

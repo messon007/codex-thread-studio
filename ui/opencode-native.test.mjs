@@ -6,6 +6,7 @@ import {
   collectOpenCodeRootSessions,
   fetchOpenCodeDirectoryStatuses,
   normalizeOpenCodeSessions,
+  openCodeMessageId,
   openCodeModelList,
   openCodeThreadFromHistory,
   splitOpenCodeModel,
@@ -193,4 +194,10 @@ test('normalizes configured providers without loading the complete catalog', () 
 test('splits provider-qualified OpenCode models', () => {
   assert.deepEqual(splitOpenCodeModel('openai/gpt-5.5'), { providerID: 'openai', modelID: 'gpt-5.5' })
   assert.equal(splitOpenCodeModel('gpt-5.5'), null)
+})
+
+test('normalizes client message IDs for the OpenCode prompt schema', () => {
+  assert.equal(openCodeMessageId('19d9d838-69f0-42ef-a229-63c44fd77d99'), 'msg_19d9d838-69f0-42ef-a229-63c44fd77d99')
+  assert.equal(openCodeMessageId('msg_existing'), 'msg_existing')
+  assert.equal(openCodeMessageId(''), '')
 })

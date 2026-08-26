@@ -15,6 +15,7 @@ import {
   lineNumberAt,
   locateQuote,
   normalizeAnnotationTarget,
+  resolveMarkdownFileLink,
   resolveMarkdownImagePath,
   snapshotAnnotationSelection,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
@@ -129,6 +130,19 @@ test('resolves Markdown images from the document directory without escaping the 
   assert.equal(resolveMarkdownImagePath(file, 'https://example.com/image.png'), null)
   assert.match(documentReviewApp, /gatewayFetch\('\/studio\/review-image'/u)
   assert.match(documentReviewApp, /hydrateMarkdownImages\(file, content\)/u)
+})
+
+test('resolves generated file links with source locations', () => {
+  assert.deepEqual(
+    resolveMarkdownFileLink('/home/rui/project/docs/RICO%20Profile%20%E7%AD%96%E7%95%A5%E7%9F%A9%E9%98%B5.zh-CN.md:12:4'),
+    { path: '/home/rui/project/docs/RICO Profile \u7b56\u7565\u77e9\u9635.zh-CN.md', line: 12, column: 4 },
+  )
+  assert.deepEqual(resolveMarkdownFileLink('docs/guide.md#L8C3'), { path: 'docs/guide.md', line: 8, column: 3 })
+  assert.deepEqual(resolveMarkdownFileLink('C:\\work\\docs\\guide.md:7'), { path: 'C:\\work\\docs\\guide.md', line: 7, column: undefined })
+  assert.deepEqual(resolveMarkdownFileLink('./guide.md:5'), { path: 'guide.md', line: 5, column: undefined })
+  assert.deepEqual(resolveMarkdownFileLink('./docs/guide.md?raw=1'), { path: 'docs/guide.md', line: undefined, column: undefined })
+  assert.equal(resolveMarkdownFileLink('https://example.com/guide.md'), null)
+  assert.equal(resolveMarkdownFileLink('mailto:user@example.com'), null)
 })
 
 test('document outline stays inside the document shell as a wide overlay drawer', () => {

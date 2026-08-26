@@ -64,6 +64,7 @@ import {
   userImagesFromContent,
 } from './composer-images.mjs'
 import {
+  resolveMarkdownFileLink,
   resolveMarkdownImagePath,
 } from './document-review.mjs'
 import {
@@ -3612,11 +3613,10 @@ async function handleTranscriptClick(event) {
       await openBrowserUrl(target)
       return
     }
-    let path = target
-    try { path = decodeURIComponent(path) } catch {}
-    path = path.replace(/[?#].*$/u, '').replace(/^\.\//u, '')
-    if (!path) return
-    await openArtifact({ root: selectedThread()?.cwd, path }, { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' })
+    const file = resolveMarkdownFileLink(target)
+    if (!file) return
+    await openArtifact({ root: selectedThread()?.cwd, path: file.path }, { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' })
+    if (file.line) jumpArtifactToLine(file.line, file.column)
     return
   }
   const earlier = event.target.closest('[data-load-earlier]')

@@ -70,6 +70,33 @@ export function resolveMarkdownImagePath(file, source) {
   return segments.length ? { path: segments.join('/') } : null
 }
 
+export function resolveMarkdownFileLink(value) {
+  let raw = String(value || '').trim()
+  if (!raw || raw.startsWith('#') || /^https?:\/\//iu.test(raw)) return null
+
+  const fragmentLocation = raw.match(/#L(\d+)(?:C(\d+))?$/iu)
+  if (fragmentLocation) raw = raw.slice(0, fragmentLocation.index)
+  else raw = raw.replace(/[?#].*$/u, '')
+
+  try {
+    raw = decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+  raw = raw.replace(/^\.\//u, '')
+  if (!raw || raw.includes('\0')) return null
+
+  const location = raw.match(/^(.*?)(?::(\d+))(?::(\d+))?$/u)
+  const path = location?.[1] || raw
+  const unsupportedScheme = /^[a-z][a-z\d+.-]*:/iu.test(path) && !/^[a-z]:[\\/]/iu.test(path)
+  if (!path || unsupportedScheme) return null
+  return {
+    path,
+    line: Number(location?.[2] || fragmentLocation?.[1] || 0) || undefined,
+    column: Number(location?.[3] || fragmentLocation?.[2] || 0) || undefined,
+  }
+}
+
 export function normalizeAnnotationTarget(draft = {}) {
   const target = draft.target
   if (target?.kind === 'fileRange' && target.filePath) {

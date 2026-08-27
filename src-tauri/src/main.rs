@@ -743,6 +743,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
+        .route("/comment-markers.mjs", get(comment_markers_js))
         .route(
             "/browser-comment-provider.mjs",
             get(browser_comment_provider_js),
@@ -1895,6 +1896,10 @@ async fn workspace_editor_js() -> impl IntoResponse {
 
 async fn comment_core_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/comment-core.mjs"))
+}
+
+async fn comment_markers_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/comment-markers.mjs"))
 }
 
 async fn browser_comment_provider_js() -> impl IntoResponse {
@@ -3306,6 +3311,7 @@ mod tests {
                 "/document-outline.mjs",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
+                "/comment-markers.mjs",
                 "/session-resources.mjs",
                 "/session-resources-ui.mjs",
                 "/favorites.mjs",
@@ -3340,13 +3346,48 @@ mod tests {
                 );
             }
 
-            let app_source = include_str!("../../ui/app.js");
-            for module in app_source.lines().filter_map(|line| {
-                let start = line.find("from './")? + "from '.".len();
-                let remainder = &line[start..];
-                let end = remainder.find('\'')?;
-                Some(remainder[..end].to_string())
-            }) {
+            fn relative_imports(source: &str) -> Vec<String> {
+                source
+                    .lines()
+                    .filter_map(|line| {
+                        ["from '", "import '", "from \"", "import \""]
+                            .into_iter()
+                            .find_map(|marker| {
+                                let start = line.find(marker)? + marker.len();
+                                let remainder = &line[start..];
+                                let quote = marker.chars().last()?;
+                                let end = remainder.find(quote)?;
+                                let specifier = &remainder[..end];
+                                specifier.starts_with("./").then(|| specifier.to_string())
+                            })
+                    })
+                    .collect()
+            }
+
+            fn resolve_import(importer: &str, specifier: &str) -> String {
+                let parent = importer.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let mut segments = parent
+                    .split('/')
+                    .filter(|segment| !segment.is_empty())
+                    .collect::<Vec<_>>();
+                for segment in specifier.split('/') {
+                    match segment {
+                        "" | "." => {}
+                        ".." => {
+                            segments.pop();
+                        }
+                        value => segments.push(value),
+                    }
+                }
+                format!("/{}", segments.join("/"))
+            }
+
+            let mut pending = vec!["/app.js".to_string()];
+            let mut visited = BTreeSet::new();
+            while let Some(module) = pending.pop() {
+                if !visited.insert(module.clone()) {
+                    continue;
+                }
                 let response = router
                     .clone()
                     .oneshot(
@@ -3361,6 +3402,15 @@ mod tests {
                     response.status(),
                     StatusCode::OK,
                     "missing route for imported module {module}"
+                );
+                let source = axum::body::to_bytes(response.into_body(), 5 * 1024 * 1024)
+                    .await
+                    .expect("imported module body");
+                let source = std::str::from_utf8(&source).expect("UTF-8 frontend module");
+                pending.extend(
+                    relative_imports(source)
+                        .into_iter()
+                        .map(|specifier| resolve_import(&module, &specifier)),
                 );
             }
         });

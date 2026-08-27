@@ -331,6 +331,7 @@ const state = {
   hiddenUtilityThreads: new Set(),
   hiddenUtilityThreadNames: new Set(),
   selectionTranslationCache: new Map(),
+  selectionTranslationTasks: new Map(),
   router: normalizeThreadRouter(null),
   routerRuntime: createThreadRouterRuntimeState(),
 }
@@ -976,6 +977,7 @@ async function translateSelectionWithCurrentBackend(value) {
   const utilityName = `Studio translation ${randomId()}`
   state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
   let threadId = ''
+  let translationTask = null
   try {
     const started = await rpc('thread/start', {
       cwd,
@@ -991,6 +993,12 @@ async function translateSelectionWithCurrentBackend(value) {
     if (!threadId) throw new Error(t('The current backend did not create a translation task'))
     markUtilityThreadHidden(backend, threadId)
     ensureTranslationBackend(backend, generation)
+    if (isCodexBackend(backend)) {
+      const model = createCodexViewModel()
+      model.threadId = threadId
+      translationTask = { backend, threadId, turnId: '', model }
+      state.selectionTranslationTasks.set(sessionRefKey(backend, threadId), translationTask)
+    }
 
     const turnStarted = await rpc('turn/start', {
       threadId,
@@ -1002,18 +1010,24 @@ async function translateSelectionWithCurrentBackend(value) {
       ...(options.effort ? { effort: options.effort } : {}),
     }, 150_000)
     if (isCodexBackend(backend) && turnStarted?.turn?.id) {
-      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnStarted.turn.id))
+      const turnId = String(turnStarted.turn.id)
+      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnId))
+      translationTask.turnId ||= turnId
+      if (!translationTask.model.turns.some((turn) => String(turn.id) === turnId)) {
+        applyCodexNotification(translationTask.model, {
+          method: 'turn/started',
+          params: { threadId, turn: turnStarted.turn },
+        })
+      }
     }
 
     const deadline = Date.now() + 150_000
     while (Date.now() < deadline) {
       ensureTranslationBackend(backend, generation)
-      const result = await rpc('thread/read', {
-        threadId,
-        includeTurns: true,
-        ...(!isCodexBackend(backend) ? { cwd } : {}),
-      }, 30_000)
-      const translation = translationTurnState(result?.thread)
+      const thread = isCodexBackend(backend)
+        ? translationTask?.model
+        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread
+      const translation = translationTurnState(thread)
       if (translation.status === 'completed') {
         state.selectionTranslationCache.set(cacheKey, translation.translation)
         while (state.selectionTranslationCache.size > 64) {
@@ -1022,17 +1036,26 @@ async function translateSelectionWithCurrentBackend(value) {
         return translation.translation
       }
       if (translation.status === 'failed') throw new Error(t(translation.error))
-      await new Promise((resolve) => setTimeout(resolve, 350))
+      await new Promise((resolve) => setTimeout(resolve, isCodexBackend(backend) ? 100 : 350))
     }
     throw new Error(t('Translation timed out'))
   } finally {
+    if (threadId) state.selectionTranslationTasks.delete(sessionRefKey(backend, threadId))
     if (threadId) {
       dispatchBackendRpc(backend, 'thread/delete', {
         threadId,
         ...(!isCodexBackend(backend) ? { cwd } : {}),
       }, 15_000).catch((error) => {
         console.warn('Unable to remove the hidden translation session', error)
+      }).finally(() => {
+        const threadKey = sessionRefKey(backend, threadId)
+        state.hiddenUtilityThreads.delete(threadKey)
+        state.hiddenCodexThreads.delete(threadKey)
+        if (translationTask?.turnId) state.hiddenCodexTurns.delete(routerRuntimeKey(backend, translationTask.turnId))
+        state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
       })
+    } else {
+      state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
     }
   }
 }
@@ -1056,6 +1079,28 @@ function hiddenUtilityThread(backend, thread) {
     (id && state.hiddenUtilityThreads.has(sessionRefKey(backend, id)))
     || (name && state.hiddenUtilityThreadNames.has(`${backend}:${name}`)),
   )
+}
+
+function captureSelectionTranslationNotification(backend, message) {
+  const params = message?.params || {}
+  const threadId = String(params.threadId || params.thread?.id || params.turn?.threadId || '')
+  const turnId = String(params.turnId || params.turn?.id || '')
+  let task = threadId
+    ? state.selectionTranslationTasks.get(sessionRefKey(backend, threadId))
+    : null
+  if (!task && turnId) {
+    task = [...state.selectionTranslationTasks.values()]
+      .find((candidate) => candidate.backend === backend && candidate.turnId === turnId)
+  }
+  if (!task) return false
+  if (turnId && task.turnId && task.turnId !== turnId) return false
+  if (turnId) task.turnId ||= turnId
+  if (message.id != null && message.method) {
+    sendRaw({ id: message.id, error: { code: -32601, message: 'Translation tasks do not support interactive requests' } })
+    return true
+  }
+  applyCodexNotification(task.model, message)
+  return true
 }
 
 function openSessionResourceSource(occurrence) {
@@ -1587,6 +1632,8 @@ function handleAppServerMessage(message) {
     else pending.resolve(message.result)
     return
   }
+
+  if (captureSelectionTranslationNotification(backend, message)) return
 
   if (message.method === 'thread/started' && message.params?.thread) {
     if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(sessionRefKey(state.backend, message.params.thread.id))) return
@@ -3209,7 +3256,7 @@ function renderPresentationBlock(block, turnId, options = {}) {
   if (block.type === 'user') return renderItem(block.item, turnId)
   if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
-  if (block.type === 'error') return `<div class="turn-error" role="alert"><strong>${t('Execution failed')}</strong><span>${escapeHtml(block.message)}</span></div>`
+  if (block.type === 'error') return `<div class="turn-error" role="alert"><span class="message-track-mark turn-error-mark" aria-hidden="true">${conversationTrackIcon('failed')}</span><div class="turn-error-content"><strong>${t('Execution failed')}</strong><span>${escapeHtml(block.message)}</span></div></div>`
   return ''
 }
 
@@ -3219,7 +3266,7 @@ function conversationTrackIcon(kind) {
     question: '<path d="m6.2 4.7 4.5 4.3-4.5 4.3"></path>',
     response: '<circle cx="9" cy="9" r="4.6"></circle>',
     completed: '<path d="m4.5 9.1 3 3.1 6-6.2"></path>',
-    failed: '<path d="M9 4.2v6.2"></path><path d="M9 13.5v.1"></path>',
+    failed: '<path d="M9 2.8 16 15H2Z"></path><path d="M9 6.5v4.2"></path><path d="M9 13v.1"></path>',
   }
   return `<svg class="track-icon track-icon-${kind}" viewBox="0 0 18 18" focusable="false">${shapes[kind] || shapes.response}</svg>`
 }
@@ -3649,7 +3696,7 @@ async function renderMermaidBlock(block, generation) {
   }
   const config = mermaidInitializeConfig(state.mermaid, {
     dark: state.theme === 'dark',
-    fontFamily: state.typography.uiFontFamily,
+    fontFamily: state.typography.contentFontFamily,
   })
   const configSignature = JSON.stringify(config)
   if (mermaidInitializedConfig !== configSignature) {
@@ -3858,7 +3905,7 @@ function renderRawActivityEntry(entry) {
   const item = entry.item || {}
   if (entry.kind === 'command') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
-    return `<pre><code>$ ${escapeHtml(command)}${item.aggregatedOutput ? `\n\n${escapeHtml(item.aggregatedOutput)}` : ''}</code></pre>`
+    return `<pre class="activity-raw-code"><code>$ ${escapeHtml(command)}${item.aggregatedOutput ? `\n\n${escapeHtml(item.aggregatedOutput)}` : ''}</code></pre>`
   }
   if (entry.kind === 'reasoning') {
     const content = arrayText(item.summary) || arrayText(item.content) || ''
@@ -3867,13 +3914,13 @@ function renderRawActivityEntry(entry) {
   if (entry.kind === 'progress') return `<div class="markdown-body compact-markdown">${renderMarkdown(sessionMapVisibleText(item.text || ''))}</div>`
   if (entry.kind === 'change') {
     const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')
-    return `<pre><code>${escapeHtml(changes)}</code></pre>`
+    return `<pre class="activity-raw-code"><code>${escapeHtml(changes)}</code></pre>`
   }
   if (entry.kind === 'plan') {
     const rows = (item.plan || []).map((step) => `${step.status || 'pending'}  ${step.step || ''}`).join('\n')
-    return `<pre><code>${escapeHtml([item.explanation || '', rows].filter(Boolean).join('\n\n'))}</code></pre>`
+    return `<pre class="activity-raw-text">${escapeHtml([item.explanation || '', rows].filter(Boolean).join('\n\n'))}</pre>`
   }
-  return `<pre><code>${escapeHtml(valueText(item))}</code></pre>`
+  return `<pre class="activity-raw-text">${escapeHtml(valueText(item))}</pre>`
 }
 
 function truncateForDisplay(value, max = 100) {
@@ -5505,10 +5552,10 @@ function applyAppearance() {
   root.style.setProperty('--ui-font-family', state.typography.uiFontFamily)
   root.style.setProperty('--ui-font-size', `${state.typography.uiFontSize}px`)
   root.style.setProperty('--ui-font-weight', state.typography.uiFontWeight)
+  root.style.setProperty('--ui-font-emphasis', Math.min(700, state.typography.uiFontWeight + 100))
   root.style.setProperty('--content-font-family', state.typography.contentFontFamily)
   root.style.setProperty('--content-font-size', `${state.typography.contentFontSize}px`)
   root.style.setProperty('--content-font-weight', state.typography.contentFontWeight)
-  root.style.setProperty('--activity-font-weight', Math.max(400, state.typography.contentFontWeight - 100))
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)

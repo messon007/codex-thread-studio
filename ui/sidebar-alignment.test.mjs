@@ -12,17 +12,25 @@ function rule(selector) {
 }
 
 test('brand geometry matches the Agent Deck Studio sidebar contract', () => {
-  assert.match(html, /<strong>Codex Thread Studio<\/strong>\s*<span>Codex Desktop<\/span>/)
+  assert.match(html, /<div class="brand-copy">\s*<strong>Codex Thread Studio<\/strong>\s*<\/div>/)
+  assert.doesNotMatch(html, /Codex Desktop/u)
   assert.match(rule('.brand-row'), /height:\s*74px/)
+  assert.match(rule('.brand-row'), /display:\s*flex/)
+  assert.match(rule('.brand-row'), /gap:\s*9px/)
   assert.doesNotMatch(rule('.brand-row'), /border-bottom/)
   assert.match(rule('.brand-row'), /padding:\s*16px 18px/)
   assert.match(rule('.brand-mark'), /width:\s*38px/)
   assert.match(rule('.brand-mark'), /height:\s*38px/)
   assert.match(rule('.brand-mark'), /border-radius:\s*11px/)
+  assert.match(html, /class="brand-mark"[^>]*><svg viewBox="0 0 24 24">/u)
+  assert.match(rule('.brand-mark svg'), /width:\s*21px/)
   assert.match(rule('.brand-copy strong'), /font-size:\s*16px/)
   assert.match(rule('.brand-copy strong'), /white-space:\s*nowrap/)
-  assert.match(rule('.brand-copy span'), /font-size:\s*11px/)
-  assert.match(rule('.brand-copy span'), /margin-top:\s*3px/)
+  assert.match(rule('.brand-copy'), /height:\s*38px/)
+  assert.match(rule('.brand-copy'), /align-items:\s*center/)
+  assert.match(rule('.brand-copy'), /justify-content:\s*flex-start/)
+  assert.match(html, /class="studio-avatar"[^>]*><svg viewBox="0 0 24 24">/u)
+  assert.match(rule('.studio-avatar svg'), /width:\s*16px/)
 })
 
 test('application actions live in an extensible footer menu instead of the brand row', () => {
@@ -82,4 +90,14 @@ test('the preparing spinner shares the conversation-track center with message ic
   assert.match(rule('.work-placeholder'), /padding:\s*0 3px/u)
   assert.match(rule('.work-placeholder'), /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
   assert.match(rule('.work-placeholder'), /gap:\s*9px/u)
+})
+
+test('turn failures use the conversation track and preserve message text alignment', () => {
+  assert.match(app, /class="message-track-mark turn-error-mark"[^>]*>\$\{conversationTrackIcon\('failed'\)\}/u)
+  assert.match(app, /class="turn-error-content"><strong>\$\{t\('Execution failed'\)\}<\/strong><span>/u)
+  assert.match(rule('.turn-error'), /padding:\s*0 3px/u)
+  assert.match(rule('.turn-error'), /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  assert.match(rule('.turn-error'), /gap:\s*9px/u)
+  assert.match(rule('.turn-error-content'), /margin-inline:\s*-8px/u)
+  assert.match(rule('.turn-error-content'), /padding:\s*6px 8px/u)
 })

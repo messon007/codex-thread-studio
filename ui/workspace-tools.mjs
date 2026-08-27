@@ -296,15 +296,16 @@ export function createWorkspaceTools({
     }
     const host = document.createElement('div')
     host.className = 'workspace-terminal-xterm'
-    const codeFontSize = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--code-font-size')) || 14
+    const rootStyle = getComputedStyle(document.documentElement)
+    const codeFontSize = Number.parseFloat(rootStyle.getPropertyValue('--code-font-size')) || 14
     const view = new Terminal({
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--code-font-family').trim() || 'monospace',
+      fontFamily: rootStyle.getPropertyValue('--code-font-family').trim() || 'monospace',
       fontSize: codeFontSize,
-      fontWeight: '500',
+      fontWeight: rootStyle.getPropertyValue('--code-font-weight').trim() || '500',
       letterSpacing: 0,
       lineHeight: 1.2,
       scrollback: 10_000,

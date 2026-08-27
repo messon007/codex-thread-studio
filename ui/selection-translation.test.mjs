@@ -42,9 +42,17 @@ test('selection translation stays bound to the current backend', () => {
   assert.match(implementation, /const backend = state\.backend/u)
   assert.match(implementation, /await rpc\('thread\/start'/u)
   assert.match(implementation, /await rpc\('turn\/start'/u)
-  assert.match(implementation, /await rpc\('thread\/read'/u)
+  assert.match(implementation, /isCodexBackend\(backend\)[\s\S]*translationTask\?\.model/u)
+  assert.match(implementation, /await rpc\('thread\/read', \{ threadId, includeTurns: true, cwd \}/u)
   assert.match(implementation, /ensureTranslationBackend\(backend, generation\)/u)
   assert.doesNotMatch(implementation, /switchBackend|backend\s*=\s*['"]codex['"]/u)
+})
+
+test('ephemeral Codex translations are assembled from notifications without reading turns', () => {
+  assert.match(app, /selectionTranslationTasks: new Map\(\)/u)
+  assert.match(app, /function captureSelectionTranslationNotification/u)
+  assert.match(app, /captureSelectionTranslationNotification\(backend, message\)/u)
+  assert.match(app, /applyCodexNotification\(task\.model, message\)/u)
 })
 
 test('Translate shares the selection popover and opens a backend-labelled result dialog', () => {

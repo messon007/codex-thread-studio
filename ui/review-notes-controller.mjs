@@ -3,6 +3,7 @@ import {
   commentSelectionSnapshot,
   createCommentDraft,
 } from './comment-core.mjs'
+import { locateCommentIntervals } from './comment-markers.mjs'
 import {
   chatCommentSource,
   documentCommentSource,
@@ -29,6 +30,7 @@ export function createReviewNotesState() {
     annotationAdditional: {},
     pendingSelection: null,
     pendingAnnotation: null,
+    editingAnnotationId: null,
     favorites: [],
     favoriteIndex: [],
     favoriteTotal: 0,
@@ -90,6 +92,8 @@ export function createReviewNotesController({
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
     $('#composer-review-insert')?.addEventListener('click', insertAnnotations)
     $('#transcript')?.addEventListener('mouseup', captureTranscriptSelection)
+    $('#transcript')?.addEventListener('click', handleCommentMarkerClick)
+    $('#transcript')?.addEventListener('keydown', handleCommentMarkerKeydown)
     $('#artifact-content')?.addEventListener('mouseup', captureArtifactSelection)
     $('#open-thread-comments')?.addEventListener('click', openAnnotationRail)
     $('#open-thread-favorites')?.addEventListener('click', () => openFavoritesRail('session'))
@@ -172,8 +176,10 @@ export function createReviewNotesController({
 
 function captureTranscriptSelection() {
   const selection = window.getSelection()
-  const text = selection?.toString().trim()
+  const rawText = selection?.toString() || ''
+  const text = rawText.trim()
   if (!text || selection.rangeCount === 0) return hideSelectionPopover()
+  const excerpt = text.slice(0, 16000)
   const range = selection.getRangeAt(0)
   const transcript = $('#transcript')
   if (!transcript.contains(range.commonAncestorContainer)) return hideSelectionPopover()
@@ -182,16 +188,29 @@ function captureTranscriptSelection() {
     : range.commonAncestorContainer.parentElement
   const item = element?.closest('[data-item-id]')
   const turn = element?.closest('[data-turn-id]')
+  const body = item?.querySelector('.markdown-body')
+  const offsets = chatSelectionOffsets(range, body, rawText, excerpt.length)
   state.pendingSelection = {
-    quote: text.slice(0, 16000),
+    quote: excerpt,
     itemId: item?.dataset.itemId || null,
     turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
     source: chatCommentSource({
       itemId: item?.dataset.itemId || null,
       turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
+      ...offsets,
     }),
   }
   positionSelectionPopover(range, { allowFavorite: true })
+}
+
+function chatSelectionOffsets(range, body, rawText, excerptLength) {
+  if (!body || !body.contains(range.startContainer) || !body.contains(range.endContainer)) return {}
+  const prefix = document.createRange()
+  prefix.selectNodeContents(body)
+  prefix.setEnd(range.startContainer, range.startOffset)
+  const leadingWhitespace = rawText.length - rawText.trimStart().length
+  const startOffset = prefix.toString().length + leadingWhitespace
+  return { startOffset, endOffset: startOffset + excerptLength }
 }
 
 function captureArtifactSelection() {
@@ -295,16 +314,31 @@ function openAnnotationFromSelection() {
   }
   state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
   if (!state.pendingAnnotation) return toast('Select the text to comment on again', 'error')
-  $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
-  $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
-  $('#annotation-comment').value = ''
-  $('#annotation-comment').placeholder = state.pendingAnnotation.source?.provider === 'epub'
+  populateAnnotationDialog(state.pendingAnnotation)
+}
+
+function populateAnnotationDialog(annotation, { editing = false } = {}) {
+  state.pendingAnnotation = annotation
+  state.editingAnnotationId = editing ? annotation.id : null
+  $('#annotation-dialog-title').textContent = t(editing ? 'Edit comment' : 'Comment on selection')
+  $('#save-annotation').textContent = t(editing ? 'Save changes' : 'Add to draft')
+  $('#annotation-quote').textContent = annotation.excerpt
+  $('#annotation-source-hint').textContent = commentSources.describe(annotation, commentProviderContext(0))
+  $('#annotation-comment').value = editing ? annotation.note || '' : ''
+  $('#annotation-comment').placeholder = annotation.source?.provider === 'epub'
     ? t('For example: explain the core meaning, context, and key concepts in this passage.')
     : t('Describe the issue and expected change, or add the selection directly to the draft.')
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
   $('#annotation-dialog').showModal()
   setTimeout(() => $('#annotation-comment').focus(), 30)
+}
+
+function openAnnotationEditor(id) {
+  const annotation = currentAnnotations().find((draft) => draft.id === id)
+  if (!annotation) return
+  hideSelectionPopover()
+  populateAnnotationDialog(annotation, { editing: true })
 }
 
 function openFavoriteFromSelection() {
@@ -346,6 +380,7 @@ function hideSelectionPopover(clear = true) {
 function closeAnnotationDialog() {
   $('#annotation-dialog').close()
   state.pendingAnnotation = null
+  state.editingAnnotationId = null
   state.pendingSelection = null
   window.getSelection()?.removeAllRanges()
 }
@@ -365,18 +400,24 @@ function addAnnotation(event) {
     return
   }
   const drafts = currentAnnotations()
-  if (drafts.length >= 32) {
+  const editingId = state.editingAnnotationId
+  if (!editingId && drafts.length >= 32) {
     errorBox.textContent = 'A session can keep up to 32 comments.'
     errorBox.classList.remove('hidden')
     return
   }
   const draft = createCommentDraft({ ...annotation, note: comment }, { registry: commentSources })
-  state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
+  if (editingId) {
+    if (!drafts.some((candidate) => candidate.id === editingId)) return closeAnnotationDialog()
+    state.annotationDrafts[selectedStateKey()] = drafts.map((candidate) => candidate.id === editingId ? draft : candidate)
+  } else {
+    state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
+  }
   persistPreferences()
   closeAnnotationDialog()
   renderAnnotationRail()
   renderComposerReviewContext()
-  toast('Comment added to reply draft')
+  toast(editingId ? 'Comment updated' : 'Comment added to reply draft')
 }
 
 function openAnnotationRail() {
@@ -412,7 +453,114 @@ function renderAnnotationRail() {
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
   $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
+  $$('.annotation-card').forEach((card) => card.addEventListener('click', (event) => {
+    if (!event.target.closest('button')) openAnnotationEditor(card.dataset.draftId)
+  }))
+  renderChatCommentMarkers()
   renderComposerReviewContext()
+}
+
+function renderChatCommentMarkers() {
+  const transcript = $('#transcript')
+  if (!transcript) return
+  clearChatCommentMarkers(transcript)
+  const byItem = new Map()
+  for (const draft of currentAnnotations()) {
+    if (draft.source?.provider !== 'chat') continue
+    const { turnId, itemId } = draft.source.anchor || {}
+    if (!turnId || !itemId) continue
+    const key = `${turnId}\u0000${itemId}`
+    if (!byItem.has(key)) byItem.set(key, { turnId, itemId, drafts: [] })
+    byItem.get(key).drafts.push(draft)
+  }
+  for (const group of byItem.values()) {
+    const body = renderedItem(group.turnId, group.itemId)?.querySelector('.markdown-body')
+    if (!body) continue
+    applyCommentIntervals(body, locateCommentIntervals(body.textContent || '', group.drafts))
+  }
+}
+
+function clearChatCommentMarkers(transcript) {
+  const parents = new Set()
+  transcript.querySelectorAll('.chat-comment-anchor').forEach((marker) => {
+    const parent = marker.parentNode
+    marker.replaceWith(...marker.childNodes)
+    if (parent) parents.add(parent)
+  })
+  parents.forEach((parent) => parent.normalize())
+}
+
+function applyCommentIntervals(root, intervals) {
+  if (!intervals.length) return
+  const nodes = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const start = offset
+    offset += node.data.length
+    if (node.data && intervals.some((interval) => interval.start < offset && interval.end > start)) {
+      nodes.push({ node, start, end: offset })
+    }
+  }
+  const keyboardMarkers = new Set()
+  for (const entry of nodes) {
+    const boundaries = new Set([0, entry.node.data.length])
+    const overlaps = intervals.filter((interval) => interval.start < entry.end && interval.end > entry.start)
+    overlaps.forEach((interval) => {
+      boundaries.add(Math.max(0, interval.start - entry.start))
+      boundaries.add(Math.min(entry.node.data.length, interval.end - entry.start))
+    })
+    const points = [...boundaries].sort((left, right) => left - right)
+    const fragment = document.createDocumentFragment()
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index]
+      const end = points[index + 1]
+      const value = entry.node.data.slice(start, end)
+      const ids = overlaps.filter((interval) => interval.start < entry.start + end && interval.end > entry.start + start).map((interval) => interval.id)
+      if (!ids.length) {
+        fragment.append(value)
+        continue
+      }
+      const marker = document.createElement('span')
+      marker.className = 'chat-comment-anchor'
+      marker.dataset.commentIds = JSON.stringify(ids)
+      marker.setAttribute('role', 'button')
+      const keyboardId = ids.find((id) => !keyboardMarkers.has(id))
+      marker.tabIndex = keyboardId ? 0 : -1
+      if (keyboardId) keyboardMarkers.add(keyboardId)
+      marker.title = t(ids.length > 1 ? 'View {count} comments' : 'View comment', { count: ids.length })
+      marker.setAttribute('aria-label', marker.title)
+      marker.textContent = value
+      fragment.append(marker)
+    }
+    entry.node.replaceWith(fragment)
+  }
+}
+
+function handleCommentMarkerClick(event) {
+  const marker = event.target.closest('.chat-comment-anchor')
+  if (!marker) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  openCommentsForMarker(marker)
+}
+
+function handleCommentMarkerKeydown(event) {
+  if (!['Enter', ' '].includes(event.key)) return
+  const marker = event.target.closest('.chat-comment-anchor')
+  if (!marker) return
+  event.preventDefault()
+  openCommentsForMarker(marker)
+}
+
+function openCommentsForMarker(marker) {
+  let ids = []
+  try { ids = JSON.parse(marker.dataset.commentIds || '[]') } catch { ids = [] }
+  if (ids.length === 1) return openAnnotationEditor(ids[0])
+  openAnnotationRail()
+  const card = ids.map((id) => $(`.annotation-card[data-draft-id="${CSS.escape(id)}"]`)).find(Boolean)
+  card?.scrollIntoView({ block: 'center' })
 }
 
 function annotationSourceLabel(draft, index) {
@@ -891,6 +1039,7 @@ function formatFavoriteDate(value) {
     openFavorites: openFavoritesRail,
     positionSelection: positionSelectionPopover,
     renderAnnotations: renderAnnotationRail,
+    renderCommentMarkers: renderChatCommentMarkers,
     renderComposerContext: renderComposerReviewContext,
     renderFavorites: renderFavoritesRail,
     renderSessionFavoriteCount,

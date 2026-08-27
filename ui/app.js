@@ -2983,6 +2983,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   observeTranscriptContent()
   bindApprovalButtons()
   bindActivityDetails()
+  reviewNotes.renderCommentMarkers()
   renderTurnNavigator()
   if (preserveScroll) {
     container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
@@ -3172,6 +3173,7 @@ function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
   section.replaceWith(template.content)
   observeTranscriptContent()
   bindActivityDetails()
+  reviewNotes.renderCommentMarkers()
   for (const activityId of openActivityIds) {
     const activity = renderedActivity(turnId, activityId)
     if (activity) hydrateActivityDetails(activity)

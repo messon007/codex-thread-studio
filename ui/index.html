@@ -463,9 +463,9 @@
 
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
       <form id="annotation-form">
-        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2>Comment on selection</h2><p id="annotation-source-hint">The original location is preserved and sent to the current session.</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2 id="annotation-dialog-title">Comment on selection</h2><p id="annotation-source-hint">The original location is preserved and sent to the current session.</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
         <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>Your comment (optional)</span><textarea id="annotation-comment" rows="5" placeholder="Describe the issue and expected change, or add the selection directly to the draft."></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
-        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Add to draft</button></footer>
+        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button id="save-annotation" class="primary-button" type="submit">Add to draft</button></footer>
       </form>
     </dialog>
 

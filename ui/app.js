@@ -247,9 +247,11 @@ const legacyDefaultUiFontFamilies = new Set([
 
 const typographyDefaults = Object.freeze({
   uiFontFamily: defaultUiFontFamily,
+  uiFontSize: 14,
   uiFontWeight: 500,
-  workspaceFontFamily: defaultUiFontFamily,
-  workspaceFontSize: 14,
+  contentFontFamily: defaultUiFontFamily,
+  contentFontSize: 15,
+  contentFontWeight: 500,
   codeFontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
   codeFontSize: 14,
   codeFontWeight: 500,
@@ -556,6 +558,11 @@ const documentWorkspace = createDocumentWorkspaceController({
     openResources: () => sessionResources.open(),
     renderSessionMap: () => sessionMap.render(),
     openBrowserUrl,
+    readingTypography: () => ({
+      fontFamily: state.typography.contentFontFamily,
+      fontSize: state.typography.contentFontSize,
+      fontWeight: state.typography.contentFontWeight,
+    }),
     reportClientError,
   },
 })
@@ -812,6 +819,9 @@ function bindUI() {
   })
   $('#about-button').addEventListener('click', openBackendDialog)
   $('#close-settings').addEventListener('click', () => $('#settings-dialog').close())
+  $('#cancel-settings').addEventListener('click', () => $('#settings-dialog').close())
+  $('#settings-navigation').addEventListener('click', handleSettingsNavigationClick)
+  $('#settings-navigation').addEventListener('keydown', handleSettingsNavigationKeydown)
   $('#settings-form').addEventListener('submit', saveSettings)
   $('#reset-settings').addEventListener('click', resetSettings)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
@@ -5128,9 +5138,50 @@ function persistPreferences() {
   return write
 }
 
+let activeSettingsPane = 'general'
+
 function openSettings() {
   populateSettingsForm()
   $('#settings-dialog').showModal()
+}
+
+function activateSettingsPane(requestedPane, { focus = false } = {}) {
+  const availableButtons = $$('#settings-navigation [data-settings-pane]').filter((button) => !button.classList.contains('hidden'))
+  const button = availableButtons.find((candidate) => candidate.dataset.settingsPane === requestedPane) || availableButtons[0]
+  if (!button) return
+  activeSettingsPane = button.dataset.settingsPane
+  for (const candidate of $$('#settings-navigation [data-settings-pane]')) {
+    const active = candidate === button
+    candidate.classList.toggle('active', active)
+    candidate.setAttribute('aria-selected', String(active))
+    candidate.tabIndex = active ? 0 : -1
+  }
+  for (const pane of $$('[data-settings-pane-content]')) {
+    const active = pane.dataset.settingsPaneContent === activeSettingsPane
+    pane.classList.toggle('active', active)
+    pane.classList.toggle('hidden', !active)
+  }
+  if (focus) button.focus()
+}
+
+function handleSettingsNavigationClick(event) {
+  const button = event.target.closest('[data-settings-pane]')
+  if (!button || button.classList.contains('hidden')) return
+  activateSettingsPane(button.dataset.settingsPane)
+}
+
+function handleSettingsNavigationKeydown(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+  const buttons = $$('#settings-navigation [data-settings-pane]').filter((button) => !button.classList.contains('hidden'))
+  if (!buttons.length) return
+  const currentIndex = Math.max(0, buttons.indexOf(document.activeElement))
+  let nextIndex = currentIndex
+  if (event.key === 'Home') nextIndex = 0
+  else if (event.key === 'End') nextIndex = buttons.length - 1
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + buttons.length) % buttons.length
+  else nextIndex = (currentIndex + 1) % buttons.length
+  event.preventDefault()
+  activateSettingsPane(buttons[nextIndex].dataset.settingsPane, { focus: true })
 }
 
 function populateSettingsForm() {
@@ -5138,21 +5189,26 @@ function populateSettingsForm() {
   $('#theme-select').value = state.theme
   $('#content-width').value = state.contentWidth
   $('#ui-font-family').value = state.typography.uiFontFamily
+  $('#ui-font-size').value = String(state.typography.uiFontSize)
   $('#ui-font-weight').value = String(state.typography.uiFontWeight)
-  $('#workspace-font-family').value = state.typography.workspaceFontFamily
-  $('#workspace-font-size').value = String(state.typography.workspaceFontSize)
+  $('#content-font-family').value = state.typography.contentFontFamily
+  $('#content-font-size').value = String(state.typography.contentFontSize)
+  $('#content-font-weight').value = String(state.typography.contentFontWeight)
   $('#code-font-family').value = state.typography.codeFontFamily
   $('#code-font-size').value = String(state.typography.codeFontSize)
   $('#code-font-weight').value = String(state.typography.codeFontWeight)
   $('#high-contrast').checked = state.typography.highContrast
   $('#desktop-notifications').checked = state.desktopNotifications
-  $('#wsl-settings').classList.toggle('hidden', state.hostPlatform !== 'windows')
+  const windowsHost = state.hostPlatform === 'windows'
+  $('#settings-backends-navigation').classList.toggle('hidden', !windowsHost)
+  $('#wsl-settings').classList.toggle('hidden', !windowsHost)
   $('#wsl-distribution').value = state.wsl.distribution
   $('#wsl-user').value = state.wsl.user
   $('#wsl-codex-binary').value = state.wsl.codexBinary
   $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
   $('#annotation-template').value = state.annotationPromptTemplate
   $('#settings-error').classList.add('hidden')
+  activateSettingsPane(activeSettingsPane)
 }
 
 async function saveSettings(event) {
@@ -5172,9 +5228,11 @@ async function saveSettings(event) {
   state.contentWidth = normalizeContentWidth($('#content-width').value)
   state.typography = normalizeTypography({
     uiFontFamily: $('#ui-font-family').value.trim(),
+    uiFontSize: Number($('#ui-font-size').value),
     uiFontWeight: Number($('#ui-font-weight').value),
-    workspaceFontFamily: $('#workspace-font-family').value.trim(),
-    workspaceFontSize: Number($('#workspace-font-size').value),
+    contentFontFamily: $('#content-font-family').value.trim(),
+    contentFontSize: Number($('#content-font-size').value),
+    contentFontWeight: Number($('#content-font-weight').value),
     codeFontFamily: $('#code-font-family').value.trim(),
     codeFontSize: Number($('#code-font-size').value),
     codeFontWeight: Number($('#code-font-weight').value),
@@ -5445,9 +5503,12 @@ function applyAppearance() {
   root.dataset.highContrast = String(state.typography.highContrast)
   root.dataset.markdownMode = state.markdown.mode
   root.style.setProperty('--ui-font-family', state.typography.uiFontFamily)
+  root.style.setProperty('--ui-font-size', `${state.typography.uiFontSize}px`)
   root.style.setProperty('--ui-font-weight', state.typography.uiFontWeight)
-  root.style.setProperty('--workspace-font-family', state.typography.workspaceFontFamily)
-  root.style.setProperty('--workspace-font-size', `${state.typography.workspaceFontSize}px`)
+  root.style.setProperty('--content-font-family', state.typography.contentFontFamily)
+  root.style.setProperty('--content-font-size', `${state.typography.contentFontSize}px`)
+  root.style.setProperty('--content-font-weight', state.typography.contentFontWeight)
+  root.style.setProperty('--activity-font-weight', Math.max(400, state.typography.contentFontWeight - 100))
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
@@ -5588,22 +5649,28 @@ function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (cha
 
 function normalizeTypography(value) {
   const weights = [400, 500, 600]
+  const uiFontFamily = String(value.uiFontFamily || typographyDefaults.uiFontFamily).trim().slice(0, 512) || typographyDefaults.uiFontFamily
+  const uiFontWeight = weights.includes(Number(value.uiFontWeight)) ? Number(value.uiFontWeight) : typographyDefaults.uiFontWeight
   return {
-    uiFontFamily: String(value.uiFontFamily || typographyDefaults.uiFontFamily).slice(0, 512),
-    uiFontWeight: weights.includes(Number(value.uiFontWeight)) ? Number(value.uiFontWeight) : 400,
-    workspaceFontFamily: String(value.workspaceFontFamily || typographyDefaults.workspaceFontFamily).slice(0, 512),
-    workspaceFontSize: Math.min(20, Math.max(11, Number(value.workspaceFontSize) || 14)),
-    codeFontFamily: String(value.codeFontFamily || typographyDefaults.codeFontFamily).slice(0, 512),
-    codeFontSize: Math.min(20, Math.max(11, Number(value.codeFontSize) || 13)),
-    codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : 400,
-    highContrast: Boolean(value.highContrast),
+    uiFontFamily,
+    uiFontSize: Math.min(20, Math.max(11, Number(value.uiFontSize) || typographyDefaults.uiFontSize)),
+    uiFontWeight,
+    contentFontFamily: String(value.contentFontFamily || uiFontFamily).trim().slice(0, 512) || uiFontFamily,
+    contentFontSize: Math.min(24, Math.max(11, Number(value.contentFontSize) || typographyDefaults.contentFontSize)),
+    contentFontWeight: weights.includes(Number(value.contentFontWeight)) ? Number(value.contentFontWeight) : uiFontWeight,
+    codeFontFamily: String(value.codeFontFamily || typographyDefaults.codeFontFamily).trim().slice(0, 512) || typographyDefaults.codeFontFamily,
+    codeFontSize: Math.min(20, Math.max(11, Number(value.codeFontSize) || typographyDefaults.codeFontSize)),
+    codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : typographyDefaults.codeFontWeight,
+    highContrast: value.highContrast === undefined ? typographyDefaults.highContrast : Boolean(value.highContrast),
   }
 }
 
 function migrateDefaultFontFamilies(value) {
   const typography = value && typeof value === 'object' ? { ...value } : {}
   if (legacyDefaultUiFontFamilies.has(typography.uiFontFamily)) typography.uiFontFamily = defaultUiFontFamily
-  if (legacyDefaultUiFontFamilies.has(typography.workspaceFontFamily)) typography.workspaceFontFamily = defaultUiFontFamily
+  if (!typography.contentFontFamily && typography.uiFontFamily) typography.contentFontFamily = typography.uiFontFamily
+  if (!typography.contentFontWeight && typography.uiFontWeight) typography.contentFontWeight = typography.uiFontWeight
+  if (legacyDefaultUiFontFamilies.has(typography.contentFontFamily)) typography.contentFontFamily = defaultUiFontFamily
   return typography
 }
 

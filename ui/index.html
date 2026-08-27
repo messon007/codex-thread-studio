@@ -101,7 +101,7 @@
               </button>
             </div>
             <div class="menu-anchor">
-              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="More session actions" aria-expanded="false">•••</button>
+              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="More session actions" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="19" cy="12" r="1.35"/></svg></button>
               <div id="thread-more-menu" class="action-menu thread-action-menu hidden" role="menu">
                 <button id="rename-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span>Rename session</span></button>
                 <button id="fork-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M8 5h3a5 5 0 0 1 5 5"/></svg><span>Fork session</span></button>
@@ -580,42 +580,85 @@
     <dialog id="settings-dialog" class="dialog settings-dialog">
       <form id="settings-form">
         <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>Studio settings</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body">
-          <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
-          <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
-          <label class="field"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
-          <label class="field full"><span>UI font</span><input id="ui-font-family" /></label>
-          <label class="field full"><span>Workspace font</span><input id="workspace-font-family" /></label>
-          <label class="field full"><span>Code, diff, and terminal font</span><input id="code-font-family" /></label>
-          <label class="field"><span>UI weight</span><select id="ui-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
-          <label class="field"><span>Workspace size</span><input id="workspace-font-size" type="number" min="11" max="20" /></label>
-          <label class="field"><span>Code weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
-          <label class="field"><span>Code, diff, and terminal size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
-          <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
-          <label class="check-field"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
-          <section id="wsl-settings" class="settings-section wsl-settings-card full hidden">
-            <header class="wsl-settings-header">
-              <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>Run Codex and OpenCode in WSL2 using the Linux environment configuration and credentials.</small></div></div>
-              <span class="wsl-restart-badge">Applies after restart</span>
-            </header>
-            <div class="wsl-settings-layout">
-              <section class="wsl-environment-card">
-                <header><strong>Linux runtime</strong><small>Leave blank to use the system default distribution and user.</small></header>
-                <div class="wsl-identity-grid">
-                  <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="Default WSL distribution" /></label>
-                  <label class="field"><span>Linux user</span><input id="wsl-user" maxlength="128" placeholder="Distribution default user" /></label>
+        <div class="settings-layout">
+          <nav id="settings-navigation" class="settings-navigation" aria-label="Settings categories">
+            <span class="settings-navigation-label">Categories</span>
+            <button class="settings-navigation-item active" type="button" role="tab" aria-selected="true" aria-controls="settings-pane-general" data-settings-pane="general"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>General</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-typography" data-settings-pane="typography"><span class="settings-navigation-icon typography">Aa</span><span>Typography</span></button>
+            <button id="settings-backends-navigation" class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-backends" data-settings-pane="backends"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 12h10M9 17h6"/></svg></span><span>Backends</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-comments" data-settings-pane="comments"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg></span><span>Comments</span></button>
+          </nav>
+
+          <div class="settings-panes">
+            <section id="settings-pane-general" class="settings-pane active" role="tabpanel" data-settings-pane-content="general">
+              <header class="settings-pane-header"><h3>General</h3><p>Language, appearance, and notifications used across Studio.</p></header>
+              <section class="settings-section settings-field-grid">
+                <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
+                <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+                <label class="field full"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
+                <label class="check-field full"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
+                <label class="check-field full"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
+              </section>
+            </section>
+
+            <section id="settings-pane-typography" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="typography">
+              <header class="settings-pane-header"><h3>Typography</h3><p>Use separate, consistent type systems for application controls, reading content, and technical output.</p></header>
+              <div class="typography-settings">
+                <section class="typography-profile settings-section">
+                  <header><span class="typography-profile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8.5 9h7M8.5 13h5"/></svg></span><div><strong>Interface</strong><small>Menus, navigation, controls, session lists, Files, and Git Review.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="ui-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="ui-font-size" type="number" min="11" max="20" /></label>
+                  <label class="field"><span>Weight</span><select id="ui-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+                <section class="typography-profile settings-section reading">
+                  <header><span class="typography-profile-icon typography">T</span><div><strong>Reading content</strong><small>Chat messages, progress text, document previews, comments, and saved excerpts.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="content-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="content-font-size" type="number" min="11" max="24" /></label>
+                  <label class="field"><span>Weight</span><select id="content-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+                <section class="typography-profile settings-section code">
+                  <header><span class="typography-profile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 4 4-4 4M11.5 17H19"/></svg></span><div><strong>Code, diff, and terminal</strong><small>Code blocks, source editors, Git diffs, command output, and terminal text.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="code-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
+                  <label class="field"><span>Weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+              </div>
+            </section>
+
+            <section id="settings-pane-backends" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="backends">
+              <header class="settings-pane-header"><h3>Backends</h3><p>Configure commands used to run backends on this machine.</p></header>
+              <section id="wsl-settings" class="settings-section wsl-settings-card hidden">
+                <header class="wsl-settings-header">
+                  <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>Run Codex and OpenCode in WSL2 using the Linux environment configuration and credentials.</small></div></div>
+                  <span class="wsl-restart-badge">Applies after restart</span>
+                </header>
+                <div class="wsl-settings-layout">
+                  <section class="wsl-environment-card">
+                    <header><strong>Linux runtime</strong><small>Leave blank to use the system default distribution and user.</small></header>
+                    <div class="wsl-identity-grid">
+                      <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="Default WSL distribution" /></label>
+                      <label class="field"><span>Linux user</span><input id="wsl-user" maxlength="128" placeholder="Distribution default user" /></label>
+                    </div>
+                  </section>
+                  <section class="wsl-command-list">
+                    <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex command</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>Command name or absolute path inside WSL</small></label>
+                    <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode command</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>Command name or absolute path inside WSL</small></label>
+                  </section>
                 </div>
               </section>
-              <section class="wsl-command-list">
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex command</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>Command name or absolute path inside WSL</small></label>
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode command</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>Command name or absolute path inside WSL</small></label>
+            </section>
+
+            <section id="settings-pane-comments" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="comments">
+              <header class="settings-pane-header"><h3>Comments</h3><p>Customize how selected text and review notes are sent to the current session.</p></header>
+              <section class="settings-section">
+                <label class="field full"><span>Comment prompt template</span><textarea id="annotation-template" rows="10"></textarea><small>Must contain <code>{{annotations}}</code>; optional <code>{{additional}}</code>.</small></label>
               </section>
-            </div>
-          </section>
-          <label class="field full"><span>Comment prompt template</span><textarea id="annotation-template" rows="7"></textarea><small>Must contain <code>{{annotations}}</code>; optional <code>{{additional}}</code>.</small></label>
-          <div id="settings-error" class="form-error hidden"></div>
+            </section>
+
+            <div id="settings-error" class="form-error hidden"></div>
+          </div>
         </div>
-        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button" type="button">Restore defaults</button><button class="primary-button" type="submit">Save</button></footer>
+        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button push-left" type="button">Restore defaults</button><button id="cancel-settings" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 

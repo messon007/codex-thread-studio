@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#14232a" flood-opacity=".18"/>
+    </filter>
+    <style>
+      .ui { font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; fill: #18282e; }
+      .eyebrow { font-size: 9px; font-weight: 750; letter-spacing: 1.4px; fill: #2f7d70; }
+      .title { font-size: 19px; font-weight: 650; letter-spacing: -.2px; }
+      .pane-title { font-size: 22px; font-weight: 650; letter-spacing: -.3px; }
+      .section-title { font-size: 13px; font-weight: 650; }
+      .label { font-size: 10px; font-weight: 650; }
+      .small { font-size: 10px; font-weight: 500; fill: #68777e; }
+      .tiny { font-size: 9px; font-weight: 600; fill: #809097; }
+      .value { font-size: 11px; font-weight: 500; fill: #26383f; }
+      .nav { font-size: 12px; font-weight: 550; }
+      .line { stroke: #dce3e5; stroke-width: 1; }
+      .icon { fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="840" fill="#edf1f2"/>
+  <text x="80" y="27" class="ui tiny">SETTINGS REDESIGN · STUDIO VISUAL SYSTEM</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="42" width="1040" height="758" rx="13" fill="#fbfcfc" stroke="#cfd9dc"/>
+  </g>
+
+  <!-- Existing Studio dialog header language -->
+  <path d="M93 42h1014a13 13 0 0 1 13 13v65H80V55a13 13 0 0 1 13-13z" fill="#ffffff"/>
+  <line x1="80" y1="120" x2="1120" y2="120" class="line"/>
+  <text x="104" y="70" class="ui eyebrow">STUDIO SETTINGS</text>
+  <text x="104" y="96" class="ui title">Settings</text>
+  <rect x="1065" y="62" width="32" height="32" rx="8" fill="#f7f9f9" stroke="#dce3e5"/>
+  <path d="m1077 74 8 8m0-8-8 8" fill="none" stroke="#68777e" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Settings navigation -->
+  <rect x="80" y="120" width="218" height="622" fill="#f5f7f7"/>
+  <line x1="298" y1="120" x2="298" y2="742" class="line"/>
+  <text x="103" y="154" class="ui tiny">CATEGORIES</text>
+
+  <g class="ui nav">
+    <g transform="translate(95 170)">
+      <rect width="188" height="40" rx="8" fill="transparent"/>
+      <circle cx="19" cy="20" r="13" fill="#e8edef"/>
+      <path d="M14 20h10M19 15v10" class="icon" stroke="#728188"/>
+      <text x="43" y="24">General</text>
+    </g>
+    <g transform="translate(95 214)">
+      <rect width="188" height="40" rx="8" fill="#dcece8" stroke="#c9e2dc"/>
+      <circle cx="19" cy="20" r="13" fill="#2f7d70"/>
+      <text x="19" y="24" text-anchor="middle" fill="white" font-size="11" font-weight="700">Aa</text>
+      <text x="43" y="24" fill="#205f55" font-weight="650">Typography</text>
+    </g>
+    <g transform="translate(95 258)">
+      <rect width="188" height="40" rx="8" fill="transparent"/>
+      <circle cx="19" cy="20" r="13" fill="#e8edef"/>
+      <path d="M13 16h12M15 20h8M17 24h4" class="icon" stroke="#728188"/>
+      <text x="43" y="24">Backends</text>
+    </g>
+    <g transform="translate(95 302)">
+      <rect width="188" height="40" rx="8" fill="transparent"/>
+      <circle cx="19" cy="20" r="13" fill="#e8edef"/>
+      <path d="M13 15h12v9h-7l-3 3v-3h-2z" class="icon" stroke="#728188"/>
+      <text x="43" y="24">Comments</text>
+    </g>
+  </g>
+
+  <line x1="103" y1="366" x2="275" y2="366" class="line"/>
+  <text x="103" y="393" class="ui tiny">NAVIGATION</text>
+  <text x="103" y="414" class="ui small">One level only</text>
+  <text x="103" y="432" class="ui small">Last pane is remembered</text>
+  <text x="103" y="450" class="ui small">No search for four panes</text>
+
+  <!-- Typography pane -->
+  <text x="334" y="165" class="ui pane-title">Typography</text>
+  <text x="334" y="188" class="ui small">Three consistent text systems for controls, reading, and technical output.</text>
+
+  <!-- No outer card: one semantic surface per group -->
+  <g>
+    <rect x="334" y="214" width="750" height="144" fill="transparent"/>
+    <circle cx="361" cy="244" r="13" fill="#e2ecea"/>
+    <rect x="355" y="238" width="12" height="12" rx="2" fill="none" stroke="#2f7d70" stroke-width="1.4"/>
+    <path d="M358 242h6m-6 3h4" stroke="#2f7d70" stroke-width="1.2" stroke-linecap="round"/>
+    <text x="383" y="241" class="ui section-title">Interface</text>
+    <text x="383" y="258" class="ui small">Menus, navigation, controls, session lists, Files, and Git Review.</text>
+    <text x="354" y="288" class="ui label">Font</text>
+    <rect x="354" y="297" width="402" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="366" y="321" class="ui value">Noto Sans CJK SC, Noto Sans SC…</text>
+    <path d="m738 312 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+    <text x="774" y="288" class="ui label">Base size</text>
+    <rect x="774" y="297" width="102" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="825" y="321" text-anchor="middle" class="ui value">14</text>
+    <text x="895" y="288" class="ui label">Weight</text>
+    <rect x="895" y="297" width="169" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="907" y="321" class="ui value">Medium 500</text>
+    <path d="m1046 312 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+  </g>
+
+  <g>
+    <line x1="334" y1="366" x2="1084" y2="366" class="line"/>
+    <rect x="334" y="374" width="750" height="144" fill="transparent"/>
+    <circle cx="361" cy="404" r="13" fill="#e2ecea"/>
+    <text x="361" y="408" text-anchor="middle" fill="#2f7d70" font-family="serif" font-size="14" font-weight="700">T</text>
+    <text x="383" y="401" class="ui section-title">Reading content</text>
+    <text x="383" y="418" class="ui small">Chat messages, progress text, documents, comments, and saved excerpts.</text>
+    <text x="354" y="448" class="ui label">Font</text>
+    <rect x="354" y="457" width="402" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="366" y="481" class="ui value">Noto Sans CJK SC, Noto Sans SC…</text>
+    <path d="m738 472 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+    <text x="774" y="448" class="ui label">Base size</text>
+    <rect x="774" y="457" width="102" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="825" y="481" text-anchor="middle" class="ui value">15</text>
+    <text x="895" y="448" class="ui label">Weight</text>
+    <rect x="895" y="457" width="169" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="907" y="481" class="ui value">Medium 500</text>
+    <path d="m1046 472 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+  </g>
+
+  <g>
+    <line x1="334" y1="526" x2="1084" y2="526" class="line"/>
+    <rect x="334" y="534" width="750" height="144" fill="transparent"/>
+    <circle cx="361" cy="564" r="13" fill="#e2ecea"/>
+    <path d="m355 560 4 4-4 4m7 0h5" fill="none" stroke="#2f7d70" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="383" y="561" class="ui section-title">Code, diff, and terminal</text>
+    <text x="383" y="578" class="ui small">Code blocks, source editors, Git diffs, command output, and terminal text.</text>
+    <text x="354" y="608" class="ui label">Font</text>
+    <rect x="354" y="617" width="402" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="366" y="641" class="ui value">JetBrains Mono, SFMono-Regular…</text>
+    <path d="m738 632 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+    <text x="774" y="608" class="ui label">Base size</text>
+    <rect x="774" y="617" width="102" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="825" y="641" text-anchor="middle" class="ui value">14</text>
+    <text x="895" y="608" class="ui label">Weight</text>
+    <rect x="895" y="617" width="169" height="38" rx="8" fill="#ffffff" stroke="#cfd9dc"/>
+    <text x="907" y="641" class="ui value">Medium 500</text>
+    <path d="m1046 632 4 4 4-4" fill="none" stroke="#738188" stroke-width="1.3"/>
+  </g>
+
+  <text x="334" y="708" class="ui tiny">Controls retain Studio's 38px height, 8px radius, borders, focus ring, and type scale.</text>
+
+  <!-- Existing Studio dialog footer language -->
+  <rect x="80" y="742" width="1040" height="58" fill="#ffffff"/>
+  <path d="M80 742h1040M80 742v45a13 13 0 0 0 13 13h1014a13 13 0 0 0 13-13v-45" fill="none" stroke="#dce3e5"/>
+  <rect x="104" y="755" width="127" height="34" rx="8" fill="#ffffff" stroke="#d9e1e3"/>
+  <text x="167.5" y="777" text-anchor="middle" class="ui value" fill="#68777e">Restore defaults</text>
+  <rect x="916" y="755" width="72" height="34" rx="8" fill="#ffffff" stroke="#d9e1e3"/>
+  <text x="952" y="777" text-anchor="middle" class="ui value" fill="#68777e">Cancel</text>
+  <rect x="997" y="755" width="99" height="34" rx="8" fill="#2f7d70" stroke="#2f7d70"/>
+  <text x="1046.5" y="777" text-anchor="middle" fill="#ffffff" font-family="Noto Sans CJK SC, system-ui, sans-serif" font-size="11" font-weight="650">Save</text>
+</svg>

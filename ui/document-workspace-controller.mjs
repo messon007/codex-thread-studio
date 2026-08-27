@@ -62,6 +62,7 @@ export function createDocumentWorkspaceController({
     openResources,
     renderSessionMap,
     openBrowserUrl,
+    readingTypography = () => ({}),
     reportClientError,
   } = view
   const $ = (selector) => document.querySelector(selector)
@@ -817,6 +818,7 @@ async function mountEpubReader(file, parent) {
     container: parent,
     bytes: file.bytes,
     initialState: file.readingState,
+    typography: readingTypography(),
     translate: t,
     onSelection: (selection) => captureEpubSelection(file, selection),
     onRelocate: (readingState) => {

@@ -101,7 +101,15 @@ struct BackendRegistryInfo {
 #[serde(rename_all = "camelCase")]
 struct TypographyPreferences {
     ui_font_family: String,
+    #[serde(default = "default_ui_font_size")]
+    ui_font_size: f64,
     ui_font_weight: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_weight: Option<u16>,
     #[serde(default = "default_workspace_font_family")]
     workspace_font_family: String,
     #[serde(default = "default_workspace_font_size")]
@@ -112,9 +120,12 @@ struct TypographyPreferences {
     high_contrast: bool,
 }
 
+fn default_ui_font_size() -> f64 {
+    14.0
+}
+
 fn default_workspace_font_family() -> String {
-    "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif"
-        .to_string()
+    "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif".to_string()
 }
 
 fn default_workspace_font_size() -> f64 {
@@ -2692,12 +2703,23 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     if let Some(typography) = &preferences.typography {
         if typography.ui_font_family.trim().is_empty()
             || typography.ui_font_family.len() > 512
+            || !(11.0..=20.0).contains(&typography.ui_font_size)
             || typography.code_font_family.trim().is_empty()
             || typography.code_font_family.len() > 512
             || typography.workspace_font_family.trim().is_empty()
             || typography.workspace_font_family.len() > 512
             || ![400, 500, 600].contains(&typography.ui_font_weight)
             || ![400, 500, 600].contains(&typography.code_font_weight)
+            || typography
+                .content_font_family
+                .as_ref()
+                .is_some_and(|family| family.trim().is_empty() || family.len() > 512)
+            || typography
+                .content_font_size
+                .is_some_and(|size| !(11.0..=24.0).contains(&size))
+            || typography
+                .content_font_weight
+                .is_some_and(|weight| ![400, 500, 600].contains(&weight))
             || !(11.0..=20.0).contains(&typography.workspace_font_size)
             || !(11.0..=20.0).contains(&typography.code_font_size)
         {

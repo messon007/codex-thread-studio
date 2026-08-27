@@ -422,7 +422,10 @@ mod tests {
         let root_output = repository.run_arguments(&repository_root_arguments(&nested));
         assert!(root_output.status.success());
         let root = parse_repository_root(&root_output.stdout).unwrap();
-        assert_eq!(Path::new(&root), repository.path());
+        assert_eq!(
+            std::fs::canonicalize(Path::new(&root)).unwrap(),
+            std::fs::canonicalize(repository.path()).unwrap()
+        );
 
         let status_output = repository.run_arguments(&status_arguments(&root));
         assert!(status_output.status.success());

@@ -1029,11 +1029,16 @@ async function translateSelectionWithCurrentBackend(value) {
         : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread
       const translation = translationTurnState(thread)
       if (translation.status === 'completed') {
-        state.selectionTranslationCache.set(cacheKey, translation.translation)
+        const result = {
+          translation: translation.translation,
+          sourcePronunciation: translation.sourcePronunciation,
+          translationPronunciation: translation.translationPronunciation,
+        }
+        state.selectionTranslationCache.set(cacheKey, result)
         while (state.selectionTranslationCache.size > 64) {
           state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
         }
-        return translation.translation
+        return result
       }
       if (translation.status === 'failed') throw new Error(t(translation.error))
       await new Promise((resolve) => setTimeout(resolve, isCodexBackend(backend) ? 100 : 350))

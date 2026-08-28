@@ -87,6 +87,7 @@ export function createReviewNotesController({
   let annotationPersistTimer = null
   let favoritesSearchTimer = null
   let translationGeneration = 0
+  let activeTranslationSpeechButton = null
 
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
@@ -105,6 +106,8 @@ export function createReviewNotesController({
     $('#done-selection-translation')?.addEventListener('click', closeSelectionTranslation)
     $('#selection-translation-dialog')?.addEventListener('close', resetSelectionTranslation)
     $('#copy-selection-translation')?.addEventListener('click', () => copySelectionTranslation().catch(showError))
+    $('#speak-selection-translation-source')?.addEventListener('click', () => speakSelectionTranslation('source'))
+    $('#speak-selection-translation-output')?.addEventListener('click', () => speakSelectionTranslation('output'))
     $('#close-annotation-rail')?.addEventListener('click', closeAnnotationRail)
     $('#annotation-form')?.addEventListener('submit', addAnnotation)
     $('#close-annotation-dialog')?.addEventListener('click', closeAnnotationDialog)
@@ -260,23 +263,32 @@ async function openTranslationFromSelection() {
   const quote = String(state.pendingSelection.quote).slice(0, 16_000)
   const generation = ++translationGeneration
   const dialog = $('#selection-translation-dialog')
+  stopSelectionTranslationSpeech()
   $('#selection-translation-source').textContent = quote
   $('#selection-translation-backend').textContent = t('Translated by the current backend: {backend}', { backend: backendDescriptor(state.backend).name })
   $('#selection-translation-output').textContent = ''
   $('#selection-translation-output').classList.add('hidden')
+  setSelectionTranslationPronunciation('source', '')
+  setSelectionTranslationPronunciation('output', '')
   $('#selection-translation-error').textContent = ''
   $('#selection-translation-error').classList.add('hidden')
   $('#selection-translation-loading').classList.remove('hidden')
   $('#copy-selection-translation').disabled = true
+  setSelectionTranslationSpeechButton('source', true)
+  setSelectionTranslationSpeechButton('output', false)
   hideSelectionPopover(false)
   if (dialog.open) dialog.close()
   dialog.showModal()
   dialog.setAttribute('aria-busy', 'true')
   try {
-    const translation = await translateSelection(quote)
+    const result = await translateSelection(quote)
     if (generation !== translationGeneration || !dialog.open) return
+    const translation = typeof result === 'string' ? result : String(result?.translation || '')
     $('#selection-translation-output').textContent = translation
     $('#selection-translation-output').classList.remove('hidden')
+    setSelectionTranslationPronunciation('source', result?.sourcePronunciation)
+    setSelectionTranslationPronunciation('output', result?.translationPronunciation)
+    setSelectionTranslationSpeechButton('output', Boolean(translation))
     $('#copy-selection-translation').disabled = false
   } catch (error) {
     if (generation !== translationGeneration || !dialog.open) return
@@ -296,8 +308,77 @@ function closeSelectionTranslation() {
 
 function resetSelectionTranslation() {
   translationGeneration += 1
+  stopSelectionTranslationSpeech()
   state.pendingSelection = null
   window.getSelection()?.removeAllRanges()
+}
+
+function selectionTranslationSpeechSupported() {
+  return typeof window.speechSynthesis?.speak === 'function'
+    && typeof window.SpeechSynthesisUtterance === 'function'
+}
+
+function setSelectionTranslationSpeechButton(kind, hasText) {
+  const button = $(`#speak-selection-translation-${kind}`)
+  if (!button) return
+  const supported = selectionTranslationSpeechSupported()
+  const label = kind === 'source' ? 'Listen to English' : 'Listen to Chinese'
+  button.disabled = !supported || !hasText
+  button.title = t(supported ? label : 'Speech synthesis is unavailable on this system')
+  button.setAttribute('aria-label', button.title)
+}
+
+function setSelectionTranslationPronunciation(kind, value) {
+  const container = $(`#selection-translation-${kind}-pronunciation`)
+  if (!container) return
+  const pronunciation = String(value || '').trim()
+  container.querySelector('div').textContent = pronunciation
+  container.classList.toggle('hidden', !pronunciation)
+}
+
+function resetSelectionTranslationSpeechButton(button) {
+  if (!button) return
+  button.setAttribute('aria-pressed', 'false')
+  const label = button.querySelector('span')
+  if (label) label.textContent = t('Listen')
+}
+
+function stopSelectionTranslationSpeech() {
+  const button = activeTranslationSpeechButton
+  activeTranslationSpeechButton = null
+  if (selectionTranslationSpeechSupported()) window.speechSynthesis.cancel()
+  resetSelectionTranslationSpeechButton(button)
+}
+
+function speakSelectionTranslation(kind) {
+  if (!selectionTranslationSpeechSupported()) return
+  const button = $(`#speak-selection-translation-${kind}`)
+  if (!button || button.disabled) return
+  if (activeTranslationSpeechButton === button) {
+    stopSelectionTranslationSpeech()
+    return
+  }
+  stopSelectionTranslationSpeech()
+  const text = $(`#selection-translation-${kind}`)?.textContent?.trim()
+  if (!text) return
+  const utterance = new window.SpeechSynthesisUtterance(text)
+  utterance.lang = kind === 'source' ? 'en-US' : 'zh-CN'
+  utterance.onend = () => {
+    if (activeTranslationSpeechButton !== button) return
+    activeTranslationSpeechButton = null
+    resetSelectionTranslationSpeechButton(button)
+  }
+  utterance.onerror = (event) => {
+    if (activeTranslationSpeechButton !== button) return
+    activeTranslationSpeechButton = null
+    resetSelectionTranslationSpeechButton(button)
+    if (!['canceled', 'interrupted'].includes(event.error)) toast(t('Unable to play speech'), 'error')
+  }
+  activeTranslationSpeechButton = button
+  button.setAttribute('aria-pressed', 'true')
+  const label = button.querySelector('span')
+  if (label) label.textContent = t('Stop')
+  window.speechSynthesis.speak(utterance)
 }
 
 async function copySelectionTranslation() {

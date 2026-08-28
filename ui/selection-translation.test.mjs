@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  SELECTION_TRANSLATION_INSTRUCTIONS,
+  SELECTION_TRANSLATION_SCHEMA,
   selectionTranslationInput,
   translationCacheKey,
   translationTurnState,
@@ -21,11 +23,17 @@ test('translation input treats selected text as bounded untrusted data', () => {
 
 test('translation state reads only a completed structured agent result', () => {
   assert.deepEqual(translationTurnState({ turns: [{ status: 'inProgress', items: [] }] }), { status: 'running' })
-  assert.deepEqual(translationTurnState({ turns: [{ status: 'completed', items: [{ type: 'agentMessage', text: '```json\n{"translation":"translated"}\n```' }] }] }), {
-    status: 'completed', translation: 'translated',
+  assert.deepEqual(translationTurnState({ turns: [{ status: 'completed', items: [{ type: 'agentMessage', text: '```json\n{"translation":"\u4f60\u597d","sourcePronunciation":"/həˈloʊ/","translationPronunciation":"nǐ hǎo"}\n```' }] }] }), {
+    status: 'completed', translation: '\u4f60\u597d', sourcePronunciation: '/həˈloʊ/', translationPronunciation: 'nǐ hǎo',
   })
   assert.equal(translationTurnState({ turns: [{ status: 'failed', error: { message: 'backend error' } }] }).error, 'backend error')
   assert.equal(translationTurnState({ turns: [{ status: 'completed', items: [{ type: 'agentMessage', text: 'not json' }] }] }).status, 'failed')
+})
+
+test('translation requests English IPA and tone-marked Chinese pinyin', () => {
+  assert.deepEqual(SELECTION_TRANSLATION_SCHEMA.required, ['translation', 'sourcePronunciation', 'translationPronunciation'])
+  assert.match(SELECTION_TRANSLATION_INSTRUCTIONS, /IPA/u)
+  assert.match(SELECTION_TRANSLATION_INSTRUCTIONS, /Hanyu Pinyin with tone marks/u)
 })
 
 test('translation cache remains backend and model specific', () => {
@@ -61,7 +69,14 @@ test('Translate shares the selection popover and opens a backend-labelled result
   const favorite = html.indexOf('id="selection-favorite"')
   assert.ok(comment >= 0 && comment < translate && translate < favorite)
   assert.match(html, /id="selection-translation-dialog"/u)
+  assert.match(html, /id="speak-selection-translation-source"/u)
+  assert.match(html, /id="speak-selection-translation-output"/u)
+  assert.match(html, /id="selection-translation-source-pronunciation"/u)
+  assert.match(html, /id="selection-translation-output-pronunciation"/u)
   assert.match(controller, /translateSelection\(quote\)/u)
+  assert.match(controller, /new window\.SpeechSynthesisUtterance\(text\)/u)
+  assert.match(controller, /utterance\.lang = kind === 'source' \? 'en-US' : 'zh-CN'/u)
+  assert.match(controller, /stopSelectionTranslationSpeech\(\)/u)
   assert.match(controller, /Translated by the current backend: \{backend\}/u)
   assert.match(styles, /\.selection-translation-body/u)
 })

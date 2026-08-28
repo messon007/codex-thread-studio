@@ -474,8 +474,18 @@
         <button id="close-selection-translation" class="icon-button" type="button" aria-label="Close">×</button>
       </header>
       <div class="selection-translation-body">
-        <section class="selection-translation-source"><header>Selected text</header><div id="selection-translation-source" data-no-i18n></div></section>
-        <section class="selection-translation-result"><header>Chinese translation</header><div id="selection-translation-loading" class="selection-translation-loading"><span class="artifact-spinner"></span><span>Translating with the current backend…</span></div><div id="selection-translation-output" class="selection-translation-output hidden" data-no-i18n></div><div id="selection-translation-error" class="form-error hidden"></div></section>
+        <section class="selection-translation-source">
+          <header><span>Selected text</span><button id="speak-selection-translation-source" class="translation-speak-button" type="button" aria-label="Listen to English" title="Listen to English" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5Z"/><path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/></svg><span>Listen</span></button></header>
+          <div id="selection-translation-source" data-no-i18n></div>
+          <div id="selection-translation-source-pronunciation" class="selection-translation-pronunciation hidden"><span class="selection-translation-pronunciation-label">English pronunciation · IPA</span><div data-no-i18n></div></div>
+        </section>
+        <section class="selection-translation-result">
+          <header><span>Chinese translation</span><button id="speak-selection-translation-output" class="translation-speak-button" type="button" aria-label="Listen to Chinese" title="Listen to Chinese" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5Z"/><path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/></svg><span>Listen</span></button></header>
+          <div id="selection-translation-loading" class="selection-translation-loading"><span class="artifact-spinner"></span><span>Translating with the current backend…</span></div>
+          <div id="selection-translation-output" class="selection-translation-output hidden" data-no-i18n></div>
+          <div id="selection-translation-output-pronunciation" class="selection-translation-pronunciation hidden"><span class="selection-translation-pronunciation-label">Chinese pronunciation · Pinyin</span><div data-no-i18n></div></div>
+          <div id="selection-translation-error" class="form-error hidden"></div>
+        </section>
       </div>
       <footer class="dialog-footer"><button id="done-selection-translation" class="subtle-button" type="button">Close</button><button id="copy-selection-translation" class="primary-button" type="button" disabled>Copy translation</button></footer>
     </dialog>

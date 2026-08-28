@@ -925,11 +925,17 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .selection-translation-dialog { width: min(720px, calc(100vw - 40px)); max-height: min(760px, calc(100vh - 32px)); }
 .selection-translation-body { min-height: 250px; max-height: min(570px, calc(100vh - 190px)); padding: 17px 20px 20px; display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: 12px; overflow: auto; }
 .selection-translation-body section { min-width: 0; min-height: 210px; padding: 12px 13px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); }
-.selection-translation-body section > header { margin-bottom: 9px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.selection-translation-body section > header { min-height: 29px; margin-bottom: 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--faint); font-size: var(--ui-font-xs); font-weight: var(--ui-font-emphasis); letter-spacing: .04em; text-transform: uppercase; }
+.translation-speak-button { min-height: 27px; padding: 0 7px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--muted); cursor: pointer; font-family: var(--ui-font-family); font-size: var(--ui-font-sm); font-weight: var(--ui-font-weight); letter-spacing: 0; text-transform: none; }
+.translation-speak-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.translation-speak-button:hover:not(:disabled), .translation-speak-button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--brand) 42%, var(--border)); background: var(--brand-soft); color: var(--brand); }
+.translation-speak-button:disabled { cursor: not-allowed; opacity: .42; }
 #selection-translation-source, .selection-translation-output { overflow-wrap: anywhere; color: var(--text); font-family: var(--content-font-family); font-size: max(11px, calc(var(--content-font-size) - 1px)); font-weight: var(--content-font-weight); line-height: 1.65; white-space: pre-wrap; }
 #selection-translation-source { max-height: 390px; overflow: auto; color: var(--muted); }
 .selection-translation-result { position: relative; background: color-mix(in srgb, var(--brand-soft) 38%, var(--panel)) !important; }
 .selection-translation-output { font-family: var(--content-font-family); font-size: max(11px, calc(var(--content-font-size) - 1px)); font-weight: var(--content-font-weight); }
+.selection-translation-pronunciation { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border); color: var(--muted); font-family: var(--content-font-family); font-size: var(--content-font-compact); font-weight: var(--content-font-weight); line-height: 1.65; white-space: pre-wrap; }
+.selection-translation-pronunciation-label { display: block; margin-bottom: 5px; color: var(--faint); font-family: var(--ui-font-family); font-size: var(--ui-font-xs); font-weight: var(--ui-font-emphasis); letter-spacing: .03em; text-transform: uppercase; }
 .selection-translation-loading { min-height: 140px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; }
 .selection-translation-loading .artifact-spinner { width: 15px; height: 15px; }
 .selection-translation-result .form-error { margin-top: 4px; }

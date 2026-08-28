@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { transcriptModelRevision } from './model-revision.mjs'
 
 import {
   applyOpenCodeEvent,
@@ -16,6 +17,21 @@ import {
   selectOpenCodeStartedUserMessage,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
+
+test('advances the presentation revision for selected OpenCode events only', () => {
+  const model = { turns: [], activeTurnId: null, status: 'idle', error: null }
+  assert.equal(transcriptModelRevision(model), null)
+  assert.equal(applyOpenCodeEvent(model, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-1', status: { type: 'busy' } },
+  }, 'ses-1').handled, true)
+  assert.equal(transcriptModelRevision(model), 1)
+  assert.equal(applyOpenCodeEvent(model, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-2', status: { type: 'idle' } },
+  }, 'ses-1').handled, false)
+  assert.equal(transcriptModelRevision(model), 1)
+})
 
 test('loads every root session with OpenCode cursor pagination', async () => {
   const calls = []

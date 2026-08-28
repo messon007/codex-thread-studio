@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { markTranscriptModelChanged } from './model-revision.mjs'
 import {
   TranscriptPresentationCache,
   activityOutputPreview,
@@ -200,6 +201,43 @@ test('caches completed turns and only rebuilds a changed turn', () => {
   cache.showTurn('codex:thread', model, '1')
   assert.equal(second.visibleStart, 0)
   assert.equal(second.visibleEnd, 2)
+})
+
+test('reuses tracked presentation entries without rescanning unchanged item text', () => {
+  let reads = 0
+  let text = 'Initial response'
+  const item = { id: 'answer', type: 'agentMessage' }
+  Object.defineProperty(item, 'text', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      reads += 1
+      return text
+    },
+  })
+  const model = {
+    turns: [{ id: '1', status: 'completed', items: [item] }],
+  }
+  const cache = new TranscriptPresentationCache()
+  markTranscriptModelChanged(model)
+
+  const first = cache.get('codex:tracked', model)
+  const firstPresentation = first.turns.get('1').presentation
+  assert.ok(reads > 0)
+  reads = 0
+
+  const cached = cache.get('codex:tracked', model)
+  assert.equal(cached, first)
+  assert.equal(cached.turns.get('1').presentation, firstPresentation)
+  assert.equal(reads, 0)
+  assert.equal(cache.peekCurrent('codex:tracked', model), cached)
+
+  text = 'Updated response'
+  markTranscriptModelChanged(model)
+  const updated = cache.get('codex:tracked', model)
+  assert.ok(reads > 0)
+  assert.notEqual(updated.turns.get('1').presentation, firstPresentation)
+  assert.equal(updated.turns.get('1').presentation.blocks[0].item.text, 'Updated response')
 })
 
 test('detects equal-length message replacement and incrementally rebuilds one turn', () => {

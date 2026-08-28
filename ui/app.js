@@ -194,6 +194,11 @@ import {
 import { SessionDispatchRegistry } from './session-dispatch.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
+import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
+
+const studioPerformance = createPerformanceMonitor()
+exposePerformanceMonitor(studioPerformance)
+
 const commentSources = new CommentSourceRegistry()
   .register(createChatCommentProvider())
   .register(createDocumentCommentProvider())
@@ -349,6 +354,12 @@ let composerSearchTimer = null
 let codexCatalogFocusRefreshAt = 0
 let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
+let turnNavigatorRenderFrame = null
+let turnNavigatorRenderIdle = null
+let turnNavigatorRenderTimer = null
+let turnNavigatorRenderGeneration = 0
+let turnNavigatorRenderKey = ''
+let turnNavigatorRenderedKey = ''
 let activeTurnNavigatorButton = null
 let turnNavigatorButtons = new Map()
 let turnNavigatorIds = new Set()
@@ -426,6 +437,7 @@ const sessionResources = createSessionResourcesUI({
   favoriteResource: (resource, occurrence) => reviewNotes.openFavoriteForResource(resource, occurrence),
   translate: t,
   notify: toast,
+  performanceMonitor: studioPerformance,
 })
 
 const sessionManagement = createSessionManagementUI({
@@ -2231,9 +2243,15 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
 async function fetchOpenCodeMessageHistory(threadId, directory, fetchOptions) {
   const path = `/session/${encodeURIComponent(threadId)}/message`
   const key = String(threadId || '')
+  const finishHistoryFetch = studioPerformance.start('opencode.history.fetch', {
+    backend: 'opencode',
+    threadKey: threadCatalogKey('opencode', threadId),
+  })
+  let pageCount = 0
   let latestSnapshot = { before: openCodeHistoryEventSequences.get(key) || 0, after: openCodeHistoryEventSequences.get(key) || 0 }
   const messageSnapshots = {}
   const fetchPage = async ({ limit, before }) => {
+    pageCount += 1
     const sequenceBefore = openCodeHistoryEventSequences.get(key) || 0
     const query = new URLSearchParams({ limit: String(limit) })
     if (before) query.set('before', before)
@@ -2260,16 +2278,27 @@ async function fetchOpenCodeMessageHistory(threadId, directory, fetchOptions) {
     }
     return result
   }
-  const history = await collectOpenCodeMessageHistory(fetchPage)
-  for (let attempt = 0; latestSnapshot.before !== latestSnapshot.after && attempt < 2; attempt += 1) {
-    const latest = await fetchPage({ limit: 500 })
-    if (Array.isArray(latest.messages)) {
-      history.messages = mergeOpenCodeMessagePages([history.messages, latest.messages])
+  try {
+    const history = await collectOpenCodeMessageHistory(fetchPage)
+    for (let attempt = 0; latestSnapshot.before !== latestSnapshot.after && attempt < 2; attempt += 1) {
+      const latest = await fetchPage({ limit: 500 })
+      if (Array.isArray(latest.messages)) {
+        history.messages = mergeOpenCodeMessagePages([history.messages, latest.messages])
+      }
     }
-  }
-  return {
-    ...history,
-    historyMessageSnapshots: messageSnapshots,
+    finishHistoryFetch({
+      outcome: 'loaded',
+      pageCount,
+      messageCount: Array.isArray(history.messages) ? history.messages.length : 0,
+      complete: history.complete !== false,
+    })
+    return {
+      ...history,
+      historyMessageSnapshots: messageSnapshots,
+    }
+  } catch (error) {
+    finishHistoryFetch({ outcome: 'failed', pageCount })
+    throw error
   }
 }
 
@@ -3125,6 +3154,15 @@ async function loadSelectedSessionCompanions(backend, id, { applyEnvironment = t
 }
 
 async function selectThread(id, { force = false, backend = state.backend } = {}) {
+  const threadKey = threadCatalogKey(backend, id)
+  const finishSelection = studioPerformance.start('thread.select', {
+    backend,
+    threadKey,
+    force,
+    sameBackend: backend === state.backend,
+    cacheHit: backend === state.backend && Boolean(freshThreadModel(backend, id)),
+  })
+  try {
   if (backend !== state.backend) {
     await switchBackend(backend, { selectedId: id })
     await waitFor(() => state.backend === backend && state.ready, 15_000)
@@ -3190,6 +3228,14 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   await Promise.all([mapLoad, isCodexBackend(backend) ? null : environmentLoad])
   if (state.backend !== backend || state.selectedId !== id) return
   sessionMap.maybeBootstrap(key, state.model)
+  } finally {
+    finishSelection({
+      selected: state.backend === backend && state.selectedId === id,
+      turnCount: state.backend === backend && state.selectedId === id && Array.isArray(state.model?.turns)
+        ? state.model.turns.length
+        : 0,
+    })
+  }
 }
 
 function markThreadLoaded(backend, id) {
@@ -3247,6 +3293,13 @@ async function resumeThread(id, { environmentRoot = '', environmentRevision = ''
 
 async function resumeThreadUncached(id, { environmentRoot = '', environmentRevision = '', historyEpoch = null } = {}) {
   const backend = state.backend
+  const threadKey = threadCatalogKey(backend, id)
+  const finishHistory = studioPerformance.start('history.resume', {
+    backend,
+    threadKey,
+    environmentConfigured: Boolean(environmentRoot),
+  })
+  let historyOutcome = 'discarded'
   const historyEvents = backend === 'opencode' ? beginOpenCodeHistoryEventBuffer(id) : null
   setNativeError(null)
   $('#native-connection').textContent = 'Resuming session…'
@@ -3278,16 +3331,24 @@ async function resumeThreadUncached(id, { environmentRoot = '', environmentRevis
     $('#native-connection').textContent = 'Connected'
     renderWorkspace()
     renderTranscript()
+    historyOutcome = 'loaded'
   } catch (error) {
     if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return
     if (state.backend !== backend || state.selectedId !== id) return
     abandonTranscriptHistoryRestore()
     state.model.error = error.message
     state.model.status = 'failed'
+    historyOutcome = 'failed'
     setNativeError(t('Unable to resume this {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     renderWorkspace()
   } finally {
     if (historyEvents) endOpenCodeHistoryEventBuffer(id, historyEvents)
+    finishHistory({
+      outcome: historyOutcome,
+      turnCount: state.backend === backend && state.selectedId === id && Array.isArray(state.model?.turns)
+        ? state.model.turns.length
+        : 0,
+    })
   }
 }
 
@@ -3317,6 +3378,14 @@ async function refreshSelectedThreadUncached({
   threadId,
   historyEpoch,
 }) {
+  const threadKey = threadCatalogKey(backend, threadId)
+  const finishHistory = studioPerformance.start('history.refresh', {
+    backend,
+    threadKey,
+    quiet,
+    environmentConfigured: Boolean(environmentRoot),
+  })
+  let historyOutcome = 'discarded'
   const historyEvents = backend === 'opencode' ? beginOpenCodeHistoryEventBuffer(threadId) : null
   try {
     const configuredResume = environmentRoot && isCodexBackend(backend)
@@ -3346,15 +3415,23 @@ async function refreshSelectedThreadUncached({
     renderWorkspace()
     renderTranscript()
     if (!quiet) toast('Session refreshed')
+    historyOutcome = 'loaded'
     return true
   } catch (error) {
     if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return false
     if (state.backend !== backend || state.selectedId !== threadId) return false
     if (quiet) setNativeError(t('Unable to resynchronize the current {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     else showError(error)
+    historyOutcome = 'failed'
     return false
   } finally {
     if (historyEvents) endOpenCodeHistoryEventBuffer(threadId, historyEvents)
+    finishHistory({
+      outcome: historyOutcome,
+      turnCount: state.backend === backend && state.selectedId === threadId && Array.isArray(state.model?.turns)
+        ? state.model.turns.length
+        : 0,
+    })
   }
 }
 
@@ -3949,8 +4026,10 @@ function transcriptRestoreContext(entry) {
 }
 
 function prepareTranscriptEntryForRestore() {
-  if (transcriptScrollFollower.following) return currentPresentationEntry()
-  const restore = transcriptRestoreContext({
+  const key = presentationThreadKey()
+  const cachedEntry = transcriptPresentationCache.peekCurrent(key, state.model)
+  if (transcriptScrollFollower.following) return cachedEntry || currentPresentationEntry()
+  const restore = transcriptRestoreContext(cachedEntry || {
     orderedIds: (state.model.turns || []).map((turn) => String(turn?.id || '')).filter(Boolean),
   })
   if (restore.plan.type === 'anchor') {
@@ -3968,7 +4047,7 @@ function prepareTranscriptEntryForRestore() {
     clearTranscriptLiveLayoutAnchor(restore.key)
     transcriptScrollFollower.reset()
   }
-  return currentPresentationEntry()
+  return cachedEntry || currentPresentationEntry()
 }
 
 function restoreTranscriptView(container = $('#transcript'), entry = null) {
@@ -4011,6 +4090,14 @@ function restoreTranscriptView(container = $('#transcript'), entry = null) {
 
 function renderTranscript({ preserveScroll = false, previousHeight = 0, previousTop = 0 } = {}) {
   if (!state.selectedId) return
+  const threadKey = presentationThreadKey()
+  const presentationCacheHit = Boolean(transcriptPresentationCache.peekCurrent(threadKey, state.model))
+  const finishRender = studioPerformance.start('transcript.render', {
+    backend: state.backend,
+    threadKey,
+    turnCount: Array.isArray(state.model?.turns) ? state.model.turns.length : 0,
+    presentationCacheHit,
+  })
   resetStreamingPatches()
   const container = $('#transcript')
   // A full same-session render replaces every visible node. Preserve the live
@@ -4024,7 +4111,19 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
       openActivities.set(activity.dataset.turnId, ids)
     }
   }
+  const finishPresentation = studioPerformance.start('transcript.presentation', {
+    backend: state.backend,
+    threadKey,
+    presentationCacheHit,
+  })
   const entry = prepareTranscriptEntryForRestore()
+  finishPresentation({
+    visibleTurns: Math.max(0, entry.visibleEnd - entry.visibleStart),
+  })
+  const finishDom = studioPerformance.start('transcript.dom', {
+    backend: state.backend,
+    threadKey,
+  })
   const visibleIds = entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd)
   const older = entry.visibleStart > 0
     ? `<button class="load-earlier-turns" type="button" data-load-earlier>${t('{count} earlier turns', { count: entry.visibleStart })}</button>`
@@ -4033,7 +4132,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   const later = laterCount > 0
     ? `<button class="load-earlier-turns" type="button" data-load-later>${t('{count} later turns', { count: laterCount })}</button>`
     : ''
-  container.innerHTML = older + visibleIds.map((id, offset) => {
+  const transcriptHtml = older + visibleIds.map((id, offset) => {
     const index = entry.visibleStart + offset
     const turn = entry.sourceTurns[index]
     if (String(turn?.id || '') !== id) return ''
@@ -4041,11 +4140,17 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
     if (isRouterThread()) return threadRouter.renderTurn(turn, index)
     return renderTurn(entry.turns.get(id)?.presentation, index, { openActivityIds: openActivities.get(id) || [] })
   }).join('') + later + renderApprovals()
+  container.innerHTML = transcriptHtml
+  finishDom({ visibleTurns: visibleIds.length, htmlLength: transcriptHtml.length })
+  const finishPostprocess = studioPerformance.start('transcript.postprocess', {
+    backend: state.backend,
+    threadKey,
+  })
   observeTranscriptContent()
   bindApprovalButtons()
   bindActivityDetails()
   reviewNotes.renderCommentMarkers()
-  renderTurnNavigator()
+  scheduleTurnNavigatorRender()
   if (preserveScroll) {
     container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
     captureTranscriptViewState()
@@ -4055,6 +4160,8 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   }
   captureOpeningMessage()
   sessionResources.sync()
+  finishPostprocess({ visibleTurns: visibleIds.length })
+  finishRender({ visibleTurns: visibleIds.length })
 }
 
 function markTranscriptUserScrollIntent(duration = 500) {
@@ -4168,7 +4275,54 @@ function handleTranscriptContentResize() {
   scheduleTurnNavigatorSync()
 }
 
+function cancelScheduledTurnNavigatorRender() {
+  if (turnNavigatorRenderFrame != null) cancelAnimationFrame(turnNavigatorRenderFrame)
+  if (turnNavigatorRenderIdle != null && typeof globalThis.cancelIdleCallback === 'function') {
+    globalThis.cancelIdleCallback(turnNavigatorRenderIdle)
+  }
+  if (turnNavigatorRenderTimer != null) clearTimeout(turnNavigatorRenderTimer)
+  turnNavigatorRenderFrame = null
+  turnNavigatorRenderIdle = null
+  turnNavigatorRenderTimer = null
+  turnNavigatorRenderKey = ''
+}
+
+function scheduleTurnNavigatorRender() {
+  const key = presentationThreadKey()
+  const alreadyScheduled = turnNavigatorRenderKey === key
+    && (turnNavigatorRenderFrame != null || turnNavigatorRenderIdle != null || turnNavigatorRenderTimer != null)
+  if (alreadyScheduled) return
+  cancelScheduledTurnNavigatorRender()
+  turnNavigatorRenderKey = key
+  const generation = ++turnNavigatorRenderGeneration
+  if (turnNavigatorRenderedKey !== key) $('#turn-navigator').classList.add('hidden')
+
+  const run = () => {
+    turnNavigatorRenderIdle = null
+    turnNavigatorRenderTimer = null
+    turnNavigatorRenderKey = ''
+    if (generation !== turnNavigatorRenderGeneration || key !== presentationThreadKey()) return
+    renderTurnNavigator()
+  }
+  const afterPaint = () => {
+    turnNavigatorRenderFrame = null
+    if (generation !== turnNavigatorRenderGeneration || key !== presentationThreadKey()) return
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      turnNavigatorRenderIdle = globalThis.requestIdleCallback(run, { timeout: 750 })
+    } else {
+      turnNavigatorRenderTimer = setTimeout(run, 0)
+    }
+  }
+  turnNavigatorRenderFrame = requestAnimationFrame(afterPaint)
+}
+
 function renderTurnNavigator() {
+  const threadKey = presentationThreadKey()
+  const finishRender = studioPerformance.start('turnNavigator.render', {
+    backend: state.backend,
+    threadKey,
+    turnCount: Array.isArray(state.model?.turns) ? state.model.turns.length : 0,
+  })
   const navigator = $('#turn-navigator')
   const list = $('#turn-navigator-list')
   const turns = navigableTurns(state.model.turns)
@@ -4190,12 +4344,16 @@ function renderTurnNavigator() {
     turnNavigatorButtons = new Map()
     turnNavigatorIds = new Set(items.map((item) => item.id))
     turnNavigatorSignature = signature
+    turnNavigatorRenderedKey = threadKey
+    finishRender({ buttonCount: turns.length, reused: false })
     return
   }
 
   if (signature === turnNavigatorSignature && turnNavigatorButtons.size === turns.length) {
     navigator.classList.remove('hidden')
     scheduleTurnNavigatorSync()
+    turnNavigatorRenderedKey = threadKey
+    finishRender({ buttonCount: turns.length, reused: true })
     return
   }
 
@@ -4207,8 +4365,10 @@ function renderTurnNavigator() {
     .map((button) => [button.dataset.turnNavId, button]))
   turnNavigatorIds = new Set(turnNavigatorButtons.keys())
   turnNavigatorSignature = signature
+  turnNavigatorRenderedKey = threadKey
   navigator.classList.remove('hidden')
   scheduleTurnNavigatorSync()
+  finishRender({ buttonCount: turns.length, reused: false })
 }
 
 function scheduleTurnNavigatorSync() {
@@ -4360,7 +4520,7 @@ function replaceRenderedTurn(turnId) {
     const activity = renderedActivity(turnId, activityId)
     if (activity) hydrateActivityDetails(activity)
   }
-  renderTurnNavigator()
+  scheduleTurnNavigatorRender()
   followTranscriptOutput()
   return true
 }

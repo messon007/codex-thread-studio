@@ -84,3 +84,21 @@ test('turn navigator reuses DOM only when ids, previews, and locale are unchange
   assert.match(render, /state\.language/u)
   assert.match(render, /signature === turnNavigatorSignature/u)
 })
+
+test('builds the full turn navigator after the transcript first paint', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const transcriptStart = source.indexOf('function renderTranscript(')
+  const transcriptEnd = source.indexOf('\nfunction markTranscriptUserScrollIntent', transcriptStart)
+  const transcriptRender = source.slice(transcriptStart, transcriptEnd)
+  const scheduleStart = source.indexOf('function scheduleTurnNavigatorRender(')
+  const scheduleEnd = source.indexOf('\nfunction renderTurnNavigator(', scheduleStart)
+  const scheduler = source.slice(scheduleStart, scheduleEnd)
+
+  assert.match(transcriptRender, /scheduleTurnNavigatorRender\(\)/u)
+  assert.doesNotMatch(transcriptRender, /\n\s*renderTurnNavigator\(\)/u)
+  assert.match(scheduler, /turnNavigatorRenderFrame = requestAnimationFrame\(afterPaint\)/u)
+  assert.match(scheduler, /requestIdleCallback\(run, \{ timeout: 750 \}\)/u)
+  assert.match(scheduler, /key !== presentationThreadKey\(\)/u)
+  assert.match(scheduler, /turnNavigatorRenderedKey !== key/u)
+  assert.match(scheduler, /if \(alreadyScheduled\) return/u)
+})

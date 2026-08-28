@@ -1,3 +1,5 @@
+import { transcriptModelRevision } from './model-revision.mjs'
+
 const DEFAULT_VISIBLE_TURNS = 30
 const OUTPUT_PREVIEW_LINES = 5
 
@@ -18,6 +20,8 @@ export class TranscriptPresentationCache {
       const turnCount = model?.turns?.length || 0
       entry = {
         turns: new Map(),
+        sourceModel: null,
+        sourceRevision: null,
         sourceTurns: [],
         orderedIds: [],
         historyWindow: this.visibleTurns,
@@ -29,12 +33,24 @@ export class TranscriptPresentationCache {
       }
       this.threads.set(key, entry)
     }
+    const revision = transcriptModelRevision(model)
+    if (revision != null && entry.sourceModel === model && entry.sourceRevision === revision) return entry
     syncEntry(entry, model, this.visibleTurns, { present })
+    entry.sourceModel = model
+    entry.sourceRevision = revision
     return entry
   }
 
   peek(threadKey) {
     return this.threads.get(String(threadKey || '')) || null
+  }
+
+  peekCurrent(threadKey, model) {
+    const entry = this.peek(threadKey)
+    const revision = transcriptModelRevision(model)
+    return revision != null && entry?.sourceModel === model && entry.sourceRevision === revision
+      ? entry
+      : null
   }
 
   invalidateTurn(threadKey, turnId) {
@@ -72,6 +88,8 @@ export class TranscriptPresentationCache {
     if (!turn) return this.get(key, model)
     entry.sourceTurns = turns
     syncTurn(entry, turn)
+    entry.sourceModel = model
+    entry.sourceRevision = transcriptModelRevision(model)
     return entry
   }
 

@@ -13,6 +13,7 @@ export function createSessionResourcesUI({
   notify = () => {},
   buildIndex = buildSessionResourceIndex,
   scheduleIdle = scheduleLazyResourceScan,
+  performanceMonitor = null,
 }) {
   const states = new Map()
   let developerContext = null
@@ -125,18 +126,31 @@ export function createSessionResourcesUI({
     const thread = currentThread()
     if (!state || !thread) return null
     const model = currentModel()
-    state.index = buildIndex(model, {
-      backend: currentBackend(),
-      threadId: thread.id,
-      root: thread.cwd || '',
+    const backend = currentBackend()
+    const finishMeasurement = performanceMonitor?.start?.('resources.scan', {
+      backend,
+      threadKey: `${backend}:${thread.id}`,
+      turnCount: Array.isArray(model?.turns) ? model.turns.length : 0,
     })
+    try {
+      state.index = buildIndex(model, {
+        backend,
+        threadId: thread.id,
+        root: thread.cwd || '',
+      })
+    } catch (error) {
+      finishMeasurement?.({ outcome: 'failed' })
+      throw error
+    }
     state.built = true
     state.builtRevision = revision
     state.builtModel = model
     state.builtLatestTurn = latestTurn(model)
     state.dirty = false
     if (state.selectedId && !state.index.resourcesById.has(state.selectedId)) state.selectedId = ''
-    syncLauncher(state.index.counts().all)
+    const resourceCount = state.index.counts().all
+    finishMeasurement?.({ outcome: 'loaded', resourceCount })
+    syncLauncher(resourceCount)
     if (isOpen()) render()
     return state.index
   }

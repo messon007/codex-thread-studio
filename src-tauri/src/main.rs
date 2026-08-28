@@ -720,6 +720,8 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/model-revision.mjs", get(model_revision_js))
+        .route("/performance-monitor.mjs", get(performance_monitor_js))
         .route("/selection-translation.mjs", get(selection_translation_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
@@ -1807,6 +1809,14 @@ async fn codex_native_js() -> impl IntoResponse {
 
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn model_revision_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/model-revision.mjs"))
+}
+
+async fn performance_monitor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/performance-monitor.mjs"))
 }
 
 async fn selection_translation_js() -> impl IntoResponse {
@@ -3320,6 +3330,8 @@ mod tests {
                 "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
+                "/model-revision.mjs",
+                "/performance-monitor.mjs",
                 "/selection-translation.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
@@ -3374,17 +3386,24 @@ mod tests {
             fn relative_imports(source: &str) -> Vec<String> {
                 source
                     .lines()
-                    .filter_map(|line| {
-                        ["from '", "import '", "from \"", "import \""]
-                            .into_iter()
-                            .find_map(|marker| {
-                                let start = line.find(marker)? + marker.len();
-                                let remainder = &line[start..];
-                                let quote = marker.chars().last()?;
-                                let end = remainder.find(quote)?;
-                                let specifier = &remainder[..end];
-                                specifier.starts_with("./").then(|| specifier.to_string())
-                            })
+                    .flat_map(|line| {
+                        [
+                            "from '",
+                            "import '",
+                            "from \"",
+                            "import \"",
+                            "import('",
+                            "import(\"",
+                        ]
+                        .into_iter()
+                        .filter_map(move |marker| {
+                            let start = line.find(marker)? + marker.len();
+                            let remainder = &line[start..];
+                            let quote = marker.chars().last()?;
+                            let end = remainder.find(quote)?;
+                            let specifier = &remainder[..end];
+                            specifier.starts_with("./").then(|| specifier.to_string())
+                        })
                     })
                     .collect()
             }

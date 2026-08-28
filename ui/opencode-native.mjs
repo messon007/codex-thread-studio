@@ -1,4 +1,5 @@
 import { safeImageUrl } from './composer-images.mjs'
+import { markTranscriptModelChanged } from './model-revision.mjs'
 
 export async function collectOpenCodeRootSessions(fetchPage, requestedPageSize = 100) {
   const pageSize = Math.max(1, Math.min(100, Number(requestedPageSize) || 100))
@@ -215,6 +216,12 @@ export function openCodeThreadFromHistory(session, messages, status) {
 }
 
 export function applyOpenCodeEvent(model, event, selectedSessionId) {
+  const result = applyOpenCodeEventInternal(model, event, selectedSessionId)
+  if (result.handled) markTranscriptModelChanged(model)
+  return result
+}
+
+function applyOpenCodeEventInternal(model, event, selectedSessionId) {
   const payload = event?.payload || event
   const type = payload?.type
   const properties = payload?.properties || {}

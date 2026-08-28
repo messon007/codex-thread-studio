@@ -2,6 +2,45 @@ import { BACKEND_IDS, backendSearchAliases } from './backends.mjs'
 
 const activeStatuses = new Set(['active', 'running', 'inProgress'])
 
+export const SIDEBAR_TEXT_LIMIT = 200
+
+export function compactSidebarText(value, limit = SIDEBAR_TEXT_LIMIT) {
+  const maximum = Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : SIDEBAR_TEXT_LIMIT)
+  const characters = []
+  let pendingSpace = false
+  let truncated = false
+  for (const character of String(value ?? '')) {
+    if (/\s/u.test(character)) {
+      if (characters.length) pendingSpace = true
+      continue
+    }
+    if (pendingSpace) {
+      if (characters.length >= maximum) {
+        truncated = true
+        break
+      }
+      characters.push(' ')
+      pendingSpace = false
+    }
+    if (characters.length >= maximum) {
+      truncated = true
+      break
+    }
+    characters.push(character)
+  }
+  if (!truncated) return characters.join('')
+  if (maximum === 1) return '…'
+  return `${characters.slice(0, maximum - 1).join('').trimEnd()}…`
+}
+
+export function syncCatalogSelection(rows, backend, selectedId) {
+  for (const row of rows || []) {
+    const selected = row?.dataset?.backend === backend
+      && row?.dataset?.threadId === String(selectedId || '')
+    row?.classList?.toggle('active', selected)
+  }
+}
+
 export function threadCatalogKey(backend, id) {
   return `${backend}:${id}`
 }
@@ -188,6 +227,18 @@ export function catalogTimestamp(value) {
   if (Number.isFinite(numeric)) return normalizeEpoch(numeric)
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+export function isCatalogCacheFresh(updatedAt, validatedAt, { coarse = false } = {}) {
+  const updated = catalogTimestamp(updatedAt)
+  const validated = Number(validatedAt)
+  if (!updated) return true
+  if (!Number.isFinite(validated)) return false
+  // Codex state-db timestamps currently have one-second precision. Treat the
+  // entire validation second as uncertain so an event missed by a reconnect in
+  // that same second cannot be hidden behind an apparently fresh cache.
+  if (coarse) return updated < Math.floor(validated / 1000) * 1000
+  return updated <= validated
 }
 
 function normalizeEpoch(value) {

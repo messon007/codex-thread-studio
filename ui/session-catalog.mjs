@@ -11,6 +11,13 @@ export function catalogListParams(kind, params = {}) {
   return kind === 'codex' ? { ...params, useStateDbOnly: true } : { ...params }
 }
 
+export function shouldRecoverCodexCatalog(catalog, preferredId) {
+  const threads = Array.isArray(catalog) ? catalog : []
+  if (!threads.length) return true
+  const preferred = typeof preferredId === 'string' ? preferredId : ''
+  return Boolean(preferred) && !threads.some((thread) => String(thread?.id || '') === preferred)
+}
+
 export function mergeCatalogMetadata(kind, current, incoming) {
   const merged = { ...(current || {}), ...(incoming || {}) }
   if (kind !== 'codex' || !current) return merged

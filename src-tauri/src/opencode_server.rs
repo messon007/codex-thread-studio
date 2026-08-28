@@ -60,7 +60,6 @@ impl OpenCodeServer {
             generation: Arc::new(AtomicU64::new(0)),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
-                .timeout(Duration::from_secs(10))
                 .build()
                 .expect("failed to build OpenCode HTTP client"),
         }
@@ -70,6 +69,7 @@ impl OpenCodeServer {
         match self.ensure_started().await {
             Ok(connection) => match self
                 .authenticated_get(&connection, "/global/health")
+                .timeout(Duration::from_secs(10))
                 .send()
                 .await
             {
@@ -228,6 +228,7 @@ impl OpenCodeServer {
 
     async fn health_is_ready(&self, connection: &ProcessConnection) -> bool {
         self.authenticated_get(connection, "/global/health")
+            .timeout(Duration::from_secs(10))
             .send()
             .await
             .is_ok_and(|response| response.status().is_success())
@@ -366,6 +367,19 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_proxy_client_has_no_global_request_timeout() {
+        let source = include_str!("opencode_server.rs");
+        let builder = source
+            .split("client: reqwest::Client::builder()")
+            .nth(1)
+            .and_then(|value| value.split(".build()").next())
+            .expect("OpenCode client builder");
+        assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
+        assert!(!builder.contains(".timeout("));
+        assert!(source.contains("authenticated_get(&connection, \"/global/health\")\n                .timeout(Duration::from_secs(10))"));
+    }
 
     #[test]
     fn configured_binary_takes_precedence() {

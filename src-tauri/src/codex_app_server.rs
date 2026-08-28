@@ -340,7 +340,7 @@ impl CodexAppServer {
         let mut events = self.events.subscribe();
         self.send(json!({ "id": id, "method": method, "params": params }))
             .await?;
-        let response = tokio::time::timeout(std::time::Duration::from_secs(15), async move {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(30), async move {
             loop {
                 let payload = events.recv().await.map_err(|error| error.to_string())?;
                 let value: Value =

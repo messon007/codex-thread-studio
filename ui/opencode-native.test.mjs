@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
   applyOpenCodeEvent,
+  collectOpenCodeMessageHistory,
   collectOpenCodeRootSessions,
+  createOpenCodeLoopGuard,
   fetchOpenCodeDirectoryStatuses,
   normalizeOpenCodeSessions,
-  openCodeMessageId,
+  openCodeCommandTurn,
   openCodeModelList,
   openCodeThreadFromHistory,
+  replayOpenCodeEventsAfterHistory,
+  selectOpenCodeStartedUserMessage,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
 
@@ -96,6 +101,439 @@ test('groups assistant parts under their user interaction', () => {
   assert.equal(thread.turns.length, 1)
   assert.deepEqual(thread.turns[0].items.map((item) => item.type), ['userMessage', 'reasoning', 'agentMessage'])
   assert.equal(thread.messageTurns['msg-agent'], 'msg-user')
+})
+
+test('paginates complete OpenCode histories and refreshes the newest page', async () => {
+  const messages = Array.from({ length: 260 }, (_, index) => {
+    const userId = `msg-user-${index}`
+    return [
+      { info: { id: userId, role: 'user' }, parts: [{ id: `user-part-${index}`, type: 'text', text: `Question ${index}` }] },
+      { info: { id: `msg-agent-${index}`, parentID: userId, role: 'assistant' }, parts: [{ id: `agent-part-${index}`, type: 'text', text: `Answer ${index}` }] },
+    ]
+  }).flat()
+  const calls = []
+  let newestReads = 0
+  const history = await collectOpenCodeMessageHistory(async (params) => {
+    calls.push(params)
+    if (params.before) return { messages: structuredClone(messages.slice(0, 20)), cursor: null }
+    newestReads += 1
+    const newest = structuredClone(messages.slice(20))
+    if (newestReads === 2) newest.at(-1).parts[0].text = 'Updated while paging'
+    return { messages: newest, cursor: 'older-page' }
+  })
+  const thread = openCodeThreadFromHistory({ id: 'ses-long' }, history.messages, { type: 'idle' })
+
+  assert.equal(messages.length, 520)
+  assert.equal(history.complete, true)
+  assert.deepEqual(calls, [
+    { limit: 500 },
+    { limit: 500, before: 'older-page' },
+    { limit: 500 },
+  ])
+  assert.equal(thread.turns.length, 260)
+  assert.equal(thread.turns[0].id, 'msg-user-0')
+  assert.equal(thread.turns.at(-1).id, 'msg-user-259')
+  assert.equal(thread.turns.at(-1).items.at(-1).text, 'Updated while paging')
+
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const rpcStart = source.indexOf('async function openCodeRpc(')
+  const rpcEnd = source.indexOf('\nfunction openCodeFilePart', rpcStart)
+  assert.match(source.slice(rpcStart, rpcEnd), /fetchOpenCodeMessageHistory\(params\.threadId, session\.directory, fetchOptions\)/u)
+})
+
+test('keeps history bounded when an older OpenCode server does not expose a message cursor', async () => {
+  const page = Array.from({ length: 500 }, (_, index) => ({ info: { id: `msg-${index}` }, parts: [] }))
+  const history = await collectOpenCodeMessageHistory(async () => ({ messages: page, cursor: null }))
+
+  assert.equal(history.complete, false)
+  assert.equal(history.messages.length, 500)
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('async function fetchOpenCodeMessageHistory(')
+  const end = source.indexOf('\nasync function fetchOpenCodeCatalog', start)
+  const fetchHistory = source.slice(start, end)
+  assert.match(fetchHistory, /return \{\s*\.\.\.history,/u)
+  assert.doesNotMatch(fetchHistory, /openCodeFetch\(withDirectory\(path, directory\), fetchOptions\)/u)
+})
+
+test('continues through cursor-backed short pages and completes on a full final page', async () => {
+  const calls = []
+  const history = await collectOpenCodeMessageHistory(async (params) => {
+    calls.push(params)
+    if (!params.before) return { messages: [{ info: { id: '3' } }], cursor: 'older' }
+    return { messages: [{ info: { id: '1' } }, { info: { id: '2' } }], cursor: null }
+  }, 2)
+
+  assert.equal(history.complete, true)
+  assert.deepEqual(history.messages.map((message) => message.info.id), ['1', '2', '3'])
+  assert.deepEqual(calls, [{ limit: 2 }, { limit: 2, before: 'older' }, { limit: 2 }])
+})
+
+test('replays buffered OpenCode deltas without losing history prefixes or duplicating captured text', () => {
+  const messages = [
+    { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'user-part', type: 'text', text: 'Question' }] },
+    { info: { id: 'msg-agent', parentID: 'msg-user', role: 'assistant' }, parts: [{ id: 'agent-part', type: 'text', text: 'prefixsuffix' }] },
+  ]
+  const historyModel = openCodeThreadFromHistory({ id: 'ses-1' }, messages, { type: 'busy' })
+  const delta = {
+    type: 'message.part.delta',
+    properties: { sessionID: 'ses-1', messageID: 'msg-agent', partID: 'agent-part', field: 'text', delta: 'suffix' },
+  }
+  replayOpenCodeEventsAfterHistory(historyModel, [{ event: delta, sequence: 1 }], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+
+  assert.equal(historyModel.turns[0].items.at(-1).text, 'prefixsuffix')
+
+  const earlierHistory = openCodeThreadFromHistory({ id: 'ses-1' }, [messages[0], {
+    ...messages[1],
+    parts: [{ id: 'agent-part', type: 'text', text: 'prefix' }],
+  }], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(earlierHistory, [{ event: delta, sequence: 2 }], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+  assert.equal(earlierHistory.turns[0].items.at(-1).text, 'prefixsuffix')
+
+  const streamingHistory = openCodeThreadFromHistory({ id: 'ses-1' }, [messages[0], {
+    ...messages[1],
+    parts: [{ id: 'agent-part', type: 'text', text: '' }],
+  }], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(streamingHistory, [{
+    event: { ...delta, properties: { ...delta.properties, delta: 'foo' } },
+    sequence: 1,
+  }], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+  assert.equal(streamingHistory.turns[0].items.at(-1).text, 'foo')
+
+  const postSnapshotHistory = openCodeThreadFromHistory({ id: 'ses-1' }, [messages[0], {
+    ...messages[1],
+    parts: [{ id: 'agent-part', type: 'text', text: 'hello' }],
+  }], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(postSnapshotHistory, [{
+    event: { ...delta, properties: { ...delta.properties, delta: 'o' } },
+    sequence: 2,
+  }], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+  assert.equal(postSnapshotHistory.turns[0].items.at(-1).text, 'helloo')
+
+  const interleavedHistory = openCodeThreadFromHistory({ id: 'ses-1' }, [messages[0], {
+    ...messages[1],
+    parts: [{ id: 'agent-part', type: 'text', text: '' }],
+  }], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(interleavedHistory, [
+    { event: { ...delta, properties: { ...delta.properties, delta: 'a' } }, sequence: 1 },
+    { event: { type: 'session.status', properties: { sessionID: 'ses-1', status: { type: 'busy' } } }, sequence: 2 },
+    { event: { ...delta, properties: { ...delta.properties, delta: 'a' } }, sequence: 3 },
+  ], 'ses-1')
+  assert.equal(interleavedHistory.turns[0].items.at(-1).text, 'aa')
+
+  const reasoningHistory = openCodeThreadFromHistory({ id: 'ses-1' }, [messages[0], {
+    ...messages[1],
+    parts: [{ id: 'agent-part', type: 'reasoning', text: 'think' }],
+  }], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(reasoningHistory, [{
+    event: { ...delta, properties: { ...delta.properties, delta: 'ing' } },
+    sequence: 2,
+  }], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+  assert.equal(reasoningHistory.turns[0].items.at(-1).content[0], 'thinking')
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  assert.match(source, /beginOpenCodeHistoryEventBuffer\(id\)[\s\S]*replayOpenCodeEventsAfterHistory\(state\.model, historyEvents, id, \{[\s\S]*endOpenCodeHistoryEventBuffer\(id, historyEvents\)/u)
+  assert.match(source, /bufferOpenCodeHistoryEvent\(eventThreadId, event\)/u)
+})
+
+test('reapplies an authoritative idle snapshot after earlier buffered content events', () => {
+  const model = openCodeThreadFromHistory({ id: 'ses-1' }, [], { type: 'idle' })
+  replayOpenCodeEventsAfterHistory(model, [
+    {
+      sequence: 1,
+      event: {
+        type: 'message.updated',
+        properties: { sessionID: 'ses-1', info: { id: 'msg-user', role: 'user' } },
+      },
+    },
+    {
+      sequence: 2,
+      event: { type: 'session.idle', properties: { sessionID: 'ses-1' } },
+    },
+  ], 'ses-1', {
+    statusAfterSequence: 2,
+    authoritativeStatus: 'idle',
+  })
+
+  assert.equal(model.status, 'idle')
+  assert.equal(model.activeTurnId, null)
+  assert.equal(model.turns[0].status, 'completed')
+
+  replayOpenCodeEventsAfterHistory(model, [{
+    sequence: 3,
+    event: {
+      type: 'message.updated',
+      properties: { sessionID: 'ses-1', info: { id: 'msg-next', role: 'user' } },
+    },
+  }], 'ses-1', {
+    statusAfterSequence: 2,
+    authoritativeStatus: 'idle',
+  })
+  assert.equal(model.status, 'running')
+  assert.equal(model.activeTurnId, 'msg-next')
+
+  const errorModel = openCodeThreadFromHistory({ id: 'ses-1' }, [], { type: 'idle' })
+  replayOpenCodeEventsAfterHistory(errorModel, [{
+    sequence: 1,
+    event: {
+      type: 'session.error',
+      properties: { sessionID: 'ses-1', error: { message: 'Rate limited' } },
+    },
+  }], 'ses-1', { statusAfterSequence: 1, authoritativeStatus: 'idle' })
+  assert.equal(errorModel.status, 'idle')
+  assert.equal(errorModel.error, 'Rate limited')
+})
+
+test('does not replay stale full-part snapshots already covered by the latest history page', () => {
+  const model = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'user-part', type: 'text', text: 'Question' }] },
+    { info: { id: 'msg-agent', parentID: 'msg-user', role: 'assistant' }, parts: [{ id: 'agent-part', type: 'text', text: 'foo' }] },
+  ], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(model, [
+    {
+      sequence: 1,
+      event: {
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'ses-1',
+          part: { id: 'agent-part', messageID: 'msg-agent', type: 'text', text: '' },
+        },
+      },
+    },
+    {
+      sequence: 2,
+      event: {
+        type: 'message.part.delta',
+        properties: { sessionID: 'ses-1', messageID: 'msg-agent', partID: 'agent-part', field: 'text', delta: 'foo' },
+      },
+    },
+  ], 'ses-1', {
+    messageSnapshots: { 'msg-agent': { afterSequence: 2, ambiguousThroughSequence: 2 } },
+  })
+
+  assert.equal(model.turns[0].items.at(-1).text, 'foo')
+
+  const transformedModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    {
+      info: { id: 'transform-user', role: 'user' },
+      parts: [{ id: 'transform-user-part', type: 'text', text: 'Transform' }],
+    },
+    {
+      info: { id: 'transform-agent', parentID: 'transform-user', role: 'assistant' },
+      parts: [{ id: 'transform-part', type: 'text', text: 'bar' }],
+    },
+  ], { type: 'idle' })
+  replayOpenCodeEventsAfterHistory(transformedModel, [
+    {
+      sequence: 1,
+      event: {
+        type: 'message.part.delta',
+        properties: { sessionID: 'ses-1', messageID: 'transform-agent', partID: 'transform-part', field: 'text', delta: 'foo' },
+      },
+    },
+    {
+      sequence: 2,
+      event: {
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'ses-1',
+          part: { id: 'transform-part', messageID: 'transform-agent', type: 'text', text: 'bar' },
+        },
+      },
+    },
+  ], 'ses-1', {
+    messageSnapshots: { 'transform-agent': { afterSequence: 2, ambiguousThroughSequence: 2 } },
+  })
+  assert.equal(transformedModel.turns[0].items.at(-1).text, 'bar')
+
+  const toolModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'tool-user', role: 'user' }, parts: [{ id: 'tool-user-part', type: 'text', text: 'Run' }] },
+    { info: { id: 'tool-agent', parentID: 'tool-user', role: 'assistant' }, parts: [{
+      id: 'tool-part',
+      messageID: 'tool-agent',
+      type: 'tool',
+      tool: 'bash',
+      state: { status: 'completed', input: { command: 'pwd' }, output: '/tmp' },
+    }] },
+  ], { type: 'idle' })
+  replayOpenCodeEventsAfterHistory(toolModel, [{
+    sequence: 1,
+    event: {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: 'ses-1',
+        part: {
+          id: 'tool-part',
+          messageID: 'tool-agent',
+          type: 'tool',
+          tool: 'bash',
+          state: { status: 'running', input: { command: 'pwd' } },
+        },
+      },
+    },
+  }], 'ses-1', {
+    messageSnapshots: { 'tool-agent': { afterSequence: 1, ambiguousThroughSequence: 1 } },
+  })
+  assert.equal(toolModel.turns[0].items.at(-1).status, 'completed')
+
+  const recreatedPartModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    {
+      info: { id: 'recreate-user', role: 'user' },
+      parts: [{ id: 'recreate-user-part', type: 'text', text: 'Recreate' }],
+    },
+    {
+      info: { id: 'recreate-agent', parentID: 'recreate-user', role: 'assistant' },
+      parts: [{ id: 'recreate-part', type: 'text', text: 'new' }],
+    },
+  ], { type: 'idle' })
+  replayOpenCodeEventsAfterHistory(recreatedPartModel, [
+    {
+      sequence: 1,
+      event: {
+        type: 'message.part.removed',
+        properties: { sessionID: 'ses-1', messageID: 'recreate-agent', partID: 'recreate-part' },
+      },
+    },
+    {
+      sequence: 2,
+      event: {
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'ses-1',
+          part: { id: 'recreate-part', messageID: 'recreate-agent', type: 'text', text: 'new' },
+        },
+      },
+    },
+  ], 'ses-1', {
+    messageSnapshots: { 'recreate-agent': { afterSequence: 2, ambiguousThroughSequence: 2 } },
+  })
+  assert.equal(recreatedPartModel.turns[0].items.at(-1).text, 'new')
+
+  const olderPageModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'old-user', role: 'user' }, parts: [{ id: 'old-user-part', type: 'text', text: 'Old' }] },
+    { info: { id: 'old-agent', parentID: 'old-user', role: 'assistant' }, parts: [{ id: 'old-part', type: 'text', text: 'a' }] },
+  ], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(olderPageModel, [{
+    sequence: 1,
+    event: {
+      type: 'message.part.delta',
+      properties: { sessionID: 'ses-1', messageID: 'old-agent', partID: 'old-part', field: 'text', delta: 'b' },
+    },
+  }], 'ses-1', {
+    messageSnapshots: {
+      'old-agent': { afterSequence: 0, ambiguousThroughSequence: 0 },
+      'new-agent': { afterSequence: 1, ambiguousThroughSequence: 1 },
+    },
+  })
+  assert.equal(olderPageModel.turns[0].items.at(-1).text, 'ab')
+})
+
+test('removes OpenCode parts and their owning messages from live history', () => {
+  const model = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'msg-user', role: 'user' }, parts: [{ id: 'user-part', type: 'text', text: 'Question' }] },
+    { info: { id: 'msg-agent', parentID: 'msg-user', role: 'assistant' }, parts: [
+      { id: 'part-a', type: 'text', text: 'Answer' },
+      { id: 'part-b', type: 'reasoning', text: 'Thought' },
+    ] },
+  ], { type: 'busy' })
+
+  applyOpenCodeEvent(model, {
+    type: 'message.part.removed',
+    properties: { sessionID: 'ses-1', messageID: 'msg-agent', partID: 'part-b' },
+  }, 'ses-1')
+  assert.deepEqual(model.turns[0].items.map((item) => item.id), ['msg-user', 'part-a'])
+
+  applyOpenCodeEvent(model, {
+    type: 'message.removed',
+    properties: { sessionID: 'ses-1', messageID: 'msg-agent' },
+  }, 'ses-1')
+  assert.deepEqual(model.turns[0].items.map((item) => item.id), ['msg-user'])
+  assert.equal(model.messageTurns['msg-agent'], undefined)
+
+  const structuredModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'structured-user', role: 'user' }, parts: [] },
+  ], { type: 'busy' })
+  applyOpenCodeEvent(structuredModel, {
+    type: 'message.updated',
+    properties: {
+      sessionID: 'ses-1',
+      info: { id: 'structured-agent', parentID: 'structured-user', role: 'assistant', structured: { ok: true } },
+    },
+  }, 'ses-1')
+  applyOpenCodeEvent(structuredModel, {
+    type: 'message.removed',
+    properties: { sessionID: 'ses-1', messageID: 'structured-agent' },
+  }, 'ses-1')
+  assert.deepEqual(structuredModel.turns[0].items.map((item) => item.id), ['structured-user'])
+
+  const erroredModel = openCodeThreadFromHistory({ id: 'ses-1' }, [
+    { info: { id: 'error-user', role: 'user' }, parts: [{ id: 'question', type: 'text', text: 'Question' }] },
+    {
+      info: {
+        id: 'error-agent',
+        parentID: 'error-user',
+        role: 'assistant',
+        error: { message: 'Provider failed' },
+      },
+      parts: [],
+    },
+  ], { type: 'idle' })
+  assert.equal(erroredModel.turns[0].error.message, 'Provider failed')
+  applyOpenCodeEvent(erroredModel, {
+    type: 'message.removed',
+    properties: { sessionID: 'ses-1', messageID: 'error-agent' },
+  }, 'ses-1')
+  assert.equal(erroredModel.turns[0].error, undefined)
+  assert.equal(erroredModel.turns[0].status, 'completed')
+
+  const deletedBeforeSnapshot = openCodeThreadFromHistory({ id: 'ses-1' }, [], { type: 'busy' })
+  replayOpenCodeEventsAfterHistory(deletedBeforeSnapshot, [
+    {
+      sequence: 1,
+      event: {
+        type: 'message.part.delta',
+        properties: { sessionID: 'ses-1', messageID: 'ghost-agent', partID: 'ghost-part', field: 'text', delta: 'ghost' },
+      },
+    },
+    {
+      sequence: 2,
+      event: { type: 'message.removed', properties: { sessionID: 'ses-1', messageID: 'ghost-agent' } },
+    },
+  ], 'ses-1')
+  assert.deepEqual(deletedBeforeSnapshot.turns, [])
+})
+
+test('replaying a user part update preserves sibling user content and supports part removal', () => {
+  const model = openCodeThreadFromHistory({ id: 'ses-1' }, [{
+    info: { id: 'msg-user', role: 'user' },
+    parts: [
+      { id: 'part-a', type: 'text', text: 'first' },
+      { id: 'part-b', type: 'text', text: 'second' },
+    ],
+  }], { type: 'busy' })
+
+  replayOpenCodeEventsAfterHistory(model, [{
+    type: 'message.part.updated',
+    properties: {
+      sessionID: 'ses-1',
+      part: { id: 'part-b', messageID: 'msg-user', type: 'text', text: 'updated' },
+    },
+  }], 'ses-1')
+  assert.deepEqual(model.turns[0].items[0].content.map((item) => item.text), ['first', 'updated'])
+
+  applyOpenCodeEvent(model, {
+    type: 'message.part.removed',
+    properties: { sessionID: 'ses-1', messageID: 'msg-user', partID: 'part-a' },
+  }, 'ses-1')
+  assert.deepEqual(model.turns[0].items[0].content.map((item) => item.text), ['updated'])
 })
 
 test('preserves image file parts as structured user images', () => {
@@ -196,8 +634,164 @@ test('splits provider-qualified OpenCode models', () => {
   assert.equal(splitOpenCodeModel('gpt-5.5'), null)
 })
 
-test('normalizes client message IDs for the OpenCode prompt schema', () => {
-  assert.equal(openCodeMessageId('19d9d838-69f0-42ef-a229-63c44fd77d99'), 'msg_19d9d838-69f0-42ef-a229-63c44fd77d99')
-  assert.equal(openCodeMessageId('msg_existing'), 'msg_existing')
-  assert.equal(openCodeMessageId(''), '')
+test('uses authoritative command and post-baseline user identities', () => {
+  const commandTurn = openCodeCommandTurn({
+    info: { id: 'assistant', parentID: 'user-command', role: 'assistant', finish: 'stop' },
+    parts: [{ id: 'answer', messageID: 'assistant', type: 'text', text: 'done' }],
+  }, [{ type: 'skill', name: 'review' }])
+  assert.equal(commandTurn.id, 'user-command')
+  assert.equal(commandTurn.status, 'completed')
+  assert.equal(commandTurn.items.at(-1).text, 'done')
+
+  const messages = [
+    { info: { id: 'old-user', role: 'user' }, parts: [{ type: 'text', text: 'same prompt' }] },
+    { info: { id: 'other-new-user', role: 'user' }, parts: [{ type: 'text', text: 'different prompt' }] },
+    { info: { id: 'expected-new-user', role: 'user' }, parts: [{ type: 'text', text: 'same prompt' }] },
+  ]
+  assert.equal(selectOpenCodeStartedUserMessage(messages, {
+    baselineIds: ['old-user'],
+    expectedText: 'same prompt',
+  })?.info.id, 'expected-new-user')
+  assert.equal(selectOpenCodeStartedUserMessage(messages.slice(0, 2), {
+    baselineIds: ['old-user'],
+    expectedText: 'same prompt',
+  }), null)
+})
+
+test('Studio leaves OpenCode message identity to the server', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf("if (method === 'turn/start')")
+  const end = source.indexOf("throw new Error(t('The OpenCode backend", start)
+  const turnStart = source.slice(start, end)
+  assert.match(turnStart, /prompt_async/u)
+  assert.match(turnStart, /return openCodeStartedTurn\(/u)
+  assert.match(turnStart, /return openCodeStartedTurn\([\s\S]*allowInactive: true/u)
+  assert.match(turnStart, /openCodeUserMessageBaseline/u)
+  assert.match(turnStart, /openCodeCommandTurn/u)
+  assert.doesNotMatch(turnStart, /messageID|openCodeMessageId/u)
+  const adapterStart = source.indexOf(".register('opencode'")
+  const adapterEnd = source.indexOf('\n\nmarked.setOptions', adapterStart)
+  assert.doesNotMatch(source.slice(adapterStart, adapterEnd), /clientUserMessageId|messageID/u)
+})
+
+test('OpenCode ignores the initial connected event but refreshes after an SSE reconnect', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const connect = source.slice(
+    source.indexOf('async function connectOpenCode('),
+    source.indexOf('\nfunction cleanupSocket', source.indexOf('async function connectOpenCode(')),
+  )
+  const events = source.slice(
+    source.indexOf('function handleOpenCodeServerEvent('),
+    source.indexOf('\nasync function abortRepeatedOpenCodeTerminalLoop', source.indexOf('function handleOpenCodeServerEvent(')),
+  )
+  const connectedBranch = events.slice(
+    events.indexOf("if (payload.type === 'server.connected')"),
+    events.indexOf("if (payload.type.startsWith('session.'))"),
+  )
+  assert.match(connect, /openCodeEventStreamOpenCount = 0[\s\S]*events\.onopen[\s\S]*openCodeEventStreamOpenCount \+= 1/u)
+  assert.match(connectedBranch, /server\.connected[\s\S]*EventSource\.onopen owns the continuity epoch/u)
+  assert.doesNotMatch(connectedBranch, /scheduleOpenCodeListRefresh/u)
+  assert.match(connect, /openCodeHistoryEpoch \+= 1[\s\S]*openCodeEventStreamOpenCount > 0 \|\| initialSelectionStarted[\s\S]*openCodeHistoryEpoch \+= 1[\s\S]*scheduleOpenCodeListRefresh\(\{ forceSelectedHistory: true \}\)/u)
+  assert.match(connect, /await Promise\.race\([\s\S]*eventStreamOpen[\s\S]*initialSelectionStarted = true[\s\S]*loadThreads\(\)/u)
+  assert.match(source, /backend === 'opencode' && cached\.historyEpoch !== openCodeHistoryEpoch/u)
+  assert.match(source, /historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null/u)
+  assert.match(source, /backend === 'opencode' \? \{ historyEpoch \}/u)
+  assert.match(source, /const historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(backend, id, state\.model, \{ historyEpoch \}\)/u)
+  assert.match(source, /const historyEpoch = ref\.backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(ref\.backend, ref\.id, model, \{ historyEpoch \}\)/u)
+})
+
+test('OpenCode never reuses or installs a history load from an older connection epoch', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const resume = source.slice(
+    source.indexOf('async function resumeThread('),
+    source.indexOf('\nasync function refreshSelectedThread(', source.indexOf('async function resumeThread(')),
+  )
+  const refresh = source.slice(
+    source.indexOf('async function refreshSelectedThread('),
+    source.indexOf('\nfunction freshThreadModel(', source.indexOf('async function refreshSelectedThread(')),
+  )
+
+  for (const load of [resume, refresh]) {
+    assert.match(load, /activeLoad\.historyEpoch === historyEpoch/u)
+    assert.match(load, /load\.historyEpoch = historyEpoch/u)
+    const epochGuard = load.indexOf('historyEpoch !== openCodeHistoryEpoch')
+    const hydrate = load.indexOf('hydrateCodexThread(')
+    assert.ok(epochGuard >= 0 && epochGuard < hydrate)
+    const catchBranch = load.slice(load.indexOf('} catch (error) {'))
+    assert.ok(catchBranch.indexOf('historyEpoch !== openCodeHistoryEpoch')
+      < catchBranch.indexOf('state.backend !== backend'))
+  }
+})
+
+test('OpenCode catalog refresh cannot start history for a newly selected session', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('async function refreshOpenCodeThreadList(')
+  const end = source.indexOf('\nfunction rpc(', start)
+  const refresh = source.slice(start, end)
+  assert.match(refresh, /const selectedId = state\.selectedId/u)
+  assert.match(refresh, /forceSelectedHistory \|\| !freshThreadModel\('opencode', selectedId\)/u)
+  assert.match(refresh, /state\.selectedId !== selectedId/u)
+  assert.match(refresh, /threadCatalogKey\('opencode', selectedId\)/u)
+  assert.ok(refresh.lastIndexOf('state.selectedId !== selectedId') < refresh.indexOf('await refreshSelectedThread('))
+})
+
+test('trips an OpenCode loop guard only on repeated empty terminal assistants', () => {
+  const guard = createOpenCodeLoopGuard()
+  const update = (id, finish = 'stop') => ({
+    type: 'message.updated',
+    properties: {
+      sessionID: 'session-1',
+      info: { id, role: 'assistant', parentID: 'user-1', finish },
+    },
+  })
+
+  guard.observe({
+    type: 'message.part.updated',
+    properties: { part: { sessionID: 'session-1', messageID: 'assistant-tool', id: 'tool-1', type: 'tool' } },
+  })
+  assert.equal(guard.observe(update('assistant-tool')), null)
+  guard.observe({
+    type: 'message.part.updated',
+    properties: { part: { sessionID: 'session-1', messageID: 'assistant-file', id: 'file-1', type: 'file', url: 'file:///tmp/result' } },
+  })
+  assert.equal(guard.observe(update('assistant-file')), null)
+  assert.equal(guard.observe({
+    type: 'message.updated',
+    properties: {
+      sessionID: 'session-1',
+      info: { id: 'assistant-output', role: 'assistant', parentID: 'user-1', finish: 'stop', tokens: { output: 2 } },
+    },
+  }), null)
+  assert.equal(guard.observe(update('assistant-empty-1')), null)
+  assert.equal(guard.observe(update('assistant-empty-1')), null)
+  assert.equal(guard.observe(update('assistant-empty-2')), null)
+  assert.deepEqual(guard.observe(update('assistant-empty-3')), {
+    sessionId: 'session-1',
+    parentId: 'user-1',
+    assistantIds: ['assistant-empty-1', 'assistant-empty-2', 'assistant-empty-3'],
+  })
+  assert.deepEqual(guard.observe(update('assistant-empty-4'))?.assistantIds, [
+    'assistant-empty-1', 'assistant-empty-2', 'assistant-empty-3', 'assistant-empty-4',
+  ])
+})
+
+test('an idle OpenCode session resets the duplicate-terminal loop guard', () => {
+  const guard = createOpenCodeLoopGuard()
+  const update = (id) => ({
+    type: 'message.updated',
+    properties: { sessionID: 'session-1', info: { id, role: 'assistant', parentID: 'user-1', finish: 'stop' } },
+  })
+  guard.observe(update('assistant-1'))
+  guard.observe({ type: 'session.status', properties: { sessionID: 'session-1', status: { type: 'idle' } } })
+  assert.equal(guard.observe(update('assistant-2')), null)
+})
+
+test('Studio aborts a live OpenCode session when the terminal loop guard trips', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const handlerStart = source.indexOf('function handleOpenCodeServerEvent(')
+  const handlerEnd = source.indexOf('\nfunction openCodeCompletionSignal', handlerStart)
+  const handler = source.slice(handlerStart, handlerEnd)
+  assert.match(handler, /openCodeLoopGuard\.observe\(payload\)/u)
+  assert.match(handler, /\/session\/\$\{encodeURIComponent\(sessionId\)\}\/abort/u)
+  assert.match(handler, /openCodeLoopAbortRequests\.has\(sessionId\)/u)
 })

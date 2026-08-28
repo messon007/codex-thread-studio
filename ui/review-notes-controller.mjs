@@ -42,6 +42,13 @@ export function createReviewNotesState() {
   }
 }
 
+export function deactivateChatCommentMarker(marker) {
+  marker.classList.remove('chat-comment-anchor')
+  for (const attribute of ['data-comment-ids', 'role', 'tabindex', 'title', 'aria-label']) {
+    marker.removeAttribute(attribute)
+  }
+}
+
 export function createReviewNotesController({
   state,
   commentSources,
@@ -70,6 +77,7 @@ export function createReviewNotesController({
     renderedItem,
     setComposerValue,
     pauseTranscript,
+    preserveTranscriptLayout,
     switchBackend,
     waitForBackend,
     loadThreads,
@@ -88,6 +96,7 @@ export function createReviewNotesController({
   let favoritesSearchTimer = null
   let translationGeneration = 0
   let activeTranslationSpeechButton = null
+  const deactivatedChatCommentMarkers = new Set()
 
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
@@ -506,13 +515,17 @@ function openAnnotationRail() {
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
-  $('#annotation-rail').classList.add('hidden')
-  if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
-  syncRightWorkspaceLaunchers()
-  if ($('#favorites-rail').classList.contains('hidden')) {
-    if (state.artifact) renderArtifact()
-    else renderSessionMap()
+  const close = () => {
+    $('#annotation-rail').classList.add('hidden')
+    if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
+    syncRightWorkspaceLaunchers()
+    if ($('#favorites-rail').classList.contains('hidden')) {
+      if (state.artifact) renderArtifact()
+      else renderSessionMap()
+    }
   }
+  if (preserveTranscriptLayout) preserveTranscriptLayout(close)
+  else close()
 }
 
 function renderAnnotationRail() {
@@ -544,7 +557,6 @@ function renderAnnotationRail() {
 function renderChatCommentMarkers() {
   const transcript = $('#transcript')
   if (!transcript) return
-  clearChatCommentMarkers(transcript)
   const byItem = new Map()
   for (const draft of currentAnnotations()) {
     if (draft.source?.provider !== 'chat') continue
@@ -554,6 +566,11 @@ function renderChatCommentMarkers() {
     if (!byItem.has(key)) byItem.set(key, { turnId, itemId, drafts: [] })
     byItem.get(key).drafts.push(draft)
   }
+  if (!byItem.size) {
+    deactivateChatCommentMarkers(transcript)
+    return
+  }
+  clearChatCommentMarkers(transcript)
   for (const group of byItem.values()) {
     const body = renderedItem(group.turnId, group.itemId)?.querySelector('.markdown-body')
     if (!body) continue
@@ -561,9 +578,24 @@ function renderChatCommentMarkers() {
   }
 }
 
+function deactivateChatCommentMarkers(transcript) {
+  for (const marker of deactivatedChatCommentMarkers) {
+    if (!transcript.contains(marker)) deactivatedChatCommentMarkers.delete(marker)
+  }
+  transcript.querySelectorAll('.chat-comment-anchor').forEach((marker) => {
+    deactivateChatCommentMarker(marker)
+    deactivatedChatCommentMarkers.add(marker)
+  })
+}
+
 function clearChatCommentMarkers(transcript) {
   const parents = new Set()
-  transcript.querySelectorAll('.chat-comment-anchor').forEach((marker) => {
+  const markers = new Set(transcript.querySelectorAll('.chat-comment-anchor'))
+  for (const marker of deactivatedChatCommentMarkers) {
+    if (transcript.contains(marker)) markers.add(marker)
+  }
+  deactivatedChatCommentMarkers.clear()
+  markers.forEach((marker) => {
     const parent = marker.parentNode
     marker.replaceWith(...marker.childNodes)
     if (parent) parents.add(parent)

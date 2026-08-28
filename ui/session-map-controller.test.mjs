@@ -24,7 +24,7 @@ function mapFixture() {
   }
 }
 
-function controllerFixture() {
+function controllerFixture(overrides = {}) {
   const runtime = createSessionMapRuntimeState()
   const state = {
     backend: 'codex',
@@ -36,9 +36,11 @@ function controllerFixture() {
     ready: true,
     artifact: null,
     ...runtime,
+    ...overrides.state,
   }
   const requests = []
   const sent = []
+  const dispatched = []
   const controller = createSessionMapController({
     state,
     transport: {
@@ -51,15 +53,19 @@ function controllerFixture() {
       },
       gatewayWebSocket: () => { throw new Error('not used') },
       rpc: async () => ({}),
-      dispatchBackendRpc: async () => ({}),
+      dispatchBackendRpc: async (backend, method, params) => {
+        dispatched.push({ backend, method, params })
+        return {}
+      },
       sendRaw: (message) => sent.push(message),
+      ...overrides.transport,
     },
     model: {
       createViewModel: () => ({ turns: [] }),
       applyNotification: () => {},
     },
     view: {
-      selectedStateKey: () => 'codex:different-thread',
+      selectedStateKey: () => `${state.backend}:${state.selectedId}`,
       activateRightWorkspace: () => {},
       closeActionMenus: () => {},
       toggleActionMenu: () => {},
@@ -68,10 +74,11 @@ function controllerFixture() {
       renderArtifact: () => {},
       isResourcesOpen: () => false,
       isWorkspaceOpen: () => false,
+      ...overrides.view,
     },
     randomId: () => 'generated-id',
   })
-  return { controller, requests, sent, state }
+  return { controller, dispatched, requests, sent, state }
 }
 
 test('Session Map runtime factories isolate caches, workers, and UI state', () => {
@@ -95,6 +102,33 @@ test('Session Map controller coalesces concurrent loads for one session', async 
   assert.equal(requests.length, 1)
   assert.deepEqual(first, second)
   assert.equal(state.sessionMaps.get('codex:thread-one').id, 'map-one')
+})
+
+test('preparing a turn keeps Map context bound to its original session', async () => {
+  let releaseMap
+  const mapReady = new Promise((resolve) => { releaseMap = resolve })
+  const { controller, dispatched, state } = controllerFixture({
+    state: { backend: 'codex', selectedId: 'thread-one' },
+    transport: {
+      gatewayFetch: async () => {
+        await mapReady
+        return { ok: true, status: 200, json: async () => mapFixture() }
+      },
+    },
+  })
+  const preparing = controller.prepareTurn({ backend: 'codex', id: 'thread-one' })
+  state.backend = 'opencode'
+  state.selectedId = 'other-thread'
+  releaseMap()
+  await preparing
+
+  assert.deepEqual(dispatched.map(({ backend, method, params }) => ({
+    backend,
+    method,
+    threadId: params.threadId,
+  })), [{ backend: 'codex', method: 'thread/resume', threadId: 'thread-one' }])
+  assert.equal(state.sessionMapSync.get('codex:thread-one')?.state, 'syncing')
+  assert.equal(state.sessionMapSync.has('opencode:other-thread'), false)
 })
 
 test('Session Map tool updates are validated, persisted, and acknowledged', async () => {

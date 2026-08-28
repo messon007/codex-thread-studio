@@ -5,6 +5,10 @@ const MARKDOWN_TARGET_PATTERN = /!?\[[^\]\n]*\]\(([^\s)]+)(?:\s+["'][^"']*["'])?
 const INLINE_CODE_PATTERN = /`([^`\n]+)`/gu
 const FILE_PATTERN = /(?:[a-z]:[\\/]|\.{0,2}[\\/])?(?:[\p{L}\p{N}_.@+-]+[\\/])+[\p{L}\p{N}_.@+-]+(?:\.[\p{L}\p{N}_.+-]+)?(?::\d+(?::\d+)?)?/giu
 const FILE_EXTENSION_PATTERN = /\.(?:adoc|avif|bash|bmp|c|cc|cfg|cjs|cmake|conf|cpp|cs|css|csv|dart|doc|docx|epub|erl|ex|exs|fish|fs|fsx|gif|go|h|hpp|hrl|htm|html|ico|ini|java|jpeg|jpg|js|json|jsonl|jsx|kt|kts|less|lock|lua|m|md|mdx|mjs|mm|mov|mp3|mp4|odf|ods|odt|pdf|php|plist|png|ppt|pptx|properties|proto|ps1|py|rb|rs|rst|rtf|sass|scala|scss|sh|sql|svg|swift|toml|ts|tsv|tsx|txt|vb|vue|wasm|wav|webm|webp|xml|xls|xlsx|yaml|yml|zig|zsh)$/iu
+const resourceObjectIds = new WeakMap()
+const resourceNarrativeRevisions = new WeakMap()
+let nextResourceObjectId = 1
+let nextResourceNarrativeRevision = 1
 
 export const RESOURCE_KINDS = Object.freeze(['web', 'file', 'code', 'directory', 'issue', 'commit', 'artifact'])
 
@@ -148,6 +152,22 @@ export function buildSessionResourceIndex(model, context = {}, registry = create
   return new SessionResourceIndex().rebuild(model, context, registry)
 }
 
+export function sessionResourceRevision(model) {
+  const latestTurn = Array.isArray(model?.turns) ? model.turns.at(-1) : null
+  if (!latestTurn) return 'empty'
+  const items = (latestTurn.items || []).filter((item) => ['userMessage', 'agentMessage', 'plan'].includes(item?.type))
+  return [
+    String(latestTurn.id || ''),
+    objectRevision(latestTurn),
+    ...items.map((item) => [
+      String(item.id || ''),
+      String(item.type || ''),
+      objectRevision(item),
+      narrativeItemFingerprint(item),
+    ].join(':')),
+  ].join('|')
+}
+
 export function normalizeResourceCandidate(candidate, source = {}, context = {}) {
   const raw = cleanCandidate(candidate?.raw)
   if (!raw) return null
@@ -211,6 +231,21 @@ function itemText(item = {}) {
   if (item.type === 'userMessage') return userContentText(item.content)
   if (item.type === 'agentMessage' || item.type === 'plan') return String(item.text || '')
   return ''
+}
+
+function narrativeItemFingerprint(item = {}) {
+  const text = itemText(item)
+  const previous = resourceNarrativeRevisions.get(item)
+  if (previous?.text === text) return `${text.length}:${previous.revision}`
+  const revision = nextResourceNarrativeRevision++
+  resourceNarrativeRevisions.set(item, { text, revision })
+  return `${text.length}:${revision}`
+}
+
+function objectRevision(value) {
+  if (!value || typeof value !== 'object') return 0
+  if (!resourceObjectIds.has(value)) resourceObjectIds.set(value, nextResourceObjectId++)
+  return resourceObjectIds.get(value)
 }
 
 function userContentText(content) {

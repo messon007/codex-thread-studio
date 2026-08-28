@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -25,6 +26,12 @@ test('truncates long turn previews and handles missing user text', () => {
     items: [{ type: 'userMessage', content: [{ type: 'text', text: 'abcdefghij' }] }],
   }
   assert.equal(turnPromptPreview(turn, 6), 'abcde…')
+  assert.equal(turnPromptPreview({
+    items: [{ type: 'userMessage', content: [{ type: 'text', text: `prefix ${'x'.repeat(100_000)}` }] }],
+  }, 10), 'prefix xx…')
+  assert.equal(turnPromptPreview({
+    items: [{ type: 'userMessage', content: [{ type: 'text', text: 'A😀BCD' }] }],
+  }, 4), 'A😀B…')
   assert.equal(turnPromptPreview({ items: [] }), '')
 })
 
@@ -54,4 +61,26 @@ test('selects the final turn at the bottom of the transcript', () => {
   const positions = [{ id: 'turn-1', top: 20 }, { id: 'turn-2', top: 700 }]
   assert.equal(activeTurnAtMarker(positions, 200, true), 'turn-2')
   assert.equal(activeTurnAtMarker([], 200), null)
+})
+
+test('turn navigation records its final position before another session can be selected', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('function handleTurnNavigatorClick(')
+  const end = source.indexOf('\nfunction queueStreamingItemPatch', start)
+  const handler = source.slice(start, end)
+
+  assert.ok(handler.indexOf('pendingTranscriptViewRestore = null') < handler.indexOf('renderTranscript()'))
+  assert.ok(handler.indexOf('transcriptPresentationCache.showTurn(') < handler.indexOf("querySelectorAll('.turn[data-turn-id]')"))
+  assert.ok(handler.indexOf('transcript.scrollTop = Math.max(0, top)') < handler.indexOf('captureTranscriptViewState()'))
+  assert.doesNotMatch(handler, /behavior:\s*['"]smooth['"]/u)
+})
+
+test('turn navigator reuses DOM only when ids, previews, and locale are unchanged', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('function renderTurnNavigator(')
+  const end = source.indexOf('\nfunction scheduleTurnNavigatorSync', start)
+  const render = source.slice(start, end)
+  assert.match(render, /const preview = turnPromptPreview\(turn\)/u)
+  assert.match(render, /state\.language/u)
+  assert.match(render, /signature === turnNavigatorSignature/u)
 })

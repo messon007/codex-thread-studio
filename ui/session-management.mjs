@@ -57,6 +57,8 @@ export function createSessionManagementUI({
   const {
     createViewModel,
     hydrateThread,
+    captureTranscriptView,
+    prepareTranscriptView,
     closeActionMenus,
     closeWorkspacePeerRails,
     renderThreadList,
@@ -134,14 +136,9 @@ export function createSessionManagementUI({
       if (returnBackend !== state.backend) {
         await switchBackend(returnBackend, { selectedId: returnId || undefined })
         await waitFor(() => state.backend === returnBackend && state.ready, 15_000)
-        if (returnId) await selectThread(returnId, { force: true, backend: returnBackend }).catch(reportError)
         return
       }
-      state.selectedId = returnId || null
-      state.model = createViewModel()
       renderThreadList()
-      renderWorkspace()
-      renderTranscript()
       if (returnId && state.threads.some((thread) => thread.id === returnId)) await selectThread(returnId, { force: true })
       else await loadThreads()
     },
@@ -264,9 +261,14 @@ export function createSessionManagementUI({
       const result = await rpc('thread/read', { threadId, includeTurns: true })
       if (!library.open || library.selected !== entry) return
       entry.thread = { ...entry.thread, ...(result.thread || {}), archived: true, turns: undefined }
+      captureTranscriptView?.()
       state.selectedId = threadId
       state.model = createViewModel()
       hydrateThread(state.model, result.thread)
+      prepareTranscriptView?.({
+        historyReady: true,
+        historyComplete: result.historyComplete !== false,
+      })
       closeWorkspacePeerRails()
       renderThreadList()
       renderWorkspace()

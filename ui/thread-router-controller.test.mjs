@@ -44,6 +44,7 @@ function controllerFixture(overrides = {}) {
       refreshCatalogs: async () => calls.push({ type: 'refresh' }),
       loadBackendInfo: async () => ({ routerWorkspace: '/router' }),
       configuredTurnOptions: () => ({ effort: 'high' }),
+      ...overrides.backend,
     },
     catalog: {
       sidebarCatalogs: () => state.threadsByBackend,
@@ -56,6 +57,7 @@ function controllerFixture(overrides = {}) {
       ensureSessionModel: async () => ({ turns: [], status: 'idle' }),
       applyNotification: () => {},
       cacheThreadModel: () => {},
+      ...overrides.model,
     },
     view: {
       closeActionMenus: () => {},
@@ -65,6 +67,7 @@ function controllerFixture(overrides = {}) {
       renderComposerState: () => {},
       renderItem: () => '',
       selectThread: async () => {},
+      ...overrides.view,
     },
     persistPreferences: async () => {},
   })
@@ -102,6 +105,45 @@ test('Router keeps image attachments with the routing request', async () => {
   assert.deepEqual(calls[1].input, [{ type: 'text', text: 'Inspect this screenshot' }, image])
   assert.deepEqual(state.routerRuntime.pending.get('codex:route-turn').attachments, [image])
   for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
+})
+
+test('Router acknowledgement stays bound to its original model across a session switch', async () => {
+  let releaseRefresh
+  let markRefreshStarted
+  let fixtureState
+  const refreshStarted = new Promise((resolve) => { markRefreshStarted = resolve })
+  const refreshReady = new Promise((resolve) => { releaseRefresh = resolve })
+  const routerModel = { activeTurnId: null, turns: [] }
+  const otherModel = { activeTurnId: null, turns: [] }
+  const appliedModels = []
+  const cachedModels = []
+  const fixture = controllerFixture({
+    state: { model: routerModel },
+    backend: {
+      refreshCatalogs: async () => {
+        markRefreshStarted()
+        await refreshReady
+      },
+      configuredTurnOptions: () => ({ selectedAtSend: fixtureState.selectedId }),
+    },
+    model: {
+      applyNotification: (model) => appliedModels.push(model),
+      cacheThreadModel: (backend, id, model) => cachedModels.push({ backend, id, model }),
+    },
+  })
+  fixtureState = fixture.state
+  const started = fixture.controller.startTurn('Route this safely')
+  await refreshStarted
+  fixture.state.selectedId = 'worker'
+  fixture.state.model = otherModel
+  releaseRefresh()
+  await started
+
+  assert.deepEqual(appliedModels, [routerModel])
+  assert.deepEqual(cachedModels, [{ backend: 'codex', id: 'router', model: routerModel }])
+  assert.equal(fixture.calls.at(-1).options.turnOptions.selectedAtSend, 'router')
+  assert.equal(otherModel.turns.length, 0)
+  for (const timer of fixture.state.routerRuntime.monitors.values()) clearTimeout(timer)
 })
 
 test('removing a session repairs Router controllers and fallback references', () => {

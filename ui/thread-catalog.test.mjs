@@ -7,11 +7,14 @@ import { installBackendRegistry } from './backends.mjs'
 import {
   catalogCountsWithAttention,
   catalogTimestamp,
+  compactSidebarText,
   filterCatalogEntries,
   groupCatalogEntries,
+  isCatalogCacheFresh,
   isSessionDirectoryHidden,
   normalizeHiddenSessionDirectories,
   normalizeSessionDirectoryIgnore,
+  syncCatalogSelection,
   threadCatalogKey,
 } from './thread-catalog.mjs'
 
@@ -49,6 +52,16 @@ test('normalizes second and millisecond epoch timestamps for cross-backend order
   assert.equal(catalogTimestamp(1_784_881_800_123), 1_784_881_800_123)
 })
 
+test('treats the Codex validation second as uncertain when checking cached history', () => {
+  const validatedAt = 1_784_881_800_700
+  assert.equal(isCatalogCacheFresh(1_784_881_800, validatedAt, { coarse: true }), false)
+  assert.equal(isCatalogCacheFresh(1_784_881_800, validatedAt), true)
+  assert.equal(isCatalogCacheFresh(1_784_881_799, validatedAt, { coarse: true }), true)
+  assert.equal(isCatalogCacheFresh(1_784_881_800_600, validatedAt), true)
+  assert.equal(isCatalogCacheFresh(1_784_881_800_800, validatedAt), false)
+  assert.equal(isCatalogCacheFresh(null, validatedAt, { coarse: true }), true)
+})
+
 test('reports deck-style all, active, and attention counts', () => {
   const attention = new Set([threadCatalogKey('opencode', 'same-id')])
   assert.deepEqual(catalogCountsWithAttention(catalogs, attention), { all: 4, active: 1, attention: 1 })
@@ -83,6 +96,25 @@ test('search includes the backend tag and project directory', () => {
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'OC' }).map(({ thread }) => thread.name), ['OpenCode task'])
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'WK' }).map(({ thread }) => thread.name), ['Company Codex task'])
   assert.deepEqual(filterCatalogEntries(catalogs, { search: '/work/codex' }).map(({ thread }) => thread.name), ['Codex task'])
+})
+
+test('compacts sidebar copy without splitting Unicode characters', () => {
+  assert.equal(compactSidebarText('  A\n  short\t title  '), 'A short title')
+  assert.equal(compactSidebarText('A😀BC', 4), 'A😀BC')
+  assert.equal(compactSidebarText('A😀BCD', 4), 'A😀B…')
+  assert.equal(compactSidebarText(`short${'x'.repeat(100_000)}`, 10), 'shortxxxx…')
+})
+
+test('updates only the selected catalog row for a session switch', () => {
+  const rows = [
+    fakeCatalogRow('codex', 'one', true),
+    fakeCatalogRow('codex', 'two', false),
+    fakeCatalogRow('opencode', 'two', false),
+  ]
+  syncCatalogSelection(rows, 'codex', 'two')
+  assert.deepEqual(rows.map((row) => row.active), [false, true, false])
+  syncCatalogSelection(rows, 'opencode', 'two')
+  assert.deepEqual(rows.map((row) => row.active), [false, false, true])
 })
 
 test('hides configured directories and all descendants without deleting catalog data', () => {
@@ -153,8 +185,27 @@ test('session selection renders a valid cache before performing a first history 
   const selectThread = source.slice(start, end)
   assert.ok(selectThread.indexOf('freshThreadModel(') < selectThread.indexOf('renderTranscript()'))
   assert.ok(selectThread.indexOf('setNativeError(null)') < selectThread.indexOf('if (cached)'))
-  assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id)'))
+  assert.ok(selectThread.indexOf('renderTranscript()') < selectThread.indexOf('schedulePreferencesPersist()'))
+  assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id,'))
+  assert.match(selectThread, /syncThreadListSelection\(\)/u)
+  assert.doesNotMatch(selectThread, /renderThreadList\(\)/u)
   assert.doesNotMatch(selectThread, /thread\/unsubscribe/)
+})
+
+test('catalog refreshes do not rerender a still-selected fresh transcript', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('async function loadThreads(')
+  const end = source.indexOf('\nfunction setActiveThreads', start)
+  const loadThreads = source.slice(start, end)
+  assert.match(loadThreads, /preferredLoad = cached[\s\S]*loadSelectedSessionCompanions/u)
+  assert.match(loadThreads, /preferredMissingFromCatalog[\s\S]*thread\/read'[\s\S]*threadId: preferred, includeTurns: false/u)
+  assert.match(loadThreads, /preferredMissingFromCatalog && isCodexBackend\(backend\)[\s\S]*mergeThreadIntoCatalog\(backend, knownPreferred\)/u)
+  assert.match(loadThreads, /backend === 'opencode' && preferredMissingFromCatalog[\s\S]*invalidateThreadModel\(backend, preferred\)/u)
+  assert.match(loadThreads, /await preferredLoad[\s\S]*preferredMissingFromCatalog && isCodexBackend\(backend\)[\s\S]*threadId: preferred, includeTurns: false/u)
+  assert.match(loadThreads, /const preserveMissingPreferred = preferredLoad[\s\S]*!preferredMissingFromCatalog \|\| isCodexBackend\(backend\)[\s\S]*const nextId = preserveMissingPreferred/u)
+  assert.match(loadThreads, /await preferredLoad[\s\S]*if \(preferredUsedCache && !freshThreadModel\(backend, nextId\)\)[\s\S]*selectThread/u)
+  assert.match(loadThreads, /state\.selectedId !== preferred[\s\S]*return true/u)
+  assert.match(loadThreads, /else if \(nextId && \(state\.selectedId !== nextId \|\| !freshThreadModel\(backend, nextId\)\)\)[\s\S]*selectThread/u)
 })
 
 test('session switches prepare their own transcript position before rendering cached content', () => {
@@ -166,6 +217,22 @@ test('session switches prepare their own transcript position before rendering ca
   const backendEnd = source.indexOf('\nfunction applyBackendCopy', backendStart)
   const switchBackend = source.slice(backendStart, backendEnd)
 
-  assert.ok(selectThread.indexOf('prepareTranscriptViewForSelection()') < selectThread.indexOf('renderTranscript()'))
-  assert.ok(switchBackend.indexOf('prepareTranscriptViewForSelection()') < switchBackend.indexOf('renderTranscript()'))
+  assert.ok(selectThread.indexOf('prepareTranscriptViewForSelection(') < selectThread.indexOf('renderTranscript()'))
+  assert.ok(switchBackend.indexOf('prepareTranscriptViewForSelection(') < switchBackend.indexOf('renderTranscript()'))
+  assert.match(selectThread, /historyReady: Boolean\(cached\),\s*historyComplete: cached\?\.model\?\.historyComplete !== false/u)
+  assert.match(switchBackend, /historyReady: Boolean\(cached\),\s*historyComplete: cached\?\.model\?\.historyComplete !== false/u)
 })
+
+function fakeCatalogRow(backend, threadId, active) {
+  const row = {
+    dataset: { backend, threadId },
+    active,
+    classList: {
+      toggle(name, enabled) {
+        assert.equal(name, 'active')
+        row.active = enabled
+      },
+    },
+  }
+  return row
+}

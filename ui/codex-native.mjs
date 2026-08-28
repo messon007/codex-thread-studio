@@ -14,9 +14,16 @@ export function createCodexViewModel() {
 
 export function hydrateCodexThread(model, thread) {
   model.threadId = thread?.id || model.threadId
-  model.turns = Array.isArray(thread?.turns) ? structuredCloneSafe(thread.turns) : []
+  // RPC history objects are freshly decoded and are not reused by callers.
+  // Taking ownership avoids cloning an entire large session a second time.
+  model.turns = Array.isArray(thread?.turns) ? thread.turns : []
   model.error = null
-  const active = [...model.turns].reverse().find((turn) => turn?.status === 'inProgress')
+  let active = null
+  for (let index = model.turns.length - 1; index >= 0; index -= 1) {
+    if (model.turns[index]?.status !== 'inProgress') continue
+    active = model.turns[index]
+    break
+  }
   model.activeTurnId = active?.id || null
   model.status = model.activeTurnId ? 'running' : 'idle'
   return model

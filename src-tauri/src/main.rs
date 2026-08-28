@@ -2203,6 +2203,8 @@ struct ApplyEnvironmentRequest {
     root: String,
     thread_id: String,
     backend: String,
+    #[serde(default)]
+    include_thread: bool,
 }
 
 async fn apply_environment_profile(
@@ -2236,6 +2238,7 @@ async fn apply_environment_profile(
         )
         .await
     {
+        Ok(result) if request.include_thread => json_response(StatusCode::OK, &result),
         Ok(_) => json_response(StatusCode::OK, &json!({ "applied": true })),
         Err(message) => json_error(StatusCode::BAD_GATEWAY, &message),
     }

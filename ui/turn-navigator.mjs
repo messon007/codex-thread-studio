@@ -1,14 +1,8 @@
 export function turnPromptPreview(turn, maxLength = 72) {
   const userMessage = (turn?.items || []).find((item) => item?.type === 'userMessage')
-  const text = (userMessage?.content || [])
-    .filter((item) => item?.type === 'text')
-    .map((item) => item.text || '')
-    .join(' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-  if (!text) return ''
-  if (text.length <= maxLength) return text
-  return `${text.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
+  const content = Array.isArray(userMessage?.content) ? userMessage.content : []
+  const textParts = content.filter((item) => item?.type === 'text').map((item) => item.text || '')
+  return compactPromptParts(textParts, maxLength)
 }
 
 export function turnHasUserInput(turn) {
@@ -35,4 +29,36 @@ export function activeTurnAtMarker(positions, marker, atBottom = false) {
 export function turnNavigationLabel(turn, index) {
   const preview = turnPromptPreview(turn)
   return preview ? `User input ${index + 1}: ${preview}` : `User input ${index + 1}`
+}
+
+function compactPromptParts(parts, limit) {
+  const maximum = Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 72)
+  const characters = []
+  let pendingSpace = false
+  let truncated = false
+  outer: for (const part of parts) {
+    if (characters.length) pendingSpace = true
+    for (const character of String(part || '')) {
+      if (/\s/u.test(character)) {
+        if (characters.length) pendingSpace = true
+        continue
+      }
+      if (pendingSpace) {
+        if (characters.length >= maximum) {
+          truncated = true
+          break outer
+        }
+        characters.push(' ')
+        pendingSpace = false
+      }
+      if (characters.length >= maximum) {
+        truncated = true
+        break outer
+      }
+      characters.push(character)
+    }
+  }
+  if (!truncated) return characters.join('').trim()
+  if (maximum === 1) return '…'
+  return `${characters.slice(0, maximum - 1).join('').trimEnd()}…`
 }

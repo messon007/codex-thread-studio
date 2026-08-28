@@ -152,6 +152,33 @@ test('extracts a compact reasoning stage', () => {
   assert.equal(reasoningStage({ content: ['Checking the current implementation\nMore detail'] }), 'Checking the current implementation')
 })
 
+test('stops at the newest activity stage and bounds long stage summaries', () => {
+  const olderReasoning = { id: 'older', type: 'reasoning' }
+  Object.defineProperty(olderReasoning, 'summary', {
+    get() { throw new Error('an older stage should not be inspected') },
+  })
+  const longProgress = `Latest progress ${'x'.repeat(1_000_000)}`
+  const presentation = presentTurn({
+    id: 'bounded-stage',
+    status: 'inProgress',
+    items: [
+      olderReasoning,
+      { id: 'latest', type: 'agentMessage', text: longProgress },
+      { id: 'command', type: 'commandExecution', command: 'pwd', status: 'inProgress' },
+    ],
+  })
+
+  const stage = presentation.blocks[0].latestStage
+  assert.equal(stage.length, 180)
+  assert.match(stage, /^Latest progress x+…$/u)
+
+  const summary = ['**First bounded stage**\nMore detail']
+  Object.defineProperty(summary, 1, {
+    get() { throw new Error('a later summary part should not be inspected') },
+  })
+  assert.equal(reasoningStage({ summary }), 'First bounded stage')
+})
+
 test('caches completed turns and only rebuilds a changed turn', () => {
   const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
   const model = {
@@ -162,16 +189,17 @@ test('caches completed turns and only rebuilds a changed turn', () => {
     ],
   }
   const first = cache.get('codex:thread', model)
-  const oldTurn = first.turns.get('1').presentation
+  const oldTurn = first.turns.get('2').presentation
   assert.equal(first.visibleStart, 1)
 
   model.turns[2].items[0].text = 'Three updated'
   const second = cache.get('codex:thread', model)
-  assert.equal(second.turns.get('1').presentation, oldTurn)
+  assert.equal(second.turns.get('2').presentation, oldTurn)
   assert.equal(second.turns.get('3').presentation.blocks[0].item.text, 'Three updated')
 
   cache.showTurn('codex:thread', model, '1')
   assert.equal(second.visibleStart, 0)
+  assert.equal(second.visibleEnd, 2)
 })
 
 test('detects equal-length message replacement and incrementally rebuilds one turn', () => {
@@ -208,16 +236,208 @@ test('rebuilds a cached turn when user message text changes', () => {
   assert.equal(second.blocks[0].item.content[0].text, 'Updated question')
 })
 
+test('notices reasoning summary length changes without joining the full summary', () => {
+  const cache = new TranscriptPresentationCache()
+  const model = {
+    turns: [{
+      id: 'reasoning-turn',
+      status: 'inProgress',
+      items: [{
+        id: 'reasoning',
+        type: 'reasoning',
+        summary: ['first', 'second', 'third', 'middle', 'fifth', 'sixth', 'last'],
+      }],
+    }],
+  }
+  const first = cache.get('thread', model).turns.get('reasoning-turn').presentation
+  model.turns[0].items[0].summary[3] = 'a substantially longer middle summary'
+  const second = cache.get('thread', model).turns.get('reasoning-turn').presentation
+
+  assert.notEqual(second, first)
+})
+
 test('keeps the rendered history window bounded until the user loads earlier turns', () => {
   const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
   const model = { turns: [1, 2, 3].map((id) => ({ id: String(id), status: 'completed', items: [] })) }
   const entry = cache.get('thread', model)
   assert.equal(entry.visibleStart, 1)
+  assert.equal(entry.visibleEnd, 3)
   model.turns.push({ id: '4', status: 'completed', items: [] })
   cache.get('thread', model)
   assert.equal(entry.visibleStart, 2)
+  assert.equal(entry.visibleEnd, 4)
   cache.showEarlier('thread', model, 2)
   assert.equal(entry.visibleStart, 0)
+  assert.equal(entry.visibleEnd, 4)
+})
+
+test('builds presentations only for visible turns and fills newly revealed windows', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
+  const hiddenReasoning = { id: 'hidden-reasoning', type: 'reasoning' }
+  Object.defineProperty(hiddenReasoning, 'summary', {
+    get() { throw new Error('hidden turn presentation should stay lazy') },
+  })
+  const model = {
+    turns: Array.from({ length: 100 }, (_, index) => ({
+      id: String(index),
+      status: 'completed',
+      items: index === 0 ? [hiddenReasoning] : [],
+    })),
+  }
+
+  const entry = cache.get('thread', model)
+  assert.deepEqual([...entry.turns.keys()], ['98', '99'])
+
+  cache.showTurn('thread', model, '2')
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [1, 3])
+  assert.deepEqual([...entry.turns.keys()], ['1', '2'])
+
+  cache.showLater('thread', model, 2)
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [1, 5])
+  assert.deepEqual([...entry.turns.keys()], ['1', '2', '3', '4'])
+})
+
+test('keeps a restored anchor in a fixed-size window instead of rendering through the latest turn', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 30 })
+  const model = {
+    turns: Array.from({ length: 500 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: 'completed',
+      items: [],
+    })),
+  }
+
+  const entry = cache.showTurn('thread', model, 'turn-50')
+  assert.equal(entry.visibleStart, 48)
+  assert.equal(entry.visibleEnd, 78)
+  assert.equal(entry.visibleEnd - entry.visibleStart, 30)
+
+  const resynced = cache.get('thread', model)
+  assert.equal(resynced.visibleStart, 48)
+  assert.equal(resynced.visibleEnd, 78)
+  assert.equal(resynced.historyWindow, 30)
+})
+
+test('force-restores an anchor into a centered bounded window', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const model = {
+    turns: Array.from({ length: 12 }, (_, index) => ({ id: String(index), status: 'completed', items: [] })),
+  }
+  const expanded = cache.get('thread', model)
+  cache.showEarlier('thread', model, 20)
+  assert.deepEqual([expanded.visibleStart, expanded.visibleEnd], [0, 12])
+
+  const hiddenReasoning = { id: 'hidden-reasoning', type: 'reasoning' }
+  Object.defineProperty(hiddenReasoning, 'summary', {
+    get() { throw new Error('force restore should not rebuild the expanded window') },
+  })
+  model.turns[0].items = [hiddenReasoning]
+
+  const restored = cache.restoreTurn('thread', model, '5')
+  assert.equal(restored, expanded)
+  assert.deepEqual([restored.visibleStart, restored.visibleEnd], [3, 7])
+  assert.deepEqual(restored.orderedIds.slice(restored.visibleStart, restored.visibleEnd), ['3', '4', '5', '6'])
+  assert.equal(restored.historyWindow, 4)
+  assert.equal(restored.windowMode, 'fixed')
+  assert.deepEqual([...restored.turns.keys()], ['3', '4', '5', '6'])
+})
+
+test('keeps near-tail restores pinned while new turns arrive', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const makeTurn = (id) => ({ id: String(id), status: 'completed', items: [] })
+  const model = { turns: Array.from({ length: 8 }, (_, index) => makeTurn(index)) }
+  let entry = cache.restoreTurn('thread', model, '7')
+  assert.equal(entry.windowMode, 'fixed')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
+
+  model.turns.push(...Array.from({ length: 5 }, (_, index) => makeTurn(index + 8)))
+  entry = cache.get('thread', model)
+  assert.equal(entry.windowMode, 'fixed')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
+})
+
+test('pins the current latest window when the reader manually pauses', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const makeTurn = (id) => ({ id: String(id), status: 'completed', items: [] })
+  const model = { turns: Array.from({ length: 8 }, (_, index) => makeTurn(index)) }
+  let entry = cache.get('thread', model)
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
+
+  cache.pinCurrent('thread')
+  model.turns.push(...Array.from({ length: 5 }, (_, index) => makeTurn(index + 8)))
+  entry = cache.get('thread', model)
+
+  assert.equal(entry.windowMode, 'fixed')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
+})
+
+test('keeps fixed windows on stable turn ids and falls back to bounded latest history', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const model = {
+    turns: Array.from({ length: 12 }, (_, index) => ({ id: String(index), status: 'completed', items: [] })),
+  }
+  const entry = cache.showTurn('thread', model, '3')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['1', '2', '3', '4'])
+
+  model.turns = [
+    { id: 'older-a', status: 'completed', items: [] },
+    { id: 'older-b', status: 'completed', items: [] },
+    ...model.turns,
+  ]
+  cache.get('thread', model)
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [3, 7])
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['1', '2', '3', '4'])
+
+  model.turns = ['new-a', 'new-b', 'new-c'].map((id) => ({ id, status: 'completed', items: [] }))
+  cache.get('thread', model)
+  assert.equal(entry.windowMode, 'latest')
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [0, 3])
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['new-a', 'new-b', 'new-c'])
+})
+
+test('loads omitted turns in either direction without automatically expanding an anchor window', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const model = {
+    turns: Array.from({ length: 12 }, (_, index) => ({ id: String(index), status: 'completed', items: [] })),
+  }
+
+  const entry = cache.showTurn('thread', model, '3')
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [1, 5])
+  cache.showEarlier('thread', model, 1)
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [0, 5])
+  cache.showLater('thread', model, 2)
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [0, 7])
+
+  model.turns.push({ id: '12', status: 'completed', items: [] })
+  cache.get('thread', model)
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [0, 7])
+
+  cache.showTurn('thread', model, '12')
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [9, 13])
+})
+
+test('peeks at cached presentation metadata without synchronizing a changed model', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
+  const model = { turns: [{ id: '1', status: 'completed', items: [] }] }
+  const entry = cache.get('thread', model)
+  model.turns.push({ id: '2', status: 'completed', items: [] })
+
+  assert.equal(cache.peek('thread'), entry)
+  assert.deepEqual(cache.peek('thread').orderedIds, ['1'])
+  assert.equal(cache.peek('missing'), null)
+})
+
+test('reveals a turn in an existing entry without synchronizing the model again', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 2 })
+  const model = {
+    turns: [1, 2, 3].map((id) => ({ id: String(id), status: 'completed', items: [] })),
+  }
+  const entry = cache.get('thread', model)
+  model.turns.push({ id: '4', status: 'completed', items: [] })
+
+  assert.equal(cache.revealTurn(entry, '1'), entry)
+  assert.deepEqual(entry.orderedIds, ['1', '2', '3'])
+  assert.deepEqual([entry.visibleStart, entry.visibleEnd], [0, 2])
 })
 
 test('keeps per-session reading positions in the in-memory presentation cache', () => {

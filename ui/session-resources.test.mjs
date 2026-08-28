@@ -6,6 +6,7 @@ import {
   extractPathCandidates,
   extractUrlCandidates,
   normalizeResourceCandidate,
+  sessionResourceRevision,
 } from './session-resources.mjs'
 
 test('URL extraction trims prose punctuation but keeps balanced URL parentheses', () => {
@@ -72,6 +73,38 @@ test('only the latest turn contributes resources', () => {
   }
   const index = buildSessionResourceIndex(model, { backend: 'codex', threadId: 'thread', root: '/repo' })
   assert.deepEqual(index.resources().map((resource) => resource.target.path), ['docs/current.md'])
+})
+
+test('resource revision changes only when the latest narrative content changes', () => {
+  const model = {
+    turns: [
+      { id: 'old', items: [{ id: 'old-answer', type: 'agentMessage', text: 'docs/old.md' }] },
+      { id: 'latest', items: [{ id: 'answer', type: 'agentMessage', text: 'docs/current.md' }] },
+    ],
+  }
+  const initial = sessionResourceRevision(model)
+  assert.equal(sessionResourceRevision(model), initial)
+  model.turns[0].items[0].text = 'docs/changed.md'
+  assert.equal(sessionResourceRevision(model), initial)
+  model.turns[1].items[0].text += '?updated'
+  assert.notEqual(sessionResourceRevision(model), initial)
+})
+
+test('resource revision notices a replaced latest item with equal-length text', () => {
+  const model = { turns: [{ id: 'latest', items: [{ id: 'answer', type: 'agentMessage', text: 'docs/one.md' }] }] }
+  const initial = sessionResourceRevision(model)
+  model.turns[0].items[0] = { id: 'answer', type: 'agentMessage', text: 'docs/two.md' }
+  assert.notEqual(sessionResourceRevision(model), initial)
+})
+
+test('resource revision notices an in-place equal-length change outside sampled positions', () => {
+  const text = `docs/${'a'.repeat(90)}.md`
+  const item = { id: 'answer', type: 'agentMessage', text }
+  const model = { turns: [{ id: 'latest', items: [item] }] }
+  const initial = sessionResourceRevision(model)
+  item.text = `${text.slice(0, 1)}X${text.slice(2)}`
+  assert.equal(item.text.length, text.length)
+  assert.notEqual(sessionResourceRevision(model), initial)
 })
 
 test('file changes are activity rather than resources', () => {

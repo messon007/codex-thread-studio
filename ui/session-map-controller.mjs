@@ -807,24 +807,35 @@ export function createSessionMapController({
     return JSON.parse(unwrapped)
   }
 
-  async function prepareTurn() {
-    if (!isCodexBackend(state.backend) || !state.selectedId) return
-    const map = await loadSessionMap(state.backend, state.selectedId)
+  async function prepareTurn(ref = { backend: state.backend, id: state.selectedId }) {
+    const backend = String(ref?.backend || '')
+    const threadId = String(ref?.id || '')
+    if (!isCodexBackend(backend) || !threadId) return
+    const key = sessionMapKey(backend, threadId)
+    const map = await loadSessionMap(backend, threadId)
     if (!map) return
     const configuration = sessionMapTurnConfiguration(map)
     try {
-      await rpc('thread/resume', {
-        threadId: state.selectedId,
+      await dispatchBackendRpc(backend, 'thread/resume', {
+        threadId,
         ...configuration,
       })
     } catch (error) {
       console.debug('Dynamic Session Map tools are unavailable; using developer context only', error)
-      await rpc('thread/resume', {
-        threadId: state.selectedId,
-        developerInstructions: configuration.developerInstructions,
-      })
+      try {
+        await dispatchBackendRpc(backend, 'thread/resume', {
+          threadId,
+          developerInstructions: configuration.developerInstructions,
+        })
+      } catch (fallbackError) {
+        state.sessionMapSync.set(key, { state: 'error', message: fallbackError.message })
+        if (selectedStateKey() === key) setSessionMapSyncState('error', fallbackError.message)
+        throw fallbackError
+      }
     }
-    setSessionMapSyncState('syncing', 'The current Map was added to this turn context')
+    const sync = { state: 'syncing', message: 'The current Map was added to this turn context' }
+    state.sessionMapSync.set(key, sync)
+    if (selectedStateKey() === key) setSessionMapSyncState(sync.state, sync.message)
   }
 
   function resetSelection() {

@@ -16,8 +16,10 @@ import {
 
 test('hydrates persisted turns and detects an active turn', () => {
   const model = createCodexViewModel()
-  hydrateCodexThread(model, { id: 'thread-1', turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] })
+  const turns = [{ id: 'turn-1', status: 'inProgress', items: [] }]
+  hydrateCodexThread(model, { id: 'thread-1', turns })
   assert.equal(model.threadId, 'thread-1')
+  assert.equal(model.turns, turns)
   assert.equal(model.activeTurnId, 'turn-1')
   assert.equal(model.status, 'running')
 })

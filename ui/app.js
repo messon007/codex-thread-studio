@@ -12,18 +12,24 @@ import {
 } from './codex-native.mjs'
 import {
   applyOpenCodeEvent,
+  collectOpenCodeMessageHistory,
   collectOpenCodeRootSessions,
+  createOpenCodeLoopGuard,
   fetchOpenCodeDirectoryStatuses,
+  mergeOpenCodeMessagePages,
   normalizeOpenCodeSessions,
-  openCodeMessageId,
+  openCodeCommandTurn,
   openCodeModelList,
   openCodeThreadFromHistory,
+  replayOpenCodeEventsAfterHistory,
+  selectOpenCodeStartedUserMessage,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
 import {
   catalogListParams,
   mergeCatalogMetadata,
+  shouldRecoverCodexCatalog,
   turnStartParams,
 } from './session-catalog.mjs'
 import {
@@ -110,7 +116,6 @@ import { marked } from './vendor/marked.esm.js'
 import {
   activeTurnAtMarker,
   navigableTurns,
-  turnNavigationLabel,
   turnPromptPreview,
 } from './turn-navigator.mjs'
 import {
@@ -148,6 +153,9 @@ import {
   createTranscriptScrollFollower,
   distanceFromBottom,
   shouldFollowLatestOnReturn,
+  transcriptResizeAction,
+  transcriptScrollEventAction,
+  transcriptRestorePlan,
 } from './transcript-scroll.mjs'
 import { createWorkspaceTools } from './workspace-tools.mjs'
 import { createSessionResourcesUI } from './session-resources-ui.mjs'
@@ -155,10 +163,13 @@ import { rightRailWidthBounds } from './right-rail-layout.mjs'
 import {
   catalogCountsWithAttention,
   catalogTimestamp,
+  compactSidebarText,
   filterCatalogEntries,
   groupCatalogEntries,
+  isCatalogCacheFresh,
   isSessionDirectoryHidden,
   normalizeHiddenSessionDirectories,
+  syncCatalogSelection,
   threadCatalogKey,
 } from './thread-catalog.mjs'
 import {
@@ -210,23 +221,14 @@ const sessionDispatch = new SessionDispatchRegistry()
   .register('codex', codexDispatchAdapter())
   .register('opencode', {
     read: (ref) => dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true }),
-    startTurn: async (ref, input, options = {}) => {
-      const clientUserMessageId = openCodeMessageId(options.clientUserMessageId || randomId())
-      await dispatchBackendRpc(ref.backend, 'turn/start', {
+    startTurn: (ref, input, options = {}) => {
+      return dispatchBackendRpc(ref.backend, 'turn/start', {
         threadId: ref.id,
-        clientUserMessageId,
         input,
         ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
         ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
         ...(options.turnOptions || {}),
       }, options.timeoutMs)
-      return {
-        turn: {
-          id: clientUserMessageId,
-          status: 'inProgress',
-          items: [{ id: clientUserMessageId, type: 'userMessage', content: input }],
-        },
-      }
     },
   })
 
@@ -309,6 +311,7 @@ const state = {
   appServerInitialization: null,
   appServerGenerations: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, null])),
   environmentProfile: null,
+  environmentProfileSelectionRoot: '',
   browser: null,
   browserInfo: null,
   embeddedBrowserVisible: false,
@@ -338,6 +341,7 @@ const state = {
 
 let preferencesReady = false
 let preferencesWriteChain = Promise.resolve()
+let preferencesPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
@@ -345,14 +349,33 @@ let composerSearchTimer = null
 let codexCatalogFocusRefreshAt = 0
 let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
+let activeTurnNavigatorButton = null
+let turnNavigatorButtons = new Map()
+let turnNavigatorIds = new Set()
+let turnNavigatorSignature = ''
+let transcriptCaptureFrame = null
+let transcriptCaptureFrameKey = ''
+let transcriptLiveLayoutAnchor = null
+let transcriptUserScrollIntentUntil = 0
+let transcriptPointerScrollActive = false
 let openCodeListRefreshTimer = null
+let openCodeListRefreshNeedsHistory = false
+let openCodeEventStreamOpenCount = 0
+let openCodeHistoryEpoch = 0
 const openCodeStatusReconcileTimers = new Map()
+const openCodeLoopAbortRequests = new Set()
+const openCodeLoopGuard = createOpenCodeLoopGuard()
+const openCodeHistoryEventBuffers = new Map()
+const openCodeHistoryEventSequences = new Map()
+const transcriptCaptureSuppressedKeys = new Set()
 let threadCatalogRetryTimer = null
 let threadCatalogRetryAttempt = 0
 let threadCatalogErrorMessage = null
 const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
+const backendSelectionLoads = new Map()
 const codexCatalogRecoveryStarted = new Set()
+let inactiveCatalogRefreshScheduled = false
 const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptContentObserver = createTranscriptContentObserver({ onResize: handleTranscriptContentResize })
 const composerDrafts = createComposerDraftStore()
@@ -372,6 +395,8 @@ let embeddedBrowserWidthTimer = null
 let environmentDialogRoot = ''
 let environmentDialogProfile = null
 const environmentSecretRemovals = new Set()
+const appliedEnvironmentProfiles = new Set()
+const environmentApplyRequests = new Map()
 let pendingTranscriptViewRestore = null
 
 const workspaceTools = createWorkspaceTools({
@@ -421,6 +446,8 @@ const sessionManagement = createSessionManagementUI({
   view: {
     createViewModel: createCodexViewModel,
     hydrateThread: hydrateCodexThread,
+    captureTranscriptView: captureTranscriptViewState,
+    prepareTranscriptView: prepareTranscriptViewForSelection,
     closeActionMenus,
     closeWorkspacePeerRails,
     renderThreadList,
@@ -433,7 +460,7 @@ const sessionManagement = createSessionManagementUI({
     activityBlocks: activityBlocksForTurn,
     renderedActivity,
     hydrateActivity: hydrateActivityDetails,
-    pauseFollowing: () => transcriptScrollFollower.pause(),
+    pauseFollowing: beginTranscriptProgrammaticNavigation,
   },
   notify: toast,
   reportError: showError,
@@ -527,7 +554,8 @@ const reviewNotes = createReviewNotesController({
     renderMarkdown,
     renderedItem,
     setComposerValue: setCurrentComposerValue,
-    pauseTranscript: () => transcriptScrollFollower.pause(),
+    pauseTranscript: beginTranscriptProgrammaticNavigation,
+    preserveTranscriptLayout,
     switchBackend,
     waitForBackend: waitFor,
     loadThreads,
@@ -796,6 +824,14 @@ function bindUI() {
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
   $('#open-browser-workspace').addEventListener('click', () => openGlobalBrowser().catch(showError))
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
+  $('#transcript').addEventListener('wheel', handleTranscriptUserTakeover, { passive: true })
+  $('#transcript').addEventListener('touchstart', handleTranscriptUserTakeover, { passive: true })
+  $('#transcript').addEventListener('pointerdown', handleTranscriptUserTakeover, { passive: true })
+  $('#transcript').addEventListener('keydown', handleTranscriptKeyboardTakeover)
+  $('#transcript').addEventListener('touchend', finishTranscriptUserTakeover, { passive: true })
+  $('#transcript').addEventListener('touchcancel', finishTranscriptUserTakeover, { passive: true })
+  window.addEventListener('pointerup', finishTranscriptUserTakeover, { passive: true })
+  window.addEventListener('pointercancel', finishTranscriptUserTakeover, { passive: true })
   $('#artifact-content').addEventListener('click', handleTranscriptClick)
   for (const resizer of $$('.app-right-rail-resizer')) {
     resizer.addEventListener('pointerdown', beginRightRailResize)
@@ -1110,7 +1146,7 @@ function captureSelectionTranslationNotification(backend, message) {
 
 function openSessionResourceSource(occurrence) {
   if (!occurrence?.turnId) return
-  transcriptScrollFollower.pause()
+  beginTranscriptProgrammaticNavigation()
   transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, occurrence.turnId)
   renderTranscript()
   requestAnimationFrame(() => {
@@ -1359,8 +1395,8 @@ function currentBackend() {
   return backendDescriptor(state.backend)
 }
 
-function connectBackend() {
-  if (state.backend === 'opencode') connectOpenCode().catch(showError)
+function connectBackend({ backendInfoReady = false } = {}) {
+  if (state.backend === 'opencode') connectOpenCode({ backendInfoReady }).catch(showError)
   else connectAppServer()
 }
 
@@ -1370,15 +1406,21 @@ async function switchBackend(backend, { selectedId } = {}) {
   captureTranscriptViewState()
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
+  const transitionGeneration = state.socketGeneration
   state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
   rejectPending(new Error('Backend switched'))
   state.backend = backend
   if (selectedId) state.selectedByBackend[backend] = selectedId
   state.selectedId = state.selectedByBackend[backend] || null
+  sessionMap.resetSelection()
   state.threads = state.threadsByBackend[backend]
-  state.model = freshThreadModel(backend, state.selectedId)?.model || createCodexViewModel()
+  const cached = freshThreadModel(backend, state.selectedId)
+  state.model = cached?.model || createCodexViewModel()
   if (state.selectedId) state.model.threadId = state.selectedId
-  prepareTranscriptViewForSelection()
+  prepareTranscriptViewForSelection({
+    historyReady: Boolean(cached),
+    historyComplete: cached?.model?.historyComplete !== false,
+  })
   state.backendInfo = state.backendInfos[backend]
   state.ready = false
   applyBackendCopy()
@@ -1387,8 +1429,9 @@ async function switchBackend(backend, { selectedId } = {}) {
   renderTranscript()
   sessionMap.render()
   persistPreferences()
-  await loadBackendInfo()
-  connectBackend()
+  await loadBackendInfo(backend)
+  if (state.backend !== backend || state.socketGeneration !== transitionGeneration) return
+  connectBackend({ backendInfoReady: true })
 }
 
 function applyBackendCopy() {
@@ -1442,7 +1485,7 @@ function connectAppServer() {
   }
 }
 
-async function connectOpenCode() {
+async function connectOpenCode({ backendInfoReady = false } = {}) {
   clearTimeout(state.reconnectTimer)
   cleanupConnections()
   state.ready = false
@@ -1450,7 +1493,7 @@ async function connectOpenCode() {
   const generation = state.socketGeneration
   setBackendState('checking', 'Starting OpenCode', 'Server · HTTP/SSE')
   setNativeError(null)
-  await loadBackendInfo()
+  if (!backendInfoReady) await loadBackendInfo()
   if (generation !== state.socketGeneration) return
   if (state.backendInfo?.reachable === false || state.backendInfo?.error) {
     const reason = state.backendInfo.error || 'OpenCode Server is not ready'
@@ -1459,13 +1502,27 @@ async function connectOpenCode() {
     return
   }
   state.ready = true
+  // A new OpenCode connection cannot prove continuity with events observed by
+  // the previous stream. Cached histories remain displayable, but must be
+  // revalidated in this epoch before they can skip an authoritative read.
+  openCodeHistoryEpoch += 1
   setBackendState('online', 'OpenCode Server', 'Native structured connection')
   $('#native-connection').textContent = 'Connected'
   loadBackendModels().catch((error) => console.debug('Unable to load OpenCode models', error))
+  openCodeEventStreamOpenCount = 0
+  let initialSelectionStarted = false
+  let markEventStreamOpen
+  const eventStreamOpen = new Promise((resolve) => { markEventStreamOpen = resolve })
   const events = gatewayEventSource('/opencode/global/event')
   state.eventSource = events
   events.onopen = () => {
     if (generation !== state.socketGeneration) return
+    if (openCodeEventStreamOpenCount > 0 || initialSelectionStarted) {
+      openCodeHistoryEpoch += 1
+      scheduleOpenCodeListRefresh({ forceSelectedHistory: true })
+    }
+    openCodeEventStreamOpenCount += 1
+    markEventStreamOpen()
     setBackendState('online', 'OpenCode Server', 'Native structured connection')
     $('#native-connection').textContent = 'Connected'
   }
@@ -1479,9 +1536,26 @@ async function connectOpenCode() {
     setBackendState('checking', 'Reconnecting to OpenCode', 'SSE event stream')
     $('#native-connection').textContent = 'Reconnecting event stream…'
   }
-  await loadThreads().catch((error) => {
+  // Prefer establishing the event barrier before taking the history snapshot.
+  // If the stream is slow to open, the late first onopen advances the epoch and
+  // schedules a second authoritative read so the gap still cannot be hidden.
+  let eventStreamWaitTimer
+  await Promise.race([
+    eventStreamOpen,
+    new Promise((resolve) => { eventStreamWaitTimer = setTimeout(resolve, 1_500) }),
+  ])
+  clearTimeout(eventStreamWaitTimer)
+  if (generation !== state.socketGeneration || state.backend !== 'opencode') return
+  initialSelectionStarted = true
+  const selectionLoad = loadThreads()
+  backendSelectionLoads.set('opencode', selectionLoad)
+  try {
+    await selectionLoad
+  } catch (error) {
     handleThreadCatalogFailure('opencode', generation, error)
-  })
+  } finally {
+    if (backendSelectionLoads.get('opencode') === selectionLoad) backendSelectionLoads.delete('opencode')
+  }
 }
 
 function cleanupSocket() {
@@ -1494,6 +1568,9 @@ function cleanupSocket() {
 function cleanupConnections() {
   clearTimeout(state.reconnectTimer)
   clearTimeout(threadCatalogRetryTimer)
+  clearTimeout(openCodeListRefreshTimer)
+  openCodeListRefreshTimer = null
+  openCodeListRefreshNeedsHistory = false
   for (const timer of openCodeStatusReconcileTimers.values()) clearTimeout(timer)
   openCodeStatusReconcileTimers.clear()
   threadCatalogRetryTimer = null
@@ -1575,9 +1652,9 @@ function handleAppServerMessage(message) {
     if (status === 'ready') {
       const firstReady = !state.ready
       const previousGeneration = state.appServerGenerations[backend]
-      const reconnecting = previousGeneration != null
       const nextGeneration = message.params?.generation ?? previousGeneration
-      if (previousGeneration != null && nextGeneration !== previousGeneration) {
+      const appServerRestarted = previousGeneration != null && nextGeneration !== previousGeneration
+      if (appServerRestarted) {
         sessionDispatch.clearPrepared(backend)
       }
       state.appServerGenerations[backend] = nextGeneration
@@ -1589,9 +1666,53 @@ function handleAppServerMessage(message) {
       setNativeError(null)
       loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error))
       if (firstReady) {
-        loadThreads().then(async () => {
-          if (reconnecting && state.selectedId) await refreshSelectedThread({ quiet: true })
-        }).catch((error) => handleThreadCatalogFailure(backend, state.socketGeneration, error))
+        const socketGeneration = state.socketGeneration
+        const cachedModelsBeforeCatalog = new Map(state.threadModels)
+        const selectionLoad = loadThreads({ applyCachedEnvironment: !appServerRestarted }).then(async () => {
+          if (state.backend !== backend
+            || state.socketGeneration !== socketGeneration
+            || sessionManagement.archive.isOpen()
+            || !state.selectedId) return
+          const selectedId = state.selectedId
+          const selectedKey = threadCatalogKey(backend, selectedId)
+          // The operator may have selected another session while the catalog
+          // was loading. Let that session's resume finish before deciding
+          // whether reconnect recovery still needs an authoritative read.
+          const activeHistory = state.threadLoads.get(selectedKey)
+          if (activeHistory) {
+            try { await activeHistory }
+            catch (error) { console.warn('Selected history load failed before reconnect recovery', error) }
+          }
+          if (state.backend !== backend
+            || state.socketGeneration !== socketGeneration
+            || sessionManagement.archive.isOpen()
+            || state.selectedId !== selectedId) return
+          // loadThreads() may already have resumed a stale or uncached selection.
+          // Its cache replacement is proof that this generation has supplied a
+          // complete history, so do not immediately read the same history again.
+          if (state.threadModels.get(selectedKey) !== cachedModelsBeforeCatalog.get(selectedKey)) return
+          // Reopening only the browser-side WebSocket does not invalidate a
+          // history that is still fresh for the same App Server process.
+          if (!appServerRestarted && freshThreadModel(backend, selectedId, { reconnectValidation: true })) return
+          const root = selectedThread()?.cwd || ''
+          const profile = state.environmentProfile
+          const environmentRoot = appServerRestarted
+            && profile?.configured
+            && state.environmentProfileSelectionRoot === root
+            ? profile.root
+            : ''
+          await refreshSelectedThread({
+            quiet: true,
+            environmentRoot,
+            environmentRevision: profile?.revision || '',
+          })
+        })
+        backendSelectionLoads.set(backend, selectionLoad)
+        selectionLoad
+          .catch((error) => handleThreadCatalogFailure(backend, socketGeneration, error))
+          .finally(() => {
+            if (backendSelectionLoads.get(backend) === selectionLoad) backendSelectionLoads.delete(backend)
+          })
       }
     } else if (status === 'starting') {
       setBackendState('checking', `Starting ${descriptor.name}`, message.params?.binary || 'App Server')
@@ -1609,15 +1730,22 @@ function handleAppServerMessage(message) {
   }
   if (message.method === 'studio/appServer/lagged') {
     const skipped = Number(message.params?.skipped || 0)
-    if (!state.selectedId) {
+    const threadId = state.selectedId
+    const socketGeneration = state.socketGeneration
+    if (isArchivedPreview()) return
+    if (!threadId) {
       toast(t('The UI missed {count} App Server events', { count: skipped }), 'error')
       return
     }
     setNativeError(`The interface missed ${skipped} App Server events and is resynchronizing the current session…`)
-    refreshSelectedThread({ quiet: true }).then((refreshed) => {
-      if (!refreshed) return
-      setNativeError(null)
-      toast(t('Resynchronized the session from {backend}', { backend: descriptor.name }))
+    resynchronizeSelectedThreadAfterLag({ backend, threadId, socketGeneration, skipped }).catch((error) => {
+      reportClientError(error)
+      if (state.backend === backend && state.selectedId === threadId && state.socketGeneration === socketGeneration) {
+        setNativeError(t('Unable to resynchronize the current {backend} session: {message}', {
+          backend: backendDescriptor(backend).name,
+          message: error.message,
+        }))
+      }
     })
     return
   }
@@ -1730,6 +1858,12 @@ function handleAppServerMessage(message) {
   if (!targetModel) return
   if (applyCodexNotification(targetModel, message)) {
     markCachedModelValidated(backend, targetModel)
+    if (message.method === 'item/completed' || message.method === 'turn/completed') {
+      sessionResources.invalidate(
+        backend,
+        message.params?.threadId || targetModel.threadId || state.selectedId,
+      )
+    }
     if (message.method === 'turn/completed') {
       const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
       notifyDesktop(t('Work completed'), threadTitle(completedThread || { name: t('Untitled session') }))
@@ -1749,8 +1883,7 @@ function handleAppServerMessage(message) {
     else if (updateKind === 'item') replaceCompletedItem(message.params)
     else if (updateKind === 'full') {
       const turnId = message.params?.turnId || message.params?.turn?.id
-      const preserveActivity = message.method !== 'turn/completed'
-      if (!turnId || !replaceRenderedTurn(turnId, { preserveActivity })) renderTranscript()
+      if (!turnId || !replaceRenderedTurn(turnId)) renderTranscript()
     }
     renderComposerState()
     updateSelectedThreadStatus(message)
@@ -1761,6 +1894,27 @@ function handleAppServerMessage(message) {
       })
     }
   }
+}
+
+async function resynchronizeSelectedThreadAfterLag({ backend, threadId, socketGeneration, skipped }) {
+  const activeHistory = state.threadLoads.get(threadCatalogKey(backend, threadId))
+  if (activeHistory) {
+    try { await activeHistory }
+    catch (error) { console.warn('Selected history load failed before lag recovery', error) }
+  }
+  if (state.backend !== backend
+    || state.selectedId !== threadId
+    || state.socketGeneration !== socketGeneration
+    || !state.ready) return false
+  const refreshed = await refreshSelectedThread({ quiet: true })
+  if (!refreshed
+    || state.backend !== backend
+    || state.selectedId !== threadId
+    || state.socketGeneration !== socketGeneration) return false
+  setNativeError(null)
+  toast(t('Resynchronized the session from {backend}', { backend: backendDescriptor(backend).name }))
+  console.debug('Recovered missed App Server events', { backend, threadId, skipped })
+  return true
 }
 
 async function captureOffscreenInteraction(message) {
@@ -1795,17 +1949,56 @@ function notifyDesktop(title, body = '') {
   }
 }
 
+function beginOpenCodeHistoryEventBuffer(threadId) {
+  const key = String(threadId || '')
+  const buffer = []
+  if (!key) return buffer
+  let buffers = openCodeHistoryEventBuffers.get(key)
+  if (!buffers) {
+    buffers = new Set()
+    openCodeHistoryEventBuffers.set(key, buffers)
+  }
+  buffers.add(buffer)
+  return buffer
+}
+
+function endOpenCodeHistoryEventBuffer(threadId, buffer) {
+  const key = String(threadId || '')
+  const buffers = openCodeHistoryEventBuffers.get(key)
+  if (!buffers) return
+  buffers.delete(buffer)
+  if (!buffers.size) openCodeHistoryEventBuffers.delete(key)
+}
+
+function bufferOpenCodeHistoryEvent(threadId, event) {
+  const key = String(threadId || '')
+  if (!key) return
+  const sequence = (openCodeHistoryEventSequences.get(key) || 0) + 1
+  openCodeHistoryEventSequences.set(key, sequence)
+  for (const buffer of openCodeHistoryEventBuffers.get(key) || []) buffer.push({ event, sequence })
+}
+
+function openCodeHistoryIncludesDeletion(buffer, threadId) {
+  return (buffer || []).some(({ event }) => {
+    const payload = event?.payload || event
+    return payload?.type === 'session.deleted' && String(openCodeEventThreadId(payload) || '') === String(threadId || '')
+  })
+}
+
 function handleOpenCodeServerEvent(event) {
   const payload = event?.payload || event
   if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
   const eventThreadId = openCodeEventThreadId(payload)
+  bufferOpenCodeHistoryEvent(eventThreadId, event)
+  const repeatedTerminalLoop = openCodeLoopGuard.observe(payload)
+  if (repeatedTerminalLoop) abortRepeatedOpenCodeTerminalLoop(repeatedTerminalLoop)
   const eventThread = payload.properties?.info || { id: eventThreadId }
   if (hiddenUtilityThread('opencode', eventThread)) {
     if (eventThreadId) markUtilityThreadHidden('opencode', eventThreadId)
     return
   }
   if (payload.type === 'server.connected') {
-    scheduleOpenCodeListRefresh()
+    // EventSource.onopen owns the continuity epoch and reconnect refresh.
     return
   }
   if (payload.type.startsWith('session.')) scheduleOpenCodeListRefresh()
@@ -1825,7 +2018,8 @@ function handleOpenCodeServerEvent(event) {
     invalidateThreadModel('opencode', deletedId)
     return
   }
-  if (eventThreadId && openCodeCompletionSignal(payload)) scheduleOpenCodeStatusReconciliation(eventThreadId)
+  const completionSignal = Boolean(eventThreadId && openCodeCompletionSignal(payload))
+  if (completionSignal) scheduleOpenCodeStatusReconciliation(eventThreadId)
   updateOpenCodeReplyTime(payload, eventThreadId)
   const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
   const targetModel = eventThreadId === state.selectedId
@@ -1835,12 +2029,43 @@ function handleOpenCodeServerEvent(event) {
   const update = applyOpenCodeEvent(targetModel, event, eventThreadId)
   if (!update.handled) return
   markCachedModelValidated('opencode', targetModel)
+  if (completionSignal) sessionResources.invalidate('opencode', eventThreadId)
   if (targetModel !== state.model) return
   if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
   else if (update.kind === 'metadata') {
     renderComposerState()
-  } else if (!update.turnId || !replaceRenderedTurn(update.turnId, { preserveActivity: payload.type !== 'session.idle' })) renderTranscript()
+  } else if (!update.turnId || !replaceRenderedTurn(update.turnId)) renderTranscript()
   renderComposerState()
+}
+
+async function abortRepeatedOpenCodeTerminalLoop({ sessionId, parentId, assistantIds }) {
+  if (!sessionId || openCodeLoopAbortRequests.has(sessionId)) return
+  const thread = state.threadsByBackend.opencode.find((candidate) => candidate.id === sessionId)
+  openCodeLoopAbortRequests.add(sessionId)
+  console.warn('Stopping repeated OpenCode terminal-assistant loop', { sessionId, parentId, assistantIds })
+  try {
+    let directory = thread?.cwd || ''
+    if (!directory) {
+      const session = await openCodeFetch(`/session/${encodeURIComponent(sessionId)}`, {
+        timeoutMs: 10_000,
+        allowInactive: true,
+      })
+      directory = session?.directory || ''
+      if (!directory) throw new Error('OpenCode did not return the looping session directory')
+    }
+    await openCodeFetch(withDirectory(`/session/${encodeURIComponent(sessionId)}/abort`, directory), {
+      method: 'POST',
+      timeoutMs: 10_000,
+      allowInactive: true,
+    })
+    if (state.backend === 'opencode' && state.selectedId === sessionId) {
+      toast(t('Stopped an abnormal OpenCode response loop after repeated final replies.'), 'error')
+    }
+  } catch (error) {
+    console.warn('Unable to stop repeated OpenCode response loop', error)
+  } finally {
+    openCodeLoopAbortRequests.delete(sessionId)
+  }
 }
 
 function openCodeCompletionSignal(payload) {
@@ -1870,18 +2095,43 @@ function scheduleOpenCodeStatusReconciliation(threadId) {
   openCodeStatusReconcileTimers.set(threadId, timer)
 }
 
-function scheduleOpenCodeListRefresh() {
+function scheduleOpenCodeListRefresh({ forceSelectedHistory = false } = {}) {
+  openCodeListRefreshNeedsHistory ||= forceSelectedHistory
   clearTimeout(openCodeListRefreshTimer)
-  openCodeListRefreshTimer = setTimeout(() => refreshOpenCodeThreadList().catch(console.error), 180)
+  openCodeListRefreshTimer = setTimeout(() => {
+    const refreshSelectedHistory = openCodeListRefreshNeedsHistory
+    openCodeListRefreshNeedsHistory = false
+    refreshOpenCodeThreadList({ forceSelectedHistory: refreshSelectedHistory }).catch(console.error)
+  }, 180)
 }
 
-async function refreshOpenCodeThreadList() {
+async function refreshOpenCodeThreadList({ forceSelectedHistory = false } = {}) {
   if (state.backend !== 'opencode' || !state.ready) return
+  const initialSelection = backendSelectionLoads.get('opencode')
+  if (initialSelection) await initialSelection
+  if (state.backend !== 'opencode' || !state.ready) return
+  const socketGeneration = state.socketGeneration
+  const selectedId = state.selectedId
+  const catalogGeneration = (catalogRequestGenerations.get('opencode') || 0) + 1
+  catalogRequestGenerations.set('opencode', catalogGeneration)
   const result = await rpc('thread/list', { limit: 100 })
-  setActiveThreads(Array.isArray(result?.data) ? result.data : [])
+  if (state.backend !== 'opencode'
+    || state.socketGeneration !== socketGeneration
+    || catalogRequestGenerations.get('opencode') !== catalogGeneration
+    || !state.ready) return
+  setActiveThreads(Array.isArray(result?.data) ? result.data : [], 'opencode')
   renderThreadList()
   renderWorkspace()
-  if (state.selectedId && !freshThreadModel('opencode', state.selectedId)) {
+  if (state.selectedId !== selectedId) return
+  if (selectedId && (forceSelectedHistory || !freshThreadModel('opencode', selectedId))) {
+    const activeHistory = state.threadLoads.get(threadCatalogKey('opencode', selectedId))
+    if (activeHistory) await activeHistory
+    if (state.backend !== 'opencode'
+      || state.socketGeneration !== socketGeneration
+      || state.selectedId !== selectedId
+      || !state.ready) return
+  }
+  if (selectedId && (forceSelectedHistory || !freshThreadModel('opencode', selectedId))) {
     await refreshSelectedThread({ quiet: true })
   }
 }
@@ -1954,7 +2204,7 @@ async function ensureOpenCodeAvailable() {
   }
 }
 
-async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false } = {}) {
+async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false, includeHeaders = false } = {}) {
   if (!allowInactive && (state.backend !== 'opencode' || !state.ready)) throw new Error('OpenCode Server is not ready')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -1966,16 +2216,81 @@ async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, a
       signal: controller.signal,
       cache: 'no-store',
     })
-    if (response.status === 204) return null
+    if (response.status === 204) return includeHeaders ? { value: null, headers: response.headers } : null
     const text = await response.text()
     let value = null
     try { value = text ? JSON.parse(text) : null } catch { value = text }
     if (!response.ok) throw new Error(value?.error?.message || value?.message || `${method} ${path} failed: HTTP ${response.status}`)
-    return value
+    return includeHeaders ? { value, headers: response.headers } : value
   } catch (error) {
     if (error.name === 'AbortError') throw new Error(t('{method} {path} request timed out', { method, path }))
     throw error
   } finally { clearTimeout(timer) }
+}
+
+async function fetchOpenCodeMessageHistory(threadId, directory, fetchOptions) {
+  const path = `/session/${encodeURIComponent(threadId)}/message`
+  const key = String(threadId || '')
+  let latestSnapshot = { before: openCodeHistoryEventSequences.get(key) || 0, after: openCodeHistoryEventSequences.get(key) || 0 }
+  const messageSnapshots = {}
+  const fetchPage = async ({ limit, before }) => {
+    const sequenceBefore = openCodeHistoryEventSequences.get(key) || 0
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (before) query.set('before', before)
+    const page = await openCodeFetch(withDirectory(path, directory, query.toString()), {
+      ...fetchOptions,
+      includeHeaders: true,
+    })
+    const result = {
+      messages: page.value,
+      cursor: page.headers.get('x-next-cursor'),
+    }
+    const sequenceAfter = openCodeHistoryEventSequences.get(key) || 0
+    for (const message of Array.isArray(result.messages) ? result.messages : []) {
+      const messageId = String(message?.info?.id || '')
+      if (!messageId) continue
+      messageSnapshots[messageId] = {
+        afterSequence: sequenceBefore === sequenceAfter ? sequenceAfter : sequenceBefore,
+        ambiguousThroughSequence: sequenceAfter,
+      }
+    }
+    if (!before) latestSnapshot = {
+      before: sequenceBefore,
+      after: sequenceAfter,
+    }
+    return result
+  }
+  const history = await collectOpenCodeMessageHistory(fetchPage)
+  for (let attempt = 0; latestSnapshot.before !== latestSnapshot.after && attempt < 2; attempt += 1) {
+    const latest = await fetchPage({ limit: 500 })
+    if (Array.isArray(latest.messages)) {
+      history.messages = mergeOpenCodeMessagePages([history.messages, latest.messages])
+    }
+  }
+  return {
+    ...history,
+    historyMessageSnapshots: messageSnapshots,
+  }
+}
+
+async function fetchOpenCodeStatusSnapshot(threadId, directory, fetchOptions) {
+  const key = String(threadId || '')
+  let value = {}
+  let snapshot = { before: -1, after: Number.POSITIVE_INFINITY }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const before = openCodeHistoryEventSequences.get(key) || 0
+    try {
+      value = await openCodeFetch(withDirectory('/session/status', directory), fetchOptions)
+    } catch {
+      return { value: {}, statusEventSequence: -1 }
+    }
+    snapshot = { before, after: openCodeHistoryEventSequences.get(key) || 0 }
+    if (snapshot.before === snapshot.after) break
+  }
+  return {
+    value,
+    statusEventSequence: snapshot.before === snapshot.after ? snapshot.after : snapshot.before,
+  }
 }
 
 async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includeStatuses = true } = {}) {
@@ -2117,6 +2432,11 @@ async function fetchBackendCatalog(backend, { includeStatuses = true } = {}) {
 }
 
 async function refreshBackendCatalog(backend, { includeStatuses = true } = {}) {
+  const activeSelection = backend === state.backend ? backendSelectionLoads.get(backend) : null
+  if (activeSelection) {
+    await activeSelection
+    return state.threadsByBackend[backend]
+  }
   const refreshKey = `${backend}:${includeStatuses ? 'full' : 'list'}`
   if (catalogRefreshes.has(refreshKey)) return catalogRefreshes.get(refreshKey)
   const generation = (catalogRequestGenerations.get(backend) || 0) + 1
@@ -2133,8 +2453,47 @@ async function refreshBackendCatalog(backend, { includeStatuses = true } = {}) {
 
 function scheduleCodexCatalogRecovery(backend) {
   if (!isCodexBackend(backend) || codexCatalogRecoveryStarted.has(backend)) return
+  const catalog = state.threadsByBackend[backend]
+  const preferredId = state.selectedByBackend[backend]
+  if (!shouldRecoverCodexCatalog(catalog, preferredId)) return
   codexCatalogRecoveryStarted.add(backend)
-  queueMicrotask(async () => {
+  scheduleStudioIdleWork(async () => {
+    const currentCatalog = state.threadsByBackend[backend]
+    const currentPreferredId = state.selectedByBackend[backend]
+    if (!shouldRecoverCodexCatalog(currentCatalog, currentPreferredId)) {
+      codexCatalogRecoveryStarted.delete(backend)
+      return
+    }
+    if ([...state.threadLoads.keys()].some((key) => key.startsWith(`${backend}:`))) {
+      codexCatalogRecoveryStarted.delete(backend)
+      scheduleCodexCatalogRecovery(backend)
+      return
+    }
+    if (currentCatalog.length && currentPreferredId && !currentCatalog.some((thread) => thread.id === currentPreferredId)) {
+      try {
+        const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: currentPreferredId, includeTurns: false })
+        if (result?.thread) {
+          mergeThreadIntoCatalog(backend, result.thread)
+          renderThreadList()
+          if (state.backend === backend && state.selectedId === currentPreferredId) {
+            renderWorkspace()
+            renderComposerState()
+            if (!freshThreadModel(backend, currentPreferredId)) {
+              await refreshSelectedThread({ quiet: true })
+            }
+          }
+        }
+      } catch (error) {
+        if (/not found|does not exist|unknown thread/iu.test(String(error?.message || error))) {
+          console.debug(`Saved ${backend} session is no longer available`, error)
+        } else {
+          codexCatalogRecoveryStarted.delete(backend)
+          console.debug(`Unable to verify saved ${backend} session; recovery will retry`, error)
+          scheduleCodexCatalogRecovery(backend)
+        }
+      }
+      return
+    }
     try {
       // The default list path scans rollout files and repairs the state index.
       // Its response may contain creation-time metadata, so never install it.
@@ -2144,6 +2503,25 @@ function scheduleCodexCatalogRecovery(backend) {
       codexCatalogRecoveryStarted.delete(backend)
       console.warn(`Unable to recover ${backend} session catalog`, error)
     }
+  })
+}
+
+function scheduleStudioIdleWork(callback, { delay = 1_200, timeout = 4_000 } = {}) {
+  setTimeout(() => {
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      globalThis.requestIdleCallback(() => callback(), { timeout })
+    } else {
+      callback()
+    }
+  }, delay)
+}
+
+function scheduleInactiveCatalogRefresh() {
+  if (inactiveCatalogRefreshScheduled) return
+  inactiveCatalogRefreshScheduled = true
+  scheduleStudioIdleWork(async () => {
+    inactiveCatalogRefreshScheduled = false
+    await refreshInactiveCatalog()
   })
 }
 
@@ -2254,9 +2632,14 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
   if (method === 'thread/unsubscribe') return {}
   if (method === 'thread/resume' || method === 'thread/read') {
     const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), fetchOptions)
-    const messages = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/message`, session.directory, 'limit=500'), fetchOptions)
-    const statuses = await openCodeFetch(withDirectory('/session/status', session.directory), fetchOptions).catch(() => ({}))
-    return { thread: openCodeThreadFromHistory(session, messages, statuses?.[session.id] || 'idle') }
+    const history = await fetchOpenCodeMessageHistory(params.threadId, session.directory, fetchOptions)
+    const statuses = await fetchOpenCodeStatusSnapshot(params.threadId, session.directory, fetchOptions)
+    return {
+      thread: openCodeThreadFromHistory(session, history.messages, statuses.value?.[session.id] || 'idle'),
+      historyComplete: history.complete,
+      historyMessageSnapshots: history.historyMessageSnapshots,
+      historyStatusSequence: statuses.statusEventSequence,
+    }
   }
   if (method === 'thread/start') {
     const model = splitOpenCodeModel(params.model)
@@ -2280,11 +2663,14 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
       if (params.input?.some((item) => item?.type === 'image' || item?.type === 'localImage')) {
         throw new Error(t('OpenCode cannot combine a skill command with image attachments. Remove the skill or images and try again.'))
       }
-      return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), {
+      const result = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), {
         method: 'POST',
         body: { command: skill.name, arguments: text, agent: 'build' },
         timeoutMs: Math.max(timeoutMs, 300_000),
       })
+      const turn = openCodeCommandTurn(result, params.input)
+      if (!turn) throw new Error(t('OpenCode completed the command but did not return its user message ID.'))
+      return { turn }
     }
     const imageParts = (params.input || []).map(openCodeImagePart).filter(Boolean)
     const parts = [
@@ -2292,11 +2678,11 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
       ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart),
       ...imageParts,
     ]
+    const baselineIds = await openCodeUserMessageBaseline(params.threadId, directory, fetchOptions)
     await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/prompt_async`, directory), {
       method: 'POST',
       body: {
         parts,
-        ...(params.clientUserMessageId ? { messageID: openCodeMessageId(params.clientUserMessageId) } : {}),
         ...(model ? { model } : {}),
         ...(params.developerInstructions ? { system: params.developerInstructions } : {}),
         ...(params.outputSchema ? { format: { type: 'json_schema', schema: params.outputSchema, retryCount: 2 } } : {}),
@@ -2304,7 +2690,16 @@ async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInact
       timeoutMs,
       allowInactive,
     })
-    return null
+    // OpenCode owns message identity. Older servers compare their monotonic
+    // IDs to decide whether a prompt loop is complete, so a client UUID can
+    // keep the same user prompt running forever. Read back the authoritative
+    // user ID for Router/optimistic correlation instead of supplying one.
+    return openCodeStartedTurn(params.threadId, directory, params.input, baselineIds, {
+      ...fetchOptions,
+      // The server has already accepted the prompt. Keep resolving its
+      // authoritative user ID even if the operator switches backends now.
+      allowInactive: true,
+    })
   }
   if (method === 'turn/steer') throw new Error('Messages cannot be added while OpenCode is running. Wait for completion or stop it first.')
   if (method === 'turn/interrupt') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/abort`, directory), { method: 'POST', timeoutMs })
@@ -2352,6 +2747,37 @@ function openCodeFilePart(file) {
   }
 }
 
+function openCodeTurnResult(userId, input) {
+  return {
+    turn: {
+      id: userId,
+      status: 'inProgress',
+      items: [{ id: userId, type: 'userMessage', content: input }],
+    },
+  }
+}
+
+async function openCodeUserMessageBaseline(threadId, directory, fetchOptions) {
+  const path = `/session/${encodeURIComponent(threadId)}/message`
+  const messages = await openCodeFetch(withDirectory(path, directory, 'limit=20'), fetchOptions)
+  return new Set((Array.isArray(messages) ? messages : [])
+    .filter((message) => message?.info?.role === 'user' && message.info.id)
+    .map((message) => String(message.info.id)))
+}
+
+async function openCodeStartedTurn(threadId, directory, input, baselineIds, fetchOptions) {
+  const path = `/session/${encodeURIComponent(threadId)}/message`
+  const expectedText = textFromUserContent(input).trim()
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const messages = await openCodeFetch(withDirectory(path, directory, 'limit=20'), fetchOptions)
+    const message = selectOpenCodeStartedUserMessage(messages, { baselineIds, expectedText })
+    const info = message?.info
+    if (info?.id) return openCodeTurnResult(info.id, input)
+    await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)))
+  }
+  throw new Error(t('OpenCode accepted the prompt but did not return its user message ID.'))
+}
+
 function sendRaw(message) {
   if (state.socket?.readyState !== WebSocket.OPEN) throw new Error('Codex App Server connection is not open')
   state.socket.send(JSON.stringify(message))
@@ -2365,32 +2791,207 @@ function rejectPending(error) {
   state.pending.clear()
 }
 
-async function loadThreads() {
-  const result = await rpc('thread/list', catalogListParams(backendDescriptor(state.backend).kind, { limit: 100 }))
-  setActiveThreads(Array.isArray(result?.data) ? result.data : [])
+async function loadThreads({ applyCachedEnvironment = true } = {}) {
+  const backend = state.backend
+  const socketGeneration = state.socketGeneration
+  const archiveOpen = sessionManagement.archive.isOpen()
+  const preferred = state.selectedId
+  const knownPreferred = !archiveOpen && preferred
+    ? state.threadsByBackend[backend].find((thread) => thread.id === preferred)
+    : null
+  const preferredVisible = knownPreferred
+    && !isSessionDirectoryHidden(knownPreferred.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
+  let preferredLoad = null
+  let preferredUsedCache = false
+  let preferredVerified = false
+  if (preferredVisible) {
+    const cached = freshThreadModel(backend, preferred)
+    preferredUsedCache = Boolean(cached)
+    preferredLoad = cached
+      ? loadSelectedSessionCompanions(backend, preferred, { applyEnvironment: applyCachedEnvironment })
+      : selectThread(preferred, { force: true, backend }).catch(showError)
+  }
+  // Invalidate any inactive-catalog response that started before this backend
+  // became active, but reuse its network work when possible. The preferred
+  // history above starts immediately and does not wait for sidebar metadata.
+  const existingCatalogLoad = catalogRefreshes.get(`${backend}:full`)
+    || catalogRefreshes.get(`${backend}:list`)
+  const catalogGeneration = (catalogRequestGenerations.get(backend) || 0) + 1
+  catalogRequestGenerations.set(backend, catalogGeneration)
+  const result = existingCatalogLoad
+    ? { data: await existingCatalogLoad }
+    : await dispatchBackendRpc(backend, 'thread/list', catalogListParams(backendDescriptor(backend).kind, { limit: 100 }))
+  if (state.backend !== backend
+    || state.socketGeneration !== socketGeneration
+    || catalogRequestGenerations.get(backend) !== catalogGeneration
+    || !state.ready) return false
+  const listedThreads = Array.isArray(result?.data) ? result.data : []
+  const preferredMissingFromCatalog = Boolean(preferred)
+    && !listedThreads.some((thread) => thread.id === preferred)
+  setActiveThreads(listedThreads, backend)
+  if (preferredLoad && knownPreferred && preferredMissingFromCatalog && isCodexBackend(backend)) {
+    mergeThreadIntoCatalog(backend, knownPreferred)
+  }
+  if (backend === 'opencode' && preferredMissingFromCatalog) {
+    invalidateThreadModel(backend, preferred)
+  }
   markThreadCatalogLoaded()
-  if (state.backend === state.router.controllerBackend) {
-    await threadRouter.ensureManagedSession(state.backend).catch(showError)
+  if (backend === state.router.controllerBackend) {
+    await threadRouter.ensureManagedSession(backend).catch(showError)
+    if (state.backend !== backend || state.socketGeneration !== socketGeneration || !state.ready) return false
   }
   renderThreadList()
-  scheduleCodexCatalogRecovery(state.backend)
-  refreshInactiveCatalog()
-  if (sessionManagement.archive.isOpen()) {
-    renderWorkspace()
-    return
+  // Catalog requests are deliberately parallel with the selected history.
+  // If the operator chose another session while this request was in flight,
+  // install the new sidebar metadata but never replay the old auto-selection.
+  if (sessionManagement.archive.isOpen() !== archiveOpen || state.selectedId !== preferred) {
+    scheduleCodexCatalogRecovery(backend)
+    scheduleInactiveCatalogRefresh()
+    return true
   }
-  const visibleThreads = sidebarThreadsForBackend(state.backend).filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
-  const preferred = state.selectedId
+  if (archiveOpen) {
+    renderWorkspace()
+    scheduleCodexCatalogRecovery(backend)
+    scheduleInactiveCatalogRefresh()
+    return true
+  }
+  if (!preferredLoad && preferred && preferredMissingFromCatalog && isCodexBackend(backend)) {
+    try {
+      const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: preferred, includeTurns: false })
+      if (state.backend !== backend
+        || state.socketGeneration !== socketGeneration
+        || catalogRequestGenerations.get(backend) !== catalogGeneration
+        || sessionManagement.archive.isOpen() !== archiveOpen
+        || state.selectedId !== preferred
+        || !state.ready) return false
+      const recovered = result?.thread
+      if (recovered && !isSessionDirectoryHidden(recovered.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)) {
+        mergeThreadIntoCatalog(backend, recovered)
+        renderThreadList()
+        preferredVerified = true
+        preferredLoad = selectThread(preferred, { force: true, backend }).catch(showError)
+      }
+    } catch (error) {
+      if (state.backend !== backend
+        || state.socketGeneration !== socketGeneration
+        || catalogRequestGenerations.get(backend) !== catalogGeneration
+        || sessionManagement.archive.isOpen() !== archiveOpen
+        || state.selectedId !== preferred
+        || !state.ready) return false
+      if (/not found|does not exist|unknown thread/iu.test(String(error?.message || error))) {
+        console.debug(`Saved ${backend} session is no longer available`, error)
+      } else {
+        showError(error)
+        // Preserve the saved selection on transient errors so a later catalog
+        // recovery can retry it instead of silently replacing it with recent.
+        preferredLoad = Promise.resolve()
+      }
+    }
+  }
+  if (state.backend !== backend
+    || state.socketGeneration !== socketGeneration
+    || catalogRequestGenerations.get(backend) !== catalogGeneration
+    || sessionManagement.archive.isOpen() !== archiveOpen
+    || state.selectedId !== preferred
+    || !state.ready) return false
+  const visibleThreads = sidebarThreadsForBackend(backend).filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
   const recent = [...visibleThreads].sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
-  const nextId = visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
-  if (nextId) await selectThread(nextId, { force: true }).catch(showError)
-  else renderWorkspace()
+  // A bounded fresh catalog can temporarily omit a known selected session.
+  // Its already-started history/cache load remains authoritative; keep that
+  // selection so targeted catalog recovery can restore its metadata later.
+  const preserveMissingPreferred = preferredLoad
+    && (!preferredMissingFromCatalog || isCodexBackend(backend))
+  const nextId = preserveMissingPreferred
+    ? preferred
+    : visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
+  if (backend === 'opencode' && preferredMissingFromCatalog && !nextId) {
+    state.selectedId = null
+    state.selectedByBackend[backend] = null
+    state.model = createCodexViewModel()
+    renderThreadList()
+    renderWorkspace()
+    renderTranscript()
+  }
+  if (nextId === preferred && preferredLoad) {
+    await preferredLoad
+    if (state.backend !== backend
+      || state.socketGeneration !== socketGeneration
+      || catalogRequestGenerations.get(backend) !== catalogGeneration
+      || sessionManagement.archive.isOpen() !== archiveOpen
+      || state.selectedId !== preferred
+      || !state.ready) return false
+    if (preferredMissingFromCatalog && isCodexBackend(backend) && !preferredVerified) {
+      try {
+        const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: preferred, includeTurns: false })
+        if (state.backend !== backend
+          || state.socketGeneration !== socketGeneration
+          || catalogRequestGenerations.get(backend) !== catalogGeneration
+          || sessionManagement.archive.isOpen() !== archiveOpen
+          || state.selectedId !== preferred
+          || !state.ready) return false
+        if (result?.thread) {
+          mergeThreadIntoCatalog(backend, result.thread)
+          renderThreadList()
+          if (state.backend === backend && state.selectedId === preferred) {
+            renderWorkspace()
+            renderComposerState()
+          }
+        }
+      } catch (error) {
+        if (state.backend !== backend
+          || state.socketGeneration !== socketGeneration
+          || catalogRequestGenerations.get(backend) !== catalogGeneration
+          || sessionManagement.archive.isOpen() !== archiveOpen
+          || state.selectedId !== preferred
+          || !state.ready) return false
+        if (/not found|does not exist|unknown thread/iu.test(String(error?.message || error))) {
+          state.threadsByBackend[backend] = state.threadsByBackend[backend]
+            .filter((thread) => thread.id !== preferred)
+          if (state.backend === backend) state.threads = state.threadsByBackend[backend]
+          invalidateThreadModel(backend, preferred)
+          const fallback = [...listedThreads]
+            .filter((thread) => !isSessionDirectoryHidden(thread.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
+            .sort((left, right) => threadUpdatedAt(right) - threadUpdatedAt(left))[0]
+          if (fallback) await selectThread(fallback.id, { force: true, backend }).catch(showError)
+          else {
+            state.selectedId = null
+            state.selectedByBackend[backend] = null
+            state.model = createCodexViewModel()
+            renderThreadList()
+            renderWorkspace()
+            renderTranscript()
+          }
+          scheduleInactiveCatalogRefresh()
+          return true
+        }
+        showError(error)
+      }
+    }
+    // The fresh catalog can reveal activity that the previous metadata did
+    // not know about. Revalidate after the parallel companion/cache path.
+    if (preferredUsedCache && !freshThreadModel(backend, nextId)) {
+      await selectThread(nextId, { force: true, backend }).catch(showError)
+    }
+  } else if (nextId && (state.selectedId !== nextId || !freshThreadModel(backend, nextId))) {
+    await selectThread(nextId, { force: true, backend }).catch(showError)
+  } else {
+    renderWorkspace()
+    if (nextId) {
+      await loadSelectedSessionCompanions(backend, nextId, { applyEnvironment: applyCachedEnvironment })
+    }
+  }
+  if (state.backend !== backend || state.socketGeneration !== socketGeneration || !state.ready) return false
+  // Catalog repair can scan every rollout. Never let it compete with the
+  // selected session's initial history load.
+  scheduleCodexCatalogRecovery(backend)
+  scheduleInactiveCatalogRefresh()
+  return true
 }
 
-function setActiveThreads(threads) {
-  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(state.backend, thread))
-  state.threads = visible
-  state.threadsByBackend[state.backend] = visible
+function setActiveThreads(threads, backend = state.backend) {
+  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(backend, thread))
+  state.threadsByBackend[backend] = visible
+  if (state.backend === backend) state.threads = visible
 }
 
 function sidebarThreadsForBackend(backend) {
@@ -2417,10 +3018,7 @@ function renderThreadList() {
     return
   }
   const list = $('#thread-list')
-  const counts = catalogCountsWithAttention(sidebarThreadCatalogs(), state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
-  $('#count-all').textContent = counts.all
-  $('#count-active').textContent = counts.active
-  $('#count-attention').textContent = counts.attention
+  renderThreadCatalogCounts()
   $$('.thread-filter').forEach((button) => {
     const active = button.dataset.filter === state.filter
     button.classList.toggle('active', active)
@@ -2442,11 +3040,12 @@ function renderThreadList() {
     const descriptor = backendDescriptor(backend)
     const status = threadStatus(thread)
     const active = backend === state.backend && thread.id === state.selectedId
+    const title = compactSidebarText(threadTitle(thread))
     const tag = descriptor.tag
     const router = backend === state.router.controllerBackend && isRouterSession(state.router, backend, thread.id)
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
-      <span class="thread-copy"><strong>${escapeHtml(threadTitle(thread))}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small></span>
+      <span class="thread-copy"><strong>${escapeHtml(title)}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small></span>
       <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${descriptor.name}">${tag}</span></span>
     </button>`
   }
@@ -2475,13 +3074,70 @@ function renderThreadList() {
   ))
 }
 
+function renderThreadCatalogCounts() {
+  const counts = catalogCountsWithAttention(sidebarThreadCatalogs(), state.attentionThreads, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
+  $('#count-all').textContent = counts.all
+  $('#count-active').textContent = counts.active
+  $('#count-attention').textContent = counts.attention
+}
+
+function syncThreadCatalogRow(backend, thread, previous = null) {
+  if (!thread || state.search || state.filter !== 'all' || previous?.cwd !== thread.cwd) {
+    renderThreadList()
+    return
+  }
+  const row = [...$('#thread-list').querySelectorAll('.thread-row')]
+    .find((candidate) => candidate.dataset.backend === backend && candidate.dataset.threadId === thread.id)
+  if (!row) {
+    renderThreadList()
+    return
+  }
+  const status = threadStatus(thread)
+  row.querySelector('.status-dot').className = `status-dot ${status}`
+  row.querySelector('.thread-copy strong').textContent = threadTitle(thread)
+  const path = thread.cwd || t('Project directory not recorded')
+  const pathElement = row.querySelector('.thread-copy small')
+  pathElement.textContent = path
+  pathElement.title = path
+  renderThreadCatalogCounts()
+}
+
+function syncThreadListSelection() {
+  syncCatalogSelection($('#thread-list')?.querySelectorAll('.thread-row'), state.backend, state.selectedId)
+}
+
+async function loadSelectedSessionCompanions(backend, id, { applyEnvironment = true } = {}) {
+  if (state.backend !== backend || state.selectedId !== id) return null
+  const key = sessionMapKey(backend, id)
+  const mapLoad = sessionMap.load(backend, id).catch((error) => {
+    console.warn('Unable to load Session Map', error)
+    if (state.backend === backend && state.selectedId === id) sessionMap.setSyncState('error', error.message)
+    return null
+  })
+  const environmentLoad = activateSelectedEnvironment({ apply: applyEnvironment }).catch((error) => {
+    reportClientError(error)
+    return null
+  })
+  const [, profile] = await Promise.all([mapLoad, environmentLoad])
+  if (state.backend !== backend || state.selectedId !== id) return profile
+  sessionMap.maybeBootstrap(key, state.model)
+  return profile
+}
+
 async function selectThread(id, { force = false, backend = state.backend } = {}) {
   if (backend !== state.backend) {
     await switchBackend(backend, { selectedId: id })
     await waitFor(() => state.backend === backend && state.ready, 15_000)
+    const selectionLoad = backendSelectionLoads.get(backend)
+    if (selectionLoad) await selectionLoad
     await waitFor(() => state.threads.some((thread) => thread.id === id), 15_000)
-    if (state.selectedId === id && freshThreadModel(backend, id)) return
-    return selectThread(id, { force: true, backend })
+    // The ready handler's loadThreads() owns the initial selection. Waiting for
+    // its cache avoids running a second selection/render/environment flow in
+    // parallel with the same single-flight history request.
+    await waitFor(() => state.backend === backend
+      && state.selectedId === id
+      && Boolean(freshThreadModel(backend, id)), 30_000)
+    return
   }
   if (!force && state.selectedId === id) return
   sessionManagement.search.close({ clear: true })
@@ -2497,31 +3153,49 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   const key = sessionMapKey(state.backend, id)
   const mapLoad = sessionMap.load(state.backend, id).catch((error) => {
     console.warn('Unable to load Session Map', error)
-    if (state.selectedId === id) sessionMap.setSyncState('error', error.message)
+    if (state.backend === backend && state.selectedId === id) sessionMap.setSyncState('error', error.message)
   })
   const cached = freshThreadModel(state.backend, id)
   state.model = cached?.model || createCodexViewModel()
   state.model.threadId = id
-  prepareTranscriptViewForSelection()
-  persistPreferences()
-  renderThreadList()
+  prepareTranscriptViewForSelection({
+    historyReady: Boolean(cached),
+    historyComplete: cached?.model?.historyComplete !== false,
+  })
+  syncThreadListSelection()
   renderWorkspace()
   renderTranscript()
+  schedulePreferencesPersist()
+  const environmentLoad = activateSelectedEnvironment({ apply: Boolean(cached) }).catch((error) => {
+    reportClientError(error)
+    return null
+  })
   if (cached) {
     $('#native-connection').textContent = t('Restored from cache')
     await mapLoad
-    await activateSelectedEnvironment().catch((error) => reportClientError(error))
+    await environmentLoad
+    if (state.backend !== backend || state.selectedId !== id) return
     sessionMap.maybeBootstrap(key, state.model)
     return
   }
-  await resumeThread(id)
-  await mapLoad
-  await activateSelectedEnvironment().catch((error) => reportClientError(error))
+  const environmentProfile = isCodexBackend(backend) ? await environmentLoad : null
+  if (state.backend !== backend || state.selectedId !== id) return
+  const environmentRoot = isCodexBackend(backend) && environmentProfile?.configured
+    ? environmentProfile.root
+    : ''
+  await resumeThread(id, {
+    environmentRoot,
+    environmentRevision: environmentProfile?.revision || '',
+  })
+  await Promise.all([mapLoad, isCodexBackend(backend) ? null : environmentLoad])
+  if (state.backend !== backend || state.selectedId !== id) return
   sessionMap.maybeBootstrap(key, state.model)
 }
 
 function markThreadLoaded(backend, id) {
-  if (addLoadedThread(state.attentionThreads, backend, id)) renderThreadList()
+  if (!addLoadedThread(state.attentionThreads, backend, id)) return
+  if (state.filter === 'attention') renderThreadList()
+  else renderThreadCatalogCounts()
 }
 
 function updateCodexReplyTime(message, model = null) {
@@ -2555,72 +3229,165 @@ function threadUpdatedAt(thread) {
   return catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt)
 }
 
-async function resumeThread(id) {
-  const key = threadCatalogKey(state.backend, id)
-  if (state.threadLoads.has(key)) return state.threadLoads.get(key)
-  const load = resumeThreadUncached(id).finally(() => state.threadLoads.delete(key))
+async function resumeThread(id, { environmentRoot = '', environmentRevision = '' } = {}) {
+  const backend = state.backend
+  const key = threadCatalogKey(backend, id)
+  const historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null
+  const activeLoad = state.threadLoads.get(key)
+  if (activeLoad && (backend !== 'opencode' || activeLoad.historyEpoch === historyEpoch)) return activeLoad
+  let load
+  load = resumeThreadUncached(id, { environmentRoot, environmentRevision, historyEpoch })
+    .finally(() => {
+      if (state.threadLoads.get(key) === load) state.threadLoads.delete(key)
+    })
+  if (backend === 'opencode') load.historyEpoch = historyEpoch
   state.threadLoads.set(key, load)
   return load
 }
 
-async function resumeThreadUncached(id) {
+async function resumeThreadUncached(id, { environmentRoot = '', environmentRevision = '', historyEpoch = null } = {}) {
+  const backend = state.backend
+  const historyEvents = backend === 'opencode' ? beginOpenCodeHistoryEventBuffer(id) : null
   setNativeError(null)
   $('#native-connection').textContent = 'Resuming session…'
   try {
-    const result = await rpc('thread/resume', { threadId: id })
-    sessionDispatch.markPrepared({ backend: state.backend, id })
-    if (state.selectedId !== id) return
+    const configuredResume = environmentRoot
+      ? await applyEnvironmentToCodex(environmentRoot, {
+        backend,
+        threadId: id,
+        includeThread: true,
+        profileRevision: environmentRevision,
+      })
+      : null
+    const result = configuredResume?.thread
+      ? configuredResume
+      : await dispatchBackendRpc(backend, 'thread/resume', { threadId: id })
+    sessionDispatch.markPrepared({ backend, id })
+    if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return
+    if (state.backend !== backend || state.selectedId !== id) return
     hydrateCodexThread(state.model, result.thread)
-    if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
+    if (backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread, state.model, result.historyComplete)
+    if (historyEvents?.length) replayOpenCodeEventsAfterHistory(state.model, historyEvents, id, {
+      messageSnapshots: result.historyMessageSnapshots,
+      statusAfterSequence: result.historyStatusSequence,
+      authoritativeStatus: result.historyStatusSequence >= 0 ? result.thread?.status : null,
+    })
+    markTranscriptHistoryReady({ complete: result.historyComplete !== false })
     mergeThreadMetadata(result.thread)
-    cacheThreadModel(state.backend, id)
+    cacheThreadModel(backend, id, state.model, { historyEpoch })
     $('#native-connection').textContent = 'Connected'
     renderWorkspace()
     renderTranscript()
   } catch (error) {
-    if (state.selectedId !== id) return
+    if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return
+    if (state.backend !== backend || state.selectedId !== id) return
+    abandonTranscriptHistoryRestore()
     state.model.error = error.message
     state.model.status = 'failed'
     setNativeError(t('Unable to resume this {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     renderWorkspace()
+  } finally {
+    if (historyEvents) endOpenCodeHistoryEventBuffer(id, historyEvents)
   }
 }
 
-async function refreshSelectedThread({ quiet = false } = {}) {
-  if (!state.selectedId) return false
+async function refreshSelectedThread(options = {}) {
+  if (!state.selectedId || isArchivedPreview()) return false
+  const backend = state.backend
   const threadId = state.selectedId
+  const key = threadCatalogKey(backend, threadId)
+  const historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null
+  const activeLoad = state.threadLoads.get(key)
+  if (activeLoad && (backend !== 'opencode' || activeLoad.historyEpoch === historyEpoch)) return activeLoad
+  let load
+  load = refreshSelectedThreadUncached({ ...options, backend, threadId, historyEpoch })
+    .finally(() => {
+      if (state.threadLoads.get(key) === load) state.threadLoads.delete(key)
+    })
+  if (backend === 'opencode') load.historyEpoch = historyEpoch
+  state.threadLoads.set(key, load)
+  return load
+}
+
+async function refreshSelectedThreadUncached({
+  quiet = false,
+  environmentRoot = '',
+  environmentRevision = '',
+  backend,
+  threadId,
+  historyEpoch,
+}) {
+  const historyEvents = backend === 'opencode' ? beginOpenCodeHistoryEventBuffer(threadId) : null
   try {
-    const result = await rpc('thread/read', { threadId, includeTurns: true })
-    if (state.selectedId !== threadId) return false
+    const configuredResume = environmentRoot && isCodexBackend(backend)
+      ? await applyEnvironmentToCodex(environmentRoot, {
+        backend,
+        threadId,
+        includeThread: true,
+        profileRevision: environmentRevision,
+      })
+      : null
+    const result = configuredResume?.thread
+      ? configuredResume
+      : await dispatchBackendRpc(backend, 'thread/read', { threadId, includeTurns: true })
+    if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return false
+    if (state.backend !== backend || state.selectedId !== threadId) return false
+    if (configuredResume?.thread) sessionDispatch.markPrepared({ backend, id: threadId })
     hydrateCodexThread(state.model, result.thread)
-    if (state.backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread)
+    if (backend === 'opencode') hydrateOpenCodeModelMetadata(result.thread, state.model, result.historyComplete)
+    if (historyEvents?.length) replayOpenCodeEventsAfterHistory(state.model, historyEvents, threadId, {
+      messageSnapshots: result.historyMessageSnapshots,
+      statusAfterSequence: result.historyStatusSequence,
+      authoritativeStatus: result.historyStatusSequence >= 0 ? result.thread?.status : null,
+    })
+    markTranscriptHistoryReady({ complete: result.historyComplete !== false })
     mergeThreadMetadata(result.thread)
-    cacheThreadModel(state.backend, threadId)
+    cacheThreadModel(backend, threadId, state.model, { historyEpoch })
     renderWorkspace()
     renderTranscript()
     if (!quiet) toast('Session refreshed')
     return true
   } catch (error) {
+    if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return false
+    if (state.backend !== backend || state.selectedId !== threadId) return false
     if (quiet) setNativeError(t('Unable to resynchronize the current {backend} session: {message}', { backend: currentBackend().name, message: error.message }))
     else showError(error)
     return false
+  } finally {
+    if (historyEvents) endOpenCodeHistoryEventBuffer(threadId, historyEvents)
   }
 }
 
-function freshThreadModel(backend, id) {
+function freshThreadModel(backend, id, { reconnectValidation = false } = {}) {
   const cached = state.threadModels.get(threadCatalogKey(backend, id))
   if (!cached) return null
+  if (backend === 'opencode' && cached.historyEpoch !== openCodeHistoryEpoch) return null
   const thread = state.threadsByBackend[backend].find((candidate) => candidate.id === id)
-  const updatedAt = catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt)
-  return !updatedAt || updatedAt <= cached.validatedAt ? cached : null
+  const updatedAt = thread?.updatedAt || thread?.updated_at || thread?.createdAt
+  return isCatalogCacheFresh(updatedAt, cached.validatedAt, {
+    coarse: reconnectValidation && isCodexBackend(backend),
+  }) ? cached : null
 }
 
-function cacheThreadModel(backend = state.backend, id = state.selectedId, model = state.model) {
+function cacheThreadModel(
+  backend = state.backend,
+  id = state.selectedId,
+  model = state.model,
+  { historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null } = {},
+) {
   if (!id || !model || model.threadId !== id) return
-  state.threadModels.set(threadCatalogKey(backend, id), {
-    model,
-    validatedAt: Date.now(),
-  })
+  const key = threadCatalogKey(backend, id)
+  const existing = state.threadModels.get(key)
+  if (existing?.model === model) {
+    existing.validatedAt = Date.now()
+    if (backend === 'opencode') existing.historyEpoch = historyEpoch
+  } else {
+    state.threadModels.set(key, {
+      model,
+      validatedAt: Date.now(),
+      ...(backend === 'opencode' ? { historyEpoch } : {}),
+    })
+  }
   markThreadLoaded(backend, id)
 }
 
@@ -2629,6 +3396,7 @@ function invalidateThreadModel(backend, id) {
   const key = threadCatalogKey(backend, id)
   state.threadModels.delete(key)
   transcriptPresentationCache.invalidateThread(key)
+  transcriptCaptureSuppressedKeys.delete(key)
   if (state.attentionThreads.delete(key)) persistPreferences()
 }
 
@@ -2636,6 +3404,11 @@ function markCachedModelValidated(backend, model) {
   for (const [key, cached] of state.threadModels) {
     if (key.startsWith(`${backend}:`) && cached.model === model) {
       cached.validatedAt = Date.now()
+      // A delta received after reconnect cannot prove that this model contains
+      // events missed before reconnect. Only an already-current cache may be
+      // extended by live events; a full history read advances stale entries.
+      if (backend === 'opencode' && cached.historyEpoch !== openCodeHistoryEpoch) return
+      if (backend === 'opencode') cached.historyEpoch = openCodeHistoryEpoch
       return
     }
   }
@@ -2687,23 +3460,27 @@ function updateThreadStatusFromNotification(message) {
   renderThreadList()
 }
 
-function hydrateOpenCodeModelMetadata(thread) {
-  state.model.messageTurns = { ...(thread?.messageTurns || {}) }
-  state.model.messageRoles = { ...(thread?.messageRoles || {}) }
-  state.model.status = thread?.status || state.model.status
-  state.model.activeTurnId = state.model.status === 'running' ? state.model.turns.at(-1)?.id || null : null
+function hydrateOpenCodeModelMetadata(thread, model = state.model, historyComplete = true) {
+  model.messageTurns = thread?.messageTurns || {}
+  model.messageRoles = thread?.messageRoles || {}
+  model.messageItems = thread?.messageItems || {}
+  model.messageErrors = thread?.messageErrors || {}
+  model.historyComplete = historyComplete !== false
+  model.status = thread?.status || model.status
+  model.activeTurnId = model.status === 'running' ? model.turns.at(-1)?.id || null : null
 }
 
 function mergeThreadMetadata(incoming) {
   if (!incoming?.id) return
   const index = state.threads.findIndex((thread) => thread.id === incoming.id)
+  const previous = index >= 0 ? state.threads[index] : null
   if (index >= 0) state.threads[index] = {
     ...mergeCatalogMetadata(backendDescriptor(state.backend).kind, state.threads[index], incoming),
     turns: undefined,
   }
   else state.threads.unshift({ ...incoming, turns: undefined })
   state.threadsByBackend[state.backend] = state.threads
-  renderThreadList()
+  syncThreadCatalogRow(state.backend, state.threads.find((thread) => thread.id === incoming.id), previous)
 }
 
 function selectedThread() {
@@ -2757,7 +3534,11 @@ function discardComposerSessionState(backend, threadId) {
 function captureOpeningMessage() {
   const key = selectedStateKey()
   if (!key || state.openingMessages[key]?.text) return
-  const text = state.model.turns.map((turn) => questionForTurn(turn).trim()).find(Boolean)
+  let text = ''
+  for (const turn of state.model.turns) {
+    text = questionForTurn(turn).trim()
+    if (text) break
+  }
   if (!text) return
   const normalized = truncateUtf8(text, 16 * 1024)
   state.openingMessages[key] = {
@@ -2830,6 +3611,15 @@ async function saveThreadInfo() {
   }
 }
 
+function applyTurnAcknowledgement(model, turn, threadId = '') {
+  if (!turn?.id) return false
+  const existing = model.turns.find((candidate) => String(candidate?.id || '') === String(turn.id))
+  const terminal = ['completed', 'failed', 'cancelled', 'interrupted'].includes(existing?.status)
+  if (turn.status === 'inProgress' && terminal) return false
+  const method = turn.status === 'inProgress' ? 'turn/started' : 'turn/completed'
+  return applyCodexNotification(model, { method, params: { threadId, turn } })
+}
+
 async function generateSessionResponsibility() {
   if (!state.selectedId || isRouterThread()) return
   if (state.model.activeTurnId) throw new Error(t('Wait for the current turn to finish before generating a session responsibility.'))
@@ -2846,7 +3636,7 @@ async function generateSessionResponsibility() {
       timeoutMs: 60_000,
     })
     if (!result?.turn?.id) throw new Error(t('Unable to start session responsibility generation.'))
-    applyCodexNotification(state.model, { method: 'turn/started', params: { threadId: ref.id, turn: result.turn } })
+    applyTurnAcknowledgement(state.model, result.turn, ref.id)
     cacheThreadModel(ref.backend, ref.id, state.model)
     renderTranscript()
     renderComposerState()
@@ -2905,7 +3695,7 @@ function renderWorkspace() {
   }
   $('.thread-action-menu .menu-separator')?.classList.toggle('hidden', archived)
   workspaceTools.sync(thread)
-  sessionResources.sync()
+  sessionResources.syncSelection()
   if (!thread) {
     sessionManagement.search.close()
     sessionMap.render()
@@ -2953,6 +3743,83 @@ function transcriptReadingAnchor(container = $('#transcript')) {
   }
 }
 
+function captureTranscriptRenderAnchor(container = $('#transcript')) {
+  if (pendingTranscriptViewRestore?.key === presentationThreadKey() || transcriptScrollFollower.following) return null
+  const containerRect = container.getBoundingClientRect()
+  const targets = [...container.querySelectorAll('[data-turn-id][data-item-id], .work-activity[data-turn-id][data-activity-id]')]
+  const item = targets.find((candidate) => candidate.getBoundingClientRect().bottom > containerRect.top + 1)
+  const turn = item?.closest('.turn[data-turn-id]')
+    || [...container.querySelectorAll('.turn[data-turn-id]')]
+      .find((candidate) => candidate.getBoundingClientRect().bottom > containerRect.top + 1)
+  const target = item || turn
+  if (!target) return null
+  return {
+    turnId: turn?.dataset.turnId || target.dataset.turnId || '',
+    itemId: item?.dataset.itemId || '',
+    activityId: item?.dataset.activityId || '',
+    offset: target.getBoundingClientRect().top - containerRect.top,
+  }
+}
+
+function restoreTranscriptRenderAnchor(anchor, container = $('#transcript')) {
+  if (!anchor) return false
+  const turns = [...container.querySelectorAll('.turn[data-turn-id]')]
+  const turn = turns.find((candidate) => candidate.dataset.turnId === anchor.turnId)
+  const item = anchor.itemId && turn
+    ? [...turn.querySelectorAll('[data-item-id]')].find((candidate) => candidate.dataset.itemId === anchor.itemId)
+    : null
+  const activity = anchor.activityId && turn
+    ? [...turn.querySelectorAll('.work-activity[data-activity-id]')]
+      .find((candidate) => candidate.dataset.activityId === anchor.activityId)
+    : null
+  const target = item || activity || turn
+  if (!target) return false
+  const containerRect = container.getBoundingClientRect()
+  container.scrollTop += target.getBoundingClientRect().top - containerRect.top - Number(anchor.offset || 0)
+  return true
+}
+
+function clearTranscriptLiveLayoutAnchor(key = '') {
+  if (!key || transcriptLiveLayoutAnchor?.key === key) transcriptLiveLayoutAnchor = null
+}
+
+function rememberTranscriptLiveLayoutAnchor(container = $('#transcript')) {
+  const key = presentationThreadKey()
+  if (transcriptScrollFollower.following || pendingTranscriptViewRestore?.key === key) {
+    clearTranscriptLiveLayoutAnchor(key)
+    return null
+  }
+  const anchor = captureTranscriptRenderAnchor(container)
+  transcriptLiveLayoutAnchor = anchor ? { key, anchor } : null
+  return anchor
+}
+
+function restoreTranscriptLiveLayoutAnchor(container = $('#transcript')) {
+  const key = presentationThreadKey()
+  if (transcriptLiveLayoutAnchor?.key !== key) return false
+  if (!restoreTranscriptRenderAnchor(transcriptLiveLayoutAnchor.anchor, container)) {
+    clearTranscriptLiveLayoutAnchor(key)
+    return false
+  }
+  scheduleTranscriptViewCapture()
+  return true
+}
+
+function preserveTranscriptLayout(mutate) {
+  const key = presentationThreadKey()
+  const container = $('#transcript')
+  const hasPendingRestore = pendingTranscriptViewRestore?.key === key
+  const wasFollowing = transcriptScrollFollower.following
+  const anchor = hasPendingRestore || wasFollowing ? null : captureTranscriptRenderAnchor(container)
+  mutate()
+  if (hasPendingRestore) return
+  requestAnimationFrame(() => {
+    if (key !== presentationThreadKey()) return
+    if (wasFollowing) followTranscriptOutput()
+    else if (restoreTranscriptRenderAnchor(anchor, container)) scheduleTranscriptViewCapture()
+  })
+}
+
 function transcriptReadingTurnId(container = $('#transcript')) {
   const containerRect = container.getBoundingClientRect()
   const marker = containerRect.top + Math.min(container.clientHeight * 0.28, 160)
@@ -2962,11 +3829,17 @@ function transcriptReadingTurnId(container = $('#transcript')) {
 }
 
 function captureTranscriptViewState() {
+  cancelScheduledTranscriptViewCapture()
   if (!state.selectedId) return
   const key = presentationThreadKey()
-  if (pendingTranscriptViewRestore?.key === key) return
   const container = $('#transcript')
-  const entry = currentPresentationEntry()
+  if (transcriptCaptureSuppressedKeys.has(key)) return
+  // A return-position restore owns the viewport until it is explicitly applied,
+  // rejected, or cancelled by a user navigation action. DOM clamping while an
+  // uncached history is loading must never consume the transaction.
+  if (pendingTranscriptViewRestore?.key === key) return
+  const orderedTurnIds = transcriptPresentationCache.peek(key)?.orderedIds
+    || (state.model.turns || []).map((turn) => String(turn?.id || '')).filter(Boolean)
   const anchor = transcriptReadingAnchor(container)
   const readingTurnId = transcriptReadingTurnId(container)
   const bottomDistance = distanceFromBottom(container)
@@ -2975,23 +3848,52 @@ function captureTranscriptViewState() {
     anchorTurnId: anchor.turnId,
     anchorOffset: anchor.offset,
     followOnReturn: shouldFollowLatestOnReturn({
-      orderedTurnIds: entry.orderedIds,
+      orderedTurnIds,
       readingTurnId,
       bottomDistance,
     }),
   })
+  rememberTranscriptLiveLayoutAnchor(container)
 }
 
-function prepareTranscriptViewForSelection() {
+function scheduleTranscriptViewCapture() {
+  const key = presentationThreadKey()
+  if (transcriptCaptureFrame != null && transcriptCaptureFrameKey === key) return
+  if (transcriptCaptureFrame != null) cancelAnimationFrame(transcriptCaptureFrame)
+  transcriptCaptureFrameKey = key
+  transcriptCaptureFrame = requestAnimationFrame(() => {
+    transcriptCaptureFrame = null
+    const scheduledKey = transcriptCaptureFrameKey
+    transcriptCaptureFrameKey = ''
+    if (scheduledKey === presentationThreadKey()) captureTranscriptViewState()
+  })
+}
+
+function cancelScheduledTranscriptViewCapture() {
+  if (transcriptCaptureFrame != null) cancelAnimationFrame(transcriptCaptureFrame)
+  transcriptCaptureFrame = null
+  transcriptCaptureFrameKey = ''
+}
+
+function prepareTranscriptViewForSelection({ historyReady = true, historyComplete = true } = {}) {
+  transcriptLiveLayoutAnchor = null
+  transcriptUserScrollIntentUntil = 0
+  transcriptPointerScrollActive = false
   if (!state.selectedId) {
     pendingTranscriptViewRestore = null
     transcriptScrollFollower.reset()
     return
   }
   const key = presentationThreadKey()
+  if (historyReady) transcriptCaptureSuppressedKeys.delete(key)
   const saved = transcriptPresentationCache.scrollState(key)
   if (saved && !saved.followOnReturn) {
-    pendingTranscriptViewRestore = { key, ...saved }
+    pendingTranscriptViewRestore = {
+      key,
+      ...saved,
+      historyReady: Boolean(historyReady),
+      historyComplete: historyComplete !== false,
+    }
     transcriptScrollFollower.pause()
   } else {
     pendingTranscriptViewRestore = null
@@ -2999,28 +3901,111 @@ function prepareTranscriptViewForSelection() {
   }
 }
 
-function restoreTranscriptView(container = $('#transcript')) {
-  if (!state.selectedId || transcriptScrollFollower.following) return false
+function markTranscriptHistoryReady({ complete = true } = {}) {
   const key = presentationThreadKey()
-  const saved = pendingTranscriptViewRestore?.key === key
-    ? pendingTranscriptViewRestore
-    : transcriptPresentationCache.scrollState(key)
-  if (!saved) return false
-  const anchor = saved.anchorTurnId
+  const wasSuppressed = transcriptCaptureSuppressedKeys.delete(key)
+  if (wasSuppressed && pendingTranscriptViewRestore?.key !== key) {
+    const saved = transcriptPresentationCache.scrollState(key)
+    if (saved && !saved.followOnReturn) {
+      pendingTranscriptViewRestore = {
+        key,
+        ...saved,
+        historyReady: true,
+        historyComplete: complete !== false,
+      }
+      transcriptScrollFollower.pause()
+    }
+  }
+  if (pendingTranscriptViewRestore?.key === key) {
+    pendingTranscriptViewRestore.historyReady = true
+    pendingTranscriptViewRestore.historyComplete = complete !== false
+  }
+}
+
+function abandonTranscriptHistoryRestore() {
+  if (pendingTranscriptViewRestore?.key !== presentationThreadKey()) return
+  transcriptCaptureSuppressedKeys.add(presentationThreadKey())
+  pendingTranscriptViewRestore = null
+  clearTranscriptLiveLayoutAnchor(presentationThreadKey())
+  transcriptScrollFollower.reset()
+}
+
+function transcriptRestoreContext(entry) {
+  const key = presentationThreadKey()
+  const pending = pendingTranscriptViewRestore?.key === key ? pendingTranscriptViewRestore : null
+  if (!pending) return { key, pending: null, saved: null, plan: { type: 'none' } }
+  const resolvedEntry = entry || currentPresentationEntry()
+  return {
+    key,
+    pending,
+    saved: pending,
+    plan: transcriptRestorePlan({
+      saved: pending,
+      historyReady: pending.historyReady,
+      historyComplete: pending.historyComplete,
+      orderedTurnIds: resolvedEntry.orderedIds,
+    }),
+  }
+}
+
+function prepareTranscriptEntryForRestore() {
+  if (transcriptScrollFollower.following) return currentPresentationEntry()
+  const restore = transcriptRestoreContext({
+    orderedIds: (state.model.turns || []).map((turn) => String(turn?.id || '')).filter(Boolean),
+  })
+  if (restore.plan.type === 'anchor') {
+    return transcriptPresentationCache.restoreTurn(restore.key, state.model, restore.plan.anchorTurnId)
+  }
+  if (restore.plan.type === 'stale') {
+    if (restore.pending) pendingTranscriptViewRestore = null
+    transcriptPresentationCache.setScrollState(restore.key, null)
+    clearTranscriptLiveLayoutAnchor(restore.key)
+    transcriptScrollFollower.reset()
+  }
+  if (restore.plan.type === 'unavailable') {
+    transcriptCaptureSuppressedKeys.add(restore.key)
+    if (restore.pending) pendingTranscriptViewRestore = null
+    clearTranscriptLiveLayoutAnchor(restore.key)
+    transcriptScrollFollower.reset()
+  }
+  return currentPresentationEntry()
+}
+
+function restoreTranscriptView(container = $('#transcript'), entry = null) {
+  if (!state.selectedId || pendingTranscriptViewRestore?.key !== presentationThreadKey()) return false
+  const restore = transcriptRestoreContext(entry)
+  if (restore.plan.type === 'none' || restore.plan.type === 'defer') return false
+  if (restore.pending) pendingTranscriptViewRestore = null
+  if (restore.plan.type === 'stale') {
+    transcriptPresentationCache.setScrollState(restore.key, null)
+    clearTranscriptLiveLayoutAnchor(restore.key)
+    transcriptScrollFollower.reset()
+    return false
+  }
+  if (restore.plan.type === 'unavailable') {
+    transcriptCaptureSuppressedKeys.add(restore.key)
+    clearTranscriptLiveLayoutAnchor(restore.key)
+    transcriptScrollFollower.reset()
+    return false
+  }
+  const anchor = restore.plan.type === 'anchor'
     ? [...container.querySelectorAll('.turn[data-turn-id]')]
-      .find((turn) => turn.dataset.turnId === saved.anchorTurnId)
+      .find((turn) => turn.dataset.turnId === restore.plan.anchorTurnId)
     : null
   if (anchor) {
     const containerRect = container.getBoundingClientRect()
-    container.scrollTop += anchor.getBoundingClientRect().top - containerRect.top - Number(saved.anchorOffset || 0)
-    if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+    container.scrollTop += anchor.getBoundingClientRect().top - containerRect.top - Number(restore.saved.anchorOffset || 0)
+    rememberTranscriptLiveLayoutAnchor(container)
     return true
   }
-  if (!saved.anchorTurnId && Number.isFinite(saved.scrollTop)) {
-    container.scrollTop = saved.scrollTop
-    if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+  if (restore.plan.type === 'scrollTop') {
+    container.scrollTop = restore.plan.scrollTop
+    rememberTranscriptLiveLayoutAnchor(container)
     return true
   }
+  transcriptPresentationCache.setScrollState(restore.key, null)
+  clearTranscriptLiveLayoutAnchor(restore.key)
+  transcriptScrollFollower.reset()
   return false
 }
 
@@ -3028,20 +4013,34 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   if (!state.selectedId) return
   resetStreamingPatches()
   const container = $('#transcript')
-  const turns = state.model.turns || []
-  const entry = currentPresentationEntry()
-  const visibleIds = entry.orderedIds.slice(entry.visibleStart)
-  const turnById = new Map(turns.map((turn) => [String(turn.id || ''), turn]))
+  // A full same-session render replaces every visible node. Preserve the live
+  // viewport with a one-render anchor; never reuse the saved return position.
+  const renderAnchor = preserveScroll ? null : captureTranscriptRenderAnchor(container)
+  const openActivities = new Map()
+  if (preserveScroll || renderAnchor) {
+    for (const activity of container.querySelectorAll('.work-activity[open][data-turn-id][data-activity-id]')) {
+      const ids = openActivities.get(activity.dataset.turnId) || []
+      ids.push(activity.dataset.activityId)
+      openActivities.set(activity.dataset.turnId, ids)
+    }
+  }
+  const entry = prepareTranscriptEntryForRestore()
+  const visibleIds = entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd)
   const older = entry.visibleStart > 0
     ? `<button class="load-earlier-turns" type="button" data-load-earlier>${t('{count} earlier turns', { count: entry.visibleStart })}</button>`
     : ''
-  container.innerHTML = older + visibleIds.map((id) => {
-    const turn = turnById.get(id)
+  const laterCount = entry.orderedIds.length - entry.visibleEnd
+  const later = laterCount > 0
+    ? `<button class="load-earlier-turns" type="button" data-load-later>${t('{count} later turns', { count: laterCount })}</button>`
+    : ''
+  container.innerHTML = older + visibleIds.map((id, offset) => {
+    const index = entry.visibleStart + offset
+    const turn = entry.sourceTurns[index]
+    if (String(turn?.id || '') !== id) return ''
     if (!turn) return ''
-    const index = entry.orderedIds.indexOf(id)
     if (isRouterThread()) return threadRouter.renderTurn(turn, index)
-    return renderTurn(entry.turns.get(id)?.presentation, index)
-  }).join('') + renderApprovals()
+    return renderTurn(entry.turns.get(id)?.presentation, index, { openActivityIds: openActivities.get(id) || [] })
+  }).join('') + later + renderApprovals()
   observeTranscriptContent()
   bindApprovalButtons()
   bindActivityDetails()
@@ -3050,21 +4049,102 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   if (preserveScroll) {
     container.scrollTop = previousTop + Math.max(0, container.scrollHeight - previousHeight)
     captureTranscriptViewState()
-  } else if (!restoreTranscriptView(container)) followTranscriptOutput()
+  } else if (!restoreTranscriptView(container, entry)) {
+    if (restoreTranscriptRenderAnchor(renderAnchor, container)) scheduleTranscriptViewCapture()
+    else followTranscriptOutput()
+  }
   captureOpeningMessage()
-  sessionResources.sync({ rebuild: true })
+  sessionResources.sync()
+}
+
+function markTranscriptUserScrollIntent(duration = 500) {
+  transcriptUserScrollIntentUntil = Math.max(
+    transcriptUserScrollIntentUntil,
+    Date.now() + Math.max(0, Number(duration) || 0),
+  )
+}
+
+function transcriptUserScrollIntentActive() {
+  return transcriptPointerScrollActive || Date.now() <= transcriptUserScrollIntentUntil
+}
+
+function beginTranscriptProgrammaticNavigation() {
+  const key = presentationThreadKey()
+  if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+  transcriptCaptureSuppressedKeys.delete(key)
+  transcriptScrollFollower.pause()
+  transcriptPresentationCache.pinCurrent(key)
+  rememberTranscriptLiveLayoutAnchor()
+  markTranscriptUserScrollIntent(1_200)
 }
 
 function handleTranscriptScroll() {
   const transcript = $('#transcript')
-  transcriptScrollFollower.handleScroll(transcript)
-  captureTranscriptViewState()
+  const key = presentationThreadKey()
+  const action = transcriptScrollEventAction({
+    hasPendingRestore: pendingTranscriptViewRestore?.key === key,
+    userInitiated: transcriptUserScrollIntentActive(),
+    following: transcriptScrollFollower.following,
+  })
+  if (action === 'ignore') {
+    scheduleTurnNavigatorSync()
+    return
+  }
+  if (action === 'follow') {
+    followTranscriptOutput()
+    return
+  }
+  if (action === 'preserve') {
+    scheduleTurnNavigatorSync()
+    return
+  }
+  markTranscriptUserScrollIntent(240)
+  const entry = transcriptPresentationCache.peek(key)
+  const hasLaterTurns = Boolean(entry && entry.visibleEnd < entry.orderedIds.length)
+  if (hasLaterTurns) {
+    transcriptScrollFollower.pause()
+    transcriptPresentationCache.pinCurrent(key)
+  }
+  else if (transcriptScrollFollower.handleScroll(transcript)) {
+    transcriptPresentationCache.followLatest(key, state.model)
+  } else {
+    transcriptPresentationCache.pinCurrent(key)
+  }
+  scheduleTranscriptViewCapture()
   scheduleTurnNavigatorSync()
+}
+
+function handleTranscriptUserTakeover(event) {
+  const key = presentationThreadKey()
+  const transcript = $('#transcript')
+  if (!transcript.querySelector('.turn[data-turn-id]')) return
+  if (event?.type === 'pointerdown') transcriptPointerScrollActive = true
+  markTranscriptUserScrollIntent(event?.type === 'touchstart' ? 900 : 500)
+  if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+  transcriptCaptureSuppressedKeys.delete(key)
+  transcriptScrollFollower.pause()
+  transcriptPresentationCache.pinCurrent(key)
+  rememberTranscriptLiveLayoutAnchor(transcript)
+}
+
+function handleTranscriptKeyboardTakeover(event) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) return
+  if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return
+  handleTranscriptUserTakeover(event)
+}
+
+function finishTranscriptUserTakeover(event) {
+  if (event?.type === 'pointerup' || event?.type === 'pointercancel') {
+    if (!transcriptPointerScrollActive) return
+    transcriptPointerScrollActive = false
+  }
+  markTranscriptUserScrollIntent(event?.type?.startsWith('touch') ? 700 : 180)
 }
 
 function followTranscriptOutput() {
   if (!transcriptScrollFollower.following) return
   const transcript = $('#transcript')
+  clearTranscriptLiveLayoutAnchor(presentationThreadKey())
   transcript.scrollTop = transcript.scrollHeight
   scheduleTurnNavigatorSync()
 }
@@ -3074,7 +4154,17 @@ function observeTranscriptContent() {
 }
 
 function handleTranscriptContentResize() {
-  if (!restoreTranscriptView()) followTranscriptOutput()
+  // Session-return positions are one-shot. Once a selection restore has been
+  // consumed, ordinary layout changes (for example closing the Comment rail)
+  // preserve the live DOM anchor instead of replaying an old session snapshot.
+  const action = transcriptResizeAction({
+    hasPendingRestore: pendingTranscriptViewRestore?.key === presentationThreadKey(),
+    following: transcriptScrollFollower.following,
+  })
+  if (action === 'restore') restoreTranscriptView()
+  else if (action === 'follow') followTranscriptOutput()
+  else if (transcriptUserScrollIntentActive()) scheduleTranscriptViewCapture()
+  else restoreTranscriptLiveLayoutAnchor()
   scheduleTurnNavigatorSync()
 }
 
@@ -3082,17 +4172,41 @@ function renderTurnNavigator() {
   const navigator = $('#turn-navigator')
   const list = $('#turn-navigator-list')
   const turns = navigableTurns(state.model.turns)
+  const items = turns.map((turn, index) => {
+    const preview = turnPromptPreview(turn)
+    const fallback = t('User input {index}', { index: index + 1 })
+    return {
+      id: String(turn.id || ''),
+      label: preview ? `${fallback}: ${preview}` : fallback,
+      title: preview || fallback,
+    }
+  })
+  const signature = `${presentationThreadKey()}\u0000${state.language}\u0000${items
+    .map((item) => `${item.id}\u0001${item.label}\u0001${item.title}`).join('\u0000')}`
   if (turns.length < 2) {
     navigator.classList.add('hidden')
     list.innerHTML = ''
+    activeTurnNavigatorButton = null
+    turnNavigatorButtons = new Map()
+    turnNavigatorIds = new Set(items.map((item) => item.id))
+    turnNavigatorSignature = signature
     return
   }
 
-  list.innerHTML = turns.map((turn, index) => {
-    const label = turnNavigationLabel(turn, index)
-    const title = turnPromptPreview(turn) || t('User input {index}', { index: index + 1 })
-    return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(turn.id || '')}" aria-label="${escapeHtml(label)}"><span class="turn-nav-title">${escapeHtml(title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
+  if (signature === turnNavigatorSignature && turnNavigatorButtons.size === turns.length) {
+    navigator.classList.remove('hidden')
+    scheduleTurnNavigatorSync()
+    return
+  }
+
+  list.innerHTML = items.map((item) => {
+    return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.label)}"><span class="turn-nav-title">${escapeHtml(item.title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
   }).join('')
+  activeTurnNavigatorButton = null
+  turnNavigatorButtons = new Map([...list.querySelectorAll('[data-turn-nav-id]')]
+    .map((button) => [button.dataset.turnNavId, button]))
+  turnNavigatorIds = new Set(turnNavigatorButtons.keys())
+  turnNavigatorSignature = signature
   navigator.classList.remove('hidden')
   scheduleTurnNavigatorSync()
 }
@@ -3109,9 +4223,8 @@ function syncTurnNavigator() {
   const transcript = $('#transcript')
   const transcriptRect = transcript.getBoundingClientRect()
   const marker = transcriptRect.top + Math.min(transcript.clientHeight * 0.28, 160)
-  const navigableIds = new Set(navigableTurns(state.model.turns).map((turn) => String(turn.id || '')))
   const positions = [...transcript.querySelectorAll('.turn[data-turn-id]')]
-    .filter((element) => navigableIds.has(element.dataset.turnId))
+    .filter((element) => turnNavigatorIds.has(element.dataset.turnId))
     .map((element) => ({ id: element.dataset.turnId, top: element.getBoundingClientRect().top }))
   const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 8
   setActiveTurnNavigator(activeTurnAtMarker(positions, marker, atBottom))
@@ -3119,17 +4232,16 @@ function syncTurnNavigator() {
 
 function setActiveTurnNavigator(turnId) {
   const list = $('#turn-navigator-list')
-  let activeButton = null
-  list.querySelectorAll('[data-turn-nav-id]').forEach((button) => {
-    const active = button.dataset.turnNavId === String(turnId || '')
-    button.classList.toggle('active', active)
-    if (active) {
-      button.setAttribute('aria-current', 'true')
-      activeButton = button
-    } else {
-      button.removeAttribute('aria-current')
-    }
-  })
+  const activeButton = turnNavigatorButtons.get(String(turnId || '')) || null
+  if (activeTurnNavigatorButton && activeTurnNavigatorButton !== activeButton) {
+    activeTurnNavigatorButton.classList.remove('active')
+    activeTurnNavigatorButton.removeAttribute('aria-current')
+  }
+  if (activeButton && activeTurnNavigatorButton !== activeButton) {
+    activeButton.classList.add('active')
+    activeButton.setAttribute('aria-current', 'true')
+  }
+  activeTurnNavigatorButton = activeButton
   if (!activeButton) return
   if (activeButton.offsetTop < list.scrollTop) list.scrollTop = activeButton.offsetTop
   else if (activeButton.offsetTop + activeButton.offsetHeight > list.scrollTop + list.clientHeight) {
@@ -3140,20 +4252,29 @@ function setActiveTurnNavigator(turnId) {
 function handleTurnNavigatorClick(event) {
   const button = event.target.closest('[data-turn-nav-id]')
   if (!button) return
+  const key = presentationThreadKey()
   const transcript = $('#transcript')
+  if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+  transcriptPresentationCache.setScrollState(key, null)
+  transcriptScrollFollower.pause()
+  transcriptPresentationCache.showTurn(key, state.model, button.dataset.turnNavId)
   let target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
     .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
   if (!target) {
-    transcriptPresentationCache.showTurn(presentationThreadKey(), state.model, button.dataset.turnNavId)
     renderTranscript()
     target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
       .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
   }
-  if (!target) return
-  transcriptScrollFollower.pause()
+  if (!target) {
+    transcriptScrollFollower.reset()
+    followTranscriptOutput()
+    return
+  }
   const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
   setActiveTurnNavigator(button.dataset.turnNavId)
-  transcript.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  transcript.scrollTop = Math.max(0, top)
+  transcriptCaptureSuppressedKeys.delete(key)
+  captureTranscriptViewState()
 }
 
 function queueStreamingItemPatch(params = {}) {
@@ -3211,7 +4332,7 @@ function replaceCompletedItem(params = {}) {
   dirtyStreamItems.delete(`${params.turnId || ''}:${itemId || ''}`)
   transcriptPresentationCache.invalidateTurn(presentationThreadKey(), params.turnId)
   if (!replaceRenderedTurn(params.turnId)) renderTranscript()
-  sessionResources.sync({ rebuild: true })
+  else sessionResources.sync()
 }
 
 function renderedActivity(turnId, activityId = '') {
@@ -3220,13 +4341,12 @@ function renderedActivity(turnId, activityId = '') {
       && (!activityId || element.dataset.activityId === String(activityId))) || null
 }
 
-function replaceRenderedTurn(turnId, { preserveActivity = true } = {}) {
+function replaceRenderedTurn(turnId) {
   const section = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')]
     .find((element) => element.dataset.turnId === String(turnId || ''))
   if (!section) return false
-  const openActivityIds = preserveActivity
-    ? [...section.querySelectorAll('.work-activity[open]')].map((activity) => activity.dataset.activityId)
-    : []
+  const openActivityIds = [...section.querySelectorAll('.work-activity[open]')]
+    .map((activity) => activity.dataset.activityId)
   const entry = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
   const presentation = entry.turns.get(String(turnId || ''))?.presentation
   if (!presentation) return false
@@ -3816,11 +4936,22 @@ async function handleTranscriptClick(event) {
   const earlier = event.target.closest('[data-load-earlier]')
   if (earlier) {
     const transcript = $('#transcript')
-    transcriptScrollFollower.pause()
+    beginTranscriptProgrammaticNavigation()
     const previousHeight = transcript.scrollHeight
     const previousTop = transcript.scrollTop
     transcriptPresentationCache.showEarlier(presentationThreadKey(), state.model, 20)
     renderTranscript({ preserveScroll: true, previousHeight, previousTop })
+    return
+  }
+  const later = event.target.closest('[data-load-later]')
+  if (later) {
+    const transcript = $('#transcript')
+    beginTranscriptProgrammaticNavigation()
+    const previousTop = transcript.scrollTop
+    transcriptPresentationCache.showLater(presentationThreadKey(), state.model, 20)
+    renderTranscript()
+    transcript.scrollTop = previousTop
+    scheduleTranscriptViewCapture()
     return
   }
   const activityLog = event.target.closest('[data-activity-log]')
@@ -4652,7 +5783,7 @@ async function sendComposer(event) {
       renderComposerState()
       toast(t('Shell command sent to {backend}', { backend: currentBackend().name }))
     } catch (error) { showError(error) }
-    finally { button.disabled = false }
+    finally { renderComposerState() }
     return
   }
   const slashName = text.match(/^\/([\w-]+)$/)?.[1]
@@ -4683,7 +5814,7 @@ async function sendComposer(event) {
       hideComposerMenu()
       renderComposerState()
     } catch (error) { showError(error) }
-    finally { button.disabled = false }
+    finally { renderComposerState() }
     return
   }
   const backend = state.backend
@@ -4722,11 +5853,8 @@ async function sendComposer(event) {
         renderComposerState()
         renderTranscript()
       }
-      await sessionMap.prepareTurn().catch((error) => {
-        console.warn('Unable to attach Session Map context', error)
-        sessionMap.setSyncState('error', error.message)
-      })
-      const result = await rpc('turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef({ backend, id: threadId }), {
+      await sessionMap.prepareTurn({ backend, id: threadId })
+      const result = await dispatchBackendRpc(backend, 'turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef({ backend, id: threadId }), {
         threadId,
         clientUserMessageId,
         input: turnInput,
@@ -4737,9 +5865,7 @@ async function sendComposer(event) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)
           bindTurnLatencyTrace(latencyTrace, result.turn.id)
           markTurnLatency(latencyTrace, 'turn_start_ack')
-        } else {
-          applyCodexNotification(targetModel, { method: 'turn/started', params: { turn: result.turn } })
-        }
+        } else applyTurnAcknowledgement(targetModel, result.turn, threadId)
         if (targetModel === state.model) renderTranscript()
       }
     }
@@ -4766,7 +5892,7 @@ async function sendComposer(event) {
     }
     showError(error)
   }
-  finally { button.disabled = false }
+  finally { renderComposerState() }
 }
 
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {
@@ -4775,20 +5901,36 @@ function isRouterThread(threadId = state.selectedId, backend = state.backend) {
 
 async function ensureSessionModel(ref) {
   const key = threadCatalogKey(ref.backend, ref.id)
-  const result = await sessionDispatch.read(ref)
-  const model = state.backend === ref.backend && state.selectedId === ref.id
-    ? state.model
-    : state.threadModels.get(key)?.model || createCodexViewModel()
-  hydrateCodexThread(model, result.thread)
-  if (ref.backend === 'opencode') {
-    model.messageTurns = { ...(result.thread?.messageTurns || {}) }
-    model.messageRoles = { ...(result.thread?.messageRoles || {}) }
-    model.status = result.thread?.status || model.status
-    model.activeTurnId = model.status === 'running' ? model.turns.at(-1)?.id || null : null
+  const historyEpoch = ref.backend === 'opencode' ? openCodeHistoryEpoch : null
+  const historyEvents = ref.backend === 'opencode' ? beginOpenCodeHistoryEventBuffer(ref.id) : null
+  try {
+    const result = await sessionDispatch.read(ref)
+    if (historyEvents && openCodeHistoryIncludesDeletion(historyEvents, ref.id)) {
+      throw new Error(t('This OpenCode session was deleted while its history was loading.'))
+    }
+    const model = state.backend === ref.backend && state.selectedId === ref.id
+      ? state.model
+      : state.threadModels.get(key)?.model || createCodexViewModel()
+    hydrateCodexThread(model, result.thread)
+    if (ref.backend === 'opencode') {
+      hydrateOpenCodeModelMetadata(result.thread, model, result.historyComplete)
+      if (historyEvents.length) replayOpenCodeEventsAfterHistory(model, historyEvents, ref.id, {
+        messageSnapshots: result.historyMessageSnapshots,
+        statusAfterSequence: result.historyStatusSequence,
+        authoritativeStatus: result.historyStatusSequence >= 0 ? result.thread?.status : null,
+      })
+    }
+    if (state.backend === ref.backend && state.selectedId === ref.id) {
+      markTranscriptHistoryReady({ complete: result.historyComplete !== false })
+    } else {
+      transcriptCaptureSuppressedKeys.delete(key)
+    }
+    mergeThreadIntoCatalog(ref.backend, result.thread)
+    cacheThreadModel(ref.backend, ref.id, model, { historyEpoch })
+    return model
+  } finally {
+    if (historyEvents) endOpenCodeHistoryEventBuffer(ref.id, historyEvents)
   }
-  mergeThreadIntoCatalog(ref.backend, result.thread)
-  cacheThreadModel(ref.backend, ref.id, model)
-  return model
 }
 
 function mergeThreadIntoCatalog(backend, incoming) {
@@ -5190,6 +6332,14 @@ function persistPreferences() {
   return write
 }
 
+function schedulePreferencesPersist() {
+  clearTimeout(preferencesPersistTimer)
+  preferencesPersistTimer = setTimeout(() => {
+    preferencesPersistTimer = null
+    persistPreferences()
+  }, 150)
+}
+
 let activeSettingsPane = 'general'
 
 function openSettings() {
@@ -5483,21 +6633,38 @@ async function saveEnvironmentProfile() {
   environmentDialogProfile = result
   if (selectedThread()?.cwd === root) {
     state.environmentProfile = result
-    await applyEnvironmentToCodex(root)
+    state.environmentProfileSelectionRoot = root
+    await applyEnvironmentToCodex(result.root, {
+      force: true,
+      profileRevision: result.revision,
+    })
     renderProjectEnvironmentEntry()
   }
 }
 
-async function activateSelectedEnvironment() {
+async function activateSelectedEnvironment({ apply = true } = {}) {
+  const backend = state.backend
+  const threadId = state.selectedId
   const root = selectedThread()?.cwd || ''
   if (!root) {
     state.environmentProfile = null
+    state.environmentProfileSelectionRoot = ''
     renderProjectEnvironmentEntry()
-    return
+    return null
   }
-  state.environmentProfile = await fetchEnvironmentProfile(root)
+  const profile = await fetchEnvironmentProfile(root)
+  if (state.backend !== backend || state.selectedId !== threadId || selectedThread()?.cwd !== root) return null
+  state.environmentProfile = profile
+  state.environmentProfileSelectionRoot = root
   renderProjectEnvironmentEntry()
-  if (state.environmentProfile?.configured) await applyEnvironmentToCodex(state.environmentProfile.root)
+  if (apply && profile?.configured) {
+    await applyEnvironmentToCodex(profile.root, {
+      backend,
+      threadId,
+      profileRevision: profile.revision,
+    })
+  }
+  return profile
 }
 
 function renderProjectEnvironmentEntry() {
@@ -5507,18 +6674,36 @@ function renderProjectEnvironmentEntry() {
   if (!action) return
   action.disabled = !root
   action.title = t(root ? 'Configure variables, secrets, network, and cache for this project' : 'The current session has no project directory')
-  const configured = Boolean(root && state.environmentProfile?.configured && state.environmentProfile.root === root)
+  const configured = Boolean(root
+    && state.environmentProfile?.configured
+    && state.environmentProfileSelectionRoot === root)
   $('#project-environment-indicator').classList.toggle('hidden', !configured)
 }
 
-async function applyEnvironmentToCodex(root) {
-  if (!isCodexBackend(state.backend) || !state.selectedId) return
-  const applied = await gatewayFetch('/studio/environment/apply', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, threadId: state.selectedId, backend: state.backend }),
-  })
-  const result = await applied.json().catch(() => null)
-  if (!applied.ok) throw new Error(result?.error?.message || `HTTP ${applied.status}`)
+async function applyEnvironmentToCodex(root, {
+  backend = state.backend,
+  threadId = state.selectedId,
+  includeThread = false,
+  profileRevision = '',
+  force = false,
+} = {}) {
+  if (!isCodexBackend(backend) || !threadId) return null
+  const generation = state.appServerGenerations[backend] ?? 'unknown'
+  const key = `${backend}\u0000${threadId}\u0000${generation}\u0000${root}\u0000${profileRevision}`
+  if (!force && appliedEnvironmentProfiles.has(key)) return null
+  if (!force && environmentApplyRequests.has(key)) return environmentApplyRequests.get(key)
+  const request = (async () => {
+    const applied = await gatewayFetch('/studio/environment/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root, threadId, backend, includeThread }),
+    })
+    const result = await applied.json().catch(() => null)
+    if (!applied.ok) throw new Error(result?.error?.message || `HTTP ${applied.status}`)
+    appliedEnvironmentProfiles.add(key)
+    return result
+  })().finally(() => environmentApplyRequests.delete(key))
+  environmentApplyRequests.set(key, request)
+  return request
 }
 
 function resetSettings() {
@@ -5671,7 +6856,9 @@ function updateSelectedThreadStatus(message) {
   renderWorkspace()
 }
 
-function threadTitle(thread) { return thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex session') }
+function threadTitle(thread) {
+  return compactSidebarText(thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex session'))
+}
 function basename(path) { return String(path || '').split(/[\\/]/).filter(Boolean).at(-1) || '' }
 function shortId(value) { const text = String(value || ''); return text.length > 12 ? `${text.slice(0, 8)}…` : text }
 function threadSourceLabel(source) {

@@ -347,6 +347,7 @@ const state = {
 
 let preferencesReady = false
 let preferencesWriteChain = Promise.resolve()
+let sessionStateWriteChain = Promise.resolve()
 let preferencesPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
@@ -548,7 +549,7 @@ const reviewNotes = createReviewNotesController({
   commentSources,
   gatewayFetch,
   randomId,
-  persistPreferences,
+  persistAnnotationState,
   notify: toast,
   reportError: showError,
   view: {
@@ -1807,9 +1808,11 @@ function handleAppServerMessage(message) {
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
     state.threadsByBackend[backend] = state.threads
     if (message.method === 'thread/deleted') {
-      delete state.annotationDrafts[`${backend}:${threadId}`]
-      delete state.annotationAdditional[`${backend}:${threadId}`]
-      delete state.openingMessages[`${backend}:${threadId}`]
+      const deletedKey = `${backend}:${threadId}`
+      delete state.annotationDrafts[deletedKey]
+      delete state.annotationAdditional[deletedKey]
+      delete state.openingMessages[deletedKey]
+      deletePersistedSessionState(deletedKey)
     }
     threadRouter.removeSession(backend, threadId)
     discardComposerSessionState(backend, threadId)
@@ -2019,7 +2022,10 @@ function handleOpenCodeServerEvent(event) {
   if (payload.type === 'session.deleted') {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
     const deletedKey = sessionRefKey('opencode', deletedId)
+    delete state.annotationDrafts[deletedKey]
+    delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
+    deletePersistedSessionState(deletedKey)
     discardComposerSessionState('opencode', deletedId)
     if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
     if (deletedId && state.selectedId === deletedId) {
@@ -3627,7 +3633,7 @@ function captureOpeningMessage() {
     capturedAt: new Date().toISOString(),
     truncated: normalized !== text,
   }
-  persistPreferences()
+  persistOpeningMessageState(key)
 }
 
 function openThreadInfo() {
@@ -3680,7 +3686,7 @@ async function saveThreadInfo() {
     }
   }
   try {
-    await persistPreferences()
+    await persistOpeningMessageState(key)
     $('#thread-info-dialog').close()
     toast(t('Session information saved'))
   } catch (error) {
@@ -6302,9 +6308,11 @@ async function deleteSelectedThread() {
   try {
     await rpc('thread/delete', { threadId })
     invalidateThreadModel(state.backend, threadId)
-    delete state.annotationDrafts[`${state.backend}:${threadId}`]
-    delete state.annotationAdditional[`${state.backend}:${threadId}`]
-    delete state.openingMessages[`${state.backend}:${threadId}`]
+    const deletedKey = `${state.backend}:${threadId}`
+    delete state.annotationDrafts[deletedKey]
+    delete state.annotationAdditional[deletedKey]
+    delete state.openingMessages[deletedKey]
+    deletePersistedSessionState(deletedKey)
     discardComposerSessionState(state.backend, threadId)
     state.selectedId = null
     if (!archived) state.selectedByBackend[state.backend] = null
@@ -6394,11 +6402,18 @@ function waitFor(predicate, timeoutMs) {
 }
 
 async function loadPreferences() {
-  let saved = {}
-  try {
-    const response = await gatewayFetch('/studio/preferences', { cache: 'no-store' })
-    if (response.ok) saved = await response.json()
-  } catch (error) { console.warn('Unable to load preferences', error) }
+  const loadJson = async (path, label) => {
+    try {
+      const response = await gatewayFetch(path, { cache: 'no-store' })
+      if (response.ok) return response.json()
+      console.warn(`Unable to load ${label}: HTTP ${response.status}`)
+    } catch (error) { console.warn(`Unable to load ${label}`, error) }
+    return {}
+  }
+  const [saved, storedSessionState] = await Promise.all([
+    loadJson('/studio/preferences', 'preferences'),
+    loadJson('/studio/session-state', 'session state'),
+  ])
   state.language = normalizeLanguage(saved.language)
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
@@ -6440,8 +6455,14 @@ async function loadPreferences() {
   }
   state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
-  state.annotationDrafts = normalizeAnnotationDrafts(saved.annotationDrafts)
-  state.annotationAdditional = normalizeAdditional(saved.annotationAdditional)
+  state.annotationDrafts = normalizeAnnotationDrafts({
+    ...(saved.annotationDrafts || {}),
+    ...(storedSessionState.annotationDrafts || {}),
+  })
+  state.annotationAdditional = normalizeAdditional({
+    ...(saved.annotationAdditional || {}),
+    ...(storedSessionState.annotationAdditional || {}),
+  })
   let initialLocale = resolveLanguage(state.language)
   const templateMigration = migrateLocalizedTemplates(
     saved.annotationPromptTemplates,
@@ -6457,12 +6478,18 @@ async function loadPreferences() {
     state.annotationPromptTemplates[initialLocale] = defaultAnnotationPrompt(initialLocale)
   }
   state.annotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
-  state.openingMessages = migrateLegacyResponsibilities(
-    normalizeOpeningMessages(saved.openingMessages),
-    saved.router,
-  )
+  const storedOpeningMessages = normalizeOpeningMessages({
+    ...(saved.openingMessages || {}),
+    ...(storedSessionState.openingMessages || {}),
+  })
+  state.openingMessages = migrateLegacyResponsibilities(storedOpeningMessages, saved.router)
   state.router = normalizeThreadRouter(saved.router)
   preferencesReady = true
+  for (const [key, message] of Object.entries(state.openingMessages)) {
+    if (JSON.stringify(message) !== JSON.stringify(storedOpeningMessages[key])) {
+      persistOpeningMessageState(key)
+    }
+  }
   applySidebarState()
 }
 
@@ -6488,11 +6515,8 @@ function preferencesSnapshot() {
     selectedThread: state.selectedByBackend.codex,
     selectedBackend: state.backend,
     selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
-    annotationDrafts: state.annotationDrafts,
-    annotationAdditional: state.annotationAdditional,
     annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
-    openingMessages: state.openingMessages,
     router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
   }
 }
@@ -6506,6 +6530,43 @@ function persistPreferences() {
   })
   preferencesWriteChain = write.catch((error) => console.error('Unable to persist preferences', error))
   return write
+}
+
+function queueSessionStateWrite(path, body, method = 'PUT') {
+  if (!preferencesReady) return Promise.resolve()
+  const payload = JSON.stringify(body)
+  const write = sessionStateWriteChain.catch(() => {}).then(async () => {
+    const response = await gatewayFetch(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  })
+  sessionStateWriteChain = write.catch((error) => console.error('Unable to persist session state', error))
+  return write
+}
+
+function persistAnnotationState(key) {
+  if (!key) return Promise.resolve()
+  return queueSessionStateWrite('/studio/session-state/annotations', {
+    sessionKey: key,
+    drafts: state.annotationDrafts[key] || [],
+    additional: state.annotationAdditional[key] || '',
+  })
+}
+
+function persistOpeningMessageState(key) {
+  if (!key) return Promise.resolve()
+  return queueSessionStateWrite('/studio/session-state/opening-message', {
+    sessionKey: key,
+    message: state.openingMessages[key] || null,
+  })
+}
+
+function deletePersistedSessionState(key) {
+  if (!key) return Promise.resolve()
+  return queueSessionStateWrite('/studio/session-state/session', { sessionKey: key }, 'DELETE')
 }
 
 function normalizeSharedDocumentDirectories(values = []) {

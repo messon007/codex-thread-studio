@@ -36,6 +36,7 @@ mod gateway_security;
 mod git_review;
 mod opencode_server;
 mod session_map;
+mod session_state;
 mod terminal_runtime;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
@@ -73,6 +74,7 @@ struct GatewayState {
     shared_document_directories: Arc<Mutex<Vec<String>>>,
     favorites_path: Arc<PathBuf>,
     favorites_lock: Arc<Mutex<()>>,
+    session_state_migrated: bool,
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
     epub_reading_path: Arc<PathBuf>,
@@ -373,6 +375,29 @@ struct FavoriteQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AnnotationStateRequest {
+    session_key: String,
+    #[serde(default)]
+    drafts: Vec<AnnotationDraft>,
+    #[serde(default)]
+    additional: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpeningMessageStateRequest {
+    session_key: String,
+    message: Option<OpeningMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteSessionStateRequest {
+    session_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ReviewFileRequest {
     root: String,
     path: String,
@@ -504,18 +529,14 @@ fn main() {
     if let Err(error) = migrate_legacy_preferences(&preferences_path) {
         eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
     }
-    let startup_preferences = match load_preferences(&preferences_path) {
-        Ok(preferences) => {
-            if let Err(error) = save_preferences(&preferences_path, &preferences) {
-                eprintln!("Codex Thread Studio could not write default settings: {error}");
+    let (mut startup_preferences, startup_preferences_loaded) =
+        match load_preferences(&preferences_path) {
+            Ok(preferences) => (preferences, true),
+            Err(error) => {
+                eprintln!("Codex Thread Studio could not load startup settings: {error}");
+                (StudioPreferences::default(), false)
             }
-            preferences
-        }
-        Err(error) => {
-            eprintln!("Codex Thread Studio could not load startup settings: {error}");
-            StudioPreferences::default()
-        }
-    };
+        };
     let (codex_binary, opencode_binary, runtime) =
         backend_configuration(&startup_preferences, cli_path);
     let configured_backends = backend_config::load(&backend_config_path);
@@ -531,6 +552,55 @@ fn main() {
     );
     if let Err(error) = favorites::initialize(&favorites_path) {
         eprintln!("Codex Thread Studio could not initialize favorites: {error}");
+    }
+    let mut session_state_migrated = false;
+    if startup_preferences_loaded {
+        match session_state::migration_complete(&favorites_path) {
+            Ok(true) => session_state_migrated = true,
+            Ok(false) => {
+                let legacy_session_state = StudioPreferences {
+                    annotation_drafts: startup_preferences.annotation_drafts.clone(),
+                    annotation_additional: startup_preferences.annotation_additional.clone(),
+                    opening_messages: startup_preferences.opening_messages.clone(),
+                    ..StudioPreferences::default()
+                };
+                match validate_preferences(&legacy_session_state) {
+                    Ok(()) => match session_state::migrate_legacy_settings(
+                        &favorites_path,
+                        &startup_preferences.annotation_drafts,
+                        &startup_preferences.annotation_additional,
+                        &startup_preferences.opening_messages,
+                    ) {
+                        Ok(()) => session_state_migrated = true,
+                        Err(error) => {
+                            eprintln!(
+                                "Codex Thread Studio could not migrate session state: {error}"
+                            );
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!(
+                            "Codex Thread Studio did not migrate invalid session state: {error}"
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("Codex Thread Studio could not inspect session state: {error}");
+            }
+        }
+        if session_state_migrated {
+            startup_preferences.annotation_drafts.clear();
+            startup_preferences.annotation_additional.clear();
+            startup_preferences.opening_messages.clear();
+        }
+    } else if let Err(error) = session_state::initialize(&favorites_path) {
+        eprintln!("Codex Thread Studio could not initialize session state: {error}");
+    }
+    if startup_preferences_loaded {
+        if let Err(error) = save_preferences(&preferences_path, &startup_preferences) {
+            eprintln!("Codex Thread Studio could not write default settings: {error}");
+        }
     }
     if let Err(error) = session_map::initialize(&session_maps_path) {
         eprintln!("Codex Thread Studio could not initialize session maps: {error}");
@@ -570,6 +640,7 @@ fn main() {
         )),
         favorites_path: Arc::new(favorites_path),
         favorites_lock: Arc::new(Mutex::new(())),
+        session_state_migrated,
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
         epub_reading_path: Arc::new(epub_reading_path),
@@ -648,6 +719,19 @@ fn gateway_router(state: GatewayState) -> Router {
         .route(
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
+        )
+        .route("/studio/session-state", get(get_session_state))
+        .route(
+            "/studio/session-state/annotations",
+            axum::routing::put(put_annotation_state),
+        )
+        .route(
+            "/studio/session-state/opening-message",
+            axum::routing::put(put_opening_message_state),
+        )
+        .route(
+            "/studio/session-state/session",
+            axum::routing::delete(delete_session_state),
         )
         .route(
             "/studio/environment",
@@ -2382,6 +2466,128 @@ async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
     }
 }
 
+async fn get_session_state(State(state): State<GatewayState>) -> Response<Body> {
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites database lock is unavailable"),
+    };
+    match session_state::load(&state.favorites_path) {
+        Ok(snapshot) => json_response(StatusCode::OK, &snapshot),
+        Err(error) => gateway_error(&format!("failed to read session state: {error}")),
+    }
+}
+
+async fn put_annotation_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    if request.session_key.is_empty()
+        || request.session_key.len() > 320
+        || !valid_router_session_key(&request.session_key)
+    {
+        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+    }
+    let mut preferences = StudioPreferences::default();
+    preferences
+        .annotation_drafts
+        .insert(request.session_key.clone(), request.drafts.clone());
+    if !request.additional.is_empty() {
+        preferences
+            .annotation_additional
+            .insert(request.session_key.clone(), request.additional.clone());
+    }
+    if let Err(message) = validate_preferences(&preferences) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites database lock is unavailable"),
+    };
+    match session_state::replace_annotations(
+        &state.favorites_path,
+        &request.session_key,
+        &request.drafts,
+        &request.additional,
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => gateway_error(&format!("failed to save annotation state: {error}")),
+    }
+}
+
+async fn put_opening_message_state(
+    State(state): State<GatewayState>,
+    body: String,
+) -> Response<Body> {
+    let request = match parse_session_state_body::<OpeningMessageStateRequest>(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    if request.session_key.is_empty()
+        || request.session_key.len() > 320
+        || !valid_router_session_key(&request.session_key)
+    {
+        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+    }
+    let mut preferences = StudioPreferences::default();
+    if let Some(message) = &request.message {
+        preferences
+            .opening_messages
+            .insert(request.session_key.clone(), message.clone());
+    }
+    if let Err(message) = validate_preferences(&preferences) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites database lock is unavailable"),
+    };
+    match session_state::put_opening_message(
+        &state.favorites_path,
+        &request.session_key,
+        request.message.as_ref(),
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => gateway_error(&format!("failed to save opening message: {error}")),
+    }
+}
+
+async fn delete_session_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let request = match parse_session_state_body::<DeleteSessionStateRequest>(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    if request.session_key.is_empty()
+        || request.session_key.len() > 320
+        || !valid_router_session_key(&request.session_key)
+    {
+        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+    }
+    let _guard = match state.favorites_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("favorites database lock is unavailable"),
+    };
+    match session_state::delete_session(&state.favorites_path, &request.session_key) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => gateway_error(&format!("failed to delete session state: {error}")),
+    }
+}
+
+fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, Response<Body>> {
+    if body.len() > MAX_PREFERENCES_BODY {
+        return Err(json_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "session state payload is too large",
+        ));
+    }
+    serde_json::from_str(body).map_err(|error| {
+        json_error(
+            StatusCode::BAD_REQUEST,
+            &format!("invalid session state: {error}"),
+        )
+    })
+}
+
 fn shared_document_directories(state: &GatewayState) -> Result<Vec<PathBuf>, (StatusCode, String)> {
     let configured = configured_shared_document_directories(state)?;
     Ok(configured
@@ -2413,7 +2619,7 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
             "preferences payload is too large",
         );
     }
-    let preferences = match serde_json::from_str::<StudioPreferences>(&body) {
+    let mut preferences = match serde_json::from_str::<StudioPreferences>(&body) {
         Ok(preferences) => preferences,
         Err(error) => {
             return json_error(
@@ -2429,6 +2635,15 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
         Ok(guard) => guard,
         Err(_) => return gateway_error("preferences lock is unavailable"),
     };
+    if state.session_state_migrated {
+        preferences.annotation_drafts.clear();
+        preferences.annotation_additional.clear();
+        preferences.opening_messages.clear();
+    } else if let Ok(current) = load_preferences(&state.preferences_path) {
+        preferences.annotation_drafts = current.annotation_drafts;
+        preferences.annotation_additional = current.annotation_additional;
+        preferences.opening_messages = current.opening_messages;
+    }
     match save_preferences(&state.preferences_path, &preferences) {
         Ok(()) => {
             let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
@@ -3315,6 +3530,7 @@ mod tests {
                 env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.sqlite3")),
             ),
             favorites_lock: Arc::new(Mutex::new(())),
+            session_state_migrated: true,
             session_maps_path: Arc::new(env::temp_dir().join(format!(
                 "codex-thread-studio-security-maps-{suffix}.sqlite3"
             ))),
@@ -3382,6 +3598,7 @@ mod tests {
 
             for path in [
                 "/studio/preferences",
+                "/studio/session-state",
                 "/studio/favorites",
                 "/studio/session-map/codex/thread-1",
                 "/studio/epub/state",
@@ -3431,6 +3648,112 @@ mod tests {
     }
 
     #[test]
+    fn session_state_routes_round_trip_without_affecting_preferences_routes() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let state = secured_test_gateway(GatewaySecurity::disabled_for_tests());
+            let database_path = state.favorites_path.as_ref().clone();
+            let preferences_path = state.preferences_path.as_ref().clone();
+            let router = gateway_router(state);
+            let annotation_body = json!({
+                "sessionKey": "codex:thread-1",
+                "drafts": [{
+                    "id": "draft-1",
+                    "excerpt": "selected text",
+                    "createdAt": "2026-08-31T00:00:00Z"
+                }],
+                "additional": "overall note"
+            })
+            .to_string();
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/annotations")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(annotation_body))
+                        .expect("annotation request"),
+                )
+                .await
+                .expect("annotation response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/session-state")
+                        .body(Body::empty())
+                        .expect("session state request"),
+                )
+                .await
+                .expect("session state response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), MAX_PREFERENCES_BODY)
+                .await
+                .expect("session state body");
+            let value: serde_json::Value =
+                serde_json::from_slice(&body).expect("session state JSON");
+            assert_eq!(
+                value["annotationDrafts"]["codex:thread-1"][0]["id"],
+                "draft-1"
+            );
+            assert_eq!(
+                value["annotationAdditional"]["codex:thread-1"],
+                "overall note"
+            );
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/preferences")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "annotationDrafts": {
+                                    "codex:thread-1": [{
+                                        "id": "legacy-copy",
+                                        "excerpt": "must not return to settings",
+                                        "createdAt": "2026-08-31T00:00:00Z"
+                                    }]
+                                }
+                            })
+                            .to_string(),
+                        ))
+                        .expect("preferences request"),
+                )
+                .await
+                .expect("preferences response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let saved_preferences: serde_json::Value =
+                serde_json::from_slice(&fs::read(&preferences_path).expect("saved preferences"))
+                    .expect("preferences JSON");
+            assert!(saved_preferences.get("annotationDrafts").is_none());
+            assert!(saved_preferences.get("annotationAdditional").is_none());
+            assert!(saved_preferences.get("openingMessages").is_none());
+
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri("/studio/session-state/session")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"sessionKey":"codex:thread-1"}"#))
+                        .expect("delete request"),
+                )
+                .await
+                .expect("delete response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            fs::remove_file(database_path).ok();
+            fs::remove_file(preferences_path).ok();
+        });
+    }
+
+    #[test]
     fn browser_labels_do_not_match_main_webview_capabilities() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json"))
@@ -3472,6 +3795,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-favorites-test.sqlite3"),
                 ),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_state_migrated: true,
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
                 ),
@@ -3651,6 +3975,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-favorites-test.sqlite3"),
                 ),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_state_migrated: true,
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
                 ),
@@ -3719,6 +4044,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-map-api-favorites.sqlite3"),
                 ),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_state_migrated: true,
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 epub_reading_path: Arc::new(
@@ -3855,6 +4181,7 @@ mod tests {
                 shared_document_directories: Arc::new(Mutex::new(Vec::new())),
                 favorites_path: Arc::new(favorites_path.clone()),
                 favorites_lock: Arc::new(Mutex::new(())),
+                session_state_migrated: true,
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
                 ),

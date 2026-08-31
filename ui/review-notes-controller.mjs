@@ -55,7 +55,7 @@ export function createReviewNotesController({
   gatewayFetch,
   view,
   randomId,
-  persistPreferences,
+  persistAnnotationState,
   notify = () => {},
   reportError = console.error,
 }) {
@@ -489,6 +489,7 @@ function addAnnotation(event) {
     errorBox.classList.remove('hidden')
     return
   }
+  const key = selectedStateKey()
   const drafts = currentAnnotations()
   const editingId = state.editingAnnotationId
   if (!editingId && drafts.length >= 32) {
@@ -499,11 +500,11 @@ function addAnnotation(event) {
   const draft = createCommentDraft({ ...annotation, note: comment }, { registry: commentSources })
   if (editingId) {
     if (!drafts.some((candidate) => candidate.id === editingId)) return closeAnnotationDialog()
-    state.annotationDrafts[selectedStateKey()] = drafts.map((candidate) => candidate.id === editingId ? draft : candidate)
+    state.annotationDrafts[key] = drafts.map((candidate) => candidate.id === editingId ? draft : candidate)
   } else {
-    state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
+    state.annotationDrafts[key] = [...drafts, draft]
   }
-  persistPreferences()
+  persistAnnotationState(key)
   closeAnnotationDialog()
   renderAnnotationRail()
   renderComposerReviewContext()
@@ -719,25 +720,27 @@ function deleteAnnotation(id) {
   const key = selectedStateKey()
   state.annotationDrafts[key] = currentAnnotations().filter((draft) => draft.id !== id)
   if (!state.annotationDrafts[key].length) delete state.annotationDrafts[key]
-  persistPreferences()
+  persistAnnotationState(key)
   renderAnnotationRail()
 }
 
 function clearAnnotations() {
   if (!state.selectedId || !confirm(t('Clear all comment drafts for this session?'))) return
-  delete state.annotationDrafts[selectedStateKey()]
-  delete state.annotationAdditional[selectedStateKey()]
-  persistPreferences()
+  const key = selectedStateKey()
+  delete state.annotationDrafts[key]
+  delete state.annotationAdditional[key]
+  persistAnnotationState(key)
   renderAnnotationRail()
 }
 
 function saveAnnotationAdditional(event) {
   if (!state.selectedId) return
+  const key = selectedStateKey()
   const value = event.target.value.slice(0, 32000)
-  if (value) state.annotationAdditional[selectedStateKey()] = value
-  else delete state.annotationAdditional[selectedStateKey()]
+  if (value) state.annotationAdditional[key] = value
+  else delete state.annotationAdditional[key]
   clearTimeout(annotationPersistTimer)
-  annotationPersistTimer = setTimeout(persistPreferences, 300)
+  annotationPersistTimer = setTimeout(() => persistAnnotationState(key), 300)
 }
 
 function buildAnnotationPrompt(drafts, additional = '') {

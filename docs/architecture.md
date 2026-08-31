@@ -107,23 +107,23 @@ Favorites attach to complete structured AI messages rather than terminal text or
 
 ## Persistence
 
-Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI language, appearance settings, per-backend selection, language-specific comment templates, and explicit comment drafts in:
+Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI language, appearance settings, per-backend selection, and language-specific comment templates in:
 
 ```text
 ~/.config/codex-thread-studio/settings.json
 ```
 
-The global favorites library is intentionally separate because it can contain substantially larger user-selected message content:
+Larger user-authored state is stored in one shared SQLite database:
 
 ```text
 ~/.config/codex-thread-studio/favorites.sqlite3
 ```
 
-Favorites use validated, bounded SQLite records. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. Search returns summaries; full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
+Separate tables hold Favorites, per-session comment drafts and additional guidance, and per-session opening-question/responsibility metadata. All records are validated and bounded. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. A separate one-time transaction moves legacy dynamic session state out of `settings.json`; the JSON fields are removed only after the database commit succeeds. Favorite search returns summaries, and full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
 
 Session Maps use the rollout-isolated `session-maps.sqlite3` database beside Studio settings. The Rust gateway owns schema creation, validation, optimistic revision checks, transactional operation batches, and undo snapshots. Provider history is not copied into these tables. Declarative custom template snapshots remain a later milestone.
 
-Thread Router configuration is small structured metadata stored in `settings.json`: Studio-managed controller identities, up to three fallback session keys with conditions, and per-session opening-question/responsibility metadata. Every unlisted session is a regular target. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
+Thread Router configuration is small structured metadata stored in `settings.json`: Studio-managed controller identities and up to three fallback session keys with conditions. Per-session opening-question/responsibility metadata lives in `favorites.sqlite3`. Every unlisted session is a regular target. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
 
 On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 

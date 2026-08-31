@@ -16,6 +16,8 @@ test('dynamic session state loads beside preferences but is not written back to 
   assert.match(load, /loadJson\('\/studio\/preferences'/u)
   assert.match(load, /loadJson\('\/studio\/session-state'/u)
   assert.doesNotMatch(snapshot, /annotationDrafts|annotationAdditional|openingMessages/u)
+  assert.match(load, /state\.turnOptions = normalizeStoredTurnOptions\(storedSessionState\.turnOptions\)/u)
+  assert.doesNotMatch(snapshot, /turnOptions/u)
 })
 
 test('startup selection comes from Thread Router instead of persisted session state', () => {
@@ -37,8 +39,19 @@ test('session state mutations use bounded per-session endpoints', () => {
   assert.match(app, /'\/studio\/session-state\/annotations'/u)
   assert.match(app, /'\/studio\/session-state\/opening-message'/u)
   assert.match(app, /'\/studio\/session-state\/pin'/u)
+  assert.match(app, /'\/studio\/session-state\/turn-options'/u)
   assert.match(app, /'\/studio\/session-state\/session',[^\n]*'DELETE'/u)
   assert.match(app, /const payload = JSON\.stringify\(body\)/u)
+})
+
+test('session model and effort choices are persisted and can return to backend defaults', () => {
+  assert.match(app, /persistSessionTurnOptions\(key\)/u)
+  assert.match(app, /data-model-default/u)
+  assert.match(app, /delete state\.turnOptions\[key\][\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
+  assert.match(app, /model: String\(options\.model \|\| ''\)/u)
+  assert.match(app, /effort: String\(options\.effort \|\| ''\)/u)
+  assert.match(app, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(key\)/u)
+  assert.match(app, /async function forkThread[\s\S]*state\.turnOptions\[forkKey\] = sourceOptions[\s\S]*persistSessionTurnOptions\(forkKey\)/u)
 })
 
 test('pinning is bounded and archive clears the persisted pin', () => {

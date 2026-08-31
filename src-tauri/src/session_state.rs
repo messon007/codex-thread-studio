@@ -11,6 +11,13 @@ use crate::{AnnotationDraft, OpeningMessage};
 pub(crate) const MAX_PINNED_SESSIONS: usize = 10;
 pub(crate) const PIN_LIMIT_ERROR: &str = "at most 10 sessions can be pinned";
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionTurnOptions {
+    pub(crate) model: String,
+    pub(crate) effort: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionStateSnapshot {
@@ -18,6 +25,7 @@ pub(crate) struct SessionStateSnapshot {
     pub(crate) annotation_additional: BTreeMap<String, String>,
     pub(crate) opening_messages: BTreeMap<String, OpeningMessage>,
     pub(crate) pinned_sessions: Vec<String>,
+    pub(crate) turn_options: BTreeMap<String, SessionTurnOptions>,
 }
 
 pub(crate) fn initialize(path: &Path) -> Result<(), String> {
@@ -81,6 +89,25 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
     drop(statement);
 
     snapshot.pinned_sessions = load_pins_with_connection(&connection)?;
+
+    let mut statement = connection
+        .prepare("SELECT session_key, model, effort FROM session_turn_options ORDER BY session_key")
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                SessionTurnOptions {
+                    model: row.get(1)?,
+                    effort: row.get(2)?,
+                },
+            ))
+        })
+        .map_err(sql_error)?;
+    for row in rows {
+        let (session_key, options) = row.map_err(sql_error)?;
+        snapshot.turn_options.insert(session_key, options);
+    }
 
     Ok(snapshot)
 }
@@ -163,6 +190,32 @@ pub(crate) fn put_opening_message(
     Ok(())
 }
 
+pub(crate) fn put_turn_options(
+    path: &Path,
+    session_key: &str,
+    model: &str,
+    effort: &str,
+) -> Result<(), String> {
+    let connection = connection(path)?;
+    if model.is_empty() && effort.is_empty() {
+        connection
+            .execute(
+                "DELETE FROM session_turn_options WHERE session_key = ?1",
+                [session_key],
+            )
+            .map_err(sql_error)?;
+    } else {
+        connection
+            .execute(
+                "INSERT INTO session_turn_options(session_key, model, effort) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(session_key) DO UPDATE SET model = excluded.model, effort = excluded.effort",
+                params![session_key, model, effort],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), String> {
     let mut connection = connection(path)?;
     let transaction = connection.transaction().map_err(sql_error)?;
@@ -187,6 +240,12 @@ pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), Strin
     transaction
         .execute(
             "DELETE FROM session_pins WHERE session_key = ?1",
+            [session_key],
+        )
+        .map_err(sql_error)?;
+    transaction
+        .execute(
+            "DELETE FROM session_turn_options WHERE session_key = ?1",
             [session_key],
         )
         .map_err(sql_error)?;
@@ -282,6 +341,11 @@ fn connection(path: &Path) -> Result<Connection, String> {
              CREATE TABLE IF NOT EXISTS session_pins (
                session_key TEXT PRIMARY KEY,
                pinned_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_turn_options (
+               session_key TEXT PRIMARY KEY,
+               model TEXT NOT NULL,
+               effort TEXT NOT NULL
              );",
         )
         .map_err(sql_error)?;
@@ -335,21 +399,31 @@ mod tests {
         replace_annotations(&path, "codex:one", &[draft("a"), draft("b")], "overall").unwrap();
         put_opening_message(&path, "codex:one", Some(&opening("hello"))).unwrap();
         set_pinned_at(&path, "codex:one", true, 100).unwrap();
+        put_turn_options(&path, "codex:one", "gpt-session", "high").unwrap();
 
         let state = load(&path).unwrap();
         assert_eq!(state.annotation_drafts["codex:one"].len(), 2);
         assert_eq!(state.annotation_additional["codex:one"], "overall");
         assert_eq!(state.opening_messages["codex:one"].text, "hello");
         assert_eq!(state.pinned_sessions, ["codex:one"]);
+        assert_eq!(
+            state.turn_options["codex:one"],
+            SessionTurnOptions {
+                model: "gpt-session".to_string(),
+                effort: "high".to_string(),
+            }
+        );
 
         replace_annotations(&path, "codex:one", &[], "").unwrap();
         put_opening_message(&path, "codex:one", None).unwrap();
         set_pinned_at(&path, "codex:one", false, 0).unwrap();
+        put_turn_options(&path, "codex:one", "", "").unwrap();
         let state = load(&path).unwrap();
         assert!(state.annotation_drafts.is_empty());
         assert!(state.annotation_additional.is_empty());
         assert!(state.opening_messages.is_empty());
         assert!(state.pinned_sessions.is_empty());
+        assert!(state.turn_options.is_empty());
         fs::remove_file(path).ok();
     }
 
@@ -360,6 +434,7 @@ mod tests {
             replace_annotations(&path, key, &[draft(key)], key).unwrap();
             put_opening_message(&path, key, Some(&opening(key))).unwrap();
             set_pinned_at(&path, key, true, if key == "codex:one" { 1 } else { 2 }).unwrap();
+            put_turn_options(&path, key, key, "medium").unwrap();
         }
         delete_session(&path, "codex:one").unwrap();
 
@@ -369,6 +444,8 @@ mod tests {
         assert!(!state.opening_messages.contains_key("codex:one"));
         assert!(state.opening_messages.contains_key("opencode:two"));
         assert_eq!(state.pinned_sessions, ["opencode:two"]);
+        assert!(!state.turn_options.contains_key("codex:one"));
+        assert_eq!(state.turn_options["opencode:two"].model, "opencode:two");
         fs::remove_file(path).ok();
     }
 

@@ -1823,6 +1823,7 @@ function handleAppServerMessage(message) {
       delete state.annotationDrafts[deletedKey]
       delete state.annotationAdditional[deletedKey]
       delete state.openingMessages[deletedKey]
+      delete state.turnOptions[deletedKey]
       deletePersistedSessionState(deletedKey)
     }
     threadRouter.removeSession(backend, threadId)
@@ -2037,6 +2038,7 @@ function handleOpenCodeServerEvent(event) {
     delete state.annotationDrafts[deletedKey]
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
+    delete state.turnOptions[deletedKey]
     deletePersistedSessionState(deletedKey)
     discardComposerSessionState('opencode', deletedId)
     if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
@@ -5683,12 +5685,9 @@ function configuredTurnOptions(options = currentTurnOptions()) {
 async function openModelCommand() {
   showCommandDialog('Model', '<div class="command-empty">Loading models from App Server…</div>')
   const models = await loadBackendModels({ refresh: true })
-  if (!models.length) {
-    $('#command-content').innerHTML = '<div class="command-empty">No models are available.</div>'
-    return
-  }
   const currentEffort = currentTurnOptions().effort
-  $('#command-content').innerHTML = `<div class="command-list">${models.map((model) => {
+  const defaultCard = `<div class="command-card"><strong>${t('Use the backend default model')}</strong><small>${t('Do not override the model or reasoning effort for this session')}</small><span></span><button class="subtle-button" type="button" data-model-default>${t('Use')}</button></div>`
+  $('#command-content').innerHTML = `<div class="command-list">${defaultCard}${models.map((model) => {
     const efforts = model.supportedReasoningEfforts || []
     const selectedEffort = efforts.some((entry) => entry.reasoningEffort === currentEffort)
       ? currentEffort
@@ -5697,16 +5696,27 @@ async function openModelCommand() {
     return `<div class="command-card"><strong>${escapeHtml(model.displayName || model.model || model.id)}</strong><small>${escapeHtml(model.model || model.id)}${model.isDefault ? t(' · default') : ''}</small>${effortOptions ? `<select aria-label="${t('Reasoning effort')}">${effortOptions}</select>` : '<span></span>'}<button class="subtle-button" type="button" data-model="${escapeHtml(model.model || model.id)}">${t('Use')}</button></div>`
   }).join('')}</div>`
   $('#command-content').onclick = (event) => {
-    const button = event.target.closest('[data-model]')
+    const button = event.target.closest('[data-model], [data-model-default]')
     if (!button) return
-    const options = currentTurnOptions()
-    options.model = button.dataset.model
-    const effort = button.closest('.command-card')?.querySelector('select')?.value
-    if (effort) options.effort = effort
-    else delete options.effort
+    const key = selectedStateKey()
+    let options = currentTurnOptions()
+    const useDefault = button.hasAttribute('data-model-default')
+    const effort = useDefault ? '' : button.closest('.command-card')?.querySelector('select')?.value
+    if (useDefault) {
+      delete state.turnOptions[key]
+      persistSessionTurnOptions(key).catch(showError)
+      options = currentTurnOptions()
+    } else {
+      options.model = button.dataset.model
+      if (effort) options.effort = effort
+      else delete options.effort
+      persistSessionTurnOptions(key).catch(showError)
+    }
     $('#command-dialog').close()
     renderComposerState()
-    toast(t('Selected model {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
+    toast(useDefault
+      ? t('This session now uses the backend default model')
+      : t('Selected model {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
 }
 
@@ -6296,6 +6306,11 @@ async function createThread(event) {
       await waitFor(() => state.backend === backend && state.ready, 15_000)
     }
     const result = await rpc('thread/start', params)
+    if (model) {
+      const key = selectedStateKey(result.thread.id, backend)
+      state.turnOptions[key] = { ...defaultTurnOptions(backend), model }
+      await persistSessionTurnOptions(key)
+    }
     if (name) await rpc('thread/name/set', { threadId: result.thread.id, name })
     closeNewThreadDialog()
     $('#new-thread-form').reset()
@@ -6311,6 +6326,7 @@ async function createThread(event) {
 async function forkThread(lastTurnId = null, trigger = null) {
   const sourceThreadId = state.selectedId
   const sourceBackend = state.backend
+  const sourceOptions = { ...(state.turnOptions[selectedStateKey(sourceThreadId, sourceBackend)] || {}) }
   if (!sourceThreadId || isArchivedPreview()) return
   if (trigger) {
     trigger.disabled = true
@@ -6318,6 +6334,11 @@ async function forkThread(lastTurnId = null, trigger = null) {
   }
   try {
     const result = await rpc('thread/fork', threadForkParams(sourceThreadId, lastTurnId))
+    if (sourceOptions.model || sourceOptions.effort) {
+      const forkKey = selectedStateKey(result.thread.id, sourceBackend)
+      state.turnOptions[forkKey] = sourceOptions
+      await persistSessionTurnOptions(forkKey)
+    }
     await loadThreads()
     await selectThread(result.thread.id, { force: true, backend: sourceBackend })
     toast(t(lastTurnId ? 'Created a {backend} session fork from this turn' : '{backend} session fork created', { backend: currentBackend().name }))
@@ -6367,6 +6388,7 @@ async function deleteSelectedThread() {
     delete state.annotationDrafts[deletedKey]
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
+    delete state.turnOptions[deletedKey]
     deletePersistedSessionState(deletedKey)
     discardComposerSessionState(state.backend, threadId)
     state.selectedId = null
@@ -6515,6 +6537,7 @@ async function loadPreferences() {
   state.startupRouterSelectionPending = true
   state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
+  state.turnOptions = normalizeStoredTurnOptions(storedSessionState.turnOptions)
   state.annotationDrafts = normalizeAnnotationDrafts(storedSessionState.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(storedSessionState.annotationAdditional)
   state.pinnedSessions = new Set(
@@ -6603,6 +6626,16 @@ function persistOpeningMessageState(key) {
   return queueSessionStateWrite('/studio/session-state/opening-message', {
     sessionKey: key,
     message: state.openingMessages[key] || null,
+  })
+}
+
+function persistSessionTurnOptions(key) {
+  if (!key) return Promise.resolve()
+  const options = state.turnOptions[key] || {}
+  return queueSessionStateWrite('/studio/session-state/turn-options', {
+    sessionKey: key,
+    model: String(options.model || ''),
+    effort: String(options.effort || ''),
   })
 }
 
@@ -7239,6 +7272,24 @@ function truncateUtf8(value, limit) {
 function truncateCharacters(value, limit) { return [...String(value || '')].slice(0, limit).join('') }
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
+
+function normalizeStoredTurnOptions(value) {
+  const normalized = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized
+  for (const [key, entry] of Object.entries(value).slice(0, 2048)) {
+    if (typeof key !== 'string' || !key.includes(':') || key.length > 320
+      || !entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const model = String(entry.model || '').trim().slice(0, 256)
+    const effort = String(entry.effort || '').trim().slice(0, 64)
+    if (!model && !effort) continue
+    if (/\p{Cc}/u.test(model) || /\p{Cc}/u.test(effort)) continue
+    normalized[key] = {
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    }
+  }
+  return normalized
+}
 
 function normalizeTypography(value) {
   const weights = [400, 500, 600]

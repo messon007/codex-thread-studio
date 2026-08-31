@@ -392,6 +392,16 @@ struct PinSessionStateRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TurnOptionsStateRequest {
+    session_key: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    effort: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeleteSessionStateRequest {
     session_key: String,
 }
@@ -686,6 +696,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route(
             "/studio/session-state/pin",
             axum::routing::put(put_session_pin),
+        )
+        .route(
+            "/studio/session-state/turn-options",
+            axum::routing::put(put_turn_options_state),
         )
         .route(
             "/studio/session-state/session",
@@ -2558,6 +2572,34 @@ async fn put_session_pin(State(state): State<GatewayState>, body: String) -> Res
     }
 }
 
+async fn put_turn_options_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let request = match parse_session_state_body::<TurnOptionsStateRequest>(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    if request.session_key.is_empty()
+        || request.session_key.len() > 320
+        || !valid_router_session_key(&request.session_key)
+        || (!request.model.is_empty() && !valid_runtime_value(&request.model, 256))
+        || (!request.effort.is_empty() && !valid_runtime_value(&request.effort, 64))
+    {
+        return json_error(StatusCode::BAD_REQUEST, "session turn options are invalid");
+    }
+    let _guard = match state.studio_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("Studio database lock is unavailable"),
+    };
+    match session_state::put_turn_options(
+        &state.studio_path,
+        &request.session_key,
+        &request.model,
+        &request.effort,
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
+    }
+}
+
 fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, Response<Body>> {
     if body.len() > MAX_PREFERENCES_BODY {
         return Err(json_error(
@@ -3616,6 +3658,22 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/turn-options")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"sessionKey":"codex:thread-1","model":"gpt-session","effort":"high"}"#,
+                        ))
+                        .expect("turn options request"),
+                )
+                .await
+                .expect("turn options response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
                         .uri("/studio/session-state")
                         .body(Body::empty())
                         .expect("session state request"),
@@ -3637,6 +3695,10 @@ mod tests {
                 "overall note"
             );
             assert_eq!(value["pinnedSessions"], json!(["codex:thread-1"]));
+            assert_eq!(
+                value["turnOptions"]["codex:thread-1"],
+                json!({ "model": "gpt-session", "effort": "high" })
+            );
 
             let response = router
                 .clone()

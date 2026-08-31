@@ -92,6 +92,12 @@ test('the preparing spinner shares the conversation-track center with message ic
   assert.match(rule('.work-placeholder'), /gap:\s*9px/u)
 })
 
+test('turn dividers own equal spacing above and below the boundary', () => {
+  assert.match(rule('.turn'), /padding:\s*0 0 22px/u)
+  assert.match(rule('.turn + .turn'), /padding-top:\s*22px/u)
+  assert.match(rule('.turn > :last-child'), /margin-bottom:\s*0/u)
+})
+
 test('turn failures use the conversation track and preserve message text alignment', () => {
   assert.match(app, /class="message-track-mark turn-error-mark"[^>]*>\$\{conversationTrackIcon\('failed'\)\}/u)
   assert.match(app, /class="turn-error-content"><strong>\$\{t\('Execution failed'\)\}<\/strong><span>/u)

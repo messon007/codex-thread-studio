@@ -255,6 +255,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .transcript { flex: 1; min-height: 0; overflow: auto; padding: 24px var(--workspace-gutter) 36px; }
 .turn { width: 100%; max-width: var(--content-max-width); margin: 0 auto; padding: 0 0 22px; }
 .turn + .turn { padding-top: 22px; border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
+.turn > :last-child { margin-bottom: 0; }
 .turn-separator { display: none; }
 .message { margin: 0 0 13px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 11px; line-height: 1.68; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .message.user { width: 100%; max-width: none; margin: 0 0 15px; padding: 0 3px; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-family: var(--content-font-family); font-size: var(--content-font-size); font-weight: var(--content-font-weight); line-height: 1.68; }

@@ -121,7 +121,7 @@ test('preparing a turn keeps Map context bound to its original session', async (
   state.backend = 'opencode'
   state.selectedId = 'other-thread'
   releaseMap()
-  await preparing
+  assert.equal(await preparing, true)
 
   assert.deepEqual(dispatched.map(({ backend, method, params }) => ({
     backend,
@@ -130,6 +130,18 @@ test('preparing a turn keeps Map context bound to its original session', async (
   })), [{ backend: 'codex', method: 'thread/resume', threadId: 'thread-one' }])
   assert.equal(state.sessionMapSync.get('codex:thread-one')?.state, 'syncing')
   assert.equal(state.sessionMapSync.has('opencode:other-thread'), false)
+})
+
+test('preparing a turn reports when no Session Map resumed the session', async () => {
+  const notFound = new Error('not found')
+  notFound.status = 404
+  const { controller, dispatched } = controllerFixture({
+    transport: { gatewayFetch: async () => { throw notFound } },
+  })
+
+  assert.equal(await controller.prepareTurn({ backend: 'codex', id: 'without-map' }), false)
+  assert.deepEqual(dispatched, [])
+  assert.equal(await controller.prepareTurn({ backend: 'opencode', id: 'without-map' }), false)
 })
 
 test('Session Map tool updates are validated, persisted, and acknowledged', async () => {

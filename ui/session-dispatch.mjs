@@ -4,6 +4,7 @@ export class SessionDispatchRegistry {
     this.preparedSessions = new Set()
     this.preparationLoads = new Map()
     this.preparationGenerations = new Map()
+    this.sessionPreparationGenerations = new Map()
   }
 
   register(backend, adapter) {
@@ -38,10 +39,12 @@ export class SessionDispatchRegistry {
       return Promise.resolve(null)
     }
     if (this.preparationLoads.has(session.key)) return this.preparationLoads.get(session.key)
-    const generation = this.preparationGenerations.get(session.backend) || 0
+    const backendGeneration = this.preparationGenerations.get(session.backend) || 0
+    const sessionGeneration = this.sessionPreparationGenerations.get(session.key) || 0
     const preparation = Promise.resolve(adapter.prepareTurn(session, options))
       .then((result) => {
-        if ((this.preparationGenerations.get(session.backend) || 0) === generation) {
+        if ((this.preparationGenerations.get(session.backend) || 0) === backendGeneration
+          && (this.sessionPreparationGenerations.get(session.key) || 0) === sessionGeneration) {
           this.preparedSessions.add(session.key)
         }
         return result
@@ -58,12 +61,23 @@ export class SessionDispatchRegistry {
     if (typeof this.adapterFor(session).prepareTurn === 'function') this.preparedSessions.add(session.key)
   }
 
+  clearPreparedSession(ref) {
+    const session = normalizeSessionRef(ref)
+    this.sessionPreparationGenerations.set(
+      session.key,
+      (this.sessionPreparationGenerations.get(session.key) || 0) + 1,
+    )
+    this.preparedSessions.delete(session.key)
+    this.preparationLoads.delete(session.key)
+  }
+
   clearPrepared(backend = null) {
     const normalized = backend == null ? '' : normalizeBackend(backend)
     const prefix = normalized ? `${normalized}:` : ''
     if (backend == null) {
       this.preparedSessions.clear()
       this.preparationLoads.clear()
+      this.sessionPreparationGenerations.clear()
       for (const name of this.adapters.keys()) {
         this.preparationGenerations.set(name, (this.preparationGenerations.get(name) || 0) + 1)
       }
@@ -85,6 +99,29 @@ export class SessionDispatchRegistry {
     const adapter = this.adapters.get(session.backend)
     if (!adapter) throw new Error(`Unsupported session backend: ${session.backend}`)
     return adapter
+  }
+}
+
+export function isThreadNotFoundError(error) {
+  const message = String(error?.message || error || '')
+  return /(?:\bthread\b.{0,320}\b(?:not found|does not exist|unknown)\b|\b(?:not found|unknown)\s+thread\b)/iu.test(message)
+}
+
+export async function startTurnWithPreparation({
+  registry,
+  ref,
+  prepare,
+  start,
+  recoverThreadNotFound = false,
+}) {
+  await prepare()
+  try {
+    return await start()
+  } catch (error) {
+    if (!recoverThreadNotFound || !isThreadNotFoundError(error)) throw error
+    registry.clearPreparedSession(ref)
+    await prepare()
+    return start()
   }
 }
 

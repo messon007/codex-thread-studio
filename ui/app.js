@@ -192,7 +192,7 @@ import {
   createThreadRouterRuntimeState,
   routerRuntimeKey,
 } from './thread-router-controller.mjs'
-import { SessionDispatchRegistry } from './session-dispatch.mjs'
+import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dispatch.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
@@ -5972,6 +5972,15 @@ function handleComposerImageDrop(event) {
   addComposerImages(event.dataTransfer?.files).catch(showError)
 }
 
+async function prepareComposerTurn(ref) {
+  const preparedBySessionMap = await sessionMap.prepareTurn(ref)
+  if (preparedBySessionMap) {
+    sessionDispatch.markPrepared(ref)
+    return
+  }
+  await sessionDispatch.prepareTurn(ref)
+}
+
 async function sendComposer(event) {
   event.preventDefault()
   const input = $('#composer-input')
@@ -6052,6 +6061,7 @@ async function sendComposer(event) {
       toast('Message added to the current turn')
     } else {
       const clientUserMessageId = randomId()
+      const ref = { backend, id: threadId }
       if (isCodexBackend(backend)) {
         optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
         latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
@@ -6064,13 +6074,22 @@ async function sendComposer(event) {
         renderComposerState()
         renderTranscript()
       }
-      await sessionMap.prepareTurn({ backend, id: threadId })
-      const result = await dispatchBackendRpc(backend, 'turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef({ backend, id: threadId }), {
-        threadId,
-        clientUserMessageId,
-        input: turnInput,
-        ...turnOptions,
-      }))
+      const result = await startTurnWithPreparation({
+        registry: sessionDispatch,
+        ref,
+        prepare: () => prepareComposerTurn(ref),
+        start: () => dispatchBackendRpc(backend, 'turn/start', turnStartParams(
+          backendDescriptor(backend).kind,
+          threadForRef(ref),
+          {
+            threadId,
+            clientUserMessageId,
+            input: turnInput,
+            ...turnOptions,
+          },
+        )),
+        recoverThreadNotFound: isCodexBackend(backend),
+      })
       if (result?.turn) {
         if (isCodexBackend(backend) && optimisticTurnId) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)

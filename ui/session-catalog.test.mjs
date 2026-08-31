@@ -120,7 +120,7 @@ test('Studio binds canonical cwd to Codex turns without changing the OpenCode ad
 
   assert.match(codexAdapter, /turnStartParams\('codex', threadForRef\(ref\)/u)
   assert.doesNotMatch(openCodeAdapter, /turnStartParams/u)
-  assert.match(composer, /turnStartParams\(backendDescriptor\(backend\)\.kind/u)
+  assert.match(composer, /turnStartParams\(\s*backendDescriptor\(backend\)\.kind/u)
   assert.match(composer, /dispatchBackendRpc\(backend, 'turn\/start'/u)
   assert.doesNotMatch(composer, /finally \{ button\.disabled = false \}/u)
 })

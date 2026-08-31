@@ -817,10 +817,10 @@ export function createSessionMapController({
   async function prepareTurn(ref = { backend: state.backend, id: state.selectedId }) {
     const backend = String(ref?.backend || '')
     const threadId = String(ref?.id || '')
-    if (!isCodexBackend(backend) || !threadId) return
+    if (!isCodexBackend(backend) || !threadId) return false
     const key = sessionMapKey(backend, threadId)
     const map = await loadSessionMap(backend, threadId)
-    if (!map) return
+    if (!map) return false
     const configuration = sessionMapTurnConfiguration(map)
     try {
       await dispatchBackendRpc(backend, 'thread/resume', {
@@ -843,6 +843,7 @@ export function createSessionMapController({
     const sync = { state: 'syncing', message: 'The current Map was added to this turn context' }
     state.sessionMapSync.set(key, sync)
     if (selectedStateKey() === key) setSessionMapSyncState(sync.state, sync.message)
+    return true
   }
 
   function resetSelection() {

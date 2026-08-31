@@ -25,6 +25,7 @@ import {
 const documentReviewHtml = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const documentReviewApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 const documentReviewStyles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+const documentWorkspaceSource = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
 
 test('locates a selected file range and preserves nearby anchors', () => {
   const file = { path: '/work/docs/guide.md', root: '/work', hash: 'abc', content: 'one\ntwo\nthree' }
@@ -132,6 +133,22 @@ test('resolves Markdown images from the document directory without escaping the 
   assert.match(documentReviewApp, /hydrateMarkdownImages\(file, content\)/u)
 })
 
+test('resolves Markdown images beside a read-only shared document', () => {
+  const file = {
+    root: '/work/project',
+    documentRoot: '/shared/library',
+    path: '/shared/library/docs/guide.md',
+    relativePath: '/shared/library/docs/guide.md',
+    readOnly: true,
+  }
+  assert.deepEqual(
+    resolveMarkdownImagePath(file, 'images/example.png'),
+    { path: '/shared/library/docs/images/example.png' },
+  )
+  assert.match(documentWorkspaceSource, /const editable = textReady && !file\.readOnly/u)
+  assert.match(documentWorkspaceSource, /view === 'edit' && state\.artifact\.readOnly/u)
+})
+
 test('resolves generated file links with source locations', () => {
   assert.deepEqual(
     resolveMarkdownFileLink('/home/rui/project/docs/RICO%20Profile%20%E7%AD%96%E7%95%A5%E7%9F%A9%E9%98%B5.zh-CN.md:12:4'),
@@ -156,6 +173,20 @@ test('document outline stays inside the document shell as a wide overlay drawer'
   assert.match(documentReviewStyles, /font: 550 12px\/1\.45 var\(--ui-font-family\)/u)
   assert.doesNotMatch(documentReviewStyles, /artifact-reader-shell\.compact/u)
   assert.doesNotMatch(documentReviewApp, /artifactOutlineOpen:/u)
+})
+
+test('artifact identity uses the available header width before truncating', () => {
+  const heading = documentReviewStyles.slice(
+    documentReviewStyles.indexOf('.artifact-heading {'),
+    documentReviewStyles.indexOf('.artifact-header-actions .segmented-control'),
+  )
+
+  assert.match(heading, /\.artifact-heading \{[^}]*flex: 1;/u)
+  assert.match(heading, /\.artifact-heading > div \{ min-width: 0; flex: 1; \}/u)
+  assert.match(heading, /\.artifact-heading h2 \{ max-width: 100%;/u)
+  assert.match(heading, /\.artifact-heading p \{ max-width: 100%;/u)
+  assert.doesNotMatch(heading, /max-width: min\(330px|max-width: min\(280px/u)
+  assert.match(documentWorkspaceSource, /\$\('#artifact-path'\)\.title = artifactPath/u)
 })
 
 test('static HTML preview blocks executable and externally loaded content', () => {

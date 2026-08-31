@@ -324,6 +324,7 @@ function normalizeFileResource(candidate, source, context) {
   const root = normalizeSlashes(source.root || context.root || '')
   let path = normalizeSlashes(parsed.path).replace(/^\.\//u, '')
   const absolute = path.startsWith('/') || /^[a-z]:\//iu.test(path)
+  let sharedAbsolute = false
   let blocked = false
   if (absolute) {
     const caseInsensitive = /^[a-z]:\//iu.test(path) || /^[a-z]:\//iu.test(root)
@@ -331,11 +332,14 @@ function normalizeFileResource(candidate, source, context) {
     const comparableRoot = caseInsensitive ? root.toLowerCase() : root
     if (comparableRoot && (comparablePath === comparableRoot || comparablePath.startsWith(`${comparableRoot.replace(/\/$/u, '')}/`))) {
       path = path.slice(root.replace(/\/$/u, '').length).replace(/^\//u, '')
+    } else if (candidate.kind !== 'directory' && (context.sharedDocumentDirectories || [])
+      .some((directory) => pathInsideDirectory(path, directory))) {
+      sharedAbsolute = true
     } else blocked = true
   }
   const segments = path.split('/').filter((part) => part && part !== '.')
   if (segments.some((part) => part === '..')) blocked = true
-  path = segments.join('/')
+  path = `${sharedAbsolute && path.startsWith('/') ? '/' : ''}${segments.join('/')}`
   if (!path) return null
   const kind = parsed.line ? 'code' : candidate.kind === 'directory' ? 'directory' : 'file'
   const canonicalRoot = normalizeRoot(root)
@@ -361,6 +365,16 @@ function normalizeFileResource(candidate, source, context) {
     firstSeenAt: nowFromSource(source),
     lastSeenAt: nowFromSource(source),
   }
+}
+
+function pathInsideDirectory(path, directory) {
+  const normalizedPath = normalizeSlashes(path).replace(/\/+$/u, '')
+  const normalizedDirectory = normalizeSlashes(directory).replace(/\/+$/u, '')
+  if (!normalizedPath || !normalizedDirectory) return false
+  const caseInsensitive = /^[a-z]:\//iu.test(normalizedPath) || /^[a-z]:\//iu.test(normalizedDirectory)
+  const comparablePath = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath
+  const comparableDirectory = caseInsensitive ? normalizedDirectory.toLowerCase() : normalizedDirectory
+  return comparablePath === comparableDirectory || comparablePath.startsWith(`${comparableDirectory}/`)
 }
 
 function createOccurrence(resourceId, candidate, source, sequence) {

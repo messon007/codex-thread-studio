@@ -15,6 +15,12 @@ export const annotationPromptDefaults = Object.freeze({
 
 const chinese = {
   'Desktop notifications': '桌面通知',
+  'Shared document directories': '共享文档目录',
+  'One absolute path per line': '每行一个绝对路径',
+  'Files in these directories can be previewed read-only from any session.': '这些目录中的文件可由任何会话以只读方式预览。',
+  'Shared document directories must use absolute paths.': '共享文档目录必须使用绝对路径。',
+  'Unable to save settings': '无法保存设置',
+  'Read only': '只读',
   'Notify when work completes or needs input while the window is inactive': '窗口不活跃时通知任务完成和等待输入',
   'Project environment': '项目环境',
   'Studio settings': 'Studio 设置',

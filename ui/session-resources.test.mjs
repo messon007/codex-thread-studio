@@ -48,6 +48,26 @@ test('paths outside the session root remain visible but blocked', () => {
   assert.match(resource.reason, /session root/u)
 })
 
+test('configured shared document paths remain openable across sessions', () => {
+  const context = {
+    backend: 'codex',
+    root: '/home/rui/project',
+    sharedDocumentDirectories: ['/tmp/shared-library'],
+  }
+  const shared = normalizeResourceCandidate(
+    { raw: '/tmp/shared-library/reports/result.json', kind: 'file' },
+    { backend: 'codex', root: '/home/rui/project' },
+    context,
+  )
+  assert.equal(shared.state, 'unresolved')
+  assert.equal(shared.target.path, '/tmp/shared-library/reports/result.json')
+  assert.equal(normalizeResourceCandidate(
+    { raw: '/tmp/shared-library-copy/result.json', kind: 'file' },
+    { backend: 'codex', root: '/home/rui/project' },
+    context,
+  ).state, 'blocked')
+})
+
 test('session index merges resources without losing occurrences', () => {
   const model = {
     turns: [{

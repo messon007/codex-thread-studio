@@ -585,13 +585,13 @@ body.resizing-right-rail, body.resizing-right-rail * { cursor: col-resize !impor
 body.resizing-right-rail::after { position: fixed; inset: 0; z-index: 10000; cursor: col-resize; content: ''; user-select: none; }
 body.resizing-right-rail iframe { pointer-events: none !important; }
 .artifact-header { height: var(--app-header-height); min-height: var(--app-header-height); padding: 12px 13px 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--border); }
-.artifact-heading { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.artifact-heading > div { min-width: 0; }
+.artifact-heading { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; overflow: hidden; }
+.artifact-heading > div { min-width: 0; flex: 1; }
 .artifact-file-mark { width: 32px; height: 36px; display: grid; place-items: center; flex: 0 0 32px; border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border)); border-radius: 7px 7px 9px 9px; background: var(--brand-soft); color: var(--brand); font: 750 9px/1 var(--code-font-family); }
 .artifact-file-mark svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
-.artifact-heading h2 { max-width: min(280px, 24vw); margin: 0; overflow: hidden; font-size: 15px; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-heading p { max-width: min(330px, 28vw); margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-header-actions { min-width: 0; display: flex; align-items: center; gap: 3px; }
+.artifact-heading h2 { max-width: 100%; margin: 0; overflow: hidden; font-size: 15px; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-heading p { max-width: 100%; margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-header-actions { min-width: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
 .artifact-header-actions .segmented-control { margin-right: 4px; }
 .artifact-header-actions .artifact-action-icon.active { border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); background: var(--brand-soft); color: var(--brand); }
 .segmented-control { height: 30px; padding: 2px; display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }

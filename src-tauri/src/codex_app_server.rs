@@ -82,8 +82,11 @@ impl CodexAppServer {
         root: &str,
         path: &str,
         max_bytes: u64,
+        shared_document_directories: &[String],
     ) -> std::io::Result<RuntimeFile> {
-        self.runtime.read_wsl_file(root, path, max_bytes).await
+        self.runtime
+            .read_wsl_file(root, path, max_bytes, shared_document_directories)
+            .await
     }
 
     async fn ensure_started(&self) -> Result<(), String> {

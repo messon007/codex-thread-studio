@@ -144,7 +144,25 @@ test('same-session transcript rebuilds preserve a live DOM anchor without replay
   assert.doesNotMatch(helpers, /scrollState\(|transcriptPresentationCache/u)
   assert.ok(render.indexOf('captureTranscriptRenderAnchor(container)') < render.indexOf('container.innerHTML ='))
   assert.ok(render.indexOf('container.innerHTML =') < render.indexOf('restoreTranscriptRenderAnchor(renderAnchor, container)'))
+  assert.match(render, /preserveScroll \|\| transcriptScrollFollower\.following[\s\S]*\? null[\s\S]*: captureTranscriptRenderAnchor\(container\)/u)
   assert.match(render, /openActivities[\s\S]*openActivityIds: openActivities\.get\(id\)/u)
+})
+
+test('submitting a new turn cancels a pinned reading position and follows the latest window', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const helperStart = source.indexOf('function beginTranscriptFollowingLatest(')
+  const helperEnd = source.indexOf('\nfunction handleTranscriptScroll', helperStart)
+  const helper = source.slice(helperStart, helperEnd)
+  const composerStart = source.indexOf('async function sendComposer(')
+  const composerEnd = source.indexOf('\nfunction isRouterThread(', composerStart)
+  const composer = source.slice(composerStart, composerEnd)
+
+  assert.match(helper, /cancelScheduledTranscriptViewCapture\(\)/u)
+  assert.match(helper, /pendingTranscriptViewRestore = null/u)
+  assert.match(helper, /setScrollState\(key, null\)/u)
+  assert.ok(helper.indexOf('transcriptScrollFollower.reset()') < helper.indexOf('transcriptPresentationCache.followLatest(key, model)'))
+  assert.match(composer, /beginTranscriptFollowingLatest\(targetModel\)/u)
+  assert.ok(composer.indexOf('beginTranscriptFollowingLatest(targetModel)') < composer.indexOf('beginOptimisticCodexTurn('))
 })
 
 test('right-rail layout mutations preserve a live anchor independently of session restore state', () => {

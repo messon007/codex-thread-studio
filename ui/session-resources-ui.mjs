@@ -4,6 +4,7 @@ export function createSessionResourcesUI({
   getModel,
   getThread,
   getBackend,
+  getSharedDocumentDirectories = () => [],
   activate,
   deactivate,
   openResource,
@@ -43,6 +44,7 @@ export function createSessionResourcesUI({
         builtRevision: '',
         builtModel: null,
         builtLatestTurn: null,
+        builtSharedDirectories: '',
         dirty: true,
       })
     }
@@ -127,6 +129,7 @@ export function createSessionResourcesUI({
     if (!state || !thread) return null
     const model = currentModel()
     const backend = currentBackend()
+    const sharedDocumentDirectories = getSharedDocumentDirectories()
     const finishMeasurement = performanceMonitor?.start?.('resources.scan', {
       backend,
       threadKey: `${backend}:${thread.id}`,
@@ -137,6 +140,7 @@ export function createSessionResourcesUI({
         backend,
         threadId: thread.id,
         root: thread.cwd || '',
+        sharedDocumentDirectories,
       })
     } catch (error) {
       finishMeasurement?.({ outcome: 'failed' })
@@ -146,6 +150,7 @@ export function createSessionResourcesUI({
     state.builtRevision = revision
     state.builtModel = model
     state.builtLatestTurn = latestTurn(model)
+    state.builtSharedDirectories = sharedDocumentDirectories.join('\n')
     state.dirty = false
     if (state.selectedId && !state.index.resourcesById.has(state.selectedId)) state.selectedId = ''
     const resourceCount = state.index.counts().all
@@ -289,13 +294,15 @@ export function createSessionResourcesUI({
     return !state?.built
       || state.builtModel !== model
       || state.builtLatestTurn !== latestTurn(model)
+      || state.builtSharedDirectories !== getSharedDocumentDirectories().join('\n')
   }
 
-  function invalidate(backend, threadId) {
+  function invalidate(backend, threadId, { force = false } = {}) {
     const key = threadId ? `${backend || 'codex'}:${threadId}` : ''
     const state = key && states.get(key)
     if (!state) return
     state.dirty = true
+    if (force) state.builtRevision = ''
     if (currentKey() !== key) return
     if (isOpen()) sync()
     else {

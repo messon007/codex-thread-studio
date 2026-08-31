@@ -46,23 +46,36 @@ if [ -r "$pid_file" ]; then
   rm -f "$pid_file"
 fi"#;
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const WSL_READ_FILE_SCRIPT: &str = r#"root=$(realpath -e -- "$1") || exit 20
 requested=$2
+max_bytes=$3
+shift 3
 case "$requested" in
   /*) candidate=$requested ;;
   *) candidate=$root/$requested ;;
 esac
 path=$(realpath -e -- "$candidate") || exit 21
+document_root=
+read_only=1
 case "$path" in
-  "$root"|"$root"/*) ;;
-  *) exit 22 ;;
+  "$root"|"$root"/*) document_root=$root; read_only=0 ;;
 esac
+if [ -z "$document_root" ]; then
+  for shared in "$@"; do
+    shared=$(realpath -e -- "$shared") || continue
+    [ -d "$shared" ] || continue
+    case "$path" in
+      "$shared"|"$shared"/*) document_root=$shared; break ;;
+    esac
+  done
+fi
+[ -n "$document_root" ] || exit 22
 [ -f "$path" ] || exit 23
 size=$(stat -c %s -- "$path") || exit 23
-[ "$size" -le "$3" ] || exit 24
-relative=${path#"$root"/}
-printf '%s\0%s\0%s\0%s\0' "$root" "$path" "$relative" "$size"
+[ "$size" -le "$max_bytes" ] || exit 24
+relative=${path#"$document_root"/}
+printf '%s\0%s\0%s\0%s\0%s\0%s\0' "$root" "$document_root" "$path" "$relative" "$size" "$read_only"
 cat -- "$path""#;
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -79,13 +92,15 @@ pub struct BackendRuntime {
     wsl: WslSettings,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub struct RuntimeFile {
     pub root: String,
+    pub document_root: String,
     pub path: String,
     pub relative_path: String,
     pub content: Vec<u8>,
     pub size: u64,
+    pub read_only: bool,
 }
 
 impl BackendRuntime {
@@ -120,6 +135,7 @@ impl BackendRuntime {
         root: &str,
         path: &str,
         max_bytes: u64,
+        shared_document_directories: &[String],
     ) -> io::Result<RuntimeFile> {
         if root.contains('\0') || path.contains('\0') {
             return Err(io::Error::new(
@@ -140,6 +156,7 @@ impl BackendRuntime {
             path.to_string(),
             max_bytes.to_string(),
         ]);
+        args.extend(shared_document_directories.iter().cloned());
         let output = Command::new(launcher)
             .args(args)
             .env("PATH", &self.path)
@@ -210,7 +227,7 @@ impl BackendRuntime {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
     let mut separators = bytes
         .iter()
@@ -221,8 +238,12 @@ fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
         separators.next(),
         separators.next(),
         separators.next(),
+        separators.next(),
+        separators.next(),
     ];
-    let [Some(root_end), Some(path_end), Some(relative_end), Some(size_end)] = boundaries else {
+    let [Some(root_end), Some(document_root_end), Some(path_end), Some(relative_end), Some(size_end), Some(read_only_end)] =
+        boundaries
+    else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "WSL file response is incomplete",
@@ -238,10 +259,21 @@ fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(RuntimeFile {
         root: text(0, root_end)?,
-        path: text(root_end + 1, path_end)?,
+        document_root: text(root_end + 1, document_root_end)?,
+        path: text(document_root_end + 1, path_end)?,
         relative_path: text(path_end + 1, relative_end)?,
-        content: bytes[size_end + 1..].to_vec(),
+        content: bytes[read_only_end + 1..].to_vec(),
         size,
+        read_only: match text(size_end + 1, read_only_end)?.as_str() {
+            "0" => false,
+            "1" => true,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WSL file read-only marker is invalid",
+                ))
+            }
+        },
     })
 }
 
@@ -568,6 +600,80 @@ mod tests {
         assert_eq!(&args[..2], ["--distribution", "Ubuntu"]);
         assert_eq!(args.last().map(String::as_str), Some("/tmp/runtime.pid"));
         assert!(args.iter().any(|value| value.contains("kill -TERM")));
+    }
+
+    #[test]
+    fn wsl_file_protocol_preserves_shared_root_and_read_only_state() {
+        let mut response = Vec::new();
+        for field in [
+            "/work/project",
+            "/shared/library",
+            "/shared/library/docs/guide.md",
+            "docs/guide.md",
+            "7",
+            "1",
+        ] {
+            response.extend_from_slice(field.as_bytes());
+            response.push(0);
+        }
+        response.extend_from_slice(b"content");
+        let file = parse_runtime_file(response).expect("parse WSL file response");
+        assert_eq!(file.root, "/work/project");
+        assert_eq!(file.document_root, "/shared/library");
+        assert_eq!(file.path, "/shared/library/docs/guide.md");
+        assert_eq!(file.relative_path, "docs/guide.md");
+        assert_eq!(file.content, b"content");
+        assert_eq!(file.size, 7);
+        assert!(file.read_only);
+        assert!(WSL_READ_FILE_SCRIPT.contains("for shared in \"$@\""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wsl_file_script_allows_shared_files_without_following_escaping_links() {
+        let base = std::env::temp_dir().join(format!(
+            "codex-thread-studio-wsl-shared-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let project = base.join("project");
+        let shared = base.join("shared");
+        let outside = base.join("outside.txt");
+        std::fs::create_dir_all(&project).expect("create project fixture");
+        std::fs::create_dir_all(&shared).expect("create shared fixture");
+        std::fs::write(shared.join("guide.md"), "shared\n").expect("write shared fixture");
+        std::fs::write(&outside, "outside\n").expect("write outside fixture");
+        std::os::unix::fs::symlink(&outside, shared.join("outside-link.txt"))
+            .expect("create escaping link");
+
+        let run = |path: &std::path::Path| {
+            std::process::Command::new("/bin/bash")
+                .args([
+                    "-c",
+                    WSL_READ_FILE_SCRIPT,
+                    "codex-thread-studio-test",
+                    project.to_str().unwrap(),
+                    path.to_str().unwrap(),
+                    "1024",
+                    shared.to_str().unwrap(),
+                ])
+                .output()
+                .expect("run WSL file script")
+        };
+        let allowed = run(&shared.join("guide.md"));
+        assert!(allowed.status.success());
+        let file = parse_runtime_file(allowed.stdout).expect("parse shared response");
+        assert!(file.read_only);
+        assert_eq!(file.content, b"shared\n");
+
+        let escaped = run(&shared.join("outside-link.txt"));
+        assert_eq!(escaped.status.code(), Some(22));
+
+        std::fs::remove_file(shared.join("outside-link.txt")).ok();
+        std::fs::remove_file(shared.join("guide.md")).ok();
+        std::fs::remove_file(outside).ok();
+        std::fs::remove_dir(shared).ok();
+        std::fs::remove_dir(project).ok();
+        std::fs::remove_dir(base).ok();
     }
 
     #[cfg(target_os = "linux")]

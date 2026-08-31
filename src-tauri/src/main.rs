@@ -70,6 +70,7 @@ struct GatewayState {
     opencode: OpenCodeServer,
     preferences_path: Arc<PathBuf>,
     preferences_lock: Arc<Mutex<()>>,
+    shared_document_directories: Arc<Mutex<Vec<String>>>,
     favorites_path: Arc<PathBuf>,
     favorites_lock: Arc<Mutex<()>>,
     session_maps_path: Arc<PathBuf>,
@@ -291,6 +292,8 @@ struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hidden_session_directories: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    shared_document_directories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     session_directory_ignore: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wsl_distribution: Option<String>,
@@ -387,6 +390,7 @@ struct ReviewFileRequestWithHash {
 #[serde(rename_all = "camelCase")]
 struct ReviewFileResponse {
     root: String,
+    document_root: String,
     path: String,
     relative_path: String,
     content: String,
@@ -394,6 +398,7 @@ struct ReviewFileResponse {
     size: u64,
     line_count: usize,
     language: String,
+    read_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -560,6 +565,9 @@ fn main() {
         opencode: OpenCodeServer::new(opencode_binary, runtime),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
+        shared_document_directories: Arc::new(Mutex::new(
+            startup_preferences.shared_document_directories.clone(),
+        )),
         favorites_path: Arc::new(favorites_path),
         favorites_lock: Arc::new(Mutex::new(())),
         session_maps_path: Arc::new(session_maps_path),
@@ -860,19 +868,29 @@ async fn index() -> impl IntoResponse {
 }
 
 async fn read_review_file(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
-        return match _state
+    if state.codex.execution_environment() == "wsl" {
+        let shared_directories = match configured_shared_document_directories(&state) {
+            Ok(value) => value,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        return match state
             .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_FILE_BYTES)
+            .read_wsl_file(
+                &request.root,
+                &request.path,
+                MAX_REVIEW_FILE_BYTES,
+                &shared_directories,
+            )
             .await
         {
             Ok(file) => match decode_review_text(file.content) {
                 Ok(content) => {
                     let response = ReviewFileResponse {
+                        document_root: file.document_root,
                         root: file.root,
                         path: file.path.clone(),
                         relative_path: file.relative_path,
@@ -885,6 +903,7 @@ async fn read_review_file(
                         },
                         language: review_language(std::path::Path::new(&file.path)).to_string(),
                         content,
+                        read_only: file.read_only,
                     };
                     json_response(StatusCode::OK, &response)
                 }
@@ -901,24 +920,32 @@ async fn read_review_file(
             }
         };
     }
-    match load_review_file(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    match load_review_file_with_shared(&request, &shared_directories) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
     }
 }
 
 async fn read_review_epub(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
+    if state.codex.execution_environment() == "wsl" {
         return json_error(
             StatusCode::NOT_IMPLEMENTED,
             "opening EPUB files from WSL workspaces is not available yet",
         );
     }
-    let (_, path, _) = match resolve_epub_path(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&request, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -954,23 +981,39 @@ async fn read_review_spreadsheet(
 }
 
 async fn read_review_binary(
-    _state: &GatewayState,
+    state: &GatewayState,
     request: ReviewFileRequest,
     expected: &'static str,
 ) -> Response<Body> {
     #[cfg(windows)]
-    let loaded = if _state.codex.execution_environment() == "wsl" {
-        _state
-            .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_DOCUMENT_BYTES)
-            .await
-            .map(|file| (file.content, file.path))
-            .map_err(|error| error.to_string())
+    let loaded = if state.codex.execution_environment() == "wsl" {
+        match configured_shared_document_directories(state) {
+            Ok(shared_directories) => state
+                .codex
+                .read_wsl_file(
+                    &request.root,
+                    &request.path,
+                    MAX_REVIEW_DOCUMENT_BYTES,
+                    &shared_directories,
+                )
+                .await
+                .map(|file| (file.content, file.path))
+                .map_err(|error| error.to_string()),
+            Err((_, message)) => Err(message),
+        }
     } else {
-        load_review_binary(&request).map_err(|(_, message)| message)
+        match shared_document_directories(state) {
+            Ok(shared_directories) => load_review_binary_with_shared(&request, &shared_directories)
+                .map_err(|(_, message)| message),
+            Err((_, message)) => Err(message),
+        }
     };
     #[cfg(not(windows))]
-    let loaded = load_review_binary(&request).map_err(|(_, message)| message);
+    let loaded = match shared_document_directories(state) {
+        Ok(shared_directories) => load_review_binary_with_shared(&request, &shared_directories)
+            .map_err(|(_, message)| message),
+        Err((_, message)) => Err(message),
+    };
 
     let (bytes, path) = match loaded {
         Ok(value) => value,
@@ -1048,11 +1091,16 @@ fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn load_review_binary(
+fn load_review_binary_with_shared(
     request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
 ) -> Result<(Vec<u8>, String), (StatusCode, String)> {
-    let (_root, path, _metadata) =
-        resolve_review_path(request, MAX_REVIEW_DOCUMENT_BYTES, "50 MiB document")?;
+    let (_root, path, _metadata, _document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_DOCUMENT_BYTES,
+        "50 MiB document",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1077,7 +1125,11 @@ async fn get_epub_reading_state(
         root: request.root,
         path: request.path,
     };
-    let (_, path, _) = match resolve_epub_path(&review) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&review, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -1107,7 +1159,11 @@ async fn put_epub_reading_state(
         root: reading.root.clone(),
         path: reading.path.clone(),
     };
-    let (_, path, _) = match resolve_epub_path(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&request, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -1458,16 +1514,22 @@ fn persist_workspace_file(
         .map_err(|(status, message)| WorkspaceSaveError::Http(status, message))
 }
 
-fn resolve_epub_path(
+fn resolve_epub_path_with_shared(
     request: &ReviewFileRequest,
-) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
+    shared_directories: &[PathBuf],
+) -> Result<(PathBuf, PathBuf, fs::Metadata, PathBuf), (StatusCode, String)> {
     if !request.path.to_ascii_lowercase().ends_with(".epub") {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "only .epub publications can be opened by the EPUB reader".to_owned(),
         ));
     }
-    resolve_review_path(request, epub_reader::MAX_EPUB_BYTES, "128 MiB EPUB")
+    resolve_review_path_with_shared(
+        request,
+        epub_reader::MAX_EPUB_BYTES,
+        "128 MiB EPUB",
+        shared_directories,
+    )
 }
 
 fn load_workspace_directory(
@@ -1561,14 +1623,23 @@ fn load_workspace_directory(
 }
 
 async fn read_review_image(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
-        return match _state
+    if state.codex.execution_environment() == "wsl" {
+        let shared_directories = match configured_shared_document_directories(&state) {
+            Ok(value) => value,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        return match state
             .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_IMAGE_BYTES)
+            .read_wsl_file(
+                &request.root,
+                &request.path,
+                MAX_REVIEW_IMAGE_BYTES,
+                &shared_directories,
+            )
             .await
         {
             Ok(file) => match review_image_mime(std::path::Path::new(&file.path), &file.content) {
@@ -1589,7 +1660,11 @@ async fn read_review_image(
             }
         };
     }
-    match load_review_image(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    match load_review_image_with_shared(&request, &shared_directories) {
         Ok((bytes, mime)) => review_image_response(bytes, mime),
         Err((status, message)) => json_error(status, &message),
     }
@@ -1605,11 +1680,23 @@ fn review_image_response(bytes: Vec<u8>, mime: &'static str) -> Response<Body> {
         .expect("valid image response")
 }
 
+#[cfg(test)]
 fn load_review_image(
     request: &ReviewFileRequest,
 ) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
-    let (_root, path, _metadata) =
-        resolve_review_path(request, MAX_REVIEW_IMAGE_BYTES, "25 MiB image")?;
+    load_review_image_with_shared(request, &[])
+}
+
+fn load_review_image_with_shared(
+    request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
+) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
+    let (_root, path, _metadata, _document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_IMAGE_BYTES,
+        "25 MiB image",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1658,8 +1745,19 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 fn load_review_file(
     request: &ReviewFileRequest,
 ) -> Result<ReviewFileResponse, (StatusCode, String)> {
-    let (root, path, metadata) =
-        resolve_review_path(request, MAX_REVIEW_FILE_BYTES, "5 MiB review")?;
+    load_review_file_with_shared(request, &[])
+}
+
+fn load_review_file_with_shared(
+    request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
+) -> Result<ReviewFileResponse, (StatusCode, String)> {
+    let (root, path, metadata, document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_FILE_BYTES,
+        "5 MiB review",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1670,12 +1768,13 @@ fn load_review_file(
         .map_err(|message| (StatusCode::UNSUPPORTED_MEDIA_TYPE, message.to_string()))?;
 
     let relative_path = path
-        .strip_prefix(&root)
+        .strip_prefix(&document_root)
         .unwrap_or(&path)
         .to_string_lossy()
         .replace('\\', "/");
     Ok(ReviewFileResponse {
         root: root.to_string_lossy().into_owned(),
+        document_root: document_root.to_string_lossy().into_owned(),
         path: path.to_string_lossy().into_owned(),
         relative_path,
         hash: stable_content_hash(content.as_bytes()),
@@ -1687,6 +1786,7 @@ fn load_review_file(
         },
         language: review_language(&path).to_string(),
         content,
+        read_only: !path.starts_with(&root),
     })
 }
 
@@ -1718,6 +1818,16 @@ fn resolve_review_path(
     max_bytes: u64,
     limit_label: &str,
 ) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
+    resolve_review_path_with_shared(request, max_bytes, limit_label, &[])
+        .map(|(root, path, metadata, _)| (root, path, metadata))
+}
+
+fn resolve_review_path_with_shared(
+    request: &ReviewFileRequest,
+    max_bytes: u64,
+    limit_label: &str,
+    shared_directories: &[PathBuf],
+) -> Result<(PathBuf, PathBuf, fs::Metadata, PathBuf), (StatusCode, String)> {
     let root = fs::canonicalize(&request.root).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -1732,12 +1842,19 @@ fn resolve_review_path(
     };
     let path = fs::canonicalize(candidate)
         .map_err(|_| (StatusCode::NOT_FOUND, "file does not exist".to_string()))?;
-    if !path.starts_with(&root) {
+    let document_root = if path.starts_with(&root) {
+        root.clone()
+    } else if let Some(shared_root) = shared_directories
+        .iter()
+        .find(|shared_root| path.starts_with(shared_root))
+    {
+        shared_root.clone()
+    } else {
         return Err((
             StatusCode::FORBIDDEN,
-            "file is outside the project directory".to_string(),
+            "file is outside the project directory and shared document directories".to_string(),
         ));
-    }
+    };
     let metadata = fs::metadata(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1756,7 +1873,7 @@ fn resolve_review_path(
             format!("file exceeds the {limit_label} limit"),
         ));
     }
-    Ok((root, path, metadata))
+    Ok((root, path, metadata, document_root))
 }
 
 fn stable_content_hash(bytes: &[u8]) -> String {
@@ -2265,6 +2382,30 @@ async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
     }
 }
 
+fn shared_document_directories(state: &GatewayState) -> Result<Vec<PathBuf>, (StatusCode, String)> {
+    let configured = configured_shared_document_directories(state)?;
+    Ok(configured
+        .iter()
+        .filter_map(|directory| fs::canonicalize(directory).ok())
+        .filter(|directory| directory.is_dir())
+        .collect())
+}
+
+fn configured_shared_document_directories(
+    state: &GatewayState,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    state
+        .shared_document_directories
+        .lock()
+        .map(|value| value.clone())
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "shared document directory lock is unavailable".to_string(),
+            )
+        })
+}
+
 async fn put_preferences(State(state): State<GatewayState>, body: String) -> Response<Body> {
     if body.len() > MAX_PREFERENCES_BODY {
         return json_error(
@@ -2289,7 +2430,13 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
         Err(_) => return gateway_error("preferences lock is unavailable"),
     };
     match save_preferences(&state.preferences_path, &preferences) {
-        Ok(()) => json_response(StatusCode::OK, &preferences),
+        Ok(()) => {
+            let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
+                return gateway_error("shared document directory lock is unavailable");
+            };
+            *shared_directories = preferences.shared_document_directories.clone();
+            json_response(StatusCode::OK, &preferences)
+        }
         Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
     }
 }
@@ -2617,6 +2764,14 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     {
         return Err("hidden session directories are invalid".to_string());
     }
+    if preferences.shared_document_directories.len() > 256
+        || preferences
+            .shared_document_directories
+            .iter()
+            .any(|path| !valid_shared_document_directory(path))
+    {
+        return Err("shared document directories must be absolute local paths".to_string());
+    }
     if preferences.session_directory_ignore.len() > 512
         || preferences
             .session_directory_ignore
@@ -2932,6 +3087,14 @@ fn valid_session_directory(value: &str) -> bool {
         && !value.chars().any(|character| character.is_control())
 }
 
+fn valid_shared_document_directory(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 4096
+        && !value.chars().any(|character| character.is_control())
+        && (PathBuf::from(value).is_absolute() || (cfg!(windows) && value.starts_with('/')))
+}
+
 fn backend_configuration(
     preferences: &StudioPreferences,
     cli_path: OsString,
@@ -3147,6 +3310,7 @@ mod tests {
                 env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.json")),
             ),
             preferences_lock: Arc::new(Mutex::new(())),
+            shared_document_directories: Arc::new(Mutex::new(Vec::new())),
             favorites_path: Arc::new(
                 env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.sqlite3")),
             ),
@@ -3303,6 +3467,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
                 favorites_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-favorites-test.sqlite3"),
                 ),
@@ -3481,6 +3646,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
                 favorites_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-favorites-test.sqlite3"),
                 ),
@@ -3548,6 +3714,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-map-api-settings.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
                 favorites_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-map-api-favorites.sqlite3"),
                 ),
@@ -3685,6 +3852,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-settings.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
                 favorites_path: Arc::new(favorites_path.clone()),
                 favorites_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(
@@ -3974,6 +4142,85 @@ mod tests {
     }
 
     #[test]
+    fn shared_document_reader_is_read_only_and_confined_to_configured_directories() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-shared-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        let shared = base.join("shared");
+        let outside = base.join("outside");
+        fs::create_dir_all(&root).expect("create project fixture");
+        fs::create_dir_all(shared.join("docs")).expect("create shared fixture");
+        fs::create_dir_all(&outside).expect("create outside fixture");
+        let shared_file = shared.join("docs/guide.md");
+        let outside_file = outside.join("private.md");
+        fs::write(&shared_file, "# Shared\n").expect("write shared file");
+        fs::write(&outside_file, "private\n").expect("write outside file");
+        let shared_root = fs::canonicalize(&shared).expect("canonical shared root");
+
+        let file = load_review_file_with_shared(
+            &ReviewFileRequest {
+                root: root.to_string_lossy().into_owned(),
+                path: shared_file.to_string_lossy().into_owned(),
+            },
+            std::slice::from_ref(&shared_root),
+        )
+        .expect("read configured shared file");
+        assert!(file.read_only);
+        assert_eq!(file.document_root, shared_root.to_string_lossy());
+        assert_eq!(file.relative_path, "docs/guide.md");
+
+        let escaped = load_review_file_with_shared(
+            &ReviewFileRequest {
+                root: root.to_string_lossy().into_owned(),
+                path: outside_file.to_string_lossy().into_owned(),
+            },
+            std::slice::from_ref(&shared_root),
+        );
+        assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
+
+        let save = persist_workspace_file(&WorkspaceSaveRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: shared_file.to_string_lossy().into_owned(),
+            content: "changed\n".to_string(),
+            expected_hash: file.hash,
+            overwrite: false,
+        });
+        assert!(matches!(
+            save,
+            Err(WorkspaceSaveError::Http(StatusCode::FORBIDDEN, _))
+        ));
+        assert_eq!(fs::read_to_string(&shared_file).unwrap(), "# Shared\n");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_file, shared.join("outside-link.md"))
+                .expect("create escaping symlink");
+            let linked = load_review_file_with_shared(
+                &ReviewFileRequest {
+                    root: root.to_string_lossy().into_owned(),
+                    path: shared
+                        .join("outside-link.md")
+                        .to_string_lossy()
+                        .into_owned(),
+                },
+                std::slice::from_ref(&shared_root),
+            );
+            assert!(matches!(linked, Err((StatusCode::FORBIDDEN, _))));
+            fs::remove_file(shared.join("outside-link.md")).ok();
+        }
+
+        fs::remove_file(shared_file).ok();
+        fs::remove_file(outside_file).ok();
+        fs::remove_dir(shared.join("docs")).ok();
+        fs::remove_dir(shared).ok();
+        fs::remove_dir(outside).ok();
+        fs::remove_dir(root).ok();
+        fs::remove_dir(base).ok();
+    }
+
+    #[test]
     fn workspace_directory_listing_is_lazy_sorted_and_confined_to_root() {
         let base = env::temp_dir().join(format!(
             "codex-thread-studio-workspace-list-{}",
@@ -4178,6 +4425,27 @@ mod tests {
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_shared_document_directories_as_absolute_paths() {
+        let preferences = StudioPreferences {
+            shared_document_directories: vec![env::temp_dir().to_string_lossy().into_owned()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_ok());
+
+        let relative = StudioPreferences {
+            shared_document_directories: vec!["shared/docs".to_string()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&relative).is_err());
+
+        let controlled = StudioPreferences {
+            shared_document_directories: vec!["/shared\ndocs".to_string()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&controlled).is_err());
     }
 
     #[test]

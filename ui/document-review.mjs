@@ -39,9 +39,10 @@ export function resolveMarkdownImagePath(file, source) {
   if (!reference || reference.includes('\0')) return null
 
   const root = String(file?.root || '').replaceAll('\\', '/').replace(/\/+$/u, '')
+  const documentRoot = String(file?.documentRoot || file?.root || '').replaceAll('\\', '/').replace(/\/+$/u, '')
   const absoluteDocument = String(file?.path || '').replaceAll('\\', '/')
   const relativeDocument = String(file?.relativePath || '').replaceAll('\\', '/')
-  const rootPrefix = root ? `${root}/` : ''
+  const rootPrefix = documentRoot ? `${documentRoot}/` : ''
   let candidate
 
   if (rootPrefix && absoluteDocument.startsWith(rootPrefix)) {
@@ -67,7 +68,9 @@ export function resolveMarkdownImagePath(file, source) {
       segments.push(segment)
     }
   }
-  return segments.length ? { path: segments.join('/') } : null
+  if (!segments.length) return null
+  const path = segments.join('/')
+  return { path: documentRoot && documentRoot !== root ? `${documentRoot}/${path}` : path }
 }
 
 export function resolveMarkdownFileLink(value) {

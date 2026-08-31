@@ -394,6 +394,22 @@ test('keeps near-tail restores pinned while new turns arrive', () => {
   assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
 })
 
+test('returns a pinned reader to the latest window before appending a new user turn', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const makeTurn = (id) => ({ id: String(id), status: 'completed', items: [] })
+  const model = { turns: Array.from({ length: 8 }, (_, index) => makeTurn(index)) }
+  let entry = cache.restoreTurn('thread', model, '7')
+  assert.equal(entry.windowMode, 'fixed')
+
+  cache.followLatest('thread', model)
+  model.turns.push(makeTurn(8))
+  entry = cache.get('thread', model)
+
+  assert.equal(entry.windowMode, 'latest')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['5', '6', '7', '8'])
+  assert.equal(entry.orderedIds.length - entry.visibleEnd, 0)
+})
+
 test('pins the current latest window when the reader manually pauses', () => {
   const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
   const makeTurn = (id) => ({ id: String(id), status: 'completed', items: [] })

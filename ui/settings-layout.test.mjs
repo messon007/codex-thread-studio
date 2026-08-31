@@ -14,6 +14,9 @@ test('settings use a shared categorized pane layout', () => {
   }
   assert.doesNotMatch(html, /data-settings-pane="appearance"/u)
   assert.match(html, /data-settings-pane-content="general"[\s\S]*id="theme-select"[\s\S]*id="content-width"[\s\S]*id="high-contrast"/u)
+  assert.match(html, /id="shared-document-directories"[^>]*placeholder="One absolute path per line"/u)
+  assert.match(app, /sharedDocumentDirectories: state\.sharedDocumentDirectories/u)
+  assert.match(app, /Shared document directories must use absolute paths\./u)
   assert.match(app, /function activateSettingsPane/u)
   assert.match(app, /activeSettingsPane = button\.dataset\.settingsPane/u)
   assert.match(styles, /\.settings-layout \{[^}]*grid-template-columns: 218px minmax\(0, 1fr\)/u)

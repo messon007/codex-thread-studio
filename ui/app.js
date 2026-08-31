@@ -305,6 +305,7 @@ const state = {
   theme: 'light',
   contentWidth: 'comfortable',
   hiddenSessionDirectories: [],
+  sharedDocumentDirectories: [],
   sessionDirectoryIgnore: [],
   sidebarCollapsed: false,
   rightRailWidthRatio: 0.44,
@@ -415,6 +416,7 @@ const workspaceTools = createWorkspaceTools({
   gatewayWebSocket,
   getThread: selectedThread,
   getBackend: () => state.backend,
+  getSharedDocumentDirectories: () => state.sharedDocumentDirectories,
   openFile: (file, context = {}) => openArtifact(file, { returnTool: context.returnTool }),
   canOpenFile: (file) => Boolean(reviewableFileKind(file)),
   closePeerRails: closeWorkspacePeerRails,
@@ -4101,15 +4103,16 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   resetStreamingPatches()
   const container = $('#transcript')
   // A full same-session render replaces every visible node. Preserve the live
-  // viewport with a one-render anchor; never reuse the saved return position.
-  const renderAnchor = preserveScroll ? null : captureTranscriptRenderAnchor(container)
+  // viewport with a one-render anchor while paused; a follower must remain at
+  // the latest output instead of restoring the node that preceded a new turn.
+  const renderAnchor = preserveScroll || transcriptScrollFollower.following
+    ? null
+    : captureTranscriptRenderAnchor(container)
   const openActivities = new Map()
-  if (preserveScroll || renderAnchor) {
-    for (const activity of container.querySelectorAll('.work-activity[open][data-turn-id][data-activity-id]')) {
-      const ids = openActivities.get(activity.dataset.turnId) || []
-      ids.push(activity.dataset.activityId)
-      openActivities.set(activity.dataset.turnId, ids)
-    }
+  for (const activity of container.querySelectorAll('.work-activity[open][data-turn-id][data-activity-id]')) {
+    const ids = openActivities.get(activity.dataset.turnId) || []
+    ids.push(activity.dataset.activityId)
+    openActivities.set(activity.dataset.turnId, ids)
   }
   const finishPresentation = studioPerformance.start('transcript.presentation', {
     backend: state.backend,
@@ -4183,6 +4186,17 @@ function beginTranscriptProgrammaticNavigation() {
   transcriptPresentationCache.pinCurrent(key)
   rememberTranscriptLiveLayoutAnchor()
   markTranscriptUserScrollIntent(1_200)
+}
+
+function beginTranscriptFollowingLatest(model = state.model) {
+  const key = presentationThreadKey()
+  cancelScheduledTranscriptViewCapture()
+  if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
+  transcriptCaptureSuppressedKeys.delete(key)
+  transcriptPresentationCache.setScrollState(key, null)
+  clearTranscriptLiveLayoutAnchor(key)
+  transcriptScrollFollower.reset()
+  transcriptPresentationCache.followLatest(key, model)
 }
 
 function handleTranscriptScroll() {
@@ -5726,7 +5740,7 @@ async function compactCurrentThread() {
 
 async function reviewCurrentChanges() {
   if (state.model.activeTurnId) throw new Error('The current turn is still running. Finish or stop it before starting review.')
-  transcriptScrollFollower.reset()
+  beginTranscriptFollowingLatest()
   const result = await rpc('review/start', { threadId: state.selectedId, target: { type: 'uncommittedChanges' }, delivery: 'inline' })
   if (result?.turn) {
     applyCodexNotification(state.model, { method: 'turn/started', params: { turn: result.turn } })
@@ -5935,7 +5949,7 @@ async function sendComposer(event) {
     }
     const button = $('#send-message')
     button.disabled = true
-    transcriptScrollFollower.reset()
+    beginTranscriptFollowingLatest()
     try {
       await rpc('thread/shellCommand', { threadId: state.selectedId, command: shellCommand }, 120_000)
       setComposerDraftValue(initialStateKey, '')
@@ -5966,7 +5980,7 @@ async function sendComposer(event) {
   if (isRouterThread()) {
     const button = $('#send-message')
     button.disabled = true
-    transcriptScrollFollower.reset()
+    beginTranscriptFollowingLatest()
     try {
       await threadRouter.startTurn(text, imageInputs)
       setComposerDraftValue(stateKey, '')
@@ -5986,7 +6000,7 @@ async function sendComposer(event) {
   const turnOptions = configuredTurnOptions()
   const button = $('#send-message')
   button.disabled = true
-  transcriptScrollFollower.reset()
+  beginTranscriptFollowingLatest(targetModel)
   let optimisticTurnId = null
   let latencyTrace = null
   let composerCleared = false
@@ -6389,6 +6403,7 @@ async function loadPreferences() {
   state.theme = saved.theme === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth(saved.contentWidth)
   state.hiddenSessionDirectories = normalizeHiddenSessionDirectories(saved.hiddenSessionDirectories)
+  state.sharedDocumentDirectories = normalizeSharedDocumentDirectories(saved.sharedDocumentDirectories)
   state.sessionDirectoryIgnore = Array.isArray(saved.sessionDirectoryIgnore)
     ? saved.sessionDirectoryIgnore.map((value) => String(value)).filter((value) => value.length <= 4096)
     : []
@@ -6457,6 +6472,7 @@ function preferencesSnapshot() {
     theme: state.theme,
     contentWidth: state.contentWidth,
     hiddenSessionDirectories: state.hiddenSessionDirectories,
+    sharedDocumentDirectories: state.sharedDocumentDirectories,
     sessionDirectoryIgnore: state.sessionDirectoryIgnore,
     wslDistribution: state.wsl.distribution || null,
     wslUser: state.wsl.user || null,
@@ -6490,6 +6506,18 @@ function persistPreferences() {
   })
   preferencesWriteChain = write.catch((error) => console.error('Unable to persist preferences', error))
   return write
+}
+
+function normalizeSharedDocumentDirectories(values = []) {
+  if (!Array.isArray(values)) return []
+  return [...new Set(values
+    .map((value) => String(value || '').trim())
+    .filter((value) => value && value.length <= 4096 && !/[\u0000-\u001f\u007f]/u.test(value)))]
+    .slice(0, 256)
+}
+
+function isAbsoluteDocumentDirectory(value) {
+  return value.startsWith('/') || /^[a-z]:[\\/]/iu.test(value) || /^\\\\[^\\]/u.test(value)
 }
 
 function schedulePreferencesPersist() {
@@ -6550,6 +6578,7 @@ function populateSettingsForm() {
   $('#language-select').value = state.language
   $('#theme-select').value = state.theme
   $('#content-width').value = state.contentWidth
+  $('#shared-document-directories').value = state.sharedDocumentDirectories.join('\n')
   $('#ui-font-family').value = state.typography.uiFontFamily
   $('#ui-font-size').value = String(state.typography.uiFontSize)
   $('#ui-font-weight').value = String(state.typography.uiFontWeight)
@@ -6582,12 +6611,21 @@ async function saveSettings(event) {
     return
   }
   const previousLocale = getLocale()
+  const sharedDocumentDirectories = normalizeSharedDocumentDirectories(
+    $('#shared-document-directories').value.split(/\r?\n/u),
+  )
+  if (sharedDocumentDirectories.some((directory) => !isAbsoluteDocumentDirectory(directory))) {
+    $('#settings-error').textContent = t('Shared document directories must use absolute paths.')
+    $('#settings-error').classList.remove('hidden')
+    return
+  }
   state.annotationPromptTemplates[previousLocale] = template.slice(0, 32000)
   state.language = normalizeLanguage($('#language-select').value)
   setLanguage(state.language)
   syncEmbeddedBrowserTranslations()
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
+  state.sharedDocumentDirectories = sharedDocumentDirectories
   state.typography = normalizeTypography({
     uiFontFamily: $('#ui-font-family').value.trim(),
     uiFontSize: Number($('#ui-font-size').value),
@@ -6620,7 +6658,14 @@ async function saveSettings(event) {
     : state.annotationPromptTemplates[nextLocale] || defaultAnnotationPrompt(nextLocale)
   state.annotationPromptTemplates[nextLocale] = state.annotationPromptTemplate
   applyAppearance()
-  persistPreferences()
+  try {
+    await persistPreferences()
+  } catch (error) {
+    $('#settings-error').textContent = t('Unable to save settings')
+    $('#settings-error').classList.remove('hidden')
+    return
+  }
+  sessionResources.invalidate(state.backend, state.selectedId, { force: true })
   $('#settings-dialog').close()
   renderLocalizedUI()
   if (state.hostPlatform === 'windows' && JSON.stringify(state.wsl) !== previousWsl) {

@@ -66,3 +66,23 @@ test('Review Notes restores the injected Session Map view without a global depen
   assert.match(source, /renderSessionMap\(\)/u)
   assert.doesNotMatch(source, /sessionMap\.render\(\)/u)
 })
+
+test('Send and Clear submits the composer before clearing only the selected session comments', () => {
+  const source = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
+  const index = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const start = source.indexOf('function sendAndClearAnnotations(')
+  const end = source.indexOf('\nasync function favoriteRequest', start)
+  const sendAndClear = source.slice(start, end)
+
+  assert.match(index, /id="send-clear-annotations"[^>]*>Send and Clear<\/button>/u)
+  assert.match(index, /id="composer-review-send-clear"[^>]*>Send and Clear<\/button>/u)
+  assert.match(source, /#send-clear-annotations'[)]\?\.addEventListener\('click', sendAndClearAnnotations\)/u)
+  assert.match(source, /#composer-review-send-clear'[)]\?\.addEventListener\('click', sendAndClearAnnotations\)/u)
+  assert.match(styles, /\.composer-review-context \{[^}]*grid-template-columns: 24px minmax\(0, 1fr\) auto auto auto;/u)
+  assert.ok(sendAndClear.indexOf('setComposerValue(') < sendAndClear.indexOf('form.requestSubmit(sendButton)'))
+  assert.ok(sendAndClear.indexOf('form.requestSubmit(sendButton)') < sendAndClear.indexOf('delete state.annotationDrafts[key]'))
+  assert.match(sendAndClear, /delete state\.annotationDrafts\[key\][\s\S]*delete state\.annotationAdditional\[key\][\s\S]*persistAnnotationState\(key\)[\s\S]*renderAnnotationRail\(\)/u)
+  assert.match(sendAndClear, /sendButton\.disabled \|\| form\.classList\.contains\('hidden'\) \|\| form\.classList\.contains\('shell-mode'\)/u)
+  assert.doesNotMatch(sendAndClear, /confirm\(/u)
+})

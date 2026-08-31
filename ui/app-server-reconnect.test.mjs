@@ -41,8 +41,10 @@ test('catalog loads cannot install a response after its backend selection change
 
   assert.match(loader, /const backend = state\.backend/u)
   assert.match(loader, /const socketGeneration = state\.socketGeneration/u)
-  assert.ok(loader.indexOf("await dispatchBackendRpc(backend, 'thread/list'") < loader.indexOf('state.backend !== backend'))
-  assert.ok(loader.indexOf('state.backend !== backend') < loader.indexOf('setActiveThreads('))
+  const catalogRequest = loader.indexOf("await dispatchBackendRpc(backend, 'thread/list'")
+  const catalogGuard = loader.indexOf('state.backend !== backend', catalogRequest)
+  assert.ok(catalogRequest < catalogGuard)
+  assert.ok(catalogGuard < loader.indexOf('setActiveThreads('))
   assert.match(loader, /selectThread\(nextId, \{ force: true, backend \}\)/u)
 })
 

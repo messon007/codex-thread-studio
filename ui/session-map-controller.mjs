@@ -51,6 +51,7 @@ export function createSessionMapController({
   const {
     selectedStateKey,
     activateRightWorkspace,
+    deactivateRightWorkspace,
     closeActionMenus,
     toggleActionMenu,
     closeAnnotationRail,
@@ -248,8 +249,14 @@ export function createSessionMapController({
     const key = selectedStateKey()
     if (key) state.sessionMapDismissed.add(key)
     $('#session-map-rail').classList.add('hidden')
+    closeActionMenus()
     closeSessionMapItemMenu()
-    if (state.artifact) renderArtifact()
+    if (state.artifact) {
+      activateRightWorkspace('document')
+      renderArtifact()
+      return
+    }
+    deactivateRightWorkspace('map')
   }
 
   function renderSessionMap() {

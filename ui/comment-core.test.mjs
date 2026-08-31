@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   CommentSourceRegistry,
   createCommentDraft,
+  formatCommentPromptEntry,
   normalizeCommentDrafts,
 } from './comment-core.mjs'
 
@@ -51,4 +52,25 @@ test('Removing a provider leaves stored comments readable through the generic fa
   assert.equal(draft.excerpt, 'Preserved snapshot')
   assert.equal(draft.source.provider, 'browser')
   assert.equal(registry.describe(draft, { unknownLabel: 'Saved comment' }), 'Saved comment')
+})
+
+test('prompt entries number each compact quote and comment pair', () => {
+  assert.equal(formatCommentPromptEntry({
+    index: 12,
+    excerpt: 'Added --bare for scripted -p',
+    note: 'What does --bare control?\nDoes it affect output?',
+  }), '13 > Added --bare for scripted -p\n   < What does --bare control?\nDoes it affect output?')
+
+  assert.equal(formatCommentPromptEntry({
+    index: 13,
+    anchor: 'docs/release.md:8',
+    excerpt: 'first line\r\nsecond line',
+  }), '14 > first line\nsecond line\n   @ docs/release.md:8')
+
+  assert.equal(formatCommentPromptEntry({
+    index: 5,
+    numberWidth: 2,
+    excerpt: 'Monitor tool',
+    note: 'When should it be used?',
+  }), ' 6 > Monitor tool\n   < When should it be used?')
 })

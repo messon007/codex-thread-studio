@@ -37,3 +37,20 @@ test('session More action uses the shared toolbar SVG geometry', () => {
   assert.doesNotMatch(html, /id="thread-more-button"[^>]*>•••</u)
   assert.match(styles, /#thread-more-button svg \{[^}]*width: 17px;[^}]*height: 17px;/u)
 })
+
+test('right workspace headers use one stable SVG close geometry', () => {
+  assert.match(html, /id="session-map-more"[^>]*><svg/u)
+  assert.doesNotMatch(html, /id="session-map-more"[^>]*>•••</u)
+  for (const id of ['close-session-map', 'close-resources', 'close-workspace-tools', 'close-annotation-rail', 'close-favorites']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*right-workspace-close[^>]*>\\s*<svg`, 'u'))
+    assert.doesNotMatch(html, new RegExp(`id="${id}"[^>]*>×`, 'u'))
+  }
+  assert.match(styles, /\.icon-button\.right-workspace-close svg \{[^}]*width: 16px;[^}]*height: 16px;[^}]*stroke-width: 1\.65;/u)
+})
+
+test('Session Map sync status lives with footer metadata instead of header actions', () => {
+  const header = html.match(/<header class="session-map-header">[\s\S]*?<\/header>/u)?.[0] || ''
+  const footer = html.match(/<footer class="session-map-footer">[\s\S]*?<\/footer>/u)?.[0] || ''
+  assert.doesNotMatch(header, /session-map-sync-state/u)
+  assert.match(footer, /session-map-footer-status[\s\S]*session-map-sync-state[\s\S]*session-map-revision/u)
+})

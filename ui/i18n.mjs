@@ -2,14 +2,10 @@ export const supportedLanguages = ['system', 'zh-CN', 'en-US']
 
 export const annotationPromptDefaults = Object.freeze({
   'zh-CN': `请根据下面引用的会话输出或项目文件内容，以及我的批注进行回应。请逐项处理，不要遗漏。涉及文件时，请先读取当前版本并依据文件路径、引用和上下文定位内容；如果文件已变化，以当前内容为准谨慎修改。
-
 {{annotations}}
-
 {{additional}}`,
   'en-US': `Please respond to the quoted conversation output or project file content and my comments below. Address every item. For file comments, read the current version first and locate the passage using its path, quote, and context; if the file changed, modify the current content carefully.
-
 {{annotations}}
-
 {{additional}}`,
 })
 
@@ -445,7 +441,6 @@ const chinese = {
   'Describe the issue and expected change, or add the selection directly to the draft.': '说明问题和期望调整，也可以直接将选中内容加入草稿。',
   'The selected content is required.': '选中内容不能为空。',
   'Saved comment': '已保存批注',
-  'No additional comment': '无补充意见',
   'Favorites': '收藏',
   'Add': '添加',
   'View': '查看',
@@ -542,6 +537,12 @@ const chinese = {
   'Delete favorite': '删除收藏',
   'Rename session': '重命名会话',
   'Fork session': 'Fork 会话',
+  'Pin session': '置顶会话',
+  'Unpin session': '取消置顶',
+  'Pinned': '已置顶',
+  'Session pinned': '会话已置顶',
+  'Session unpinned': '已取消会话置顶',
+  'You can pin up to 10 sessions.': '最多只能置顶 10 个会话。',
   'Fork from here': '从这里 Fork',
   'Archive session': '归档会话',
   'Delete session': '删除会话',
@@ -793,7 +794,11 @@ const chinese = {
   'A session can keep up to 32 comments.': '每个会话最多保留 32 条批注。',
   'Comment added to the reply draft': '批注已加入回覆草稿',
   'Clear all comment drafts for this session?': '清空当前会话的全部批注草稿？',
+  'Send and Clear': '发送并清空',
   'Comment draft inserted into the composer': '批注草稿已插入输入框',
+  'Comment draft sent and cleared': '批注草稿已发送并清空',
+  'Comments cannot be sent right now': '当前无法发送批注',
+  'Insert keeps comments; Send and Clear submits them immediately.': '插入会保留批注；发送并清空会立即提交。',
   'Found': '找到',
   'matching favorites': '条匹配收藏',
   'favorites in this session': '条当前会话收藏',
@@ -817,8 +822,6 @@ const chinese = {
   'Failed to load skills: {message}': '技能读取失败：{message}',
   'Command is not supported yet: /{action}': '尚未支持命令：/{action}',
   'Delete favorite “{title}”?': '删除收藏“{title}”？',
-  'Comment {index} ({anchor})\nQuote:\n{quote}\n\nMy comment:\n{comment}': '批注 {index}（{anchor}）\n引用：\n{quote}\n\n我的意见：\n{comment}',
-  'Comment {index}\nQuote:\n{quote}\n\nMy comment:\n{comment}': '批注 {index}\n引用：\n{quote}\n\n我的意见：\n{comment}',
   'Overall note:\n{text}': '整体补充：\n{text}',
   'No {backend} sessions yet': '还没有 {backend} 会话',
   'Subagent · {id}': '子代理 · {id}',
@@ -1095,34 +1098,13 @@ export function formatDate(value, options) {
   return new Intl.DateTimeFormat(locale, options).format(value)
 }
 
-export function inferTextLanguage(value, fallback = 'en-US') {
-  const hanCharacters = String(value || '').match(/\p{Script=Han}/gu)?.length || 0
-  return hanCharacters >= 4 ? 'zh-CN' : resolveLanguage(fallback)
-}
-
-export function migrateLocalizedTemplates(value, legacyValue, fallbackLocale = 'en-US') {
-  const templates = Object.fromEntries(['zh-CN', 'en-US'].flatMap((language) => {
+export function normalizeLocalizedTemplates(value) {
+  return Object.fromEntries(['zh-CN', 'en-US'].flatMap((language) => {
     const template = value?.[language]
     return typeof template === 'string' && template.includes('{{annotations}}')
       ? [[language, template.slice(0, 32000)]]
       : []
   }))
-  const legacy = typeof legacyValue === 'string' && legacyValue.includes('{{annotations}}')
-    ? legacyValue.slice(0, 32000)
-    : ''
-  if (!legacy) return { templates, legacyLocale: null, migratedLegacy: false }
-
-  const legacyLocale = inferTextLanguage(legacy, fallbackLocale)
-  let migratedLegacy = false
-  if (!templates[legacyLocale]) {
-    const misplacedLocale = legacyLocale === 'zh-CN' ? 'en-US' : 'zh-CN'
-    if (templates[misplacedLocale] === legacy) {
-      delete templates[misplacedLocale]
-    }
-    templates[legacyLocale] = legacy
-    migratedLegacy = true
-  }
-  return { templates, legacyLocale, migratedLegacy }
 }
 
 export function translateDocument(root = document.body) {

@@ -14,6 +14,7 @@ import {
   isSessionDirectoryHidden,
   normalizeHiddenSessionDirectories,
   normalizeSessionDirectoryIgnore,
+  partitionPinnedCatalogEntries,
   syncCatalogSelection,
   threadCatalogKey,
 } from './thread-catalog.mjs'
@@ -89,6 +90,23 @@ test('all and active modes keep catalog order', () => {
   assert.deepEqual(
     filterCatalogEntries(catalogs, { filter: 'active' }).map(({ backend, thread }) => `${backend}:${thread.id}`),
     ['codex:running-cx'],
+  )
+})
+
+test('pinned sessions are extracted globally in stored pin order', () => {
+  const entries = filterCatalogEntries(catalogs)
+  const pinned = new Set([
+    threadCatalogKey('opencode', 'same-id'),
+    threadCatalogKey('codex', 'same-id'),
+  ])
+  const partition = partitionPinnedCatalogEntries(entries, pinned)
+  assert.deepEqual(
+    partition.pinnedEntries.map(({ backend, thread }) => threadCatalogKey(backend, thread.id)),
+    [...pinned],
+  )
+  assert.deepEqual(
+    partition.regularEntries.map(({ backend, thread }) => threadCatalogKey(backend, thread.id)),
+    ['codex:running-cx', 'company-codex:same-id'],
   )
 })
 
@@ -168,12 +186,13 @@ test('the sidebar contract has one create button, directory groups, and no backe
   assert.match(html, /id="new-thread-backend"/)
   assert.doesNotMatch(html, /backend-switcher/)
   assert.doesNotMatch(source, /projectGroups\(/)
-  assert.match(source, /groupCatalogEntries\(entries\)/)
+  assert.match(source, /groupCatalogEntries\(regularEntries\)/)
   assert.match(source, /<small data-no-i18n title="\\?\$\{escapeHtml\(thread\.cwd/)
   assert.match(html, /data-filter="attention"[^>]*>Attention <span id="count-attention">0<\/span>/)
   assert.doesNotMatch(html, /id="thread-meta"/)
   assert.match(source, /function openThreadInfo\(\)[\s\S]*CLI Version/)
   assert.match(styles, /\.thread-group-heading strong[^}]*text-transform: uppercase/)
+  assert.match(styles, /\.pinned-thread-group::after \{[^}]*width: calc\(100% - 14px\);[^}]*margin: 7px auto;/u)
   assert.match(styles, /\.backend-tag \{[^}]*background: var\(--panel-strong\)/)
   assert.match(styles, /\.thread-row\.active \.backend-tag/)
 })
@@ -199,10 +218,10 @@ test('catalog refreshes do not rerender a still-selected fresh transcript', () =
   const loadThreads = source.slice(start, end)
   assert.match(loadThreads, /preferredLoad = cached[\s\S]*loadSelectedSessionCompanions/u)
   assert.match(loadThreads, /preferredMissingFromCatalog[\s\S]*thread\/read'[\s\S]*threadId: preferred, includeTurns: false/u)
-  assert.match(loadThreads, /preferredMissingFromCatalog && isCodexBackend\(backend\)[\s\S]*mergeThreadIntoCatalog\(backend, knownPreferred\)/u)
-  assert.match(loadThreads, /backend === 'opencode' && preferredMissingFromCatalog[\s\S]*invalidateThreadModel\(backend, preferred\)/u)
+  assert.match(loadThreads, /preferredMissingFromCatalog[\s\S]*isCodexBackend\(backend\) \|\| preferredIsRouter[\s\S]*mergeThreadIntoCatalog\(backend, knownPreferred\)/u)
+  assert.match(loadThreads, /backend === 'opencode' && preferredMissingFromCatalog && !preferredIsRouter[\s\S]*invalidateThreadModel\(backend, preferred\)/u)
   assert.match(loadThreads, /await preferredLoad[\s\S]*preferredMissingFromCatalog && isCodexBackend\(backend\)[\s\S]*threadId: preferred, includeTurns: false/u)
-  assert.match(loadThreads, /const preserveMissingPreferred = preferredLoad[\s\S]*!preferredMissingFromCatalog \|\| isCodexBackend\(backend\)[\s\S]*const nextId = preserveMissingPreferred/u)
+  assert.match(loadThreads, /const preserveMissingPreferred = preferredLoad[\s\S]*!preferredMissingFromCatalog \|\| isCodexBackend\(backend\) \|\| preferredIsRouter[\s\S]*const nextId = preserveMissingPreferred/u)
   assert.match(loadThreads, /await preferredLoad[\s\S]*if \(preferredUsedCache && !freshThreadModel\(backend, nextId\)\)[\s\S]*selectThread/u)
   assert.match(loadThreads, /state\.selectedId !== preferred[\s\S]*return true/u)
   assert.match(loadThreads, /else if \(nextId && \(state\.selectedId !== nextId \|\| !freshThreadModel\(backend, nextId\)\)\)[\s\S]*selectThread/u)

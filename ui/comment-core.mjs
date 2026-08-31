@@ -110,6 +110,22 @@ export function commentSelectionSnapshot(selection, registry) {
   }, { idFactory: () => '', now: () => '', registry })
 }
 
+export function formatCommentPromptEntry({ index = 0, numberWidth = 0, anchor = '', excerpt = '', note = '' } = {}) {
+  const number = Math.max(0, Number.parseInt(index, 10) || 0) + 1
+  const width = Math.max(String(number).length, Number.parseInt(numberWidth, 10) || 0)
+  const numberLabel = String(number).padStart(width, ' ')
+  const location = String(anchor || '').trim().replace(/\s+/gu, ' ')
+  const excerptText = String(excerpt || '').trim().replace(/\r\n?/gu, '\n')
+  const quote = excerptText ? `${numberLabel} > ${excerptText}` : ''
+  const comment = String(note || '').trim().replace(/\r\n?/gu, '\n')
+  const markerIndent = ' '.repeat(width + 1)
+  return [
+    quote,
+    location ? `${markerIndent}@ ${location}` : '',
+    comment ? `${markerIndent}< ${comment}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 function normalizeOpaqueSource(source) {
   return {
     provider: boundedText(source?.provider, MAX_PROVIDER_LENGTH) || 'unknown',

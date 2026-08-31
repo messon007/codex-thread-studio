@@ -2,6 +2,7 @@ import { backendDescriptor } from './backends.mjs'
 import {
   commentSelectionSnapshot,
   createCommentDraft,
+  formatCommentPromptEntry,
 } from './comment-core.mjs'
 import { locateCommentIntervals } from './comment-markers.mjs'
 import {
@@ -101,6 +102,7 @@ export function createReviewNotesController({
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
     $('#composer-review-insert')?.addEventListener('click', insertAnnotations)
+    $('#composer-review-send-clear')?.addEventListener('click', sendAndClearAnnotations)
     $('#transcript')?.addEventListener('mouseup', captureTranscriptSelection)
     $('#transcript')?.addEventListener('click', handleCommentMarkerClick)
     $('#transcript')?.addEventListener('keydown', handleCommentMarkerKeydown)
@@ -123,6 +125,7 @@ export function createReviewNotesController({
     $('#cancel-annotation')?.addEventListener('click', closeAnnotationDialog)
     $('#clear-annotations')?.addEventListener('click', clearAnnotations)
     $('#insert-annotations')?.addEventListener('click', insertAnnotations)
+    $('#send-clear-annotations')?.addEventListener('click', sendAndClearAnnotations)
     $('#annotation-additional')?.addEventListener('input', saveAnnotationAdditional)
     $('#open-favorites')?.addEventListener('click', () => {
       closeActionMenus()
@@ -709,6 +712,13 @@ async function reopenDocumentComment(target, excerpt) {
 function renderComposerReviewContext() {
   const drafts = currentAnnotations()
   const context = $('#composer-review-context')
+  const sendAndClearDisabled = !drafts.length
+      || Boolean($('#send-message')?.disabled)
+      || Boolean($('#composer-form')?.classList.contains('hidden'))
+      || Boolean($('#composer-form')?.classList.contains('shell-mode'))
+  for (const sendAndClear of [$('#send-clear-annotations'), $('#composer-review-send-clear')]) {
+    if (sendAndClear) sendAndClear.disabled = sendAndClearDisabled
+  }
   context.classList.toggle('hidden', !drafts.length)
   if (!drafts.length) return
   $('#composer-review-count').textContent = t('{count} comments ready to send', { count: drafts.length })
@@ -744,20 +754,19 @@ function saveAnnotationAdditional(event) {
 }
 
 function buildAnnotationPrompt(drafts, additional = '') {
+  const numberWidth = String(drafts.length).length
   const annotations = drafts.map((draft, index) => {
     const anchor = commentSources.promptAnchor(draft, commentProviderContext(index))
-    const quote = draft.excerpt.split('\n').map((line) => `> ${line}`).join('\n')
-    return t(anchor
-      ? 'Comment {index} ({anchor})\nQuote:\n{quote}\n\nMy comment:\n{comment}'
-      : 'Comment {index}\nQuote:\n{quote}\n\nMy comment:\n{comment}', {
-      index: index + 1,
+    return formatCommentPromptEntry({
+      index,
+      numberWidth,
       anchor,
-      quote,
-      comment: draft.note || t('No additional comment'),
+      excerpt: draft.excerpt,
+      note: draft.note,
     })
-  }).join('\n\n---\n\n')
+  }).join('\n\n')
   const additionalBlock = additional.trim() ? t('Overall note:\n{text}', { text: additional.trim() }) : ''
-  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.annotationPromptTemplate
+  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.activeAnnotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
     .replace(/\n{3,}/g, '\n\n')
@@ -791,13 +800,43 @@ async function reopenTableComment(anchor) {
 function insertAnnotations() {
   const drafts = currentAnnotations()
   if (!drafts.length) return
-  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[selectedStateKey()] || '')
+  const key = selectedStateKey()
+  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
   const composer = $('#composer-input')
   setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
   closeAnnotationRail()
   composer.focus()
   renderComposerReviewContext()
   toast('Comment draft inserted into the composer')
+}
+
+function sendAndClearAnnotations() {
+  const drafts = currentAnnotations()
+  const form = $('#composer-form')
+  const sendButton = $('#send-message')
+  if (!drafts.length) return
+  if (!form || !sendButton || sendButton.disabled || form.classList.contains('hidden') || form.classList.contains('shell-mode')) {
+    toast('Comments cannot be sent right now', 'error')
+    return
+  }
+  const key = selectedStateKey()
+  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
+  const composer = $('#composer-input')
+  setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
+  try {
+    form.requestSubmit(sendButton)
+  } catch (error) {
+    showError(error)
+    composer.focus()
+    return
+  }
+  delete state.annotationDrafts[key]
+  delete state.annotationAdditional[key]
+  persistAnnotationState(key)
+  renderAnnotationRail()
+  closeAnnotationRail()
+  composer.focus()
+  toast('Comment draft sent and cleared')
 }
 
 async function favoriteRequest(path, options = {}) {

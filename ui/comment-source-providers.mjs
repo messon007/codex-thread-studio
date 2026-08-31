@@ -47,10 +47,6 @@ export function createChatCommentProvider() {
       const turnId = draft.source.anchor.turnId
       return `${context.translate?.('Reply comment {index}', { index }) || `Comment ${index}`}${turnId ? ` · ${turnId.slice(0, 8)}` : ''}`
     },
-    promptAnchor(draft) {
-      const { turnId, itemId } = draft.source.anchor
-      return [turnId && `Turn ${turnId}`, itemId && `Item ${itemId}`].filter(Boolean).join(' / ')
-    },
   }
 }
 

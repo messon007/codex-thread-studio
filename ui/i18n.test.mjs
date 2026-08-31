@@ -3,14 +3,21 @@ import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  annotationPromptDefaults,
   getLocale,
-  migrateLocalizedTemplates,
+  normalizeLocalizedTemplates,
   resolveLanguage,
   setLanguage,
   t,
   translateDocument,
   translationEntries,
 } from './i18n.mjs'
+
+test('default comment templates do not add blank lines around placeholders', () => {
+  for (const template of Object.values(annotationPromptDefaults)) {
+    assert.doesNotMatch(template, /\n\n\{\{(?:annotations|additional)\}\}/u)
+  }
+})
 
 test('resolves explicit and system languages', () => {
   assert.equal(resolveLanguage('zh-CN', 'en-US'), 'zh-CN')
@@ -41,21 +48,15 @@ test('contains the Chinese catalog keyed by English source messages', () => {
   assert.equal(new Set(localizedMessages).size, localizedMessages.length)
 })
 
-test('migrates a legacy template into its actual language slot', () => {
+test('normalizes only valid localized comment templates', () => {
   const chinese = '\u8BF7\u6839\u636E\u8FD9\u4E9B\u5185\u5BB9\u56DE\u590D\uFF1A\n{{annotations}}'
-  const migrated = migrateLocalizedTemplates({ 'en-US': chinese }, chinese, 'en-US')
-  assert.deepEqual(migrated.templates, { 'zh-CN': chinese })
-  assert.equal(migrated.legacyLocale, 'zh-CN')
-  assert.equal(migrated.migratedLegacy, true)
-
   const english = 'Please respond to these notes:\n{{annotations}}'
-  const preserved = migrateLocalizedTemplates(
-    { 'zh-CN': chinese, 'en-US': english },
-    english,
-    'en-US',
-  )
-  assert.deepEqual(preserved.templates, { 'zh-CN': chinese, 'en-US': english })
-  assert.equal(preserved.migratedLegacy, false)
+  assert.deepEqual(normalizeLocalizedTemplates({
+    'zh-CN': chinese,
+    'en-US': english,
+    'ja-JP': 'ignored {{annotations}}',
+  }), { 'zh-CN': chinese, 'en-US': english })
+  assert.deepEqual(normalizeLocalizedTemplates({ 'zh-CN': 'missing placeholder' }), {})
 })
 
 test('translates an English source subtree in both directions without changing protected content', () => {
@@ -146,11 +147,16 @@ test('saving settings closes the dialog before rerendering dynamic UI', () => {
 test('comments and favorites use compact right-area launchers without add menus', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
   assert.match(html, /id="open-thread-comments"[^>]*workspace-tool-launcher[^>]*icon-only/)
   assert.match(html, /id="open-thread-favorites"[^>]*workspace-tool-launcher[^>]*icon-only/)
   assert.match(html, /id="thread-comments-count"[^>]*workspace-tool-count[^>]*hidden/)
   assert.match(html, /id="thread-favorites-count"[^>]*workspace-tool-count[^>]*hidden/)
   assert.match(html, /id="thread-resources-count"[^>]*workspace-tool-count[^>]*hidden/)
+  assert.match(styles, /\.workspace-tool-count \{[^}]*top: -4px;[^}]*right: -4px;[^}]*font-size: 7px;[^}]*font-variant-numeric: tabular-nums;/u)
+  assert.doesNotMatch(styles, /\.workspace-tool-count,[^\n]*font-size: var\(--ui-font-xxs\)/u)
+  assert.match(styles, /\.annotation-rail h2, \.resources-heading h2, \.favorites-rail h2 \{[^}]*display: flex;[^}]*align-items: center;[^}]*gap: 6px;/u)
+  assert.match(styles, /\.annotation-count \{[^}]*height: 19px;[^}]*align-items: center;[^}]*justify-content: center;[^}]*font-variant-numeric: tabular-nums;/u)
   assert.doesNotMatch(html, /id="(?:annotation|favorite)-menu-button"/)
   assert.doesNotMatch(html, /id="(?:open-annotation-rail|open-session-favorites)"/)
   assert.doesNotMatch(source, /(?:annotation|favorite)-menu-button/)

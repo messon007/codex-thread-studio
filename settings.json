@@ -1,0 +1,67 @@
+{
+  "desktopNotifications": false,
+  "language": "system",
+  "theme": "light",
+  "contentWidth": "comfortable",
+  "sharedDocumentDirectories": [
+    "/tmp"
+  ],
+  "sessionDirectoryIgnore": [
+    "/home/rui/desktop/lisource/aswcodex/test/lld2code/*/"
+  ],
+  "wslCodexBinary": "codex",
+  "wslOpencodeBinary": "opencode",
+  "typography": {
+    "uiFontFamily": "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "uiFontSize": 14.0,
+    "uiFontWeight": 500,
+    "contentFontFamily": "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "contentFontSize": 14.0,
+    "contentFontWeight": 500,
+    "workspaceFontFamily": "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "workspaceFontSize": 14.0,
+    "codeFontFamily": "\"JetBrains Mono\", \"SFMono-Regular\", Consolas, monospace",
+    "codeFontSize": 14.0,
+    "codeFontWeight": 500,
+    "highContrast": true
+  },
+  "mermaid": {
+    "style": "auto",
+    "density": "standard",
+    "curve": "rounded",
+    "layout": "auto",
+    "fontSize": 15
+  },
+  "markdown": {
+    "mode": "technical"
+  },
+  "browser": {
+    "enabled": false,
+    "restoreTabs": true,
+    "allowHttp": true,
+    "allowPrivateNetwork": false,
+    "allowLocalhost": true,
+    "previewJavascript": true,
+    "embeddedWidth": 480,
+    "agent": {
+      "enabled": false,
+      "provider": "playwright-mcp",
+      "profile": "persistent",
+      "approval": "interactive",
+      "allowedOrigins": []
+    }
+  },
+  "annotationPromptTemplates": {
+    "en-US": "Please respond to the quoted conversation output or project file content and my comments below. Address every item. For file comments, read the current version first and locate the passage using its path, quote, and context; if the file changed, modify the current content carefully.\n{{annotations}}\n{{additional}}",
+    "zh-CN": "请根据下面引用的会话输出或项目文件内容，以及我的批注进行回应。请逐项处理，不要遗漏。涉及文件时，请先读取当前版本并依据文件路径、引用和上下文定位内容；如果文件已变化，以当前内容为准谨慎修改。\n{{annotations}}\n{{additional}}"
+  },
+  "router": {
+    "controllerBackend": "codex",
+    "controllers": {
+      "codex": "019ffa41-44df-7d92-8431-4504b74769b3",
+      "opencode": "ses_0022b1bfeffe7pzQ5Y5FSB1EoA"
+    }
+  },
+  "sidebarCollapsed": false,
+  "rightRailWidthRatio": 0.27574882864792505
+}

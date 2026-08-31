@@ -79,6 +79,22 @@ export function groupCatalogEntries(entries = []) {
   }))
 }
 
+export function partitionPinnedCatalogEntries(entries = [], pinned = new Set()) {
+  const pinOrder = new Map([...pinned].map((key, index) => [key, index]))
+  const pinnedEntries = []
+  const regularEntries = []
+  for (const entry of entries) {
+    const target = pinned.has(threadCatalogKey(entry.backend, entry.thread.id))
+      ? pinnedEntries
+      : regularEntries
+    target.push(entry)
+  }
+  pinnedEntries.sort((left, right) =>
+    pinOrder.get(threadCatalogKey(left.backend, left.thread.id))
+      - pinOrder.get(threadCatalogKey(right.backend, right.thread.id)))
+  return { pinnedEntries, regularEntries }
+}
+
 export function filterCatalogEntries(catalogs, {
   filter = 'all',
   search = '',

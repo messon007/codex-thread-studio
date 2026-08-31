@@ -18,11 +18,33 @@ test('dynamic session state loads beside preferences but is not written back to 
   assert.doesNotMatch(snapshot, /annotationDrafts|annotationAdditional|openingMessages/u)
 })
 
+test('startup selection comes from Thread Router instead of persisted session state', () => {
+  const loadStart = app.indexOf('async function loadPreferences()')
+  const snapshotStart = app.indexOf('function preferencesSnapshot()', loadStart)
+  const persistStart = app.indexOf('function persistPreferences()', snapshotStart)
+  const load = app.slice(loadStart, snapshotStart)
+  const snapshot = app.slice(snapshotStart, persistStart)
+
+  assert.match(load, /state\.router = normalizeThreadRouter\(saved\.router\)/u)
+  assert.match(load, /state\.backend = isSupportedBackend\(state\.router\.controllerBackend\)/u)
+  assert.match(load, /const routerId = state\.router\.controllers\[state\.backend\]/u)
+  assert.doesNotMatch(load, /saved\.(?:selectedBackend|selectedThreads)/u)
+  assert.doesNotMatch(snapshot, /\bselected(?:Backend|Threads)\s*:/u)
+  assert.match(app, /state\.startupRouterSelectionPending[\s\S]{0,240}threadRouter\.ensureManagedSession\(backend\)/u)
+})
+
 test('session state mutations use bounded per-session endpoints', () => {
   assert.match(app, /'\/studio\/session-state\/annotations'/u)
   assert.match(app, /'\/studio\/session-state\/opening-message'/u)
+  assert.match(app, /'\/studio\/session-state\/pin'/u)
   assert.match(app, /'\/studio\/session-state\/session',[^\n]*'DELETE'/u)
   assert.match(app, /const payload = JSON\.stringify\(body\)/u)
+})
+
+test('pinning is bounded and archive clears the persisted pin', () => {
+  assert.match(app, /state\.pinnedSessions\.size >= 10/u)
+  assert.match(app, /async function archiveSelectedThread\([\s\S]*persistSessionPin\(key, false\)/u)
+  assert.match(app, /partitionPinnedCatalogEntries\(entries, state\.pinnedSessions\)/u)
 })
 
 test('debounced comment persistence stays bound to the session that changed', () => {

@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::{AnnotationDraft, OpeningMessage};
 
-const SETTINGS_MIGRATION_KEY: &str = "settings_session_state_v1";
+pub(crate) const MAX_PINNED_SESSIONS: usize = 10;
+pub(crate) const PIN_LIMIT_ERROR: &str = "at most 10 sessions can be pinned";
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,73 +17,11 @@ pub(crate) struct SessionStateSnapshot {
     pub(crate) annotation_drafts: BTreeMap<String, Vec<AnnotationDraft>>,
     pub(crate) annotation_additional: BTreeMap<String, String>,
     pub(crate) opening_messages: BTreeMap<String, OpeningMessage>,
+    pub(crate) pinned_sessions: Vec<String>,
 }
 
 pub(crate) fn initialize(path: &Path) -> Result<(), String> {
     connection(path).map(|_| ())
-}
-
-pub(crate) fn migration_complete(path: &Path) -> Result<bool, String> {
-    let connection = connection(path)?;
-    connection
-        .query_row(
-            "SELECT value FROM session_state_meta WHERE key = ?1",
-            [SETTINGS_MIGRATION_KEY],
-            |_| Ok(()),
-        )
-        .optional()
-        .map(|value| value.is_some())
-        .map_err(sql_error)
-}
-
-pub(crate) fn migrate_legacy_settings(
-    path: &Path,
-    annotation_drafts: &BTreeMap<String, Vec<AnnotationDraft>>,
-    annotation_additional: &BTreeMap<String, String>,
-    opening_messages: &BTreeMap<String, OpeningMessage>,
-) -> Result<(), String> {
-    let mut connection = connection(path)?;
-    if migration_complete_with_connection(&connection)? {
-        return Ok(());
-    }
-
-    let transaction = connection.transaction().map_err(sql_error)?;
-    for (session_key, drafts) in annotation_drafts {
-        let drafts_json = serde_json::to_string(drafts).map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO session_annotation_drafts(session_key, drafts_json)
-                 VALUES (?1, ?2)",
-                params![session_key, drafts_json],
-            )
-            .map_err(sql_error)?;
-    }
-    for (session_key, content) in annotation_additional {
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO session_annotation_additional(session_key, content)
-                 VALUES (?1, ?2)",
-                params![session_key, content],
-            )
-            .map_err(sql_error)?;
-    }
-    for (session_key, message) in opening_messages {
-        let message_json = serde_json::to_string(message).map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO session_opening_messages(session_key, message_json)
-                 VALUES (?1, ?2)",
-                params![session_key, message_json],
-            )
-            .map_err(sql_error)?;
-    }
-    transaction
-        .execute(
-            "INSERT INTO session_state_meta(key, value) VALUES (?1, '1')",
-            [SETTINGS_MIGRATION_KEY],
-        )
-        .map_err(sql_error)?;
-    transaction.commit().map_err(sql_error)
 }
 
 pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
@@ -139,8 +78,19 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
             .map_err(|error| format!("invalid opening message for {session_key}: {error}"))?;
         snapshot.opening_messages.insert(session_key, message);
     }
+    drop(statement);
+
+    snapshot.pinned_sessions = load_pins_with_connection(&connection)?;
 
     Ok(snapshot)
+}
+
+pub(crate) fn set_pinned(
+    path: &Path,
+    session_key: &str,
+    pinned: bool,
+) -> Result<Vec<String>, String> {
+    set_pinned_at(path, session_key, pinned, now_ms()?)
 }
 
 pub(crate) fn replace_annotations(
@@ -234,19 +184,75 @@ pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), Strin
             [session_key],
         )
         .map_err(sql_error)?;
+    transaction
+        .execute(
+            "DELETE FROM session_pins WHERE session_key = ?1",
+            [session_key],
+        )
+        .map_err(sql_error)?;
     transaction.commit().map_err(sql_error)
 }
 
-fn migration_complete_with_connection(connection: &Connection) -> Result<bool, String> {
-    connection
+fn set_pinned_at(
+    path: &Path,
+    session_key: &str,
+    pinned: bool,
+    pinned_at: i64,
+) -> Result<Vec<String>, String> {
+    let mut connection = connection(path)?;
+    let transaction = connection.transaction().map_err(sql_error)?;
+    let exists = transaction
         .query_row(
-            "SELECT value FROM session_state_meta WHERE key = ?1",
-            [SETTINGS_MIGRATION_KEY],
+            "SELECT 1 FROM session_pins WHERE session_key = ?1",
+            [session_key],
             |_| Ok(()),
         )
         .optional()
-        .map(|value| value.is_some())
-        .map_err(sql_error)
+        .map_err(sql_error)?
+        .is_some();
+    if pinned && !exists {
+        let count: usize = transaction
+            .query_row("SELECT COUNT(*) FROM session_pins", [], |row| row.get(0))
+            .map_err(sql_error)?;
+        if count >= MAX_PINNED_SESSIONS {
+            return Err(PIN_LIMIT_ERROR.to_string());
+        }
+        let newest_pinned_at: Option<i64> = transaction
+            .query_row("SELECT MAX(pinned_at) FROM session_pins", [], |row| {
+                row.get(0)
+            })
+            .map_err(sql_error)?;
+        let effective_pinned_at = newest_pinned_at
+            .map(|value| pinned_at.max(value.saturating_add(1)))
+            .unwrap_or(pinned_at);
+        transaction
+            .execute(
+                "INSERT INTO session_pins(session_key, pinned_at) VALUES (?1, ?2)",
+                params![session_key, effective_pinned_at],
+            )
+            .map_err(sql_error)?;
+    } else if !pinned && exists {
+        transaction
+            .execute(
+                "DELETE FROM session_pins WHERE session_key = ?1",
+                [session_key],
+            )
+            .map_err(sql_error)?;
+    }
+    transaction.commit().map_err(sql_error)?;
+    load_pins_with_connection(&connection)
+}
+
+fn load_pins_with_connection(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT session_key FROM session_pins ORDER BY pinned_at DESC, session_key ASC")
+        .map_err(sql_error)?;
+    let pins = statement
+        .query_map([], |row| row.get(0))
+        .map_err(sql_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql_error)?;
+    Ok(pins)
 }
 
 fn connection(path: &Path) -> Result<Connection, String> {
@@ -261,10 +267,6 @@ fn connection(path: &Path) -> Result<Connection, String> {
     connection
         .execute_batch(
             "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS session_state_meta (
-               key TEXT PRIMARY KEY,
-               value TEXT NOT NULL
-             );
              CREATE TABLE IF NOT EXISTS session_annotation_drafts (
                session_key TEXT PRIMARY KEY,
                drafts_json TEXT NOT NULL
@@ -276,6 +278,10 @@ fn connection(path: &Path) -> Result<Connection, String> {
              CREATE TABLE IF NOT EXISTS session_opening_messages (
                session_key TEXT PRIMARY KEY,
                message_json TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_pins (
+               session_key TEXT PRIMARY KEY,
+               pinned_at INTEGER NOT NULL
              );",
         )
         .map_err(sql_error)?;
@@ -284,6 +290,13 @@ fn connection(path: &Path) -> Result<Connection, String> {
 
 fn sql_error(error: rusqlite::Error) -> String {
     error.to_string()
+}
+
+fn now_ms() -> Result<i64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -321,38 +334,22 @@ mod tests {
         initialize(&path).unwrap();
         replace_annotations(&path, "codex:one", &[draft("a"), draft("b")], "overall").unwrap();
         put_opening_message(&path, "codex:one", Some(&opening("hello"))).unwrap();
+        set_pinned_at(&path, "codex:one", true, 100).unwrap();
 
         let state = load(&path).unwrap();
         assert_eq!(state.annotation_drafts["codex:one"].len(), 2);
         assert_eq!(state.annotation_additional["codex:one"], "overall");
         assert_eq!(state.opening_messages["codex:one"].text, "hello");
+        assert_eq!(state.pinned_sessions, ["codex:one"]);
 
         replace_annotations(&path, "codex:one", &[], "").unwrap();
         put_opening_message(&path, "codex:one", None).unwrap();
+        set_pinned_at(&path, "codex:one", false, 0).unwrap();
         let state = load(&path).unwrap();
         assert!(state.annotation_drafts.is_empty());
         assert!(state.annotation_additional.is_empty());
         assert!(state.opening_messages.is_empty());
-        fs::remove_file(path).ok();
-    }
-
-    #[test]
-    fn legacy_migration_is_transactional_and_idempotent() {
-        let path = database_path("migration");
-        let drafts = BTreeMap::from([("codex:one".to_string(), vec![draft("legacy")])]);
-        let additional = BTreeMap::from([("codex:one".to_string(), "legacy note".to_string())]);
-        let openings = BTreeMap::from([("codex:one".to_string(), opening("legacy opening"))]);
-
-        migrate_legacy_settings(&path, &drafts, &additional, &openings).unwrap();
-        replace_annotations(&path, "codex:one", &[draft("new")], "new note").unwrap();
-        put_opening_message(&path, "codex:one", Some(&opening("new opening"))).unwrap();
-        migrate_legacy_settings(&path, &drafts, &additional, &openings).unwrap();
-
-        let state = load(&path).unwrap();
-        assert_eq!(state.annotation_drafts["codex:one"][0].id, "new");
-        assert_eq!(state.annotation_additional["codex:one"], "new note");
-        assert_eq!(state.opening_messages["codex:one"].text, "new opening");
-        assert!(migration_complete(&path).unwrap());
+        assert!(state.pinned_sessions.is_empty());
         fs::remove_file(path).ok();
     }
 
@@ -362,6 +359,7 @@ mod tests {
         for key in ["codex:one", "opencode:two"] {
             replace_annotations(&path, key, &[draft(key)], key).unwrap();
             put_opening_message(&path, key, Some(&opening(key))).unwrap();
+            set_pinned_at(&path, key, true, if key == "codex:one" { 1 } else { 2 }).unwrap();
         }
         delete_session(&path, "codex:one").unwrap();
 
@@ -370,11 +368,38 @@ mod tests {
         assert!(state.annotation_drafts.contains_key("opencode:two"));
         assert!(!state.opening_messages.contains_key("codex:one"));
         assert!(state.opening_messages.contains_key("opencode:two"));
+        assert_eq!(state.pinned_sessions, ["opencode:two"]);
         fs::remove_file(path).ok();
     }
 
     #[test]
-    fn shares_the_favorites_database_without_schema_conflicts() {
+    fn pins_are_ordered_and_limited_to_ten_sessions() {
+        let path = database_path("pins");
+        for index in 0..MAX_PINNED_SESSIONS {
+            set_pinned_at(&path, &format!("codex:{index}"), true, index as i64).unwrap();
+        }
+        let pins = load(&path).unwrap().pinned_sessions;
+        assert_eq!(pins.first().map(String::as_str), Some("codex:9"));
+        assert_eq!(pins.last().map(String::as_str), Some("codex:0"));
+        assert_eq!(
+            set_pinned_at(&path, "codex:overflow", true, 11).unwrap_err(),
+            PIN_LIMIT_ERROR
+        );
+        set_pinned_at(&path, "codex:4", false, 0).unwrap();
+        set_pinned_at(&path, "codex:replacement", true, 12).unwrap();
+        assert_eq!(
+            load(&path)
+                .unwrap()
+                .pinned_sessions
+                .first()
+                .map(String::as_str),
+            Some("codex:replacement")
+        );
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn shares_the_studio_database_without_schema_conflicts() {
         let path = database_path("shared");
         crate::favorites::initialize(&path).unwrap();
         replace_annotations(&path, "codex:one", &[draft("shared")], "").unwrap();

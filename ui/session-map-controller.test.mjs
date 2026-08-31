@@ -67,6 +67,7 @@ function controllerFixture(overrides = {}) {
     view: {
       selectedStateKey: () => `${state.backend}:${state.selectedId}`,
       activateRightWorkspace: () => {},
+      deactivateRightWorkspace: () => {},
       closeActionMenus: () => {},
       toggleActionMenu: () => {},
       closeAnnotationRail: () => {},

@@ -142,7 +142,7 @@ import {
 import {
   annotationPromptDefaults,
   getLocale,
-  migrateLocalizedTemplates,
+  normalizeLocalizedTemplates,
   resolveLanguage,
   setLanguage,
   startTranslationObserver,
@@ -169,6 +169,7 @@ import {
   isCatalogCacheFresh,
   isSessionDirectoryHidden,
   normalizeHiddenSessionDirectories,
+  partitionPinnedCatalogEntries,
   syncCatalogSelection,
   threadCatalogKey,
 } from './thread-catalog.mjs'
@@ -272,6 +273,7 @@ function defaultAnnotationPrompt(locale = getLocale()) {
 const state = {
   backend: 'codex',
   selectedByBackend: emptyBackendSelections(),
+  startupRouterSelectionPending: true,
   socket: null,
   eventSource: null,
   socketGeneration: 0,
@@ -299,6 +301,7 @@ const state = {
   sessionLibrary: createSessionLibraryState(),
   threadSearch: createThreadSearchState(),
   attentionThreads: new Set(),
+  pinnedSessions: new Set(),
   collapsedThreadGroups: new Set(),
   model: createCodexViewModel(),
   language: 'system',
@@ -325,7 +328,7 @@ const state = {
   activeRightWorkspace: null,
   ...createReviewNotesState(),
   annotationPromptTemplates: {},
-  annotationPromptTemplate: annotationPromptDefaults['en-US'],
+  activeAnnotationPromptTemplate: annotationPromptDefaults['en-US'],
   openingMessages: {},
   ...createDocumentWorkspaceState(),
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
@@ -431,8 +434,7 @@ const sessionResources = createSessionResourcesUI({
   getBackend: () => state.backend,
   activate: activateRightWorkspace,
   deactivate: (tool) => {
-    if (state.activeRightWorkspace === tool) state.activeRightWorkspace = null
-    syncRightWorkspaceLaunchers()
+    deactivateRightWorkspace(tool)
     sessionMap.render()
   },
   openResource: openSessionResource,
@@ -531,6 +533,7 @@ const sessionMap = createSessionMapController({
   view: {
     selectedStateKey,
     activateRightWorkspace,
+    deactivateRightWorkspace,
     closeActionMenus,
     toggleActionMenu,
     closeAnnotationRail: () => reviewNotes.closeAnnotations(),
@@ -809,6 +812,10 @@ function bindUI() {
   $('#fork-thread').addEventListener('click', () => {
     closeActionMenus()
     forkSelectedThread()
+  })
+  $('#pin-thread').addEventListener('click', () => {
+    closeActionMenus()
+    toggleSelectedThreadPin()
   })
   $('#archive-thread').addEventListener('click', () => {
     closeActionMenus()
@@ -1801,14 +1808,18 @@ function handleAppServerMessage(message) {
   if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
     const backend = state.backend
     const threadId = message.params?.threadId
+    const sessionKey = `${backend}:${threadId}`
     sessionManagement.archive.markStale()
     if (message.method === 'thread/deleted') {
       sessionManagement.archive.remove(backend, threadId)
     }
     state.threads = state.threads.filter((thread) => thread.id !== threadId)
     state.threadsByBackend[backend] = state.threads
+    if (state.pinnedSessions.delete(sessionKey) && message.method === 'thread/archived') {
+      persistSessionPin(sessionKey, false).catch(showError)
+    }
     if (message.method === 'thread/deleted') {
-      const deletedKey = `${backend}:${threadId}`
+      const deletedKey = sessionKey
       delete state.annotationDrafts[deletedKey]
       delete state.annotationAdditional[deletedKey]
       delete state.openingMessages[deletedKey]
@@ -2022,6 +2033,7 @@ function handleOpenCodeServerEvent(event) {
   if (payload.type === 'session.deleted') {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
     const deletedKey = sessionRefKey('opencode', deletedId)
+    state.pinnedSessions.delete(deletedKey)
     delete state.annotationDrafts[deletedKey]
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
@@ -2832,12 +2844,21 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
   const backend = state.backend
   const socketGeneration = state.socketGeneration
   const archiveOpen = sessionManagement.archive.isOpen()
+  if (state.startupRouterSelectionPending && !archiveOpen) {
+    const routerId = await threadRouter.ensureManagedSession(backend)
+    if (state.backend !== backend || state.socketGeneration !== socketGeneration || !state.ready) return false
+    state.selectedByBackend[backend] = routerId
+    state.selectedId = routerId
+    state.startupRouterSelectionPending = false
+  }
   const preferred = state.selectedId
+  const preferredIsRouter = Boolean(preferred) && isRouterThread(preferred, backend)
   const knownPreferred = !archiveOpen && preferred
     ? state.threadsByBackend[backend].find((thread) => thread.id === preferred)
     : null
   const preferredVisible = knownPreferred
-    && !isSessionDirectoryHidden(knownPreferred.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore)
+    && (preferredIsRouter
+      || !isSessionDirectoryHidden(knownPreferred.cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore))
   let preferredLoad = null
   let preferredUsedCache = false
   let preferredVerified = false
@@ -2866,10 +2887,11 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
   const preferredMissingFromCatalog = Boolean(preferred)
     && !listedThreads.some((thread) => thread.id === preferred)
   setActiveThreads(listedThreads, backend)
-  if (preferredLoad && knownPreferred && preferredMissingFromCatalog && isCodexBackend(backend)) {
+  if (preferredLoad && knownPreferred && preferredMissingFromCatalog
+    && (isCodexBackend(backend) || preferredIsRouter)) {
     mergeThreadIntoCatalog(backend, knownPreferred)
   }
-  if (backend === 'opencode' && preferredMissingFromCatalog) {
+  if (backend === 'opencode' && preferredMissingFromCatalog && !preferredIsRouter) {
     invalidateThreadModel(backend, preferred)
   }
   markThreadCatalogLoaded()
@@ -2937,7 +2959,7 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
   // Its already-started history/cache load remains authoritative; keep that
   // selection so targeted catalog recovery can restore its metadata later.
   const preserveMissingPreferred = preferredLoad
-    && (!preferredMissingFromCatalog || isCodexBackend(backend))
+    && (!preferredMissingFromCatalog || isCodexBackend(backend) || preferredIsRouter)
   const nextId = preserveMissingPreferred
     ? preferred
     : visibleThreads.some((thread) => thread.id === preferred) ? preferred : recent?.id
@@ -3083,13 +3105,20 @@ function renderThreadList() {
     return `<button class="thread-row${active ? ' active' : ''}" data-thread-id="${escapeHtml(thread.id)}" data-backend="${backend}">
       <span class="status-dot ${escapeHtml(status)}"></span>
       <span class="thread-copy"><strong>${escapeHtml(title)}</strong><small data-no-i18n title="${escapeHtml(thread.cwd || t('Project directory not recorded'))}">${escapeHtml(thread.cwd || t('Project directory not recorded'))}</small></span>
-      <span class="thread-tags">${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${descriptor.name}">${tag}</span></span>
+      <span class="thread-tags">${state.pinnedSessions.has(threadCatalogKey(backend, thread.id)) ? `<span class="thread-pin" title="${t('Pinned')}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6"/></svg></span>` : ''}${router ? '<span class="backend-tag router" title="Thread Router">RT</span>' : ''}<span class="backend-tag ${backend}" title="${descriptor.name}">${tag}</span></span>
     </button>`
   }
+  const { pinnedEntries, regularEntries } = partitionPinnedCatalogEntries(entries, state.pinnedSessions)
+  const pinnedMarkup = pinnedEntries.length ? `<section class="thread-group pinned-thread-group">
+    <div class="thread-group-heading static pinned-heading">
+      <span class="thread-group-pin" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6"/></svg></span><strong>${t('Pinned')}</strong><span>${pinnedEntries.length}</span>
+    </div>
+    <div class="thread-group-sessions">${pinnedEntries.map(renderRow).join('')}</div>
+  </section>` : ''
   if (state.filter === 'attention') {
-    list.innerHTML = entries.map(renderRow).join('')
+    list.innerHTML = `${pinnedMarkup}${regularEntries.map(renderRow).join('')}`
   } else {
-    list.innerHTML = groupCatalogEntries(entries).map(({ cwd, name, entries: groupEntries }) => {
+    const groupedMarkup = groupCatalogEntries(regularEntries).map(({ cwd, name, entries: groupEntries }) => {
       const label = name || t('Other sessions')
       const collapsed = state.collapsedThreadGroups.has(cwd)
       return `<section class="thread-group${collapsed ? ' collapsed' : ''}" data-group-path="${escapeHtml(cwd)}">
@@ -3099,8 +3128,9 @@ function renderThreadList() {
         <div class="thread-group-sessions">${groupEntries.map(renderRow).join('')}</div>
       </section>`
     }).join('')
+    list.innerHTML = `${pinnedMarkup}${groupedMarkup}`
   }
-  list.querySelectorAll('.thread-group-heading').forEach((button) => button.addEventListener('click', () => {
+  list.querySelectorAll('button.thread-group-heading').forEach((button) => button.addEventListener('click', () => {
     const path = button.closest('.thread-group').dataset.groupPath
     if (state.collapsedThreadGroups.has(path)) state.collapsedThreadGroups.delete(path)
     else state.collapsedThreadGroups.add(path)
@@ -3775,7 +3805,7 @@ function renderWorkspace() {
   $('#composer-form').classList.toggle('hidden', archived)
   $('#archived-composer').classList.toggle('hidden', !archived)
   $('#thread-more-button').classList.toggle('hidden', !hasThread)
-  for (const id of ['rename-thread', 'fork-thread', 'archive-thread', 'refresh-thread', 'project-environment-action', 'session-map-action', 'router-settings-action']) {
+  for (const id of ['rename-thread', 'fork-thread', 'pin-thread', 'archive-thread', 'refresh-thread', 'project-environment-action', 'session-map-action', 'router-settings-action']) {
     $(`#${id}`).classList.toggle('hidden', archived)
   }
   $('.thread-action-menu .menu-separator')?.classList.toggle('hidden', archived)
@@ -3790,6 +3820,7 @@ function renderWorkspace() {
   $('#thread-path').textContent = thread.cwd || thread.id
   $('#archive-thread').disabled = archived || state.backend === 'opencode'
   $('#archive-thread').title = t(state.backend === 'opencode' ? 'The OpenCode backend does not support archiving yet' : 'Archive session')
+  syncPinThreadAction()
   $('#router-settings-action').classList.toggle('hidden', archived || !isRouterThread())
   if (!archived) {
     renderProjectEnvironmentEntry()
@@ -6287,8 +6318,12 @@ async function forkSelectedThread() {
 async function archiveSelectedThread() {
   if (!state.selectedId || !confirm(t('Archive the current Codex session?'))) return
   const threadId = state.selectedId
+  const key = selectedStateKey(threadId, state.backend)
   try {
     await rpc('thread/archive', { threadId })
+    if (state.pinnedSessions.delete(key)) {
+      persistSessionPin(key, false).catch(showError)
+    }
     discardComposerSessionState(state.backend, threadId)
     invalidateThreadModel(state.backend, threadId)
     state.selectedId = null
@@ -6309,6 +6344,7 @@ async function deleteSelectedThread() {
     await rpc('thread/delete', { threadId })
     invalidateThreadModel(state.backend, threadId)
     const deletedKey = `${state.backend}:${threadId}`
+    state.pinnedSessions.delete(deletedKey)
     delete state.annotationDrafts[deletedKey]
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
@@ -6356,6 +6392,11 @@ function activateRightWorkspace(tool) {
   }
   closeActionMenus()
   reviewNotes.hideSelection()
+  syncRightWorkspaceLaunchers()
+}
+
+function deactivateRightWorkspace(tool) {
+  if (state.activeRightWorkspace === tool) state.activeRightWorkspace = null
   syncRightWorkspaceLaunchers()
 }
 
@@ -6445,45 +6486,31 @@ async function loadPreferences() {
     agent: { enabled: false, provider: 'playwright-mcp', profile: 'persistent', approval: 'interactive', allowedOrigins: [] },
     ...(saved.browser || {}),
   }
-  state.backend = isSupportedBackend(saved.selectedBackend) ? saved.selectedBackend : 'codex'
+  state.router = normalizeThreadRouter(saved.router)
+  state.backend = isSupportedBackend(state.router.controllerBackend)
+    ? state.router.controllerBackend
+    : 'codex'
   state.selectedByBackend = emptyBackendSelections()
-  for (const [backend, id] of Object.entries(saved.selectedThreads || {})) {
-    if (isSupportedBackend(backend) && typeof id === 'string' && id) state.selectedByBackend[backend] = id
-  }
-  if (!state.selectedByBackend.codex && typeof saved.selectedThread === 'string') {
-    state.selectedByBackend.codex = saved.selectedThread
-  }
+  const routerId = state.router.controllers[state.backend]
+  if (typeof routerId === 'string' && routerId) state.selectedByBackend[state.backend] = routerId
+  state.startupRouterSelectionPending = true
   state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
-  state.annotationDrafts = normalizeAnnotationDrafts({
-    ...(saved.annotationDrafts || {}),
-    ...(storedSessionState.annotationDrafts || {}),
-  })
-  state.annotationAdditional = normalizeAdditional({
-    ...(saved.annotationAdditional || {}),
-    ...(storedSessionState.annotationAdditional || {}),
-  })
-  let initialLocale = resolveLanguage(state.language)
-  const templateMigration = migrateLocalizedTemplates(
-    saved.annotationPromptTemplates,
-    saved.annotationPromptTemplate,
-    initialLocale,
+  state.annotationDrafts = normalizeAnnotationDrafts(storedSessionState.annotationDrafts)
+  state.annotationAdditional = normalizeAdditional(storedSessionState.annotationAdditional)
+  state.pinnedSessions = new Set(
+    Array.isArray(storedSessionState.pinnedSessions)
+      ? storedSessionState.pinnedSessions.filter((key) => typeof key === 'string' && key.includes(':')).slice(0, 10)
+      : [],
   )
-  state.annotationPromptTemplates = templateMigration.templates
-  if (templateMigration.migratedLegacy && state.language === 'system') {
-    state.language = templateMigration.legacyLocale
-    initialLocale = resolveLanguage(state.language)
-  }
+  const initialLocale = resolveLanguage(state.language)
+  state.annotationPromptTemplates = normalizeLocalizedTemplates(saved.annotationPromptTemplates)
   if (!state.annotationPromptTemplates[initialLocale]) {
     state.annotationPromptTemplates[initialLocale] = defaultAnnotationPrompt(initialLocale)
   }
-  state.annotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
-  const storedOpeningMessages = normalizeOpeningMessages({
-    ...(saved.openingMessages || {}),
-    ...(storedSessionState.openingMessages || {}),
-  })
+  state.activeAnnotationPromptTemplate = state.annotationPromptTemplates[initialLocale]
+  const storedOpeningMessages = normalizeOpeningMessages(storedSessionState.openingMessages)
   state.openingMessages = migrateLegacyResponsibilities(storedOpeningMessages, saved.router)
-  state.router = normalizeThreadRouter(saved.router)
   preferencesReady = true
   for (const [key, message] of Object.entries(state.openingMessages)) {
     if (JSON.stringify(message) !== JSON.stringify(storedOpeningMessages[key])) {
@@ -6512,10 +6539,6 @@ function preferencesSnapshot() {
     markdown: state.markdown,
     desktopNotifications: state.desktopNotifications,
     browser: state.browser,
-    selectedThread: state.selectedByBackend.codex,
-    selectedBackend: state.backend,
-    selectedThreads: Object.fromEntries(Object.entries(state.selectedByBackend).filter(([, id]) => typeof id === 'string' && id)),
-    annotationPromptTemplate: state.annotationPromptTemplate,
     annotationPromptTemplates: state.annotationPromptTemplates,
     router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
   }
@@ -6567,6 +6590,52 @@ function persistOpeningMessageState(key) {
 function deletePersistedSessionState(key) {
   if (!key) return Promise.resolve()
   return queueSessionStateWrite('/studio/session-state/session', { sessionKey: key }, 'DELETE')
+}
+
+function persistSessionPin(key, pinned) {
+  if (!key) return Promise.resolve()
+  return queueSessionStateWrite('/studio/session-state/pin', { sessionKey: key, pinned })
+}
+
+function setPinnedSessionLocal(key, pinned) {
+  if (!key) return false
+  if (pinned) {
+    if (state.pinnedSessions.has(key)) return false
+    state.pinnedSessions = new Set([key, ...state.pinnedSessions])
+    return true
+  }
+  return state.pinnedSessions.delete(key)
+}
+
+async function toggleSelectedThreadPin() {
+  const key = selectedStateKey()
+  if (!key || isArchivedPreview()) return
+  const pinned = !state.pinnedSessions.has(key)
+  if (pinned && state.pinnedSessions.size >= 10) {
+    toast(t('You can pin up to 10 sessions.'), 'error')
+    return
+  }
+  const previousPins = new Set(state.pinnedSessions)
+  setPinnedSessionLocal(key, pinned)
+  renderThreadList()
+  syncPinThreadAction()
+  try {
+    await persistSessionPin(key, pinned)
+    toast(t(pinned ? 'Session pinned' : 'Session unpinned'))
+  } catch (error) {
+    state.pinnedSessions = previousPins
+    renderThreadList()
+    syncPinThreadAction()
+    showError(error)
+  }
+}
+
+function syncPinThreadAction() {
+  const action = $('#pin-thread')
+  if (!action) return
+  const pinned = state.pinnedSessions.has(selectedStateKey())
+  action.querySelector('span').textContent = t(pinned ? 'Unpin session' : 'Pin session')
+  action.setAttribute('aria-pressed', String(pinned))
 }
 
 function normalizeSharedDocumentDirectories(values = []) {
@@ -6658,7 +6727,7 @@ function populateSettingsForm() {
   $('#wsl-user').value = state.wsl.user
   $('#wsl-codex-binary').value = state.wsl.codexBinary
   $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
-  $('#annotation-template').value = state.annotationPromptTemplate
+  $('#annotation-template').value = state.activeAnnotationPromptTemplate
   $('#settings-error').classList.add('hidden')
   activateSettingsPane(activeSettingsPane)
 }
@@ -6714,10 +6783,10 @@ async function saveSettings(event) {
     }
   }
   const nextLocale = getLocale()
-  state.annotationPromptTemplate = nextLocale === previousLocale
+  state.activeAnnotationPromptTemplate = nextLocale === previousLocale
     ? template.slice(0, 32000)
     : state.annotationPromptTemplates[nextLocale] || defaultAnnotationPrompt(nextLocale)
-  state.annotationPromptTemplates[nextLocale] = state.annotationPromptTemplate
+  state.annotationPromptTemplates[nextLocale] = state.activeAnnotationPromptTemplate
   applyAppearance()
   try {
     await persistPreferences()
@@ -6982,7 +7051,7 @@ function resetSettings() {
   state.desktopNotifications = false
   state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
-  state.annotationPromptTemplate = defaultAnnotationPrompt()
+  state.activeAnnotationPromptTemplate = defaultAnnotationPrompt()
   populateSettingsForm()
   applyAppearance()
 }

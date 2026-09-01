@@ -7001,7 +7001,7 @@ function setPinnedSessionLocal(key, pinned) {
   if (!key) return false
   if (pinned) {
     if (state.pinnedSessions.has(key)) return false
-    state.pinnedSessions = new Set([key, ...state.pinnedSessions])
+    state.pinnedSessions = new Set([...state.pinnedSessions, key])
     return true
   }
   return state.pinnedSessions.delete(key)

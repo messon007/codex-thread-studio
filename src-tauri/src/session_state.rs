@@ -364,7 +364,7 @@ fn set_pinned_at(
 
 fn load_pins_with_connection(connection: &Connection) -> Result<Vec<String>, String> {
     let mut statement = connection
-        .prepare("SELECT session_key FROM session_pins ORDER BY pinned_at DESC, session_key ASC")
+        .prepare("SELECT session_key FROM session_pins ORDER BY pinned_at ASC, session_key ASC")
         .map_err(sql_error)?;
     let pins = statement
         .query_map([], |row| row.get(0))
@@ -547,8 +547,8 @@ mod tests {
             set_pinned_at(&path, &format!("codex:{index}"), true, index as i64).unwrap();
         }
         let pins = load(&path).unwrap().pinned_sessions;
-        assert_eq!(pins.first().map(String::as_str), Some("codex:9"));
-        assert_eq!(pins.last().map(String::as_str), Some("codex:0"));
+        assert_eq!(pins.first().map(String::as_str), Some("codex:0"));
+        assert_eq!(pins.last().map(String::as_str), Some("codex:9"));
         assert_eq!(
             set_pinned_at(&path, "codex:overflow", true, 11).unwrap_err(),
             PIN_LIMIT_ERROR
@@ -559,7 +559,7 @@ mod tests {
             load(&path)
                 .unwrap()
                 .pinned_sessions
-                .first()
+                .last()
                 .map(String::as_str),
             Some("codex:replacement")
         );

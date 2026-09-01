@@ -27,6 +27,11 @@ import {
 } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
 import {
+  completedQueueShouldAdvance,
+  normalizeQueueDepth,
+  normalizeStoredMessageQueues,
+} from './message-queue.mjs'
+import {
   catalogListParams,
   mergeCatalogMetadata,
   shouldRecoverCodexCatalog,
@@ -317,6 +322,7 @@ const state = {
   markdown: { mode: 'technical' },
   translation: { models: {}, efforts: {} },
   desktopNotifications: false,
+  queueDepth: 1,
   appServerCapabilities: {},
   appServerInitialization: null,
   appServerGenerations: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, null])),
@@ -335,6 +341,10 @@ const state = {
   composerMenu: { type: null, trigger: null, options: [], selected: 0, generation: 0 },
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
+  messageQueues: {},
+  pausedMessageQueues: new Set(),
+  runningMessageQueues: new Set(),
+  messageQueueErrors: new Map(),
   pendingSkills: {},
   pendingFiles: {},
   pendingImages: {},
@@ -357,6 +367,7 @@ let transcriptFrame = null
 const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
+let editingQueuedMessage = null
 let codexCatalogFocusRefreshAt = 0
 let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
@@ -845,6 +856,12 @@ function bindUI() {
   $('#composer-menu').addEventListener('mousedown', (event) => event.preventDefault())
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
+  $('#queue-message').addEventListener('click', queueComposerMessage)
+  $('#resume-message-queue').addEventListener('click', resumeSelectedMessageQueue)
+  $('#composer-queue-items').addEventListener('click', handleMessageQueueClick)
+  $('#edit-queued-message-form').addEventListener('submit', saveEditedQueuedMessage)
+  $('#close-edit-queued-message').addEventListener('click', closeQueuedMessageEditor)
+  $('#cancel-edit-queued-message').addEventListener('click', closeQueuedMessageEditor)
   $('#turn-navigator-list').addEventListener('click', handleTurnNavigatorClick)
   $('#open-browser-workspace').addEventListener('click', () => openGlobalBrowser().catch(showError))
   $('#transcript').addEventListener('scroll', handleTranscriptScroll, { passive: true })
@@ -1846,6 +1863,9 @@ function handleAppServerMessage(message) {
       delete state.annotationAdditional[deletedKey]
       delete state.openingMessages[deletedKey]
       delete state.turnOptions[deletedKey]
+      delete state.messageQueues[deletedKey]
+      state.pausedMessageQueues.delete(deletedKey)
+      state.messageQueueErrors.delete(deletedKey)
       deletePersistedSessionState(deletedKey)
     }
     threadRouter.removeSession(backend, threadId)
@@ -1878,6 +1898,13 @@ function handleAppServerMessage(message) {
 
   updateCodexReplyTime(message)
   observeCodexTurnLatency(message)
+  if (message.method === 'turn/completed') {
+    const threadId = message.params?.threadId || message.params?.thread?.id || message.params?.turn?.threadId
+    if (threadId) handleQueuedTurnCompletion(
+      { backend, id: threadId },
+      message.params?.turn?.status || message.params?.status || 'completed',
+    )
+  }
 
   if (message.id != null && message.method) {
     if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
@@ -2040,6 +2067,11 @@ function handleOpenCodeServerEvent(event) {
   const payload = event?.payload || event
   if (!payload?.type || payload.type === 'sync' || payload.type === 'server.heartbeat') return
   const eventThreadId = openCodeEventThreadId(payload)
+  if (eventThreadId && payload.type === 'session.idle') {
+    handleQueuedTurnCompletion({ backend: 'opencode', id: eventThreadId }, 'completed')
+  } else if (eventThreadId && (payload.type === 'session.error' || payload.type === 'session.abort')) {
+    handleQueuedTurnCompletion({ backend: 'opencode', id: eventThreadId }, 'failed')
+  }
   bufferOpenCodeHistoryEvent(eventThreadId, event)
   const repeatedTerminalLoop = openCodeLoopGuard.observe(payload)
   if (repeatedTerminalLoop) abortRepeatedOpenCodeTerminalLoop(repeatedTerminalLoop)
@@ -2061,6 +2093,9 @@ function handleOpenCodeServerEvent(event) {
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
     delete state.turnOptions[deletedKey]
+    delete state.messageQueues[deletedKey]
+    state.pausedMessageQueues.delete(deletedKey)
+    state.messageQueueErrors.delete(deletedKey)
     deletePersistedSessionState(deletedKey)
     discardComposerSessionState('opencode', deletedId)
     if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
@@ -5708,7 +5743,9 @@ async function openModelCommand() {
   showCommandDialog('Model', '<div class="command-empty">Loading models from App Server…</div>')
   const models = await loadBackendModels({ refresh: true })
   const currentEffort = currentTurnOptions().effort
-  const defaultCard = `<div class="command-card"><strong>${t('Use the backend default model')}</strong><small>${t('Do not override the model or reasoning effort for this session')}</small><span></span><button class="subtle-button" type="button" data-model-default>${t('Use')}</button></div>`
+  const backendDefault = models.find((model) => model.isDefault)
+  const backendDefaultId = String(backendDefault?.model || backendDefault?.id || '')
+  const defaultCard = `<div class="command-card"><strong>${t('Use the backend default model')}</strong><small>${backendDefaultId ? t('Save the current backend default, {model}, for this session', { model: backendDefaultId }) : t('The backend did not identify a default model')}</small><span></span><button class="subtle-button" type="button" data-model-default${backendDefaultId ? '' : ' disabled'}>${t('Use')}</button></div>`
   $('#command-content').innerHTML = `<div class="command-list">${defaultCard}${models.map((model) => {
     const efforts = model.supportedReasoningEfforts || []
     const selectedEffort = efforts.some((entry) => entry.reasoningEffort === currentEffort)
@@ -5725,9 +5762,11 @@ async function openModelCommand() {
     const useDefault = button.hasAttribute('data-model-default')
     const effort = useDefault ? '' : button.closest('.command-card')?.querySelector('select')?.value
     if (useDefault) {
-      delete state.turnOptions[key]
+      if (!backendDefaultId) return
+      options = { model: backendDefaultId }
+      if (backendDefault.defaultReasoningEffort) options.effort = backendDefault.defaultReasoningEffort
+      state.turnOptions[key] = options
       persistSessionTurnOptions(key).catch(showError)
-      options = currentTurnOptions()
     } else {
       options.model = button.dataset.model
       if (effort) options.effort = effort
@@ -5737,7 +5776,7 @@ async function openModelCommand() {
     $('#command-dialog').close()
     renderComposerState()
     toast(useDefault
-      ? t('This session now uses the backend default model')
+      ? t('This session now uses the saved backend default model {model}', { model: options.model })
       : t('Selected model {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
 }
@@ -5909,15 +5948,179 @@ function renderComposerState() {
   $('#composer-model').setAttribute('aria-label', `Current model and effort: ${display.label}`)
   const shellCommand = shellCommandFromComposer($('#composer-input').value)
   const shellMode = shellCommand !== null
+  const queue = state.messageQueues[selectedStateKey()] || []
+  const queueAvailable = active && !shellMode && !isRouterThread()
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   renderComposerImages()
   $('#interrupt-turn').classList.toggle('hidden', !active)
+  $('#queue-message').classList.toggle('hidden', !queueAvailable)
+  $('#queue-message').textContent = queue.length >= state.queueDepth ? `${t('Queue')} (${queue.length}/${state.queueDepth})` : t('Queue')
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
+  $('#send-message').classList.toggle('hidden', active && state.backend === 'opencode')
   $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
   $('#composer-add-image').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode')
+  renderMessageQueue()
+  if (queue.length && !active && !state.pausedMessageQueues.has(selectedStateKey()) && !state.runningMessageQueues.has(selectedStateKey())) {
+    const ref = { backend: state.backend, id: state.selectedId }
+    queueMicrotask(() => runNextQueuedMessage(ref).catch((error) => console.error('Queued turn failed', error)))
+  }
   reviewNotes.renderComposerContext()
+}
+
+function renderMessageQueue() {
+  const key = selectedStateKey()
+  const queue = state.messageQueues[key] || []
+  const panel = $('#composer-message-queue')
+  panel.classList.toggle('hidden', !queue.length)
+  if (!queue.length) {
+    $('#composer-queue-items').replaceChildren()
+    return
+  }
+  const paused = state.pausedMessageQueues.has(key)
+  const running = state.runningMessageQueues.has(key)
+  const error = state.messageQueueErrors.get(key)
+  $('#composer-queue-status').textContent = error
+    ? `${t('Paused')} · ${error}`
+    : running ? t('Sending…') : paused ? t('Paused') : state.model.activeTurnId ? t('Waiting for current turn') : t('Ready')
+  $('#resume-message-queue').classList.toggle('hidden', !paused || Boolean(state.model.activeTurnId) || running)
+  $('#composer-queue-items').innerHTML = queue.map((message, index) => `<div class="composer-queue-item" data-queue-id="${escapeHtml(message.id)}">
+    <span class="composer-queue-index">${index + 1}</span>
+    <span class="composer-queue-text" title="${escapeHtml(message.text)}">${escapeHtml(message.text || t('Message with attachments'))}</span>
+    <span class="composer-queue-actions"><button type="button" data-queue-edit="${escapeHtml(message.id)}"${running ? ' disabled' : ''}>${t('Edit')}</button><button type="button" data-queue-delete="${escapeHtml(message.id)}"${running ? ' disabled' : ''}>${t('Delete')}</button></span>
+  </div>`).join('')
+}
+
+async function queueComposerMessage() {
+  const key = selectedStateKey()
+  const queue = state.messageQueues[key] || []
+  const wasPaused = state.pausedMessageQueues.has(key)
+  const previousError = state.messageQueueErrors.get(key)
+  if (queue.length >= state.queueDepth) {
+    $('#composer-message-queue').scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    return
+  }
+  const input = $('#composer-input')
+  const text = input.value.trim()
+  if (text.length > 64 * 1024) {
+    showError(new Error(t('Queued messages must be 65,536 characters or fewer.')))
+    return
+  }
+  const pendingImages = state.pendingImages[key] || []
+  if (pendingImages.length) {
+    showError(new Error(t('Image messages cannot be queued. Send or steer them directly.')))
+    return
+  }
+  const skillInputs = [...(state.pendingSkills[key] || [])]
+  const fileInputs = [...(state.pendingFiles[key] || [])]
+  if (!text && !skillInputs.length && !fileInputs.length) return
+  const message = {
+    id: randomId(),
+    text,
+    input: [...skillInputs, ...fileInputs],
+    createdAt: Date.now(),
+  }
+  state.messageQueues[key] = [...queue, message]
+  if (!queue.length) {
+    state.pausedMessageQueues.delete(key)
+    state.messageQueueErrors.delete(key)
+  }
+  try {
+    await persistMessageQueue(key)
+  } catch (error) {
+    state.messageQueues[key] = queue
+    if (wasPaused) state.pausedMessageQueues.add(key)
+    else state.pausedMessageQueues.delete(key)
+    if (previousError) state.messageQueueErrors.set(key, previousError)
+    else state.messageQueueErrors.delete(key)
+    showError(error)
+    renderComposerState()
+    return
+  }
+  setComposerDraftValue(key, '')
+  state.pendingSkills[key] = []
+  state.pendingFiles[key] = []
+  hideComposerMenu()
+  renderComposerState()
+  toast(t('Message queued'))
+}
+
+function handleMessageQueueClick(event) {
+  if (state.runningMessageQueues.has(selectedStateKey())) return
+  const edit = event.target.closest('[data-queue-edit]')
+  if (edit) openQueuedMessageEditor(edit.dataset.queueEdit)
+  const remove = event.target.closest('[data-queue-delete]')
+  if (remove) deleteQueuedMessage(remove.dataset.queueDelete).catch(showError)
+}
+
+function openQueuedMessageEditor(id) {
+  const key = selectedStateKey()
+  const message = (state.messageQueues[key] || []).find((entry) => entry.id === id)
+  if (!message) return
+  editingQueuedMessage = { key, id }
+  $('#edit-queued-message-text').value = message.text
+  const attachmentCount = message.input.filter((entry) => entry.type !== 'text').length
+  $('#edit-queued-message-note').textContent = attachmentCount ? t('{count} file or skill references will be kept.', { count: attachmentCount }) : ''
+  $('#edit-queued-message-note').classList.toggle('hidden', !attachmentCount)
+  $('#edit-queued-message-dialog').showModal()
+  setTimeout(() => $('#edit-queued-message-text').focus(), 30)
+}
+
+function closeQueuedMessageEditor() {
+  editingQueuedMessage = null
+  $('#edit-queued-message-dialog').close()
+}
+
+async function saveEditedQueuedMessage(event) {
+  event.preventDefault()
+  if (!editingQueuedMessage) return
+  const { key, id } = editingQueuedMessage
+  const message = (state.messageQueues[key] || []).find((entry) => entry.id === id)
+  if (!message) return closeQueuedMessageEditor()
+  const text = $('#edit-queued-message-text').value.trim()
+  if (!text && !message.input.length) return
+  const previousText = message.text
+  const previousInput = message.input
+  message.text = text
+  message.input = message.input.filter((entry) => entry.type !== 'text')
+  try {
+    await persistMessageQueue(key)
+    closeQueuedMessageEditor()
+    if (key === selectedStateKey()) renderComposerState()
+  } catch (error) {
+    message.text = previousText
+    message.input = previousInput
+    showError(error)
+  }
+}
+
+async function deleteQueuedMessage(id) {
+  const key = selectedStateKey()
+  const previous = state.messageQueues[key] || []
+  const wasPaused = state.pausedMessageQueues.has(key)
+  const previousError = state.messageQueueErrors.get(key)
+  state.messageQueues[key] = previous.filter((message) => message.id !== id)
+  if (!state.messageQueues[key].length) {
+    delete state.messageQueues[key]
+    state.pausedMessageQueues.delete(key)
+    state.messageQueueErrors.delete(key)
+  }
+  try { await persistMessageQueue(key) }
+  catch (error) {
+    state.messageQueues[key] = previous
+    if (wasPaused) state.pausedMessageQueues.add(key)
+    if (previousError) state.messageQueueErrors.set(key, previousError)
+    throw error
+  } finally { renderComposerState() }
+}
+
+function resumeSelectedMessageQueue() {
+  const key = selectedStateKey()
+  state.pausedMessageQueues.delete(key)
+  state.messageQueueErrors.delete(key)
+  renderComposerState()
+  runNextQueuedMessage(sessionRefFromKey(key)).catch((error) => console.error('Queue resume failed', error))
 }
 
 function renderComposerImages() {
@@ -6011,6 +6214,109 @@ async function prepareComposerTurn(ref) {
     return
   }
   await sessionDispatch.prepareTurn(ref)
+}
+
+function sessionRefFromKey(key) {
+  const separator = String(key || '').indexOf(':')
+  return separator > 0 ? { backend: key.slice(0, separator), id: key.slice(separator + 1) } : null
+}
+
+function messageQueueModel(ref) {
+  if (!ref) return null
+  if (state.backend === ref.backend && state.selectedId === ref.id) return state.model
+  return state.threadModels.get(threadCatalogKey(ref.backend, ref.id))?.model || null
+}
+
+function sessionTurnOptions(ref) {
+  if (!ref) return {}
+  return { ...(state.turnOptions[selectedStateKey(ref.id, ref.backend)] || defaultTurnOptions(ref.backend)) }
+}
+
+function queuedTurnOptions(ref) {
+  const options = sessionTurnOptions(ref)
+  return selectedStateKey(ref.id, ref.backend) === selectedStateKey()
+    ? configuredTurnOptions(options)
+    : options
+}
+
+function pauseMessageQueue(ref, reason = '') {
+  if (!ref) return
+  const key = selectedStateKey(ref.id, ref.backend)
+  if (!(state.messageQueues[key] || []).length) return
+  state.pausedMessageQueues.add(key)
+  if (reason) state.messageQueueErrors.set(key, reason)
+  if (key === selectedStateKey()) renderComposerState()
+}
+
+function handleQueuedTurnCompletion(ref, status) {
+  const key = selectedStateKey(ref.id, ref.backend)
+  if (!(state.messageQueues[key] || []).length) return
+  if (!completedQueueShouldAdvance(status, state.pausedMessageQueues.has(key))) {
+    if (state.pausedMessageQueues.has(key)) return
+    pauseMessageQueue(ref, t('Previous turn did not complete normally'))
+    return
+  }
+  queueMicrotask(() => runNextQueuedMessage(ref).catch((error) => console.error('Queued turn failed', error)))
+}
+
+async function runNextQueuedMessage(ref) {
+  if (!ref || !isSupportedBackend(ref.backend)) return
+  const key = selectedStateKey(ref.id, ref.backend)
+  const queue = state.messageQueues[key] || []
+  if (!queue.length || state.pausedMessageQueues.has(key) || state.runningMessageQueues.has(key)) return
+  if (messageQueueModel(ref)?.activeTurnId) return
+  const message = queue[0]
+  state.runningMessageQueues.add(key)
+  state.messageQueueErrors.delete(key)
+  let accepted = false
+  if (key === selectedStateKey()) renderComposerState()
+  try {
+    const clientUserMessageId = randomId()
+    const result = await startTurnWithPreparation({
+      registry: sessionDispatch,
+      ref,
+      prepare: () => prepareComposerTurn(ref),
+      start: () => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams(
+        backendDescriptor(ref.backend).kind,
+        threadForRef(ref),
+        {
+          threadId: ref.id,
+          clientUserMessageId,
+          input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
+          ...queuedTurnOptions(ref),
+        },
+      )),
+      recoverThreadNotFound: isCodexBackend(ref.backend),
+    })
+    const model = messageQueueModel(ref)
+    if (result?.turn && model) applyTurnAcknowledgement(model, result.turn, ref.id)
+    accepted = true
+    const current = state.messageQueues[key] || []
+    if (current[0]?.id === message.id) current.shift()
+    if (!current.length) {
+      delete state.messageQueues[key]
+      state.pausedMessageQueues.delete(key)
+    }
+    await persistMessageQueue(key)
+    if (key === selectedStateKey()) {
+      if (result?.turn) renderTranscript()
+      toast(t('Queued message sent'))
+    }
+  } catch (error) {
+    if (accepted) {
+      const current = state.messageQueues[key] || (state.messageQueues[key] = [])
+      if (!current.some((entry) => entry.id === message.id)) current.unshift(message)
+    }
+    state.pausedMessageQueues.add(key)
+    state.messageQueueErrors.set(key, accepted
+      ? t('The message was accepted, but the queue could not be updated. Verify the conversation before resuming.')
+      : String(error?.message || error))
+    if (key === selectedStateKey()) showError(error)
+    throw error
+  } finally {
+    state.runningMessageQueues.delete(key)
+    if (key === selectedStateKey()) renderComposerState()
+  }
 }
 
 async function sendComposer(event) {
@@ -6207,6 +6513,7 @@ function mergeThreadIntoCatalog(backend, incoming) {
 
 async function interruptTurn() {
   if (!state.selectedId || !state.model.activeTurnId) return
+  pauseMessageQueue({ backend: state.backend, id: state.selectedId })
   try {
     await rpc('turn/interrupt', { threadId: state.selectedId, turnId: state.model.activeTurnId })
     toast('Requested interruption of the current turn')
@@ -6411,6 +6718,9 @@ async function deleteSelectedThread() {
     delete state.annotationAdditional[deletedKey]
     delete state.openingMessages[deletedKey]
     delete state.turnOptions[deletedKey]
+    delete state.messageQueues[deletedKey]
+    state.pausedMessageQueues.delete(deletedKey)
+    state.messageQueueErrors.delete(deletedKey)
     deletePersistedSessionState(deletedKey)
     discardComposerSessionState(state.backend, threadId)
     state.selectedId = null
@@ -6539,6 +6849,7 @@ async function loadPreferences() {
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
   state.translation = normalizeTranslationPreferences(saved.translation)
   state.desktopNotifications = Boolean(saved.desktopNotifications)
+  state.queueDepth = normalizeQueueDepth(saved.queueDepth)
   state.browser = {
     enabled: true,
     restoreTabs: false,
@@ -6561,6 +6872,10 @@ async function loadPreferences() {
   state.attentionThreads = new Set()
   state.selectedId = state.selectedByBackend[state.backend]
   state.turnOptions = normalizeStoredTurnOptions(storedSessionState.turnOptions)
+  state.messageQueues = normalizeStoredMessageQueues(storedSessionState.messageQueues)
+  state.pausedMessageQueues = new Set(Object.keys(state.messageQueues))
+  state.runningMessageQueues = new Set()
+  state.messageQueueErrors = new Map()
   state.annotationDrafts = normalizeAnnotationDrafts(storedSessionState.annotationDrafts)
   state.annotationAdditional = normalizeAdditional(storedSessionState.annotationAdditional)
   state.pinnedSessions = new Set(
@@ -6604,6 +6919,7 @@ function preferencesSnapshot() {
     markdown: state.markdown,
     translation: state.translation,
     desktopNotifications: state.desktopNotifications,
+    queueDepth: state.queueDepth,
     browser: state.browser,
     annotationPromptTemplates: state.annotationPromptTemplates,
     router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
@@ -6660,6 +6976,14 @@ function persistSessionTurnOptions(key) {
     sessionKey: key,
     model: String(options.model || ''),
     effort: String(options.effort || ''),
+  })
+}
+
+function persistMessageQueue(key) {
+  if (!key) return Promise.resolve()
+  return queueSessionStateWrite('/studio/session-state/message-queue', {
+    sessionKey: key,
+    messages: state.messageQueues[key] || [],
   })
 }
 
@@ -6784,6 +7108,7 @@ function populateSettingsForm() {
   $('#language-select').value = state.language
   $('#theme-select').value = state.theme
   $('#content-width').value = state.contentWidth
+  $('#queue-depth').value = String(state.queueDepth)
   $('#shared-document-directories').value = state.sharedDocumentDirectories.join('\n')
   $('#ui-font-family').value = state.typography.uiFontFamily
   $('#ui-font-size').value = String(state.typography.uiFontSize)
@@ -6847,6 +7172,7 @@ async function saveSettings(event) {
   syncEmbeddedBrowserTranslations()
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
+  state.queueDepth = normalizeQueueDepth($('#queue-depth').value)
   state.sharedDocumentDirectories = sharedDocumentDirectories
   const translationModel = $('#translation-model').value.trim().slice(0, 256)
   const translationEffort = $('#translation-effort').value
@@ -7148,6 +7474,7 @@ function resetSettings() {
   state.typography = { ...typographyDefaults }
   state.translation = normalizeTranslationPreferences(null)
   state.desktopNotifications = false
+  state.queueDepth = 1
   state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
   state.activeAnnotationPromptTemplate = defaultAnnotationPrompt()

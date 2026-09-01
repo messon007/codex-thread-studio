@@ -125,6 +125,7 @@ export function createReviewNotesController({
     $('#speak-selection-translation-output')?.addEventListener('click', () => speakSelectionTranslation('output').catch(showError))
     $('#close-annotation-rail')?.addEventListener('click', closeAnnotationRail)
     $('#annotation-form')?.addEventListener('submit', addAnnotation)
+    $('#annotation-comment')?.addEventListener('keydown', handleAnnotationCommentKeydown)
     $('#close-annotation-dialog')?.addEventListener('click', closeAnnotationDialog)
     $('#cancel-annotation')?.addEventListener('click', closeAnnotationDialog)
     $('#clear-annotations')?.addEventListener('click', clearAnnotations)
@@ -583,9 +584,15 @@ function addAnnotation(event) {
   renderAnnotationRail()
   renderComposerReviewContext()
   toast(editingId ? 'Comment updated' : 'Comment added to reply draft')
-}
+  }
 
-function openAnnotationRail() {
+  function handleAnnotationCommentKeydown(event) {
+    if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return
+    event.preventDefault()
+    $('#annotation-form')?.requestSubmit($('#save-annotation'))
+  }
+
+  function openAnnotationRail() {
   activateRightWorkspace('comments')
   renderAnnotationRail()
 }

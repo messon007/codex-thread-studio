@@ -44,10 +44,11 @@ test('session state mutations use bounded per-session endpoints', () => {
   assert.match(app, /const payload = JSON\.stringify\(body\)/u)
 })
 
-test('session model and effort choices are persisted and can return to backend defaults', () => {
+test('session model and effort choices persist the concrete backend default', () => {
   assert.match(app, /persistSessionTurnOptions\(key\)/u)
   assert.match(app, /data-model-default/u)
-  assert.match(app, /delete state\.turnOptions\[key\][\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
+  assert.match(app, /backendDefaultId[\s\S]{0,1200}state\.turnOptions\[key\] = options[\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
+  assert.doesNotMatch(app, /if \(useDefault\) \{[\s\S]{0,160}delete state\.turnOptions\[key\]/u)
   assert.match(app, /model: String\(options\.model \|\| ''\)/u)
   assert.match(app, /effort: String\(options\.effort \|\| ''\)/u)
   assert.match(app, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(key\)/u)

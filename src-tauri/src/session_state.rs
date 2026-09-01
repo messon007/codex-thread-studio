@@ -4,7 +4,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{AnnotationDraft, OpeningMessage};
 
@@ -18,6 +19,16 @@ pub(crate) struct SessionTurnOptions {
     pub(crate) effort: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueuedMessage {
+    pub(crate) id: String,
+    pub(crate) text: String,
+    #[serde(default)]
+    pub(crate) input: Vec<Value>,
+    pub(crate) created_at: i64,
+}
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionStateSnapshot {
@@ -26,6 +37,7 @@ pub(crate) struct SessionStateSnapshot {
     pub(crate) opening_messages: BTreeMap<String, OpeningMessage>,
     pub(crate) pinned_sessions: Vec<String>,
     pub(crate) turn_options: BTreeMap<String, SessionTurnOptions>,
+    pub(crate) message_queues: BTreeMap<String, Vec<QueuedMessage>>,
 }
 
 pub(crate) fn initialize(path: &Path) -> Result<(), String> {
@@ -107,6 +119,22 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
     for row in rows {
         let (session_key, options) = row.map_err(sql_error)?;
         snapshot.turn_options.insert(session_key, options);
+    }
+    drop(statement);
+
+    let mut statement = connection
+        .prepare("SELECT session_key, queue_json FROM session_message_queues ORDER BY session_key")
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(sql_error)?;
+    for row in rows {
+        let (session_key, queue_json) = row.map_err(sql_error)?;
+        let queue = serde_json::from_str(&queue_json)
+            .map_err(|error| format!("invalid message queue for {session_key}: {error}"))?;
+        snapshot.message_queues.insert(session_key, queue);
     }
 
     Ok(snapshot)
@@ -216,6 +244,32 @@ pub(crate) fn put_turn_options(
     Ok(())
 }
 
+pub(crate) fn replace_message_queue(
+    path: &Path,
+    session_key: &str,
+    messages: &[QueuedMessage],
+) -> Result<(), String> {
+    let connection = connection(path)?;
+    if messages.is_empty() {
+        connection
+            .execute(
+                "DELETE FROM session_message_queues WHERE session_key = ?1",
+                [session_key],
+            )
+            .map_err(sql_error)?;
+    } else {
+        let queue_json = serde_json::to_string(messages).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO session_message_queues(session_key, queue_json) VALUES (?1, ?2)
+                 ON CONFLICT(session_key) DO UPDATE SET queue_json = excluded.queue_json",
+                params![session_key, queue_json],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), String> {
     let mut connection = connection(path)?;
     let transaction = connection.transaction().map_err(sql_error)?;
@@ -246,6 +300,12 @@ pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), Strin
     transaction
         .execute(
             "DELETE FROM session_turn_options WHERE session_key = ?1",
+            [session_key],
+        )
+        .map_err(sql_error)?;
+    transaction
+        .execute(
+            "DELETE FROM session_message_queues WHERE session_key = ?1",
             [session_key],
         )
         .map_err(sql_error)?;
@@ -346,6 +406,10 @@ fn connection(path: &Path) -> Result<Connection, String> {
                session_key TEXT PRIMARY KEY,
                model TEXT NOT NULL,
                effort TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_message_queues (
+               session_key TEXT PRIMARY KEY,
+               queue_json TEXT NOT NULL
              );",
         )
         .map_err(sql_error)?;
@@ -400,6 +464,17 @@ mod tests {
         put_opening_message(&path, "codex:one", Some(&opening("hello"))).unwrap();
         set_pinned_at(&path, "codex:one", true, 100).unwrap();
         put_turn_options(&path, "codex:one", "gpt-session", "high").unwrap();
+        replace_message_queue(
+            &path,
+            "codex:one",
+            &[QueuedMessage {
+                id: "queued-1".to_string(),
+                text: "later".to_string(),
+                input: vec![],
+                created_at: 123,
+            }],
+        )
+        .unwrap();
 
         let state = load(&path).unwrap();
         assert_eq!(state.annotation_drafts["codex:one"].len(), 2);
@@ -413,17 +488,20 @@ mod tests {
                 effort: "high".to_string(),
             }
         );
+        assert_eq!(state.message_queues["codex:one"][0].text, "later");
 
         replace_annotations(&path, "codex:one", &[], "").unwrap();
         put_opening_message(&path, "codex:one", None).unwrap();
         set_pinned_at(&path, "codex:one", false, 0).unwrap();
         put_turn_options(&path, "codex:one", "", "").unwrap();
+        replace_message_queue(&path, "codex:one", &[]).unwrap();
         let state = load(&path).unwrap();
         assert!(state.annotation_drafts.is_empty());
         assert!(state.annotation_additional.is_empty());
         assert!(state.opening_messages.is_empty());
         assert!(state.pinned_sessions.is_empty());
         assert!(state.turn_options.is_empty());
+        assert!(state.message_queues.is_empty());
         fs::remove_file(path).ok();
     }
 
@@ -435,6 +513,17 @@ mod tests {
             put_opening_message(&path, key, Some(&opening(key))).unwrap();
             set_pinned_at(&path, key, true, if key == "codex:one" { 1 } else { 2 }).unwrap();
             put_turn_options(&path, key, key, "medium").unwrap();
+            replace_message_queue(
+                &path,
+                key,
+                &[QueuedMessage {
+                    id: key.to_string(),
+                    text: key.to_string(),
+                    input: vec![],
+                    created_at: 1,
+                }],
+            )
+            .unwrap();
         }
         delete_session(&path, "codex:one").unwrap();
 
@@ -446,6 +535,8 @@ mod tests {
         assert_eq!(state.pinned_sessions, ["opencode:two"]);
         assert!(!state.turn_options.contains_key("codex:one"));
         assert_eq!(state.turn_options["opencode:two"].model, "opencode:two");
+        assert!(!state.message_queues.contains_key("codex:one"));
+        assert_eq!(state.message_queues["opencode:two"][0].text, "opencode:two");
         fs::remove_file(path).ok();
     }
 

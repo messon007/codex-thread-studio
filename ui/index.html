@@ -158,6 +158,10 @@
               <button id="composer-review-send-clear" type="button">Send and Clear</button>
             </div>
             <div id="composer-images" class="composer-images hidden" aria-label="Attached images"></div>
+            <section id="composer-message-queue" class="composer-message-queue hidden" aria-label="Queued messages">
+              <header><span><strong>Queue</strong><small id="composer-queue-status"></small></span><button id="resume-message-queue" class="subtle-button hidden" type="button">Resume</button></header>
+              <div id="composer-queue-items" class="composer-queue-items"></div>
+            </section>
             <textarea
               id="composer-input"
               rows="3"
@@ -180,6 +184,7 @@
               </div>
               <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
+                <button id="queue-message" class="subtle-button hidden" type="button">Queue</button>
                 <button id="send-message" class="primary-button" type="submit">Send</button>
               </div>
             </div>
@@ -607,6 +612,7 @@
                 <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
                 <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
                 <label class="field full"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
+                <label class="field"><span>Message queue depth</span><select id="queue-depth"><option value="1">1 message</option><option value="2">2 messages</option><option value="3">3 messages</option></select><small>Per session; queued messages pause after Stop, failure, or restart.</small></label>
                 <label class="field full"><span>Shared document directories</span><textarea id="shared-document-directories" rows="4" spellcheck="false" placeholder="One absolute path per line"></textarea><small>Files in these directories can be previewed read-only from any session.</small></label>
                 <label class="check-field full"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
                 <label class="check-field full"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
@@ -680,6 +686,14 @@
           </div>
         </div>
         <footer class="dialog-footer"><button id="reset-settings" class="subtle-button push-left" type="button">Restore defaults</button><button id="cancel-settings" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="edit-queued-message-dialog" class="dialog small-dialog">
+      <form id="edit-queued-message-form">
+        <header class="dialog-header"><div><span class="eyebrow">MESSAGE QUEUE</span><h2>Edit queued message</h2></div><button id="close-edit-queued-message" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body"><label class="field full"><span>Message</span><textarea id="edit-queued-message-text" rows="8" maxlength="65536" required></textarea></label><p id="edit-queued-message-note" class="field-note hidden"></p></div>
+        <footer class="dialog-footer"><button id="cancel-edit-queued-message" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 

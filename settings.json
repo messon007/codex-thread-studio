@@ -3,6 +3,7 @@
   "language": "system",
   "theme": "light",
   "contentWidth": "comfortable",
+  "queueDepth": 1,
   "sharedDocumentDirectories": [
     "/tmp"
   ],

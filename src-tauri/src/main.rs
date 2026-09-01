@@ -294,6 +294,8 @@ struct StudioPreferences {
     #[serde(default)]
     desktop_notifications: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    queue_depth: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
@@ -409,6 +411,14 @@ struct TurnOptionsStateRequest {
     model: String,
     #[serde(default)]
     effort: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageQueueStateRequest {
+    session_key: String,
+    #[serde(default)]
+    messages: Vec<session_state::QueuedMessage>,
 }
 
 #[derive(Deserialize)]
@@ -713,6 +723,10 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::put(put_turn_options_state),
         )
         .route(
+            "/studio/session-state/message-queue",
+            axum::routing::put(put_message_queue_state),
+        )
+        .route(
             "/studio/session-state/session",
             axum::routing::delete(delete_session_state),
         )
@@ -802,6 +816,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/selection-translation.mjs", get(selection_translation_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
+        .route("/message-queue.mjs", get(message_queue_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
         .route("/session-management.mjs", get(session_management_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
@@ -2017,6 +2032,10 @@ async fn model_display_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/model-display.mjs"))
 }
 
+async fn message_queue_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/message-queue.mjs"))
+}
+
 async fn session_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-catalog.mjs"))
 }
@@ -2613,6 +2632,46 @@ async fn put_turn_options_state(State(state): State<GatewayState>, body: String)
     }
 }
 
+async fn put_message_queue_state(
+    State(state): State<GatewayState>,
+    body: String,
+) -> Response<Body> {
+    let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let invalid_message = request.messages.len() > 3
+        || request.messages.iter().any(|message| {
+            message.id.is_empty()
+                || !valid_runtime_value(&message.id, 128)
+                || message.text.len() > 256 * 1024
+                || message.input.len() > 32
+                || message
+                    .input
+                    .iter()
+                    .any(|item| item.get("type").and_then(|value| value.as_str()) == Some("text"))
+        });
+    if request.session_key.is_empty()
+        || request.session_key.len() > 320
+        || !valid_router_session_key(&request.session_key)
+        || invalid_message
+    {
+        return json_error(StatusCode::BAD_REQUEST, "session message queue is invalid");
+    }
+    let _guard = match state.studio_lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return gateway_error("Studio database lock is unavailable"),
+    };
+    match session_state::replace_message_queue(
+        &state.studio_path,
+        &request.session_key,
+        &request.messages,
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => gateway_error(&format!("failed to save message queue: {error}")),
+    }
+}
+
 fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, Response<Body>> {
     if body.len() > MAX_PREFERENCES_BODY {
         return Err(json_error(
@@ -2953,6 +3012,12 @@ fn save_preferences(path: &std::path::Path, preferences: &StudioPreferences) -> 
 
 fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     preferences.browser.validate()?;
+    if preferences
+        .queue_depth
+        .is_some_and(|depth| !(1..=3).contains(&depth))
+    {
+        return Err("queue depth must be between 1 and 3".to_string());
+    }
     if preferences
         .language
         .as_deref()
@@ -3680,6 +3745,22 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .method(Method::PUT)
+                        .uri("/studio/session-state/message-queue")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"sessionKey":"codex:thread-1","messages":[{"id":"queued-1","text":"later","input":[],"createdAt":1}]}"#,
+                        ))
+                        .expect("message queue request"),
+                )
+                .await
+                .expect("message queue response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
                         .uri("/studio/session-state/pin")
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(
@@ -3735,6 +3816,10 @@ mod tests {
             assert_eq!(
                 value["turnOptions"]["codex:thread-1"],
                 json!({ "model": "gpt-session", "effort": "high" })
+            );
+            assert_eq!(
+                value["messageQueues"]["codex:thread-1"][0]["text"],
+                "later"
             );
 
             let response = router
@@ -4753,6 +4838,22 @@ mod tests {
         }
         let preferences = StudioPreferences {
             content_width: Some("unbounded".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_message_queue_depth() {
+        for depth in 1..=3 {
+            let preferences = StudioPreferences {
+                queue_depth: Some(depth),
+                ..StudioPreferences::default()
+            };
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+        let preferences = StudioPreferences {
+            queue_depth: Some(4),
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());

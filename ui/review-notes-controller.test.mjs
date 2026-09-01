@@ -33,6 +33,12 @@ test('chat comment markers reuse the existing comment dialog for editing', () =>
   assert.match(index, /id="save-annotation"/u)
 })
 
+test('single comment input matches Composer Enter behavior', () => {
+  const source = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
+  assert.match(source, /#annotation-comment'[)]\?\.addEventListener\('keydown', handleAnnotationCommentKeydown\)/u)
+  assert.match(source, /function handleAnnotationCommentKeydown\(event\) \{[\s\S]*event\.isComposing[\s\S]*event\.key !== 'Enter'[\s\S]*event\.shiftKey[\s\S]*event\.preventDefault\(\)[\s\S]*requestSubmit\(\$\('#save-annotation'\)\)/u)
+})
+
 test('clearing chat comments keeps marker spans in the text layout', () => {
   const classes = new Set(['chat-comment-anchor'])
   const removedAttributes = []

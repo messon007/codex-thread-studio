@@ -175,6 +175,19 @@ test('right-rail layout mutations preserve a live anchor independently of sessio
   assert.doesNotMatch(helper, /scrollState\(/u)
 })
 
+test('opening a file link from the transcript uses the live anchor transaction', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('async function handleTranscriptClick(')
+  const end = source.indexOf('\nfunction openActivityLog(', start)
+  const click = source.slice(start, end)
+
+  assert.ok(start >= 0 && end > start)
+  assert.ok(click.indexOf("event.currentTarget === $('#transcript')") < click.indexOf('preserveTranscriptLayout('))
+  assert.ok(click.indexOf('preserveTranscriptLayout(') < click.indexOf('await opening'))
+  assert.match(click, /preserveTranscriptLayout\(\(\) => \{ opening = openLinkedArtifact\(\) \}\)/u)
+  assert.match(click, /else \{\s*await openLinkedArtifact\(\)\s*\}/u)
+})
+
 test('terminal turn updates keep activities the reader explicitly expanded', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const replaceStart = source.indexOf('function replaceRenderedTurn(')

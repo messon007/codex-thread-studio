@@ -5376,7 +5376,17 @@ async function handleTranscriptClick(event) {
     }
     const file = resolveMarkdownFileLink(target)
     if (!file) return
-    await openArtifact({ root: selectedThread()?.cwd, path: file.path }, { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' })
+    const openLinkedArtifact = () => openArtifact(
+      { root: selectedThread()?.cwd, path: file.path },
+      { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' },
+    )
+    if (event.currentTarget === $('#transcript')) {
+      let opening
+      preserveTranscriptLayout(() => { opening = openLinkedArtifact() })
+      await opening
+    } else {
+      await openLinkedArtifact()
+    }
     if (file.line) jumpArtifactToLine(file.line, file.column)
     return
   }

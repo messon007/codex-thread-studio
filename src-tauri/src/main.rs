@@ -37,6 +37,7 @@ mod git_review;
 mod opencode_server;
 mod session_map;
 mod session_state;
+mod speech;
 mod terminal_runtime;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
@@ -280,6 +281,14 @@ impl Default for MarkdownPreferences {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+struct TranslationPreferences {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    models: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    efforts: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudioPreferences {
     #[serde(default)]
@@ -310,6 +319,8 @@ struct StudioPreferences {
     mermaid: MermaidPreferences,
     #[serde(default)]
     markdown: MarkdownPreferences,
+    #[serde(default)]
+    translation: TranslationPreferences,
     #[serde(default)]
     browser: BrowserPreferences,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -714,6 +725,8 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(apply_environment_profile),
         )
         .route("/studio/client-log", axum::routing::post(client_log))
+        .route("/studio/speech", get(speech::status).post(speech::speak))
+        .route("/studio/speech/stop", axum::routing::post(speech::stop))
         .route(
             "/studio/workspace/list",
             axum::routing::post(list_workspace_directory),
@@ -3007,6 +3020,29 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     ) {
         return Err("Markdown mode must be reading, technical, or compact".to_string());
     }
+    if preferences.translation.models.len() > 32
+        || preferences.translation.efforts.len() > 32
+        || preferences
+            .translation
+            .models
+            .iter()
+            .any(|(backend, model)| {
+                !valid_runtime_value(backend, 64) || !valid_runtime_value(model, 256)
+            })
+        || preferences
+            .translation
+            .efforts
+            .iter()
+            .any(|(backend, effort)| {
+                !valid_runtime_value(backend, 64)
+                    || !matches!(
+                        effort.as_str(),
+                        "minimal" | "low" | "medium" | "high" | "xhigh"
+                    )
+            })
+    {
+        return Err("translation model or reasoning effort settings are invalid".to_string());
+    }
     if preferences
         .wsl_distribution
         .as_ref()
@@ -3556,6 +3592,7 @@ mod tests {
 
             for path in [
                 "/studio/preferences",
+                "/studio/speech",
                 "/studio/session-state",
                 "/studio/favorites",
                 "/studio/session-map/codex/thread-1",
@@ -3711,6 +3748,10 @@ mod tests {
                             json!({
                                 "selectedBackend": "opencode",
                                 "selectedThreads": { "opencode": "legacy-session" },
+                                "translation": {
+                                    "models": { "codex": "gpt-fast" },
+                                    "efforts": { "codex": "low" }
+                                },
                                 "annotationDrafts": {
                                     "codex:thread-1": [{
                                         "id": "legacy-copy",
@@ -3734,6 +3775,11 @@ mod tests {
             assert!(saved_preferences.get("openingMessages").is_none());
             assert!(saved_preferences.get("selectedBackend").is_none());
             assert!(saved_preferences.get("selectedThreads").is_none());
+            assert_eq!(
+                saved_preferences["translation"]["models"]["codex"],
+                "gpt-fast"
+            );
+            assert_eq!(saved_preferences["translation"]["efforts"]["codex"], "low");
 
             let response = router
                 .oneshot(
@@ -4781,6 +4827,23 @@ mod tests {
         let mut invalid = StudioPreferences::default();
         invalid.mermaid.font_size = 24;
         assert!(validate_preferences(&invalid).is_err());
+
+        let mut translation = StudioPreferences::default();
+        translation
+            .translation
+            .models
+            .insert("codex".to_string(), "gpt-fast".to_string());
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "low".to_string());
+        assert!(validate_preferences(&translation).is_ok());
+
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "unbounded".to_string());
+        assert!(validate_preferences(&translation).is_err());
     }
 
     #[test]

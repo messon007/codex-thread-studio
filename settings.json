@@ -35,6 +35,11 @@
   "markdown": {
     "mode": "technical"
   },
+  "translation": {
+    "efforts": {
+      "codex": "low"
+    }
+  },
   "browser": {
     "enabled": false,
     "restoreTabs": true,

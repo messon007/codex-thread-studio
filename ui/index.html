@@ -595,6 +595,7 @@
             <span class="settings-navigation-label">Categories</span>
             <button class="settings-navigation-item active" type="button" role="tab" aria-selected="true" aria-controls="settings-pane-general" data-settings-pane="general"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>General</span></button>
             <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-typography" data-settings-pane="typography"><span class="settings-navigation-icon typography">Aa</span><span>Typography</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-translation" data-settings-pane="translation"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h8M9 4v2c0 4-2 7-5 9M7 11c1 2 3 4 6 5M14 19l3-8 3 8M15 16h4"/></svg></span><span>Translation</span></button>
             <button id="settings-backends-navigation" class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-backends" data-settings-pane="backends"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 12h10M9 17h6"/></svg></span><span>Backends</span></button>
             <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-comments" data-settings-pane="comments"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg></span><span>Comments</span></button>
           </nav>
@@ -634,6 +635,15 @@
                   <label class="field"><span>Weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
                 </section>
               </div>
+            </section>
+
+            <section id="settings-pane-translation" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="translation">
+              <header class="settings-pane-header"><h3>Translation</h3><p>Choose a faster model and lower reasoning effort for selection translation without changing the current session.</p></header>
+              <section class="settings-section settings-field-grid">
+                <header class="full"><strong id="translation-settings-backend">Current backend</strong><small>Translation stays on the selected backend. Each backend keeps its own choices.</small></header>
+                <label class="field full"><span>Translation model</span><input id="translation-model" list="translation-model-options" maxlength="256" placeholder="Use the current session model" /><datalist id="translation-model-options"></datalist><small>Leave blank to use the current session model; choose a fast model here when one is available.</small></label>
+                <label class="field full"><span>Translation reasoning effort</span><select id="translation-effort"><option value="">Model default</option><option value="minimal">Minimal</option><option value="low">Low · recommended for speed</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select><small>Codex translations default to Low. This does not alter the chat composer.</small></label>
+              </section>
             </section>
 
             <section id="settings-pane-backends" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="backends">

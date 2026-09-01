@@ -84,6 +84,7 @@ export function createReviewNotesController({
     loadThreads,
     selectThread,
     translateSelection,
+    translationProfile,
   } = view
   const $ = (selector) => document.querySelector(selector)
   const $$ = (selector) => [...document.querySelectorAll(selector)]
@@ -97,6 +98,9 @@ export function createReviewNotesController({
   let favoritesSearchTimer = null
   let translationGeneration = 0
   let activeTranslationSpeechButton = null
+  let activeTranslationSpeechMode = null
+  let nativeTranslationSpeechAvailable = false
+  let nativeTranslationSpeechRequest = null
   const deactivatedChatCommentMarkers = new Set()
 
   function bind() {
@@ -117,8 +121,8 @@ export function createReviewNotesController({
     $('#done-selection-translation')?.addEventListener('click', closeSelectionTranslation)
     $('#selection-translation-dialog')?.addEventListener('close', resetSelectionTranslation)
     $('#copy-selection-translation')?.addEventListener('click', () => copySelectionTranslation().catch(showError))
-    $('#speak-selection-translation-source')?.addEventListener('click', () => speakSelectionTranslation('source'))
-    $('#speak-selection-translation-output')?.addEventListener('click', () => speakSelectionTranslation('output'))
+    $('#speak-selection-translation-source')?.addEventListener('click', () => speakSelectionTranslation('source').catch(showError))
+    $('#speak-selection-translation-output')?.addEventListener('click', () => speakSelectionTranslation('output').catch(showError))
     $('#close-annotation-rail')?.addEventListener('click', closeAnnotationRail)
     $('#annotation-form')?.addEventListener('submit', addAnnotation)
     $('#close-annotation-dialog')?.addEventListener('click', closeAnnotationDialog)
@@ -277,7 +281,16 @@ async function openTranslationFromSelection() {
   const dialog = $('#selection-translation-dialog')
   stopSelectionTranslationSpeech()
   $('#selection-translation-source').textContent = quote
-  $('#selection-translation-backend').textContent = t('Translated by the current backend: {backend}', { backend: backendDescriptor(state.backend).name })
+  const profile = translationProfile()
+  const modelSource = t(profile.modelSource === 'translation'
+    ? 'Translation setting'
+    : profile.modelSource === 'session' ? 'Session setting' : 'Backend default')
+  $('#selection-translation-backend').textContent = t('{backend} · Model: {model} · {source} · Effort: {effort}', {
+    backend: profile.backendName,
+    model: profile.displayModel,
+    source: modelSource,
+    effort: profile.effort || t('Model default'),
+  })
   $('#selection-translation-output').textContent = ''
   $('#selection-translation-output').classList.add('hidden')
   setSelectionTranslationPronunciation('source', '')
@@ -292,6 +305,7 @@ async function openTranslationFromSelection() {
   if (dialog.open) dialog.close()
   dialog.showModal()
   dialog.setAttribute('aria-busy', 'true')
+  ensureNativeTranslationSpeechSupport()
   try {
     const result = await translateSelection(quote)
     if (generation !== translationGeneration || !dialog.open) return
@@ -326,8 +340,28 @@ function resetSelectionTranslation() {
 }
 
 function selectionTranslationSpeechSupported() {
+  return nativeTranslationSpeechAvailable || (typeof window.speechSynthesis?.speak === 'function'
+    && typeof window.SpeechSynthesisUtterance === 'function'
+  )
+}
+
+function browserTranslationSpeechSupported() {
   return typeof window.speechSynthesis?.speak === 'function'
     && typeof window.SpeechSynthesisUtterance === 'function'
+}
+
+function ensureNativeTranslationSpeechSupport() {
+  if (nativeTranslationSpeechRequest) return nativeTranslationSpeechRequest
+  nativeTranslationSpeechRequest = gatewayFetch('/studio/speech', { cache: 'no-store' })
+    .then(async (response) => {
+      const result = await response.json().catch(() => ({}))
+      nativeTranslationSpeechAvailable = response.ok && result.available === true
+      setSelectionTranslationSpeechButton('source', Boolean($('#selection-translation-source')?.textContent?.trim()))
+      setSelectionTranslationSpeechButton('output', Boolean($('#selection-translation-output')?.textContent?.trim()))
+      return nativeTranslationSpeechAvailable
+    })
+    .catch(() => false)
+  return nativeTranslationSpeechRequest
 }
 
 function setSelectionTranslationSpeechButton(kind, hasText) {
@@ -357,12 +391,21 @@ function resetSelectionTranslationSpeechButton(button) {
 
 function stopSelectionTranslationSpeech() {
   const button = activeTranslationSpeechButton
+  const mode = activeTranslationSpeechMode
   activeTranslationSpeechButton = null
-  if (selectionTranslationSpeechSupported()) window.speechSynthesis.cancel()
+  activeTranslationSpeechMode = null
+  if (mode === 'browser' && browserTranslationSpeechSupported()) window.speechSynthesis.cancel()
+  if (mode === 'native') {
+    const stopping = gatewayFetch('/studio/speech/stop', { method: 'POST' }).catch(() => {})
+    resetSelectionTranslationSpeechButton(button)
+    return stopping
+  }
   resetSelectionTranslationSpeechButton(button)
+  return Promise.resolve()
 }
 
-function speakSelectionTranslation(kind) {
+async function speakSelectionTranslation(kind) {
+  await ensureNativeTranslationSpeechSupport()
   if (!selectionTranslationSpeechSupported()) return
   const button = $(`#speak-selection-translation-${kind}`)
   if (!button || button.disabled) return
@@ -370,26 +413,54 @@ function speakSelectionTranslation(kind) {
     stopSelectionTranslationSpeech()
     return
   }
-  stopSelectionTranslationSpeech()
+  await stopSelectionTranslationSpeech()
   const text = $(`#selection-translation-${kind}`)?.textContent?.trim()
   if (!text) return
+  activeTranslationSpeechButton = button
+  button.setAttribute('aria-pressed', 'true')
+  const label = button.querySelector('span')
+  if (label) label.textContent = t('Stop')
+  if (nativeTranslationSpeechAvailable) {
+    activeTranslationSpeechMode = 'native'
+    const pronunciation = kind === 'output'
+      ? $('#selection-translation-output-pronunciation div')?.textContent?.trim()
+      : ''
+    const response = await gatewayFetch('/studio/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: pronunciation || text,
+        language: kind === 'source' ? 'en-US' : pronunciation ? 'zh-CN-pinyin' : 'zh-CN',
+      }),
+    })
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}))
+      if (activeTranslationSpeechButton === button) stopSelectionTranslationSpeech()
+      throw new Error(result?.error?.message || t('Unable to play speech'))
+    }
+    if (activeTranslationSpeechButton === button) {
+      activeTranslationSpeechButton = null
+      activeTranslationSpeechMode = null
+      resetSelectionTranslationSpeechButton(button)
+    }
+    return
+  }
+  activeTranslationSpeechMode = 'browser'
   const utterance = new window.SpeechSynthesisUtterance(text)
   utterance.lang = kind === 'source' ? 'en-US' : 'zh-CN'
   utterance.onend = () => {
     if (activeTranslationSpeechButton !== button) return
     activeTranslationSpeechButton = null
+    activeTranslationSpeechMode = null
     resetSelectionTranslationSpeechButton(button)
   }
   utterance.onerror = (event) => {
     if (activeTranslationSpeechButton !== button) return
     activeTranslationSpeechButton = null
+    activeTranslationSpeechMode = null
     resetSelectionTranslationSpeechButton(button)
     if (!['canceled', 'interrupted'].includes(event.error)) toast(t('Unable to play speech'), 'error')
   }
-  activeTranslationSpeechButton = button
-  button.setAttribute('aria-pressed', 'true')
-  const label = button.querySelector('span')
-  if (label) label.textContent = t('Stop')
   window.speechSynthesis.speak(utterance)
 }
 

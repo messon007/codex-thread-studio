@@ -8,7 +8,7 @@ const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
 test('settings use a shared categorized pane layout', () => {
   assert.match(html, /id="settings-navigation"/u)
-  for (const pane of ['general', 'typography', 'comments']) {
+  for (const pane of ['general', 'typography', 'translation', 'comments']) {
     assert.match(html, new RegExp(`data-settings-pane="${pane}"`, 'u'))
     assert.match(html, new RegExp(`data-settings-pane-content="${pane}"`, 'u'))
   }

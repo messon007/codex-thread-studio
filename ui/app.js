@@ -315,6 +315,7 @@ const state = {
   typography: { ...typographyDefaults },
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
   markdown: { mode: 'technical' },
+  translation: { models: {}, efforts: {} },
   desktopNotifications: false,
   appServerCapabilities: {},
   appServerInitialization: null,
@@ -579,6 +580,7 @@ const reviewNotes = createReviewNotesController({
     loadThreads,
     selectThread,
     translateSelection: translateSelectionWithCurrentBackend,
+    translationProfile: currentSelectionTranslationProfile,
   },
 })
 
@@ -1019,12 +1021,11 @@ async function translateSelectionWithCurrentBackend(value) {
   if (!text) throw new Error(t('Select text to translate first'))
   if (!state.ready || !state.selectedId) throw new Error(t('The current backend is not ready for translation'))
 
-  const backend = state.backend
+  const profile = currentSelectionTranslationProfile()
+  const { backend, model, effort } = profile
   const generation = state.socketGeneration
   const cwd = selectedThread()?.cwd || ''
-  const options = { ...currentTurnOptions() }
-  const model = options.model || selectedThread()?.model || ''
-  const cacheKey = translationCacheKey({ backend, model, effort: options.effort, text })
+  const cacheKey = translationCacheKey({ backend, model, effort, text })
   const cached = state.selectionTranslationCache.get(cacheKey)
   if (cached) {
     state.selectionTranslationCache.delete(cacheKey)
@@ -1065,7 +1066,7 @@ async function translateSelectionWithCurrentBackend(value) {
       ...(!isCodexBackend(backend) ? { developerInstructions: SELECTION_TRANSLATION_INSTRUCTIONS } : {}),
       outputSchema: SELECTION_TRANSLATION_SCHEMA,
       ...(model ? { model } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
+      ...(effort ? { effort } : {}),
     }, 150_000)
     if (isCodexBackend(backend) && turnStarted?.turn?.id) {
       const turnId = String(turnStarted.turn.id)
@@ -1120,6 +1121,27 @@ async function translateSelectionWithCurrentBackend(value) {
     } else {
       state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
     }
+  }
+}
+
+function currentSelectionTranslationProfile() {
+  const backend = state.backend
+  const descriptor = backendDescriptor(backend)
+  const translationModel = String(state.translation.models[backend] || '')
+  const sessionModel = String(currentTurnOptions().model || '')
+  const model = translationModel || sessionModel
+  const defaultModel = (state.backendModels[backend] || [])
+    .find((entry) => entry?.isDefault)
+  const displayModel = model
+    || String(defaultModel?.model || defaultModel?.id || '')
+    || t('{backend} default', { backend: descriptor.name })
+  return {
+    backend,
+    backendName: descriptor.name,
+    model,
+    displayModel,
+    modelSource: translationModel ? 'translation' : sessionModel ? 'session' : 'backend',
+    effort: state.translation.efforts[backend] ?? (isCodexBackend(backend) ? 'low' : ''),
   }
 }
 
@@ -6515,6 +6537,7 @@ async function loadPreferences() {
   state.typography = normalizeTypography({ ...typographyDefaults, ...migrateDefaultFontFamilies(saved.typography) })
   state.mermaid = normalizeMermaidPreferences(saved.mermaid)
   state.markdown = { mode: ['reading', 'technical', 'compact'].includes(saved.markdown?.mode) ? saved.markdown.mode : 'technical' }
+  state.translation = normalizeTranslationPreferences(saved.translation)
   state.desktopNotifications = Boolean(saved.desktopNotifications)
   state.browser = {
     enabled: true,
@@ -6579,6 +6602,7 @@ function preferencesSnapshot() {
     typography: state.typography,
     mermaid: state.mermaid,
     markdown: state.markdown,
+    translation: state.translation,
     desktopNotifications: state.desktopNotifications,
     browser: state.browser,
     annotationPromptTemplates: state.annotationPromptTemplates,
@@ -6780,8 +6804,24 @@ function populateSettingsForm() {
   $('#wsl-codex-binary').value = state.wsl.codexBinary
   $('#wsl-opencode-binary').value = state.wsl.opencodeBinary
   $('#annotation-template').value = state.activeAnnotationPromptTemplate
+  populateTranslationSettingsForm()
   $('#settings-error').classList.add('hidden')
   activateSettingsPane(activeSettingsPane)
+  loadBackendModels().then(() => {
+    if ($('#settings-dialog').open) populateTranslationSettingsForm()
+  }).catch(() => {})
+}
+
+function populateTranslationSettingsForm() {
+  const backend = state.backend
+  const descriptor = backendDescriptor(backend)
+  $('#translation-settings-backend').textContent = t('Current backend: {backend}', { backend: descriptor.name })
+  $('#translation-model').value = state.translation.models[backend] || ''
+  $('#translation-effort').value = state.translation.efforts[backend] ?? (isCodexBackend(backend) ? 'low' : '')
+  $('#translation-model-options').innerHTML = (state.backendModels[backend] || []).map((entry) => {
+    const id = String(entry.model || entry.id || '')
+    return id ? `<option value="${escapeHtml(id)}">${escapeHtml(entry.displayName || entry.name || id)}</option>` : ''
+  }).join('')
 }
 
 async function saveSettings(event) {
@@ -6808,6 +6848,12 @@ async function saveSettings(event) {
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
   state.sharedDocumentDirectories = sharedDocumentDirectories
+  const translationModel = $('#translation-model').value.trim().slice(0, 256)
+  const translationEffort = $('#translation-effort').value
+  if (translationModel) state.translation.models[state.backend] = translationModel
+  else delete state.translation.models[state.backend]
+  if (translationEffort) state.translation.efforts[state.backend] = translationEffort
+  else delete state.translation.efforts[state.backend]
   state.typography = normalizeTypography({
     uiFontFamily: $('#ui-font-family').value.trim(),
     uiFontSize: Number($('#ui-font-size').value),
@@ -7100,6 +7146,7 @@ function resetSettings() {
   state.theme = 'light'
   state.contentWidth = 'comfortable'
   state.typography = { ...typographyDefaults }
+  state.translation = normalizeTranslationPreferences(null)
   state.desktopNotifications = false
   state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
@@ -7272,6 +7319,26 @@ function truncateUtf8(value, limit) {
 function truncateCharacters(value, limit) { return [...String(value || '')].slice(0, limit).join('') }
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
+
+function normalizeTranslationPreferences(value) {
+  const source = value && typeof value === 'object' ? value : {}
+  const models = {}
+  for (const [backend, model] of Object.entries(source.models || {})) {
+    const normalized = String(model || '').trim()
+    if (isSupportedBackend(backend) && normalized && normalized.length <= 256 && !/[\u0000-\u001f]/u.test(normalized)) {
+      models[backend] = normalized
+    }
+  }
+  const efforts = {}
+  const supportedEfforts = new Set(['minimal', 'low', 'medium', 'high', 'xhigh'])
+  for (const [backend, effort] of Object.entries(source.efforts || {})) {
+    if (isSupportedBackend(backend) && supportedEfforts.has(effort)) efforts[backend] = effort
+  }
+  for (const backend of BACKEND_IDS) {
+    if (isCodexBackend(backend) && !efforts[backend]) efforts[backend] = 'low'
+  }
+  return { models, efforts }
+}
 
 function normalizeStoredTurnOptions(value) {
   const normalized = {}

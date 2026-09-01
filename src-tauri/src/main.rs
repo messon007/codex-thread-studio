@@ -34,6 +34,7 @@ mod epub_reader;
 mod favorites;
 mod gateway_security;
 mod git_review;
+mod ollama;
 mod opencode_server;
 mod session_map;
 mod session_state;
@@ -280,12 +281,36 @@ impl Default for MarkdownPreferences {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TranslationPreferences {
+    #[serde(default = "default_translation_engine")]
+    engine: String,
+    #[serde(default = "default_ollama_model")]
+    ollama_model: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     models: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     efforts: BTreeMap<String, String>,
+}
+
+impl Default for TranslationPreferences {
+    fn default() -> Self {
+        Self {
+            engine: default_translation_engine(),
+            ollama_model: default_ollama_model(),
+            models: BTreeMap::new(),
+            efforts: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_translation_engine() -> String {
+    "backend".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "gemma3:4b".to_string()
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -741,6 +766,11 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/client-log", axum::routing::post(client_log))
         .route("/studio/speech", get(speech::status).post(speech::speak))
         .route("/studio/speech/stop", axum::routing::post(speech::stop))
+        .route("/studio/ollama/models", get(ollama::models))
+        .route(
+            "/studio/ollama/translate",
+            axum::routing::post(ollama::translate),
+        )
         .route(
             "/studio/workspace/list",
             axum::routing::post(list_workspace_directory),
@@ -3085,7 +3115,11 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     ) {
         return Err("Markdown mode must be reading, technical, or compact".to_string());
     }
-    if preferences.translation.models.len() > 32
+    if !matches!(
+        preferences.translation.engine.as_str(),
+        "backend" | "ollama"
+    ) || !valid_runtime_value(&preferences.translation.ollama_model, 256)
+        || preferences.translation.models.len() > 32
         || preferences.translation.efforts.len() > 32
         || preferences
             .translation
@@ -4940,10 +4974,21 @@ mod tests {
             .insert("codex".to_string(), "low".to_string());
         assert!(validate_preferences(&translation).is_ok());
 
+        translation.translation.engine = "ollama".to_string();
+        translation.translation.ollama_model = "gemma3:4b".to_string();
+        assert!(validate_preferences(&translation).is_ok());
+
         translation
             .translation
             .efforts
             .insert("codex".to_string(), "unbounded".to_string());
+        assert!(validate_preferences(&translation).is_err());
+
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "low".to_string());
+        translation.translation.engine = "remote".to_string();
         assert!(validate_preferences(&translation).is_err());
     }
 

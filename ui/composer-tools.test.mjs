@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CONTINUE_PROMPTS,
   composerTrigger,
   createComposerDraftStore,
   isPreviewableImageFile,
   isPreviewableTextFile,
   matchingSkills,
   matchingSlashCommands,
+  randomContinuePrompt,
   replaceComposerTrigger,
   previewableFileKind,
   reviewableFileKind,
@@ -16,6 +18,19 @@ import {
   shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
+
+test('selects continue prompts from a small explicit phrase set', () => {
+  assert.deepEqual(CONTINUE_PROMPTS, [
+    'Continue.',
+    'Go on.',
+    'Keep going.',
+    'Please continue.',
+    'Continue with the task.',
+  ])
+  assert.equal(randomContinuePrompt(() => 0), 'Continue.')
+  assert.equal(randomContinuePrompt(() => 0.41), 'Keep going.')
+  assert.equal(randomContinuePrompt(() => 0.999), 'Continue with the task.')
+})
 
 test('keeps composer drafts isolated by backend and session', () => {
   const drafts = createComposerDraftStore()

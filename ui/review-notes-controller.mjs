@@ -283,10 +283,15 @@ async function openTranslationFromSelection() {
   stopSelectionTranslationSpeech()
   $('#selection-translation-source').textContent = quote
   const profile = translationProfile()
-  const modelSource = t(profile.modelSource === 'translation'
-    ? 'Translation setting'
-    : profile.modelSource === 'session' ? 'Session setting' : 'Backend default')
-  $('#selection-translation-backend').textContent = t('{backend} · Model: {model} · {source} · Effort: {effort}', {
+  const modelSource = t(profile.modelSource === 'local'
+    ? 'Local setting'
+    : profile.modelSource === 'translation'
+      ? 'Translation setting'
+      : profile.modelSource === 'session' ? 'Session setting' : 'Backend default')
+  const profileTemplate = profile.engine === 'ollama'
+    ? '{backend} · Model: {model} · {source}'
+    : '{backend} · Model: {model} · {source} · Effort: {effort}'
+  $('#selection-translation-backend').textContent = t(profileTemplate, {
     backend: profile.backendName,
     model: profile.displayModel,
     source: modelSource,
@@ -298,6 +303,9 @@ async function openTranslationFromSelection() {
   setSelectionTranslationPronunciation('output', '')
   $('#selection-translation-error').textContent = ''
   $('#selection-translation-error').classList.add('hidden')
+  $('#selection-translation-loading span:last-child').textContent = t(profile.engine === 'ollama'
+    ? 'Translating with local Ollama…'
+    : 'Translating with the current backend…')
   $('#selection-translation-loading').classList.remove('hidden')
   $('#copy-selection-translation').disabled = true
   setSelectionTranslationSpeechButton('source', true)

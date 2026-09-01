@@ -15,6 +15,20 @@ export const SLASH_COMMANDS = Object.freeze([
   { name: 'delete', description: 'Permanently delete the current session', action: 'delete' },
 ])
 
+export const CONTINUE_PROMPTS = Object.freeze([
+  'Continue.',
+  'Go on.',
+  'Keep going.',
+  'Please continue.',
+  'Continue with the task.',
+])
+
+export function randomContinuePrompt(random = Math.random) {
+  const sample = Number(random())
+  const bounded = Number.isFinite(sample) ? Math.min(Math.max(sample, 0), 1 - Number.EPSILON) : 0
+  return CONTINUE_PROMPTS[Math.floor(bounded * CONTINUE_PROMPTS.length)]
+}
+
 export function composerTrigger(value, cursor = value.length) {
   const before = String(value || '').slice(0, cursor)
   const slash = before.match(/^\s*\/([\p{L}\p{N}_-]*)$/u)

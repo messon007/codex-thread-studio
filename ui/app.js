@@ -59,6 +59,7 @@ import {
   fuzzyFileLabel,
   matchingSkills,
   matchingSlashCommands,
+  randomContinuePrompt,
   replaceComposerTrigger,
   reviewableFileKind,
   selectedFileReference,
@@ -320,7 +321,8 @@ const state = {
   typography: { ...typographyDefaults },
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
   markdown: { mode: 'technical' },
-  translation: { models: {}, efforts: {} },
+  translation: { engine: 'backend', ollamaModel: 'gemma3:4b', models: {}, efforts: {} },
+  ollamaModels: [],
   desktopNotifications: false,
   queueDepth: 1,
   appServerCapabilities: {},
@@ -857,6 +859,7 @@ function bindUI() {
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#queue-message').addEventListener('click', queueComposerMessage)
+  $('#continue-thread').addEventListener('click', sendContinueMessage)
   $('#resume-message-queue').addEventListener('click', resumeSelectedMessageQueue)
   $('#composer-queue-items').addEventListener('click', handleMessageQueueClick)
   $('#edit-queued-message-form').addEventListener('submit', saveEditedQueuedMessage)
@@ -900,6 +903,7 @@ function bindUI() {
   $('#cancel-settings').addEventListener('click', () => $('#settings-dialog').close())
   $('#settings-navigation').addEventListener('click', handleSettingsNavigationClick)
   $('#settings-navigation').addEventListener('keydown', handleSettingsNavigationKeydown)
+  $('#translation-engine').addEventListener('change', handleTranslationEngineChange)
   $('#settings-form').addEventListener('submit', saveSettings)
   $('#reset-settings').addEventListener('click', resetSettings)
   $('#close-backend').addEventListener('click', () => $('#backend-dialog').close())
@@ -1036,12 +1040,10 @@ async function openSessionResource(resource) {
 async function translateSelectionWithCurrentBackend(value) {
   const text = String(value || '').trim().slice(0, 16_000)
   if (!text) throw new Error(t('Select text to translate first'))
-  if (!state.ready || !state.selectedId) throw new Error(t('The current backend is not ready for translation'))
+  if (!state.selectedId) throw new Error(t('The current backend is not ready for translation'))
 
   const profile = currentSelectionTranslationProfile()
   const { backend, model, effort } = profile
-  const generation = state.socketGeneration
-  const cwd = selectedThread()?.cwd || ''
   const cacheKey = translationCacheKey({ backend, model, effort, text })
   const cached = state.selectionTranslationCache.get(cacheKey)
   if (cached) {
@@ -1049,6 +1051,13 @@ async function translateSelectionWithCurrentBackend(value) {
     state.selectionTranslationCache.set(cacheKey, cached)
     return cached
   }
+  if (profile.engine === 'ollama') {
+    return translateSelectionWithOllama(text, profile, cacheKey)
+  }
+  if (!state.ready) throw new Error(t('The current backend is not ready for translation'))
+
+  const generation = state.socketGeneration
+  const cwd = selectedThread()?.cwd || ''
 
   const utilityName = `Studio translation ${randomId()}`
   state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
@@ -1141,7 +1150,45 @@ async function translateSelectionWithCurrentBackend(value) {
   }
 }
 
+async function translateSelectionWithOllama(text, profile, cacheKey) {
+  const response = await gatewayFetch('/studio/ollama/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: profile.model, text }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || t('Local Ollama translation failed'))
+  }
+  const result = {
+    translation: String(payload.translation || '').trim(),
+    sourcePronunciation: String(payload.sourcePronunciation || '').trim(),
+    translationPronunciation: String(payload.translationPronunciation || '').trim(),
+    model: String(payload.model || profile.model),
+    totalDurationMs: Number(payload.totalDurationMs || 0),
+    loadDurationMs: Number(payload.loadDurationMs || 0),
+  }
+  if (!result.translation) throw new Error(t('The translation backend returned an empty translation'))
+  state.selectionTranslationCache.set(cacheKey, result)
+  while (state.selectionTranslationCache.size > 64) {
+    state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
+  }
+  return result
+}
+
 function currentSelectionTranslationProfile() {
+  if (state.translation.engine === 'ollama') {
+    const model = String(state.translation.ollamaModel || 'gemma3:4b')
+    return {
+      engine: 'ollama',
+      backend: 'ollama',
+      backendName: t('Local Ollama'),
+      model,
+      displayModel: model,
+      modelSource: 'local',
+      effort: '',
+    }
+  }
   const backend = state.backend
   const descriptor = backendDescriptor(backend)
   const translationModel = String(state.translation.models[backend] || '')
@@ -1153,6 +1200,7 @@ function currentSelectionTranslationProfile() {
     || String(defaultModel?.model || defaultModel?.id || '')
     || t('{backend} default', { backend: descriptor.name })
   return {
+    engine: 'backend',
     backend,
     backendName: descriptor.name,
     model,
@@ -5529,6 +5577,11 @@ function handleComposerInput() {
 
 function handleComposerKeydown(event) {
   if (event.isComposing) return
+  if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault()
+    sendContinueMessage()
+    return
+  }
   const menuOpen = !$('#composer-menu').classList.contains('hidden')
   if (menuOpen && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
     event.preventDefault()
@@ -5950,11 +6003,21 @@ function renderComposerState() {
   const shellMode = shellCommand !== null
   const queue = state.messageQueues[selectedStateKey()] || []
   const queueAvailable = active && !shellMode && !isRouterThread()
+  const key = selectedStateKey()
+  const hasComposerContent = Boolean(
+    $('#composer-input').value.trim()
+      || state.pendingImages[key]?.length
+      || state.pendingSkills[key]?.length
+      || state.pendingFiles[key]?.length,
+  )
+  const continueAvailable = !active && !shellMode && !isRouterThread()
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   renderComposerImages()
   $('#interrupt-turn').classList.toggle('hidden', !active)
   $('#queue-message').classList.toggle('hidden', !queueAvailable)
   $('#queue-message').textContent = queue.length >= state.queueDepth ? `${t('Queue')} (${queue.length}/${state.queueDepth})` : t('Queue')
+  $('#continue-thread').classList.toggle('hidden', !continueAvailable)
+  $('#continue-thread').disabled = !state.ready || !state.selectedId || hasComposerContent || Boolean(queue.length)
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
@@ -5967,6 +6030,14 @@ function renderComposerState() {
     queueMicrotask(() => runNextQueuedMessage(ref).catch((error) => console.error('Queued turn failed', error)))
   }
   reviewNotes.renderComposerContext()
+}
+
+function sendContinueMessage() {
+  const button = $('#continue-thread')
+  if (button.disabled || button.classList.contains('hidden')) return
+  setCurrentComposerValue(randomContinuePrompt())
+  hideComposerMenu()
+  $('#composer-form').requestSubmit()
 }
 
 function renderMessageQueue() {
@@ -7132,21 +7203,74 @@ function populateSettingsForm() {
   populateTranslationSettingsForm()
   $('#settings-error').classList.add('hidden')
   activateSettingsPane(activeSettingsPane)
-  loadBackendModels().then(() => {
-    if ($('#settings-dialog').open) populateTranslationSettingsForm()
-  }).catch(() => {})
+  if (state.translation.engine === 'ollama') {
+    loadOllamaModels().then(() => {
+      if ($('#settings-dialog').open) renderOllamaModelOptions()
+    }).catch((error) => console.warn('Unable to load Ollama models', error))
+  } else {
+    loadBackendModels().then(() => {
+      if ($('#settings-dialog').open) renderBackendTranslationModelOptions()
+    }).catch(() => {})
+  }
 }
 
 function populateTranslationSettingsForm() {
   const backend = state.backend
   const descriptor = backendDescriptor(backend)
+  $('#translation-engine').value = state.translation.engine
   $('#translation-settings-backend').textContent = t('Current backend: {backend}', { backend: descriptor.name })
   $('#translation-model').value = state.translation.models[backend] || ''
   $('#translation-effort').value = state.translation.efforts[backend] ?? (isCodexBackend(backend) ? 'low' : '')
+  $('#translation-ollama-model').value = state.translation.ollamaModel
+  renderBackendTranslationModelOptions()
+  renderOllamaModelOptions()
+  syncTranslationSettingsEngine()
+}
+
+function renderBackendTranslationModelOptions() {
+  const backend = state.backend
   $('#translation-model-options').innerHTML = (state.backendModels[backend] || []).map((entry) => {
     const id = String(entry.model || entry.id || '')
     return id ? `<option value="${escapeHtml(id)}">${escapeHtml(entry.displayName || entry.name || id)}</option>` : ''
   }).join('')
+}
+
+function renderOllamaModelOptions() {
+  $('#translation-ollama-model-options').innerHTML = state.ollamaModels
+    .map((entry) => `<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</option>`)
+    .join('')
+}
+
+function syncTranslationSettingsEngine() {
+  const ollama = $('#translation-engine').value === 'ollama'
+  for (const field of $$('.translation-backend-setting')) field.classList.toggle('hidden', ollama)
+  $('#translation-ollama-model-field').classList.toggle('hidden', !ollama)
+}
+
+function handleTranslationEngineChange() {
+  syncTranslationSettingsEngine()
+  if ($('#translation-engine').value === 'ollama') {
+    loadOllamaModels().then(renderOllamaModelOptions).catch((error) => {
+      $('#settings-error').textContent = error.message
+      $('#settings-error').classList.remove('hidden')
+    })
+  } else {
+    loadBackendModels().then(renderBackendTranslationModelOptions).catch((error) => {
+      $('#settings-error').textContent = error.message
+      $('#settings-error').classList.remove('hidden')
+    })
+  }
+}
+
+async function loadOllamaModels({ refresh = false } = {}) {
+  if (!refresh && state.ollamaModels.length) return state.ollamaModels
+  const response = await gatewayFetch('/studio/ollama/models', { cache: 'no-store' })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error?.message || `Ollama HTTP ${response.status}`)
+  state.ollamaModels = Array.isArray(payload.models)
+    ? payload.models.filter((entry) => typeof entry?.name === 'string' && entry.name).slice(0, 256)
+    : []
+  return state.ollamaModels
 }
 
 async function saveSettings(event) {
@@ -7176,6 +7300,8 @@ async function saveSettings(event) {
   state.sharedDocumentDirectories = sharedDocumentDirectories
   const translationModel = $('#translation-model').value.trim().slice(0, 256)
   const translationEffort = $('#translation-effort').value
+  state.translation.engine = $('#translation-engine').value === 'ollama' ? 'ollama' : 'backend'
+  state.translation.ollamaModel = $('#translation-ollama-model').value.trim().slice(0, 256) || 'gemma3:4b'
   if (translationModel) state.translation.models[state.backend] = translationModel
   else delete state.translation.models[state.backend]
   if (translationEffort) state.translation.efforts[state.backend] = translationEffort
@@ -7649,6 +7775,13 @@ function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (cha
 
 function normalizeTranslationPreferences(value) {
   const source = value && typeof value === 'object' ? value : {}
+  const engine = source.engine === 'ollama' ? 'ollama' : 'backend'
+  const candidateOllamaModel = String(source.ollamaModel || '').trim()
+  const ollamaModel = candidateOllamaModel
+    && candidateOllamaModel.length <= 256
+    && !/[\u0000-\u001f]/u.test(candidateOllamaModel)
+    ? candidateOllamaModel
+    : 'gemma3:4b'
   const models = {}
   for (const [backend, model] of Object.entries(source.models || {})) {
     const normalized = String(model || '').trim()
@@ -7664,7 +7797,7 @@ function normalizeTranslationPreferences(value) {
   for (const backend of BACKEND_IDS) {
     if (isCodexBackend(backend) && !efforts[backend]) efforts[backend] = 'low'
   }
-  return { models, efforts }
+  return { engine, ollamaModel, models, efforts }
 }
 
 function normalizeStoredTurnOptions(value) {

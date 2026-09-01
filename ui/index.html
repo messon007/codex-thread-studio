@@ -185,6 +185,7 @@
               <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
                 <button id="queue-message" class="subtle-button hidden" type="button">Queue</button>
+                <button id="continue-thread" class="subtle-button" type="button" title="Send a short continue prompt · Ctrl/Cmd+Shift+Enter">Continue</button>
                 <button id="send-message" class="primary-button" type="submit">Send</button>
               </div>
             </div>
@@ -644,11 +645,13 @@
             </section>
 
             <section id="settings-pane-translation" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="translation">
-              <header class="settings-pane-header"><h3>Translation</h3><p>Choose a faster model and lower reasoning effort for selection translation without changing the current session.</p></header>
+              <header class="settings-pane-header"><h3>Translation</h3><p>Use the current session backend or a local Ollama model without changing the chat model.</p></header>
               <section class="settings-section settings-field-grid">
-                <header class="full"><strong id="translation-settings-backend">Current backend</strong><small>Translation stays on the selected backend. Each backend keeps its own choices.</small></header>
-                <label class="field full"><span>Translation model</span><input id="translation-model" list="translation-model-options" maxlength="256" placeholder="Use the current session model" /><datalist id="translation-model-options"></datalist><small>Leave blank to use the current session model; choose a fast model here when one is available.</small></label>
-                <label class="field full"><span>Translation reasoning effort</span><select id="translation-effort"><option value="">Model default</option><option value="minimal">Minimal</option><option value="low">Low · recommended for speed</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select><small>Codex translations default to Low. This does not alter the chat composer.</small></label>
+                <label class="field full"><span>Translation engine</span><select id="translation-engine"><option value="backend">Current session backend</option><option value="ollama">Local Ollama</option></select><small>Local Ollama runs independently from the selected Codex or OpenCode session.</small></label>
+                <header class="full translation-backend-setting"><strong id="translation-settings-backend">Current backend</strong><small>Each session backend keeps its own translation model and effort choices.</small></header>
+                <label class="field full translation-backend-setting"><span>Translation model</span><input id="translation-model" list="translation-model-options" maxlength="256" placeholder="Use the current session model" /><datalist id="translation-model-options"></datalist><small>Leave blank to use the current session model; choose a fast model here when one is available.</small></label>
+                <label class="field full translation-backend-setting"><span>Translation reasoning effort</span><select id="translation-effort"><option value="">Model default</option><option value="minimal">Minimal</option><option value="low">Low · recommended for speed</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select><small>Codex translations default to Low. This does not alter the chat composer.</small></label>
+                <label id="translation-ollama-model-field" class="field full hidden"><span>Ollama model</span><input id="translation-ollama-model" list="translation-ollama-model-options" maxlength="256" placeholder="gemma3:4b" /><datalist id="translation-ollama-model-options"></datalist><small>Ollama must be running locally at 127.0.0.1:11434. The model stays loaded for 30 minutes after translation.</small></label>
               </section>
             </section>
 

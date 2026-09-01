@@ -37,6 +37,8 @@
     "mode": "technical"
   },
   "translation": {
+    "engine": "ollama",
+    "ollamaModel": "gemma3:4b",
     "efforts": {
       "codex": "low"
     }

@@ -417,6 +417,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }
 .composer-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .composer-actions { flex-shrink: 0; display: flex; gap: 7px; }
+.composer-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .composer-icon-button { width: 27px; height: 27px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); cursor: pointer; }
 .composer-icon-button:hover { border-color: var(--brand); color: var(--brand); }
 .composer-icon-button:disabled { opacity: .45; cursor: not-allowed; }

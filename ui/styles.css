@@ -990,6 +990,9 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .settings-section > header small { color: var(--muted); font-size: 9px; line-height: 1.5; }
 .settings-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .settings-field-grid .check-field { background: var(--panel); }
+.chat-settings { display: grid; gap: 0; }
+.chat-settings-section > header { grid-column: 1 / -1; }
+.chat-settings-section + .chat-settings-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
 .typography-settings { display: grid; gap: 0; }
 .typography-profile { min-width: 0; padding-bottom: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 88px 150px; gap: 10px; border-bottom: 1px solid var(--border); }
 .typography-profile + .typography-profile { padding-top: 20px; }

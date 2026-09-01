@@ -145,6 +145,12 @@ import {
   translationCacheKey,
   translationTurnState,
 } from './selection-translation.mjs'
+import {
+  CONTINUATION_DRAFT_INSTRUCTIONS,
+  CONTINUATION_DRAFT_SCHEMA,
+  continuationDraftInput,
+  continuationDraftTurnState,
+} from './continuation-draft.mjs'
 
 import {
   annotationPromptDefaults,
@@ -326,6 +332,7 @@ const state = {
   ollamaModels: [],
   desktopNotifications: false,
   queueDepth: 1,
+  continueBehavior: 'sessionModelDraft',
   appServerCapabilities: {},
   appServerInitialization: null,
   appServerGenerations: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, null])),
@@ -357,7 +364,8 @@ const state = {
   hiddenUtilityThreads: new Set(),
   hiddenUtilityThreadNames: new Set(),
   selectionTranslationCache: new Map(),
-  selectionTranslationTasks: new Map(),
+  structuredUtilityTasks: new Map(),
+  continuationDraftLoads: new Set(),
   router: normalizeThreadRouter(null),
   routerRuntime: createThreadRouterRuntimeState(),
 }
@@ -862,7 +870,7 @@ function bindUI() {
   $('#composer-menu').addEventListener('click', handleComposerMenuClick)
   $('#interrupt-turn').addEventListener('click', interruptTurn)
   $('#queue-message').addEventListener('click', queueComposerMessage)
-  $('#continue-thread').addEventListener('click', sendContinueMessage)
+  $('#continue-thread').addEventListener('click', handleContinueAction)
   $('#resume-message-queue').addEventListener('click', resumeSelectedMessageQueue)
   $('#composer-queue-items').addEventListener('click', handleMessageQueueClick)
   $('#edit-queued-message-form').addEventListener('submit', saveEditedQueuedMessage)
@@ -1085,7 +1093,7 @@ async function translateSelectionWithCurrentBackend(value) {
       const model = createCodexViewModel()
       model.threadId = threadId
       translationTask = { backend, threadId, turnId: '', model }
-      state.selectionTranslationTasks.set(sessionRefKey(backend, threadId), translationTask)
+      state.structuredUtilityTasks.set(sessionRefKey(backend, threadId), translationTask)
     }
 
     const turnStarted = await rpc('turn/start', {
@@ -1133,7 +1141,7 @@ async function translateSelectionWithCurrentBackend(value) {
     }
     throw new Error(t('Translation timed out'))
   } finally {
-    if (threadId) state.selectionTranslationTasks.delete(sessionRefKey(backend, threadId))
+    if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
     if (threadId) {
       dispatchBackendRpc(backend, 'thread/delete', {
         threadId,
@@ -1234,22 +1242,22 @@ function hiddenUtilityThread(backend, thread) {
   )
 }
 
-function captureSelectionTranslationNotification(backend, message) {
+function captureStructuredUtilityNotification(backend, message) {
   const params = message?.params || {}
   const threadId = String(params.threadId || params.thread?.id || params.turn?.threadId || '')
   const turnId = String(params.turnId || params.turn?.id || '')
   let task = threadId
-    ? state.selectionTranslationTasks.get(sessionRefKey(backend, threadId))
+    ? state.structuredUtilityTasks.get(sessionRefKey(backend, threadId))
     : null
   if (!task && turnId) {
-    task = [...state.selectionTranslationTasks.values()]
+    task = [...state.structuredUtilityTasks.values()]
       .find((candidate) => candidate.backend === backend && candidate.turnId === turnId)
   }
   if (!task) return false
   if (turnId && task.turnId && task.turnId !== turnId) return false
   if (turnId) task.turnId ||= turnId
   if (message.id != null && message.method) {
-    sendRaw({ id: message.id, error: { code: -32601, message: 'Translation tasks do not support interactive requests' } })
+    sendRaw({ id: message.id, error: { code: -32601, message: 'Studio utility tasks do not support interactive requests' } })
     return true
   }
   applyCodexNotification(task.model, message)
@@ -1879,7 +1887,7 @@ function handleAppServerMessage(message) {
     return
   }
 
-  if (captureSelectionTranslationNotification(backend, message)) return
+  if (captureStructuredUtilityNotification(backend, message)) return
 
   if (message.method === 'turn/started' || message.method === 'turn/completed') {
     const threadId = message.params?.threadId || message.params?.thread?.id || message.params?.turn?.threadId
@@ -5700,7 +5708,7 @@ function handleComposerKeydown(event) {
   if (event.isComposing) return
   if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
     event.preventDefault()
-    sendContinueMessage()
+    handleContinueAction()
     return
   }
   const menuOpen = !$('#composer-menu').classList.contains('hidden')
@@ -6074,11 +6082,18 @@ function addPendingSkill(skill) {
   }
 }
 
-async function copyLatestAgentResponse() {
+function latestAgentResponseText() {
   const items = state.model.turns.flatMap((turn) => turn.items || []).reverse()
   const message = items.find((item) => (item.type === 'agentMessage' || item.type === 'plan') && item.text)
+  if (!message) return ''
+  return message.type === 'agentMessage' ? sessionMapVisibleText(message.text) : message.text
+}
+
+async function copyLatestAgentResponse() {
+  const text = latestAgentResponseText()
+  const message = text.trim()
   if (!message) throw new Error(t('This session has no {backend} response to copy.', { backend: currentBackend().name }))
-  await navigator.clipboard.writeText(message.type === 'agentMessage' ? sessionMapVisibleText(message.text) : message.text)
+  await navigator.clipboard.writeText(text)
   toast(t('Copied the latest {backend} response', { backend: currentBackend().name }))
 }
 
@@ -6125,12 +6140,8 @@ function renderComposerState() {
   const queue = state.messageQueues[selectedStateKey()] || []
   const queueAvailable = active && !shellMode && !isRouterThread()
   const key = selectedStateKey()
-  const hasComposerContent = Boolean(
-    $('#composer-input').value.trim()
-      || state.pendingImages[key]?.length
-      || state.pendingSkills[key]?.length
-      || state.pendingFiles[key]?.length,
-  )
+  const hasComposerContent = composerHasPendingContent(key)
+  const draftingContinuation = state.continuationDraftLoads.has(key)
   const continueAvailable = !active && !shellMode && !isRouterThread()
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   renderComposerImages()
@@ -6138,7 +6149,13 @@ function renderComposerState() {
   $('#queue-message').classList.toggle('hidden', !queueAvailable)
   $('#queue-message').textContent = queue.length >= state.queueDepth ? `${t('Queue')} (${queue.length}/${state.queueDepth})` : t('Queue')
   $('#continue-thread').classList.toggle('hidden', !continueAvailable)
-  $('#continue-thread').disabled = !state.ready || !state.selectedId || hasComposerContent || Boolean(queue.length)
+  $('#continue-thread').textContent = draftingContinuation ? t('Drafting…') : t('Continue')
+  $('#continue-thread').title = state.continueBehavior === 'quickSend'
+    ? t('Immediately send a random continue prompt · Ctrl/Cmd+Shift+Enter')
+    : state.continueBehavior === 'ollamaDraft'
+      ? t('Draft the next message with local Ollama · Ctrl/Cmd+Shift+Enter')
+      : t('Draft the next message with the current session model · Ctrl/Cmd+Shift+Enter')
+  $('#continue-thread').disabled = !state.ready || !state.selectedId || hasComposerContent || Boolean(queue.length) || draftingContinuation
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
@@ -6153,12 +6170,176 @@ function renderComposerState() {
   reviewNotes.renderComposerContext()
 }
 
-function sendContinueMessage() {
+function handleContinueAction() {
+  if (state.continueBehavior === 'quickSend') {
+    quickSendContinueMessage()
+    return
+  }
+  draftContinueMessage()
+}
+
+function quickSendContinueMessage() {
   const button = $('#continue-thread')
   if (button.disabled || button.classList.contains('hidden')) return
   setCurrentComposerValue(randomContinuePrompt())
   hideComposerMenu()
   $('#composer-form').requestSubmit()
+}
+
+function composerHasPendingContent(key = selectedStateKey()) {
+  const draft = key === selectedStateKey() ? $('#composer-input').value : composerDrafts.value(key)
+  return Boolean(
+    draft.trim()
+      || state.pendingImages[key]?.length
+      || state.pendingSkills[key]?.length
+      || state.pendingFiles[key]?.length,
+  )
+}
+
+async function draftContinueMessage() {
+  const button = $('#continue-thread')
+  if (button.disabled || button.classList.contains('hidden')) return
+  const key = selectedStateKey()
+  const source = latestAgentResponseText().trim()
+  if (!source) {
+    showError(new Error(t('This session has no {backend} response to continue.', { backend: currentBackend().name })))
+    return
+  }
+  state.continuationDraftLoads.add(key)
+  renderComposerState()
+  try {
+    const behavior = state.continueBehavior
+    const prompt = behavior === 'ollamaDraft'
+      ? await draftContinueWithOllama(source)
+      : await draftContinueWithSessionModel(source, key)
+    if (!prompt) throw new Error(t('The continuation backend returned an empty draft'))
+    if (selectedStateKey() !== key) return
+    if (state.model.activeTurnId || latestAgentResponseText().trim() !== source || composerHasPendingContent(key)) {
+      toast(t('The conversation changed before the continuation draft was ready'))
+      return
+    }
+    setComposerDraftValue(key, prompt)
+    hideComposerMenu()
+    const input = $('#composer-input')
+    input.setSelectionRange(prompt.length, prompt.length)
+    input.focus()
+    toast(t('Continuation draft added to the composer'))
+  } catch (error) {
+    if (selectedStateKey() === key) showError(error)
+  } finally {
+    state.continuationDraftLoads.delete(key)
+    renderComposerState()
+  }
+}
+
+async function draftContinueWithOllama(source) {
+  const response = await gatewayFetch('/studio/ollama/continue-draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: state.translation.ollamaModel || 'gemma3:4b',
+      assistantResponse: truncateCharacters(source, 32_000),
+    }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error?.message || t('Local Ollama could not draft a continuation'))
+  return String(payload.prompt || '').trim()
+}
+
+async function draftContinueWithSessionModel(source, stateKey) {
+  if (!state.ready || !state.selectedId) throw new Error(t('The current backend is not ready for continuation drafts'))
+  const backend = state.backend
+  const generation = state.socketGeneration
+  const cwd = selectedThread()?.cwd || ''
+  const options = currentTurnOptions()
+  const selectedModel = selectedThread()?.model
+  const model = String(options.model || (typeof selectedModel === 'string' ? selectedModel : '')).trim()
+  const effort = String(options.effort || '').trim()
+  const utilityName = `Studio continuation ${randomId()}`
+  state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
+  let threadId = ''
+  let utilityTask = null
+  try {
+    ensureContinuationBackend(backend, generation, stateKey)
+    const started = await rpc('thread/start', {
+      cwd,
+      ...(model ? { model } : {}),
+      ...(isCodexBackend(backend) ? {
+        ephemeral: true,
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        developerInstructions: CONTINUATION_DRAFT_INSTRUCTIONS,
+      } : { name: utilityName }),
+    }, 30_000)
+    threadId = String(started?.thread?.id || '')
+    if (!threadId) throw new Error(t('The current backend did not create a continuation draft task'))
+    markUtilityThreadHidden(backend, threadId)
+    ensureContinuationBackend(backend, generation, stateKey)
+    if (isCodexBackend(backend)) {
+      const utilityModel = createCodexViewModel()
+      utilityModel.threadId = threadId
+      utilityTask = { backend, threadId, turnId: '', model: utilityModel }
+      state.structuredUtilityTasks.set(sessionRefKey(backend, threadId), utilityTask)
+    }
+
+    const turnStarted = await rpc('turn/start', {
+      threadId,
+      cwd,
+      input: [{ type: 'text', text: continuationDraftInput(source) }],
+      ...(!isCodexBackend(backend) ? { developerInstructions: CONTINUATION_DRAFT_INSTRUCTIONS } : {}),
+      outputSchema: CONTINUATION_DRAFT_SCHEMA,
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    }, 150_000)
+    if (isCodexBackend(backend) && turnStarted?.turn?.id) {
+      const turnId = String(turnStarted.turn.id)
+      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnId))
+      utilityTask.turnId ||= turnId
+      if (!utilityTask.model.turns.some((turn) => String(turn.id) === turnId)) {
+        applyCodexNotification(utilityTask.model, {
+          method: 'turn/started',
+          params: { threadId, turn: turnStarted.turn },
+        })
+      }
+    }
+
+    const deadline = Date.now() + 150_000
+    while (Date.now() < deadline) {
+      ensureContinuationBackend(backend, generation, stateKey)
+      const thread = isCodexBackend(backend)
+        ? utilityTask?.model
+        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread
+      const draft = continuationDraftTurnState(thread)
+      if (draft.status === 'completed') return draft.prompt
+      if (draft.status === 'failed') throw new Error(t(draft.error))
+      await new Promise((resolve) => setTimeout(resolve, isCodexBackend(backend) ? 100 : 350))
+    }
+    throw new Error(t('Continuation draft timed out'))
+  } finally {
+    if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
+    if (threadId) {
+      dispatchBackendRpc(backend, 'thread/delete', {
+        threadId,
+        ...(!isCodexBackend(backend) ? { cwd } : {}),
+      }, 15_000).catch((error) => {
+        console.warn('Unable to remove the hidden continuation session', error)
+      }).finally(() => {
+        const threadKey = sessionRefKey(backend, threadId)
+        state.hiddenUtilityThreads.delete(threadKey)
+        state.hiddenCodexThreads.delete(threadKey)
+        if (utilityTask?.turnId) state.hiddenCodexTurns.delete(routerRuntimeKey(backend, utilityTask.turnId))
+        state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
+      })
+    } else {
+      state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
+    }
+  }
+}
+
+function ensureContinuationBackend(backend, generation, stateKey) {
+  if (state.backend !== backend || state.socketGeneration !== generation || !state.ready || selectedStateKey() !== stateKey) {
+    throw new Error(t('Continuation draft stopped because the current session changed'))
+  }
 }
 
 function renderMessageQueue() {
@@ -7112,6 +7293,7 @@ async function loadPreferences() {
   state.translation = normalizeTranslationPreferences(saved.translation)
   state.desktopNotifications = Boolean(saved.desktopNotifications)
   state.queueDepth = normalizeQueueDepth(saved.queueDepth)
+  state.continueBehavior = normalizeContinueBehavior(saved.continueBehavior)
   state.browser = {
     enabled: true,
     restoreTabs: false,
@@ -7182,6 +7364,7 @@ function preferencesSnapshot() {
     translation: state.translation,
     desktopNotifications: state.desktopNotifications,
     queueDepth: state.queueDepth,
+    continueBehavior: state.continueBehavior,
     browser: state.browser,
     annotationPromptTemplates: state.annotationPromptTemplates,
     router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
@@ -7371,6 +7554,7 @@ function populateSettingsForm() {
   $('#theme-select').value = state.theme
   $('#content-width').value = state.contentWidth
   $('#queue-depth').value = String(state.queueDepth)
+  $('#continue-behavior').value = state.continueBehavior
   $('#shared-document-directories').value = state.sharedDocumentDirectories.join('\n')
   $('#ui-font-family').value = state.typography.uiFontFamily
   $('#ui-font-size').value = String(state.typography.uiFontSize)
@@ -7394,11 +7578,10 @@ function populateSettingsForm() {
   populateTranslationSettingsForm()
   $('#settings-error').classList.add('hidden')
   activateSettingsPane(activeSettingsPane)
-  if (state.translation.engine === 'ollama') {
-    loadOllamaModels().then(() => {
-      if ($('#settings-dialog').open) renderOllamaModelOptions()
-    }).catch((error) => console.warn('Unable to load Ollama models', error))
-  } else {
+  loadOllamaModels({ refresh: true }).then(() => {
+    if ($('#settings-dialog').open) renderOllamaModelOptions()
+  }).catch((error) => console.warn('Unable to load Ollama models', error))
+  if (state.translation.engine !== 'ollama') {
     loadBackendModels().then(() => {
       if ($('#settings-dialog').open) renderBackendTranslationModelOptions()
     }).catch(() => {})
@@ -7427,15 +7610,19 @@ function renderBackendTranslationModelOptions() {
 }
 
 function renderOllamaModelOptions() {
-  $('#translation-ollama-model-options').innerHTML = state.ollamaModels
-    .map((entry) => `<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</option>`)
+  const select = $('#translation-ollama-model')
+  const selected = select.value || state.translation.ollamaModel || 'gemma3:4b'
+  const names = [...new Set(state.ollamaModels.map((entry) => entry.name).filter(Boolean))]
+  if (!names.includes(selected)) names.unshift(selected)
+  select.innerHTML = names
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
     .join('')
+  select.value = selected
 }
 
 function syncTranslationSettingsEngine() {
   const ollama = $('#translation-engine').value === 'ollama'
   for (const field of $$('.translation-backend-setting')) field.classList.toggle('hidden', ollama)
-  $('#translation-ollama-model-field').classList.toggle('hidden', !ollama)
 }
 
 function handleTranslationEngineChange() {
@@ -7459,7 +7646,7 @@ async function loadOllamaModels({ refresh = false } = {}) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload?.error?.message || `Ollama HTTP ${response.status}`)
   state.ollamaModels = Array.isArray(payload.models)
-    ? payload.models.filter((entry) => typeof entry?.name === 'string' && entry.name).slice(0, 256)
+    ? payload.models.filter((entry) => typeof entry?.name === 'string' && entry.name)
     : []
   return state.ollamaModels
 }
@@ -7488,6 +7675,7 @@ async function saveSettings(event) {
   state.theme = $('#theme-select').value === 'dark' ? 'dark' : 'light'
   state.contentWidth = normalizeContentWidth($('#content-width').value)
   state.queueDepth = normalizeQueueDepth($('#queue-depth').value)
+  state.continueBehavior = normalizeContinueBehavior($('#continue-behavior').value)
   state.sharedDocumentDirectories = sharedDocumentDirectories
   const translationModel = $('#translation-model').value.trim().slice(0, 256)
   const translationEffort = $('#translation-effort').value
@@ -7792,6 +7980,7 @@ function resetSettings() {
   state.translation = normalizeTranslationPreferences(null)
   state.desktopNotifications = false
   state.queueDepth = 1
+  state.continueBehavior = 'sessionModelDraft'
   state.wsl = { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' }
   state.annotationPromptTemplates = { ...annotationPromptDefaults }
   state.activeAnnotationPromptTemplate = defaultAnnotationPrompt()
@@ -7989,6 +8178,10 @@ function normalizeTranslationPreferences(value) {
     if (isCodexBackend(backend) && !efforts[backend]) efforts[backend] = 'low'
   }
   return { engine, ollamaModel, models, efforts }
+}
+
+function normalizeContinueBehavior(value) {
+  return ['ollamaDraft', 'quickSend'].includes(value) ? value : 'sessionModelDraft'
 }
 
 function normalizeStoredTurnOptions(value) {

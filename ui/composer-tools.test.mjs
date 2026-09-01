@@ -19,7 +19,7 @@ import {
   transcriptUpdateKind,
 } from './composer-tools.mjs'
 
-test('selects continue prompts from a small explicit phrase set', () => {
+test('selects quick Continue prompts from a small explicit phrase set', () => {
   assert.deepEqual(CONTINUE_PROMPTS, [
     'Continue.',
     'Go on.',

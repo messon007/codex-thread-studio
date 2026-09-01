@@ -185,7 +185,7 @@
               <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
                 <button id="queue-message" class="subtle-button hidden" type="button">Queue</button>
-                <button id="continue-thread" class="subtle-button" type="button" title="Send a short continue prompt · Ctrl/Cmd+Shift+Enter">Continue</button>
+                <button id="continue-thread" class="subtle-button" type="button" title="Draft the next message with the current session model · Ctrl/Cmd+Shift+Enter">Continue</button>
                 <button id="send-message" class="primary-button" type="submit">Send</button>
               </div>
             </div>
@@ -600,6 +600,7 @@
           <nav id="settings-navigation" class="settings-navigation" aria-label="Settings categories">
             <span class="settings-navigation-label">Categories</span>
             <button class="settings-navigation-item active" type="button" role="tab" aria-selected="true" aria-controls="settings-pane-general" data-settings-pane="general"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>General</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-chat" data-settings-pane="chat"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 3zM8 9h8M8 12h5"/></svg></span><span>Chat</span></button>
             <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-typography" data-settings-pane="typography"><span class="settings-navigation-icon typography">Aa</span><span>Typography</span></button>
             <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-translation" data-settings-pane="translation"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h8M9 4v2c0 4-2 7-5 9M7 11c1 2 3 4 6 5M14 19l3-8 3 8M15 16h4"/></svg></span><span>Translation</span></button>
             <button id="settings-backends-navigation" class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-backends" data-settings-pane="backends"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 12h10M9 17h6"/></svg></span><span>Backends</span></button>
@@ -613,11 +614,24 @@
                 <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
                 <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
                 <label class="field full"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
-                <label class="field"><span>Message queue depth</span><select id="queue-depth"><option value="1">1 message</option><option value="2">2 messages</option><option value="3">3 messages</option></select><small>Per session; queued messages pause after Stop, failure, or restart.</small></label>
-                <label class="field full"><span>Shared document directories</span><textarea id="shared-document-directories" rows="4" spellcheck="false" placeholder="One absolute directory per line"></textarea><small>Add multiple directories on separate lines (no commas). Use absolute paths such as /tmp or C:\Shared. Files in each directory and its subdirectories are available read-only to every session.</small></label>
                 <label class="check-field full"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
                 <label class="check-field full"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
               </section>
+            </section>
+
+            <section id="settings-pane-chat" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="chat">
+              <header class="settings-pane-header"><h3>Chat</h3><p>Configure message flow and shared document access across sessions.</p></header>
+              <div class="chat-settings">
+                <section class="settings-section settings-field-grid chat-settings-section">
+                  <header class="full"><strong>Message flow</strong><small>Control queued follow-up messages and what Continue does while a session is idle.</small></header>
+                  <label class="field"><span>Message queue depth</span><select id="queue-depth"><option value="1">1 message</option><option value="2">2 messages</option><option value="3">3 messages</option></select><small>Per session; queued messages pause after Stop, failure, or restart.</small></label>
+                  <label class="field"><span>Continue behavior</span><select id="continue-behavior"><option value="sessionModelDraft">Session model draft · review first</option><option value="ollamaDraft">Ollama draft · review first</option><option value="quickSend">Quick send · random prompt</option></select><small>Draft modes fill Chat for review using an isolated task; Quick send immediately sends a short continue phrase.</small></label>
+                </section>
+                <section class="settings-section settings-field-grid chat-settings-section">
+                  <header class="full"><strong>Shared documents</strong><small>Allow every session to open files from read-only directories you trust.</small></header>
+                  <label class="field full"><span>Shared document directories</span><textarea id="shared-document-directories" rows="4" spellcheck="false" placeholder="One absolute directory per line"></textarea><small>Add multiple directories on separate lines (no commas). Use absolute paths such as /tmp or C:\Shared. Files in each directory and its subdirectories are available read-only to every session.</small></label>
+                </section>
+              </div>
             </section>
 
             <section id="settings-pane-typography" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="typography">
@@ -651,7 +665,7 @@
                 <header class="full translation-backend-setting"><strong id="translation-settings-backend">Current backend</strong><small>Each session backend keeps its own translation model and effort choices.</small></header>
                 <label class="field full translation-backend-setting"><span>Translation model</span><input id="translation-model" list="translation-model-options" maxlength="256" placeholder="Use the current session model" /><datalist id="translation-model-options"></datalist><small>Leave blank to use the current session model; choose a fast model here when one is available.</small></label>
                 <label class="field full translation-backend-setting"><span>Translation reasoning effort</span><select id="translation-effort"><option value="">Model default</option><option value="minimal">Minimal</option><option value="low">Low · recommended for speed</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select><small>Codex translations default to Low. This does not alter the chat composer.</small></label>
-                <label id="translation-ollama-model-field" class="field full hidden"><span>Ollama model</span><input id="translation-ollama-model" list="translation-ollama-model-options" maxlength="256" placeholder="gemma3:4b" /><datalist id="translation-ollama-model-options"></datalist><small>Ollama must be running locally at 127.0.0.1:11434. The model stays loaded for 30 minutes after translation.</small></label>
+                <label id="translation-ollama-model-field" class="field full"><span>Local Ollama model</span><select id="translation-ollama-model"><option value="gemma3:4b">gemma3:4b</option></select><small>Lists every model managed by local Ollama. Used for local translation and Continue drafts; the selected model stays loaded for 30 minutes.</small></label>
               </section>
             </section>
 

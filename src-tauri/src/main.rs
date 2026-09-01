@@ -321,6 +321,8 @@ struct StudioPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     queue_depth: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    continue_behavior: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
@@ -772,6 +774,10 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(ollama::translate),
         )
         .route(
+            "/studio/ollama/continue-draft",
+            axum::routing::post(ollama::continue_draft),
+        )
+        .route(
             "/studio/workspace/list",
             axum::routing::post(list_workspace_directory),
         )
@@ -844,6 +850,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/model-revision.mjs", get(model_revision_js))
         .route("/performance-monitor.mjs", get(performance_monitor_js))
         .route("/selection-translation.mjs", get(selection_translation_js))
+        .route("/continuation-draft.mjs", get(continuation_draft_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
         .route("/message-queue.mjs", get(message_queue_js))
@@ -2054,6 +2061,10 @@ async fn selection_translation_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/selection-translation.mjs"))
 }
 
+async fn continuation_draft_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/continuation-draft.mjs"))
+}
+
 async fn backends_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/backends.mjs"))
 }
@@ -3049,6 +3060,17 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
         return Err("queue depth must be between 1 and 3".to_string());
     }
     if preferences
+        .continue_behavior
+        .as_deref()
+        .is_some_and(|behavior| {
+            !matches!(behavior, "sessionModelDraft" | "ollamaDraft" | "quickSend")
+        })
+    {
+        return Err(
+            "Continue behavior must be sessionModelDraft, ollamaDraft, or quickSend".to_string(),
+        );
+    }
+    if preferences
         .language
         .as_deref()
         .is_some_and(|language| !matches!(language, "system" | "zh-CN" | "en-US"))
@@ -3985,6 +4007,7 @@ mod tests {
                 "/model-revision.mjs",
                 "/performance-monitor.mjs",
                 "/selection-translation.mjs",
+                "/continuation-draft.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
                 "/session-catalog.mjs",
@@ -4990,6 +5013,22 @@ mod tests {
             .insert("codex".to_string(), "low".to_string());
         translation.translation.engine = "remote".to_string();
         assert!(validate_preferences(&translation).is_err());
+    }
+
+    #[test]
+    fn validates_continue_behavior_preferences() {
+        for behavior in ["sessionModelDraft", "ollamaDraft", "quickSend"] {
+            let preferences = StudioPreferences {
+                continue_behavior: Some(behavior.to_string()),
+                ..StudioPreferences::default()
+            };
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+        let invalid = StudioPreferences {
+            continue_behavior: Some("automaticAgent".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&invalid).is_err());
     }
 
     #[test]

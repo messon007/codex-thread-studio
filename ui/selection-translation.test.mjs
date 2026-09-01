@@ -73,9 +73,9 @@ test('local translation uses the guarded Ollama gateway without changing session
 })
 
 test('ephemeral Codex translations are assembled from notifications without reading turns', () => {
-  assert.match(app, /selectionTranslationTasks: new Map\(\)/u)
-  assert.match(app, /function captureSelectionTranslationNotification/u)
-  assert.match(app, /captureSelectionTranslationNotification\(backend, message\)/u)
+  assert.match(app, /structuredUtilityTasks: new Map\(\)/u)
+  assert.match(app, /function captureStructuredUtilityNotification/u)
+  assert.match(app, /captureStructuredUtilityNotification\(backend, message\)/u)
   assert.match(app, /applyCodexNotification\(task\.model, message\)/u)
 })
 
@@ -120,7 +120,7 @@ test('translation uses independent per-backend model and fast effort preferences
   assert.match(html, /id="translation-model"/u)
   assert.match(html, /id="translation-effort"/u)
   assert.match(html, /id="translation-engine"[\s\S]*value="ollama">Local Ollama/u)
-  assert.match(html, /id="translation-ollama-model"[^>]*placeholder="gemma3:4b"/u)
+  assert.match(html, /<select id="translation-ollama-model"><option value="gemma3:4b">gemma3:4b<\/option><\/select>/u)
   assert.match(app, /engine: 'backend', ollamaModel: 'gemma3:4b'/u)
   assert.match(app, /state\.translation\.engine = \$\('#translation-engine'\)\.value === 'ollama'/u)
   assert.match(app, /translation: state\.translation/u)

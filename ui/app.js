@@ -34,6 +34,7 @@ import {
 import {
   catalogListParams,
   mergeCatalogMetadata,
+  reconcileStartedThreadCatalog,
   shouldRecoverCodexCatalog,
   turnStartParams,
 } from './session-catalog.mjs'
@@ -404,6 +405,8 @@ let threadCatalogErrorMessage = null
 const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
 const backendSelectionLoads = new Map()
+const startedThreadsAwaitingCatalog = new Map()
+const startedThreadCatalogTimers = new Map()
 const codexCatalogRecoveryStarted = new Set()
 let inactiveCatalogRefreshScheduled = false
 const transcriptScrollFollower = createTranscriptScrollFollower()
@@ -1765,6 +1768,7 @@ function handleAppServerMessage(message) {
       const appServerRestarted = previousGeneration != null && nextGeneration !== previousGeneration
       if (appServerRestarted) {
         sessionDispatch.clearPrepared(backend)
+        clearStartedThreadsForBackend(backend, 'app-server-restarted')
       }
       state.appServerGenerations[backend] = nextGeneration
       state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
@@ -1877,6 +1881,11 @@ function handleAppServerMessage(message) {
 
   if (captureSelectionTranslationNotification(backend, message)) return
 
+  if (message.method === 'turn/started' || message.method === 'turn/completed') {
+    const threadId = message.params?.threadId || message.params?.thread?.id || message.params?.turn?.threadId
+    if (threadId) scheduleStartedThreadCatalogConfirmation(backend, threadId)
+  }
+
   if (message.method === 'thread/started' && message.params?.thread) {
     if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(sessionRefKey(state.backend, message.params.thread.id))) return
     mergeThreadMetadata(message.params.thread)
@@ -1896,6 +1905,7 @@ function handleAppServerMessage(message) {
     const backend = state.backend
     const threadId = message.params?.threadId
     const sessionKey = `${backend}:${threadId}`
+    forgetStartedThread(backend, threadId, message.method === 'thread/deleted' ? 'deleted' : 'archived')
     sessionManagement.archive.markStale()
     if (message.method === 'thread/deleted') {
       sessionManagement.archive.remove(backend, threadId)
@@ -2136,6 +2146,7 @@ function handleOpenCodeServerEvent(event) {
   if (payload.type === 'session.deleted') {
     const deletedId = payload.properties?.info?.id || payload.properties?.sessionID
     const deletedKey = sessionRefKey('opencode', deletedId)
+    forgetStartedThread('opencode', deletedId, 'deleted')
     state.pinnedSessions.delete(deletedKey)
     delete state.annotationDrafts[deletedKey]
     delete state.annotationAdditional[deletedKey]
@@ -2703,8 +2714,117 @@ async function refreshActiveCodexCatalogOnFocus() {
   }
 }
 
+function reportSessionLifecycle(phase, details = {}) {
+  const bounded = {}
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value === 'string') bounded[key] = value.slice(0, 256)
+    else if (typeof value === 'number' && Number.isFinite(value)) bounded[key] = value
+    else if (typeof value === 'boolean' || value == null) bounded[key] = value
+  }
+  const message = `[session.lifecycle] ${phase} ${JSON.stringify(bounded)}`
+  console.info(message)
+  gatewayFetch('/studio/client-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: message,
+  }).catch(() => {})
+}
+
+function startedThreadEntries(backend) {
+  const prefix = `${backend}:`
+  return [...startedThreadsAwaitingCatalog.entries()]
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, entry]) => entry)
+}
+
+function rememberStartedThread(backend, thread, operation) {
+  if (!thread?.id) throw new Error(t('The backend created a session without an ID.'))
+  const key = threadCatalogKey(backend, thread.id)
+  startedThreadsAwaitingCatalog.set(key, {
+    backend,
+    operation,
+    thread: { ...thread, turns: undefined },
+  })
+  // A catalog request that began before thread/start cannot know about this
+  // in-memory session. Invalidate that response before it can replace the
+  // active catalog; later requests retain the provisional entry below.
+  catalogRequestGenerations.set(backend, (catalogRequestGenerations.get(backend) || 0) + 1)
+  mergeThreadIntoCatalog(backend, thread)
+  reportSessionLifecycle('started', {
+    backend,
+    threadId: thread.id,
+    operation,
+    awaitingCatalog: true,
+  })
+}
+
+function forgetStartedThread(backend, threadId, reason) {
+  if (!threadId) return false
+  const key = threadCatalogKey(backend, threadId)
+  const entry = startedThreadsAwaitingCatalog.get(key)
+  if (!entry) return false
+  startedThreadsAwaitingCatalog.delete(key)
+  clearTimeout(startedThreadCatalogTimers.get(key))
+  startedThreadCatalogTimers.delete(key)
+  reportSessionLifecycle(reason, {
+    backend,
+    threadId,
+    operation: entry.operation,
+    awaitingCatalog: false,
+  })
+  return true
+}
+
+function reconcileCatalogWithStartedThreads(backend, threads) {
+  const entries = startedThreadEntries(backend)
+  if (!entries.length) return Array.isArray(threads) ? threads : []
+  const currentCatalog = state.threadsByBackend[backend] || []
+  const startedThreads = entries.map((entry) => {
+    const current = currentCatalog.find((thread) => thread.id === entry.thread.id)
+    if (current) entry.thread = { ...entry.thread, ...current, turns: undefined }
+    return entry.thread
+  })
+  const reconciled = reconcileStartedThreadCatalog(threads, startedThreads)
+  for (const threadId of reconciled.retainedIds) {
+    const entry = startedThreadsAwaitingCatalog.get(threadCatalogKey(backend, threadId))
+    if (!entry || entry.catalogMissLogged) continue
+    entry.catalogMissLogged = true
+    reportSessionLifecycle('catalog-retained', {
+      backend,
+      threadId,
+      operation: entry.operation,
+      awaitingCatalog: true,
+    })
+  }
+  for (const threadId of reconciled.confirmedIds) {
+    forgetStartedThread(backend, threadId, 'catalog-confirmed')
+  }
+  return reconciled.threads
+}
+
+function scheduleStartedThreadCatalogConfirmation(backend, threadId, delay = 800) {
+  const key = threadCatalogKey(backend, threadId)
+  if (!startedThreadsAwaitingCatalog.has(key)) return
+  clearTimeout(startedThreadCatalogTimers.get(key))
+  const timer = setTimeout(() => {
+    startedThreadCatalogTimers.delete(key)
+    if (!startedThreadsAwaitingCatalog.has(key)) return
+    refreshBackendCatalog(backend, { includeStatuses: false }).catch((error) => {
+      console.debug(`Unable to confirm newly started ${backend} session in the catalog`, error)
+    })
+  }, delay)
+  startedThreadCatalogTimers.set(key, timer)
+}
+
+function clearStartedThreadsForBackend(backend, reason) {
+  for (const entry of startedThreadEntries(backend)) {
+    forgetStartedThread(backend, entry.thread.id, reason)
+  }
+}
+
 function installBackendCatalog(backend, threads) {
-  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(backend, thread))
+  const visible = reconcileCatalogWithStartedThreads(backend, threads)
+    .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
   if (backend === state.backend) state.threads = visible
   renderThreadList()
@@ -3155,7 +3275,8 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
 }
 
 function setActiveThreads(threads, backend = state.backend) {
-  const visible = (threads || []).filter((thread) => !hiddenUtilityThread(backend, thread))
+  const visible = reconcileCatalogWithStartedThreads(backend, threads)
+    .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
   if (state.backend === backend) state.threads = visible
 }
@@ -6582,6 +6703,58 @@ function mergeThreadIntoCatalog(backend, incoming) {
   if (backend === state.backend) state.threads = catalog
 }
 
+function activateStartedThread(backend, thread, { operation = 'new' } = {}) {
+  if (!thread?.id) throw new Error(t('The backend created a session without an ID.'))
+  if (backend !== state.backend || !state.ready) {
+    throw new Error(t('The new session backend changed before Studio could open it.'))
+  }
+
+  rememberStartedThread(backend, thread, operation)
+  const model = createCodexViewModel()
+  hydrateCodexThread(model, thread)
+  if (backend === 'opencode') hydrateOpenCodeModelMetadata(thread, model, true)
+  model.historyComplete = true
+  cacheThreadModel(backend, thread.id, model)
+  // thread/start and thread/fork already leave the returned thread active in
+  // this App Server process. A redundant thread/resume can fail for a blank
+  // thread that has not reached the state database yet.
+  sessionDispatch.markPrepared({ backend, id: thread.id })
+  renderThreadList()
+
+  const selection = selectThread(thread.id, { force: true, backend })
+  $('#native-connection').textContent = t('Connected')
+  const selected = state.selectedId === thread.id && selectedThread()?.id === thread.id
+  reportSessionLifecycle('selected', {
+    backend,
+    threadId: thread.id,
+    operation,
+    selected,
+    cached: Boolean(freshThreadModel(backend, thread.id)),
+  })
+  if (!selected) {
+    return Promise.reject(new Error(t('Studio created the session but could not select it.')))
+  }
+  scheduleStartedThreadCatalogConfirmation(backend, thread.id)
+  return selection.then(() => {
+    reportSessionLifecycle('ready', {
+      backend,
+      threadId: thread.id,
+      operation,
+      selected: state.backend === backend && state.selectedId === thread.id,
+      catalogContains: Boolean(threadForRef({ backend, id: thread.id })),
+    })
+    return thread.id
+  }).catch((error) => {
+    reportSessionLifecycle('activation-failed', {
+      backend,
+      threadId: thread.id,
+      operation,
+      error: error?.message || String(error),
+    })
+    throw error
+  })
+}
+
 async function interruptTurn() {
   if (!state.selectedId || !state.model.activeTurnId) return
   pauseMessageQueue({ backend: state.backend, id: state.selectedId })
@@ -6673,6 +6846,7 @@ async function createThread(event) {
   event.preventDefault()
   const button = $('#create-thread')
   const errorBox = $('#new-thread-error')
+  let createdThreadId = ''
   button.disabled = true
   errorBox.classList.add('hidden')
   const backend = $('#new-thread-backend').value
@@ -6706,20 +6880,33 @@ async function createThread(event) {
       await waitFor(() => state.backend === backend && state.ready, 15_000)
     }
     const result = await rpc('thread/start', params)
+    if (!result?.thread?.id) throw new Error(t('The backend created a session without an ID.'))
+    createdThreadId = result.thread.id
+    const startedThread = name ? { ...result.thread, name } : result.thread
     if (model) {
-      const key = selectedStateKey(result.thread.id, backend)
+      const key = selectedStateKey(createdThreadId, backend)
       state.turnOptions[key] = { ...defaultTurnOptions(backend), model }
-      await persistSessionTurnOptions(key)
     }
-    if (name) await rpc('thread/name/set', { threadId: result.thread.id, name })
+    const activation = activateStartedThread(backend, startedThread)
     closeNewThreadDialog()
     $('#new-thread-form').reset()
-    await loadThreads()
-    await selectThread(result.thread.id, { force: true, backend })
-    toast(t('{backend} session created', { backend: currentBackend().name }))
+    await Promise.all([
+      activation,
+      model ? persistSessionTurnOptions(selectedStateKey(createdThreadId, backend)) : null,
+      name ? rpc('thread/name/set', { threadId: createdThreadId, name }) : null,
+    ])
+    toast(t('{backend} session created', { backend: backendDescriptor(backend).name }))
   } catch (error) {
-    errorBox.textContent = error.message
-    errorBox.classList.remove('hidden')
+    reportSessionLifecycle('create-failed', {
+      backend,
+      threadId: createdThreadId,
+      error: error?.message || String(error),
+    })
+    if (createdThreadId) showError(error)
+    else {
+      errorBox.textContent = error.message
+      errorBox.classList.remove('hidden')
+    }
   } finally { button.disabled = false }
 }
 
@@ -6734,13 +6921,15 @@ async function forkThread(lastTurnId = null, trigger = null) {
   }
   try {
     const result = await rpc('thread/fork', threadForkParams(sourceThreadId, lastTurnId))
+    if (!result?.thread?.id) throw new Error(t('The backend created a session without an ID.'))
+    const forkKey = selectedStateKey(result.thread.id, sourceBackend)
     if (sourceOptions.model || sourceOptions.effort) {
-      const forkKey = selectedStateKey(result.thread.id, sourceBackend)
       state.turnOptions[forkKey] = sourceOptions
-      await persistSessionTurnOptions(forkKey)
     }
-    await loadThreads()
-    await selectThread(result.thread.id, { force: true, backend: sourceBackend })
+    await Promise.all([
+      activateStartedThread(sourceBackend, result.thread, { operation: lastTurnId ? 'fork-turn' : 'fork' }),
+      sourceOptions.model || sourceOptions.effort ? persistSessionTurnOptions(forkKey) : null,
+    ])
     toast(t(lastTurnId ? 'Created a {backend} session fork from this turn' : '{backend} session fork created', { backend: currentBackend().name }))
   } catch (error) {
     showError(error)
@@ -6761,6 +6950,7 @@ async function archiveSelectedThread() {
   const key = selectedStateKey(threadId, state.backend)
   try {
     await rpc('thread/archive', { threadId })
+    forgetStartedThread(state.backend, threadId, 'archived')
     if (state.pinnedSessions.delete(key)) {
       persistSessionPin(key, false).catch(showError)
     }
@@ -6782,6 +6972,7 @@ async function deleteSelectedThread() {
   const archived = isArchivedPreview()
   try {
     await rpc('thread/delete', { threadId })
+    forgetStartedThread(state.backend, threadId, 'deleted')
     invalidateThreadModel(state.backend, threadId)
     const deletedKey = `${state.backend}:${threadId}`
     state.pinnedSessions.delete(deletedKey)

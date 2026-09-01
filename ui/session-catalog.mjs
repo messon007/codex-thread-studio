@@ -18,6 +18,30 @@ export function shouldRecoverCodexCatalog(catalog, preferredId) {
   return Boolean(preferred) && !threads.some((thread) => String(thread?.id || '') === preferred)
 }
 
+export function reconcileStartedThreadCatalog(catalog, startedThreads = []) {
+  const listed = Array.isArray(catalog) ? [...catalog] : []
+  const listedIds = new Set(listed.map((thread) => String(thread?.id || '')).filter(Boolean))
+  const retainedById = new Map()
+  const confirmedIds = []
+
+  for (const thread of Array.isArray(startedThreads) ? startedThreads : []) {
+    const id = String(thread?.id || '')
+    if (!id) continue
+    if (listedIds.has(id)) {
+      confirmedIds.push(id)
+      continue
+    }
+    retainedById.set(id, { ...thread, turns: undefined })
+  }
+
+  const retained = [...retainedById.values()].reverse()
+  return {
+    threads: [...retained, ...listed],
+    retainedIds: retained.map((thread) => thread.id),
+    confirmedIds: [...new Set(confirmedIds)],
+  }
+}
+
 export function mergeCatalogMetadata(kind, current, incoming) {
   const merged = { ...(current || {}), ...(incoming || {}) }
   if (kind !== 'codex' || !current) return merged

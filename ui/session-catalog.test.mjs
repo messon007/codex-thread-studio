@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   catalogListParams,
   mergeCatalogMetadata,
+  reconcileStartedThreadCatalog,
   shouldRecoverCodexCatalog,
   turnStartParams,
 } from './session-catalog.mjs'
@@ -27,6 +28,40 @@ test('Codex rollout recovery runs only for an empty catalog or a missing preferr
   assert.equal(shouldRecoverCodexCatalog(catalog, 'thread-missing'), true)
   assert.equal(shouldRecoverCodexCatalog(catalog, 'thread-1'), false)
   assert.equal(shouldRecoverCodexCatalog(catalog, null), false)
+})
+
+test('catalog refreshes retain newly started sessions until the backend lists them', () => {
+  const pending = [
+    { id: 'new-one', cwd: '/work/one', turns: [{ id: 'not-catalog-metadata' }] },
+    { id: 'new-two', cwd: '/work/two', turns: [] },
+  ]
+  const first = reconcileStartedThreadCatalog([{ id: 'existing' }], pending)
+
+  assert.deepEqual(first.threads.map((thread) => thread.id), ['new-two', 'new-one', 'existing'])
+  assert.deepEqual(first.retainedIds, ['new-two', 'new-one'])
+  assert.deepEqual(first.confirmedIds, [])
+  assert.equal(first.threads[0].turns, undefined)
+  assert.equal(first.threads[1].turns, undefined)
+
+  const confirmed = reconcileStartedThreadCatalog([
+    { id: 'new-two', cwd: '/work/from-state-db' },
+    { id: 'existing' },
+  ], pending)
+  assert.deepEqual(confirmed.threads.map((thread) => thread.id), ['new-one', 'new-two', 'existing'])
+  assert.deepEqual(confirmed.retainedIds, ['new-one'])
+  assert.deepEqual(confirmed.confirmedIds, ['new-two'])
+  assert.equal(confirmed.threads[1].cwd, '/work/from-state-db')
+})
+
+test('started-session catalog reconciliation ignores invalid and duplicate provisional records', () => {
+  const result = reconcileStartedThreadCatalog([], [
+    null,
+    { id: '' },
+    { id: 'same', cwd: '/old' },
+    { id: 'same', cwd: '/new' },
+  ])
+  assert.deepEqual(result.threads, [{ id: 'same', cwd: '/new', turns: undefined }])
+  assert.deepEqual(result.retainedIds, ['same'])
 })
 
 test('Codex hydration preserves state-database catalog metadata', () => {

@@ -1,0 +1,155 @@
+name: Weekly ecosystem watch
+
+on:
+  schedule:
+    # GitHub cron is UTC. This is Monday 09:17 in Asia/Shanghai.
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ecosystem-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-compatibility:
+    name: Upstream versions and used contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install current official CLIs without repository credentials
+        continue-on-error: true
+        env:
+          UPSTREAM_ROOT: ${{ runner.temp }}/studio-upstreams
+        run: >-
+          npm install --prefix "$UPSTREAM_ROOT" --ignore-scripts --no-save --package-lock=false
+          @openai/codex@latest opencode-linux-x64-baseline@latest
+
+      - name: Compare versions and Studio-used contracts
+        env:
+          REPORT_ROOT: ${{ runner.temp }}/ecosystem-watch
+          UPSTREAM_ROOT: ${{ runner.temp }}/studio-upstreams
+        run: >-
+          node scripts/ecosystem-watch.mjs probe
+          --codex-bin "$UPSTREAM_ROOT/node_modules/@openai/codex/bin/codex.js"
+          --opencode-bin "$UPSTREAM_ROOT/node_modules/opencode-linux-x64-baseline/bin/opencode"
+          --output "$REPORT_ROOT"
+
+      - name: Upload contract projections and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecosystem-watch-report
+          path: |
+            ${{ runner.temp }}/ecosystem-watch/report.json
+            ${{ runner.temp }}/ecosystem-watch/report.md
+            ${{ runner.temp }}/ecosystem-watch/codex-contract.json
+            ${{ runner.temp }}/ecosystem-watch/opencode-contract.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  project-health:
+    name: Current toolchain, tests, and security audits
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install UI development dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check vendored browser assets
+        run: |
+          npm run vendor:markdown
+          npm run vendor:workspace
+          npm run vendor:epub
+          npm run vendor:artifacts
+          git diff --exit-code -- ui/vendor
+
+      - name: Test the browser and backend code
+        run: |
+          node --check ui/app.js
+          npm test
+          npm run version:check
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+
+      - name: Audit UI dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Audit Rust dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+  notify:
+    name: Maintain the review Issue
+    if: always()
+    needs:
+      - upstream-compatibility
+      - project-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the compatibility report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ecosystem-watch-report
+          path: ecosystem-watch-report
+
+      - name: Open, update, or close the review Issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEALTH_RESULT: ${{ needs.project-health.result }}
+          UPSTREAM_RESULT: ${{ needs.upstream-compatibility.result }}
+        run: >-
+          node scripts/ecosystem-watch.mjs notify
+          --report ecosystem-watch-report/report.json
+          --upstream-result "$UPSTREAM_RESULT"
+          --health-result "$HEALTH_RESULT"

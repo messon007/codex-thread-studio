@@ -175,10 +175,11 @@ function pinWindow(entry, visibleTurns) {
 
 export function presentTurn(turn) {
   const items = Array.isArray(turn?.items) ? turn.items : []
-  const lastAssistantIndex = findLastAssistantIndex(items)
+  const finalAssistant = findFinalAssistant(items, turn?.status)
   const blocks = []
   let activityItems = []
   let activityIndex = 0
+  let deferredAssistantBlock = null
 
   const flushActivity = () => {
     if (!activityItems.length) return
@@ -194,9 +195,13 @@ export function presentTurn(turn) {
       return
     }
     if (item?.type === 'agentMessage' || item?.type === 'plan') {
-      if (index === lastAssistantIndex) {
-        flushActivity()
-        blocks.push({ type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' })
+      if (index === finalAssistant.index) {
+        const assistantBlock = { type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' }
+        if (finalAssistant.deferUntilAfterActivity) deferredAssistantBlock = assistantBlock
+        else {
+          flushActivity()
+          blocks.push(assistantBlock)
+        }
       } else {
         activityItems.push({ kind: 'progress', itemId: item.id, item })
       }
@@ -205,6 +210,7 @@ export function presentTurn(turn) {
     activityItems.push(activityEntry(item))
   })
   flushActivity()
+  if (deferredAssistantBlock) blocks.push(deferredAssistantBlock)
 
   if (turn?.status === 'failed' || turn?.error?.message) {
     blocks.push({ type: 'error', message: turn?.error?.message || 'Turn failed' })
@@ -435,13 +441,32 @@ function activityEntry(item) {
   return { ...common, kind: 'unknown' }
 }
 
-function findLastAssistantIndex(items) {
+function findFinalAssistant(items, turnStatus) {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const type = items[index]?.type
     if (type === 'contextCompaction' || type === 'stepFinish') continue
-    return type === 'agentMessage' || type === 'plan' ? index : -1
+    if (type === 'agentMessage' || type === 'plan') {
+      return { index, deferUntilAfterActivity: false }
+    }
+    break
   }
-  return -1
+
+  // Some provider adapters reuse an earlier assistant item id for the final
+  // answer. App-server history then keeps that item's old position while
+  // replacing its content, leaving completed commands after the final text.
+  // Recover only completed, phase-less/final assistant messages; explicit
+  // commentary remains progress so active and incomplete turns are unchanged.
+  if (turnStatus === 'completed') {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item?.type === 'userMessage') break
+      if (item?.type !== 'agentMessage') continue
+      if (item.phase === 'commentary') return { index: -1, deferUntilAfterActivity: false }
+      return { index, deferUntilAfterActivity: true }
+    }
+  }
+
+  return { index: -1, deferUntilAfterActivity: false }
 }
 
 function changesFingerprint(changes) {

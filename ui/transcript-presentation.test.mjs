@@ -80,6 +80,38 @@ test('keeps a progress message inside activity until a trailing final answer exi
   assert.deepEqual(presentation.blocks[0].entries.map((entry) => entry.kind), ['progress', 'command'])
 })
 
+test('recovers a phase-less final answer displaced before trailing activity in completed history', () => {
+  const presentation = presentTurn({
+    id: 'turn-displaced-final',
+    status: 'completed',
+    items: [
+      { id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Organize it' }] },
+      { id: 'rs_0', type: 'reasoning', summary: ['Done. Summarize the result.'] },
+      { id: 'msg_1', type: 'agentMessage', phase: null, text: 'The completed summary.' },
+      { id: 'command-1', type: 'commandExecution', command: 'read files', status: 'completed' },
+      { id: 'command-2', type: 'commandExecution', command: 'write docs', status: 'completed' },
+    ],
+  })
+
+  assert.deepEqual(presentation.blocks.map((block) => block.type), ['user', 'activity', 'assistant'])
+  assert.deepEqual(presentation.blocks[1].entries.map((entry) => entry.itemId), ['rs_0', 'command-1', 'command-2'])
+  assert.equal(presentation.blocks[2].itemId, 'msg_1')
+})
+
+test('does not promote explicit commentary from a completed turn with no final answer', () => {
+  const presentation = presentTurn({
+    id: 'turn-commentary-only',
+    status: 'completed',
+    items: [
+      { id: 'progress', type: 'agentMessage', phase: 'commentary', text: 'Still checking.' },
+      { id: 'command', type: 'commandExecution', command: 'inspect', status: 'completed' },
+    ],
+  })
+
+  assert.deepEqual(presentation.blocks.map((block) => block.type), ['activity'])
+  assert.deepEqual(presentation.blocks[0].entries.map((entry) => entry.itemId), ['progress', 'command'])
+})
+
 test('assigns unique activity blocks around a steered user message and keeps the full activity history', () => {
   const presentation = presentTurn({
     id: 'turn-steered',

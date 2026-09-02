@@ -173,6 +173,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .backend-tag.router { background: var(--blue-soft); color: var(--blue); }
 .thread-row.active .backend-tag { background: color-mix(in srgb, var(--brand) 10%, var(--panel)); color: var(--brand); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--faint) 12%, transparent); }
+.status-dot.notLoaded { background: color-mix(in srgb, var(--faint) 36%, var(--panel)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--faint) 7%, transparent); }
 .status-dot.active, .status-dot.running, .status-dot.inProgress, .status-dot.idle { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
 .status-dot.active, .status-dot.running, .status-dot.inProgress { animation: breathe 1.8s ease-in-out infinite; }
 .status-dot.systemError, .status-dot.failed { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }

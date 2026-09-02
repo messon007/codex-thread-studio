@@ -79,7 +79,15 @@ export function groupCatalogEntries(entries = []) {
   }))
 }
 
-export function partitionPinnedCatalogEntries(entries = [], pinned = new Set()) {
+function compareCatalogEntriesByActivity(left, right) {
+  const leftUpdated = catalogTimestamp(left.thread.updatedAt || left.thread.updated_at || left.thread.createdAt)
+  const rightUpdated = catalogTimestamp(right.thread.updatedAt || right.thread.updated_at || right.thread.createdAt)
+  if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
+  return String(left.thread.name || left.thread.title || left.thread.id)
+    .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
+}
+
+export function partitionPinnedCatalogEntries(entries = [], pinned = new Set(), { order = 'pin' } = {}) {
   const pinOrder = new Map([...pinned].map((key, index) => [key, index]))
   const pinnedEntries = []
   const regularEntries = []
@@ -89,9 +97,14 @@ export function partitionPinnedCatalogEntries(entries = [], pinned = new Set()) 
       : regularEntries
     target.push(entry)
   }
-  pinnedEntries.sort((left, right) =>
-    pinOrder.get(threadCatalogKey(left.backend, left.thread.id))
-      - pinOrder.get(threadCatalogKey(right.backend, right.thread.id)))
+  if (order === 'activity') {
+    pinnedEntries.sort(compareCatalogEntriesByActivity)
+    regularEntries.sort(compareCatalogEntriesByActivity)
+  } else {
+    pinnedEntries.sort((left, right) =>
+      pinOrder.get(threadCatalogKey(left.backend, left.thread.id))
+        - pinOrder.get(threadCatalogKey(right.backend, right.thread.id)))
+  }
   return { pinnedEntries, regularEntries }
 }
 
@@ -121,13 +134,7 @@ export function filterCatalogEntries(catalogs, {
 
   if (filter !== 'attention') return entries
 
-  return entries.sort((left, right) => {
-    const leftUpdated = catalogTimestamp(left.thread.updatedAt || left.thread.updated_at || left.thread.createdAt)
-    const rightUpdated = catalogTimestamp(right.thread.updatedAt || right.thread.updated_at || right.thread.createdAt)
-    if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
-    return String(left.thread.name || left.thread.title || left.thread.id)
-      .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
-  })
+  return entries.sort(compareCatalogEntriesByActivity)
 }
 
 export function normalizeHiddenSessionDirectories(values = []) {

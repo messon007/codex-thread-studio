@@ -110,6 +110,28 @@ test('pinned sessions are extracted globally in stored pin order', () => {
   )
 })
 
+test('attention mode orders pinned and regular sessions independently by latest activity', () => {
+  const entries = [
+    { backend: 'codex', thread: { id: 'pinned-old', name: 'Pinned old', updatedAt: 10 } },
+    { backend: 'codex', thread: { id: 'regular-old', name: 'Regular old', updatedAt: 20 } },
+    { backend: 'codex', thread: { id: 'pinned-new', name: 'Pinned new', updatedAt: 40 } },
+    { backend: 'codex', thread: { id: 'regular-new', name: 'Regular new', updatedAt: 30 } },
+  ]
+  const pinned = new Set([
+    threadCatalogKey('codex', 'pinned-old'),
+    threadCatalogKey('codex', 'pinned-new'),
+  ])
+  const partition = partitionPinnedCatalogEntries(entries, pinned, { order: 'activity' })
+  assert.deepEqual(
+    partition.pinnedEntries.map(({ thread }) => thread.id),
+    ['pinned-new', 'pinned-old'],
+  )
+  assert.deepEqual(
+    partition.regularEntries.map(({ thread }) => thread.id),
+    ['regular-new', 'regular-old'],
+  )
+})
+
 test('search includes the backend tag and project directory', () => {
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'OC' }).map(({ thread }) => thread.name), ['OpenCode task'])
   assert.deepEqual(filterCatalogEntries(catalogs, { search: 'WK' }).map(({ thread }) => thread.name), ['Company Codex task'])
@@ -195,6 +217,7 @@ test('the sidebar contract has one create button, directory groups, and no backe
   assert.match(styles, /\.pinned-thread-group::after \{[^}]*width: calc\(100% - 14px\);[^}]*margin: 7px auto;/u)
   assert.match(styles, /\.backend-tag \{[^}]*background: var\(--panel-strong\)/)
   assert.match(styles, /\.thread-row\.active \.backend-tag/)
+  assert.match(styles, /\.status-dot\.notLoaded \{[^}]*background: color-mix\(in srgb, var\(--faint\) 36%, var\(--panel\)\)/u)
 })
 
 test('session selection renders a valid cache before performing a first history load', () => {
@@ -203,9 +226,11 @@ test('session selection renders a valid cache before performing a first history 
   const end = source.indexOf('\nfunction markThreadLoaded', start)
   const selectThread = source.slice(start, end)
   assert.ok(selectThread.indexOf('freshThreadModel(') < selectThread.indexOf('renderTranscript()'))
+  assert.match(selectThread, /const fresh = freshThreadModel\(state\.backend, id\)[\s\S]*const cached = fresh \|\| cachedThreadModel\(state\.backend, id\)/u)
   assert.ok(selectThread.indexOf('setNativeError(null)') < selectThread.indexOf('if (cached)'))
   assert.ok(selectThread.indexOf('renderTranscript()') < selectThread.indexOf('schedulePreferencesPersist()'))
-  assert.ok(selectThread.indexOf('if (cached)') < selectThread.indexOf('await resumeThread(id,'))
+  assert.ok(selectThread.indexOf('if (fresh)') < selectThread.indexOf('await resumeThread(id,'))
+  assert.match(selectThread, /if \(cached\) \$\('#native-connection'\)\.textContent = t\('Checking for updates…'\)[\s\S]*await resumeThread\(id,/u)
   assert.match(selectThread, /syncThreadListSelection\(\)/u)
   assert.doesNotMatch(selectThread, /renderThreadList\(\)/u)
   assert.doesNotMatch(selectThread, /thread\/unsubscribe/)

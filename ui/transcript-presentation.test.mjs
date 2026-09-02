@@ -410,6 +410,21 @@ test('returns a pinned reader to the latest window before appending a new user t
   assert.equal(entry.orderedIds.length - entry.visibleEnd, 0)
 })
 
+test('returns a pinned reader to the latest window immediately', () => {
+  const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
+  const model = {
+    turns: Array.from({ length: 8 }, (_, index) => ({ id: String(index), status: 'completed', items: [] })),
+  }
+  const entry = cache.showTurn('thread', model, '2')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['0', '1', '2', '3'])
+
+  cache.followLatest('thread', model)
+
+  assert.equal(entry.windowMode, 'latest')
+  assert.deepEqual(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd), ['4', '5', '6', '7'])
+  assert.equal(entry.orderedIds.length - entry.visibleEnd, 0)
+})
+
 test('pins the current latest window when the reader manually pauses', () => {
   const cache = new TranscriptPresentationCache({ visibleTurns: 4 })
   const makeTurn = (id) => ({ id: String(id), status: 'completed', items: [] })

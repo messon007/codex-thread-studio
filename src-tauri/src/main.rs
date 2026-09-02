@@ -846,7 +846,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/app.js", get(app_js))
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
+        .route(
+            "/codex-lifecycle-diagnostics.mjs",
+            get(codex_lifecycle_diagnostics_js),
+        )
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/thread-history-tail.mjs", get(thread_history_tail_js))
         .route("/model-revision.mjs", get(model_revision_js))
         .route("/performance-monitor.mjs", get(performance_monitor_js))
         .route("/selection-translation.mjs", get(selection_translation_js))
@@ -2045,8 +2050,16 @@ async fn codex_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/codex-native.mjs"))
 }
 
+async fn codex_lifecycle_diagnostics_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/codex-lifecycle-diagnostics.mjs"))
+}
+
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn thread_history_tail_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-history-tail.mjs"))
 }
 
 async fn model_revision_js() -> impl IntoResponse {
@@ -2461,6 +2474,10 @@ struct ApplyEnvironmentRequest {
     backend: String,
     #[serde(default)]
     include_thread: bool,
+    #[serde(default)]
+    exclude_turns: bool,
+    #[serde(default)]
+    initial_turns_page: Option<serde_json::Value>,
 }
 
 async fn apply_environment_profile(
@@ -2483,15 +2500,19 @@ async fn apply_environment_profile(
             "environment backend must be a configured Codex-compatible instance",
         );
     };
+    let mut resume_params = json!({
+        "threadId": request.thread_id,
+        "config": { "shell_environment_policy": { "inherit": "all", "set": environment } }
+    });
+    if request.exclude_turns {
+        resume_params["excludeTurns"] = json!(true);
+    }
+    if let Some(initial_turns_page) = request.initial_turns_page {
+        resume_params["initialTurnsPage"] = initial_turns_page;
+    }
     match instance
         .server
-        .request(
-            "thread/resume",
-            json!({
-                "threadId": request.thread_id,
-                "config": { "shell_environment_policy": { "inherit": "all", "set": environment } }
-            }),
-        )
+        .request("thread/resume", resume_params)
         .await
     {
         Ok(result) if request.include_thread => json_response(StatusCode::OK, &result),

@@ -74,6 +74,67 @@ export async function collectOpenCodeMessageHistory(fetchPage, requestedPageSize
   return { messages: mergeOpenCodeMessagePages(pages), complete }
 }
 
+export async function collectOpenCodeMessageTail(fetchPage, anchorTurnIds, requestedPageSize = 80) {
+  const pageSize = Math.max(1, Math.min(1_000, Number(requestedPageSize) || 80))
+  const anchors = new Set((Array.isArray(anchorTurnIds) ? anchorTurnIds : [])
+    .map((id) => String(id || ''))
+    .filter(Boolean))
+  if (!anchors.size) return { messages: [], complete: false, matched: false, anchorTurnId: '' }
+
+  const pages = []
+  const seenCursors = new Set()
+  let before = null
+  let complete = false
+
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const page = await fetchPage({
+      limit: pageSize,
+      ...(before == null ? {} : { before }),
+    })
+    const messages = Array.isArray(page) ? page : page?.messages
+    if (!Array.isArray(messages)) break
+    pages.unshift(messages)
+
+    let merged = mergeOpenCodeMessagePages(pages)
+    let tail = sliceOpenCodeMessageTail(merged, anchors)
+    if (tail.matched) {
+      // Older-page reads can overlap a still-streaming newest page. Refresh only
+      // that page so the authoritative tail wins without downloading history.
+      if (pages.length > 1) {
+        const latest = await fetchPage({ limit: pageSize })
+        const latestMessages = Array.isArray(latest) ? latest : latest?.messages
+        if (Array.isArray(latestMessages)) {
+          pages.push(latestMessages)
+          merged = mergeOpenCodeMessagePages(pages)
+          tail = sliceOpenCodeMessageTail(merged, anchors)
+        }
+      }
+      return {
+        messages: tail.messages,
+        complete: false,
+        matched: true,
+        anchorTurnId: tail.anchorTurnId,
+      }
+    }
+
+    const nextCursor = String(page?.cursor || '')
+    if (nextCursor && !seenCursors.has(nextCursor)) {
+      seenCursors.add(nextCursor)
+      before = nextCursor
+      continue
+    }
+    if (!nextCursor) complete = before != null || messages.length < pageSize
+    break
+  }
+
+  return {
+    messages: mergeOpenCodeMessagePages(pages),
+    complete,
+    matched: false,
+    anchorTurnId: '',
+  }
+}
+
 export async function fetchOpenCodeDirectoryStatuses(directories, fetchStatus, requestedConcurrency = 6) {
   const queue = [...new Set((Array.isArray(directories) ? directories : []).filter(Boolean))]
   if (!queue.length) return {}
@@ -118,6 +179,56 @@ export function mergeOpenCodeMessagePages(pages) {
   return messages
 }
 
+export function mergeOpenCodeThreadTail(model, thread, anchorTurnId) {
+  const anchor = String(anchorTurnId || '')
+  const cachedIndex = model?.turns?.findIndex((turn) => String(turn?.id || '') === anchor) ?? -1
+  const incomingIndex = thread?.turns?.findIndex((turn) => String(turn?.id || '') === anchor) ?? -1
+  if (!model || cachedIndex < 0 || incomingIndex < 0) return false
+
+  const removedTurnIds = new Set(model.turns.slice(cachedIndex)
+    .map((turn) => String(turn?.id || ''))
+    .filter(Boolean))
+  const preservedMessageTurns = Object.fromEntries(Object.entries(model.messageTurns || {})
+    .filter(([, turnId]) => !removedTurnIds.has(String(turnId || ''))))
+  const preservedMessageIds = new Set(Object.keys(preservedMessageTurns))
+  const preserveMessageMetadata = (values) => Object.fromEntries(Object.entries(values || {})
+    .filter(([messageId]) => preservedMessageIds.has(messageId)))
+  const preservedErrors = Object.fromEntries(Object.entries(model.messageErrors || {})
+    .filter(([messageId, value]) => preservedMessageIds.has(messageId)
+      || !removedTurnIds.has(String(value?.turnId || ''))))
+
+  model.turns = [
+    ...model.turns.slice(0, cachedIndex),
+    ...thread.turns.slice(incomingIndex),
+  ]
+  model.threadId = thread.id || model.threadId
+  model.messageTurns = { ...preservedMessageTurns, ...(thread.messageTurns || {}) }
+  model.messageRoles = { ...preserveMessageMetadata(model.messageRoles), ...(thread.messageRoles || {}) }
+  model.messageItems = { ...preserveMessageMetadata(model.messageItems), ...(thread.messageItems || {}) }
+  model.messageErrors = { ...preservedErrors, ...(thread.messageErrors || {}) }
+  model.error = null
+  model.status = thread.status || model.status
+  model.activeTurnId = model.status === 'running' ? model.turns.at(-1)?.id || null : null
+  markTranscriptModelChanged(model)
+  return true
+}
+
+export function sliceOpenCodeMessageTail(messages, anchorTurnIds) {
+  const values = Array.isArray(messages) ? messages : []
+  const anchors = anchorTurnIds instanceof Set
+    ? anchorTurnIds
+    : new Set((Array.isArray(anchorTurnIds) ? anchorTurnIds : [])
+      .map((id) => String(id || ''))
+      .filter(Boolean))
+  const anchorIndex = newestOpenCodeAnchorIndex(values, anchors)
+  if (anchorIndex < 0) return { messages: values, matched: false, anchorTurnId: '' }
+  return {
+    messages: values.slice(anchorIndex),
+    matched: true,
+    anchorTurnId: String(values[anchorIndex]?.info?.id || ''),
+  }
+}
+
 export function normalizeOpenCodeSessions(sessions, statuses = {}) {
   return (Array.isArray(sessions) ? sessions : []).map((session) => ({
     id: session.id,
@@ -131,6 +242,14 @@ export function normalizeOpenCodeSessions(sessions, statuses = {}) {
     updatedAt: session.time?.updated || session.time?.created || 0,
     native: session,
   }))
+}
+
+function newestOpenCodeAnchorIndex(messages, anchors) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const info = messages[index]?.info || {}
+    if (info.role === 'user' && anchors.has(String(info.id || ''))) return index
+  }
+  return -1
 }
 
 export function openCodeThreadFromHistory(session, messages, status) {

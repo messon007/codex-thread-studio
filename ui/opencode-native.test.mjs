@@ -6,15 +6,18 @@ import { transcriptModelRevision } from './model-revision.mjs'
 import {
   applyOpenCodeEvent,
   collectOpenCodeMessageHistory,
+  collectOpenCodeMessageTail,
   collectOpenCodeRootSessions,
   createOpenCodeLoopGuard,
   fetchOpenCodeDirectoryStatuses,
+  mergeOpenCodeThreadTail,
   normalizeOpenCodeSessions,
   openCodeCommandTurn,
   openCodeModelList,
   openCodeThreadFromHistory,
   replayOpenCodeEventsAfterHistory,
   selectOpenCodeStartedUserMessage,
+  sliceOpenCodeMessageTail,
   splitOpenCodeModel,
 } from './opencode-native.mjs'
 
@@ -154,7 +157,7 @@ test('paginates complete OpenCode histories and refreshes the newest page', asyn
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const rpcStart = source.indexOf('async function openCodeRpc(')
   const rpcEnd = source.indexOf('\nfunction openCodeFilePart', rpcStart)
-  assert.match(source.slice(rpcStart, rpcEnd), /fetchOpenCodeMessageHistory\(params\.threadId, session\.directory, fetchOptions\)/u)
+  assert.match(source.slice(rpcStart, rpcEnd), /fetchOpenCodeMessageHistory\(params\.threadId, session\.directory, fetchOptions, \{[\s\S]*anchorTurnIds:/u)
 })
 
 test('keeps history bounded when an older OpenCode server does not expose a message cursor', async () => {
@@ -182,6 +185,80 @@ test('continues through cursor-backed short pages and completes on a full final 
   assert.equal(history.complete, true)
   assert.deepEqual(history.messages.map((message) => message.info.id), ['1', '2', '3'])
   assert.deepEqual(calls, [{ limit: 2 }, { limit: 2, before: 'older' }, { limit: 2 }])
+})
+
+test('loads and merges an OpenCode tail across every queued turn until a cached anchor', async () => {
+  const messagesFor = (id, answer) => [
+    { info: { id, role: 'user' }, parts: [{ id: `${id}-question`, type: 'text', text: `Question ${id}` }] },
+    { info: { id: `${id}-assistant`, parentID: id, role: 'assistant' }, parts: [{ id: `${id}-answer`, type: 'text', text: answer }] },
+  ]
+  const calls = []
+  let latestReads = 0
+  const history = await collectOpenCodeMessageTail(async (params) => {
+    calls.push(params)
+    if (!params.before) {
+      latestReads += 1
+      return { messages: messagesFor('turn-4', latestReads > 1 ? 'four latest' : 'four'), cursor: 'older-1' }
+    }
+    if (params.before === 'older-1') return { messages: messagesFor('turn-3', 'three'), cursor: 'older-2' }
+    return { messages: messagesFor('turn-2', 'two completed'), cursor: 'older-3' }
+  }, ['turn-1', 'turn-2'], 2)
+
+  assert.equal(history.matched, true)
+  assert.equal(history.anchorTurnId, 'turn-2')
+  assert.deepEqual(history.messages.filter((message) => message.info.role === 'user').map((message) => message.info.id), [
+    'turn-2', 'turn-3', 'turn-4',
+  ])
+  assert.deepEqual(calls, [
+    { limit: 2 },
+    { limit: 2, before: 'older-1' },
+    { limit: 2, before: 'older-2' },
+    { limit: 2 },
+  ])
+
+  const cached = openCodeThreadFromHistory({ id: 'ses-tail' }, [
+    ...messagesFor('turn-1', 'one'),
+    ...messagesFor('turn-2', 'two streaming'),
+  ], { type: 'busy' })
+  cached.threadId = cached.id
+  cached.historyComplete = true
+  const incoming = openCodeThreadFromHistory({ id: 'ses-tail' }, history.messages, { type: 'idle' })
+  assert.equal(mergeOpenCodeThreadTail(cached, incoming, history.anchorTurnId), true)
+  assert.deepEqual(cached.turns.map((turn) => turn.id), ['turn-1', 'turn-2', 'turn-3', 'turn-4'])
+  assert.deepEqual(cached.turns.map((turn) => turn.items.at(-1).text), [
+    'one', 'two completed', 'three', 'four latest',
+  ])
+  assert.equal(cached.messageTurns['turn-1-assistant'], 'turn-1')
+  assert.equal(cached.messageTurns['turn-2-assistant'], 'turn-2')
+  assert.equal(cached.historyComplete, true)
+})
+
+test('reports a complete replacement when an OpenCode tail no longer intersects the cache', async () => {
+  const history = await collectOpenCodeMessageTail(async () => ({
+    messages: [{ info: { id: 'new-turn', role: 'user' }, parts: [] }],
+    cursor: null,
+  }), ['old-turn'], 2)
+
+  assert.equal(history.matched, false)
+  assert.equal(history.complete, true)
+  assert.deepEqual(history.messages.map((message) => message.info.id), ['new-turn'])
+})
+
+test('recovers an OpenCode tail from a wider bounded page when the fast page missed its anchor', () => {
+  const messages = [
+    { info: { id: 'old', role: 'user' } },
+    { info: { id: 'old-answer', parentID: 'old', role: 'assistant' } },
+    { info: { id: 'anchor', role: 'user' } },
+    { info: { id: 'anchor-answer', parentID: 'anchor', role: 'assistant' } },
+    { info: { id: 'queued', role: 'user' } },
+  ]
+  const tail = sliceOpenCodeMessageTail(messages, ['anchor'])
+
+  assert.equal(tail.matched, true)
+  assert.equal(tail.anchorTurnId, 'anchor')
+  assert.deepEqual(tail.messages.map((message) => message.info.id), [
+    'anchor', 'anchor-answer', 'queued',
+  ])
 })
 
 test('replays buffered OpenCode deltas without losing history prefixes or duplicating captured text', () => {

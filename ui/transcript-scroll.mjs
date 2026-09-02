@@ -2,6 +2,10 @@ export function distanceFromBottom({ scrollHeight = 0, scrollTop = 0, clientHeig
   return Math.max(0, Number(scrollHeight) - Number(scrollTop) - Number(clientHeight))
 }
 
+export function shouldPinTranscriptOnTakeover({ metrics, hasLaterTurns = false, bottomThreshold = 48 } = {}) {
+  return Boolean(hasLaterTurns) || distanceFromBottom(metrics) > bottomThreshold
+}
+
 export function shouldFollowLatestOnReturn({ orderedTurnIds = [], readingTurnId = '', recentTurnCount = 2, bottomDistance = Infinity, bottomThreshold = 48 } = {}) {
   const ids = orderedTurnIds.map((id) => String(id || '')).filter(Boolean)
   const readingId = String(readingTurnId || '')

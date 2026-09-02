@@ -59,7 +59,7 @@ test('pinning is bounded and archive clears the persisted pin', () => {
   assert.match(app, /state\.pinnedSessions\.size >= 10/u)
   assert.match(app, /state\.pinnedSessions = new Set\(\[\.\.\.state\.pinnedSessions, key\]\)/u)
   assert.match(app, /async function archiveSelectedThread\([\s\S]*persistSessionPin\(key, false\)/u)
-  assert.match(app, /partitionPinnedCatalogEntries\(entries, state\.pinnedSessions\)/u)
+  assert.match(app, /partitionPinnedCatalogEntries\([\s\S]{0,120}state\.pinnedSessions,[\s\S]{0,120}order: state\.filter === 'all' \? 'pin' : 'activity'/u)
 })
 
 test('debounced comment persistence stays bound to the session that changed', () => {

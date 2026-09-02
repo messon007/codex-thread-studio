@@ -7,6 +7,7 @@ import {
   createTranscriptScrollFollower,
   distanceFromBottom,
   shouldFollowLatestOnReturn,
+  shouldPinTranscriptOnTakeover,
   transcriptResizeAction,
   transcriptScrollEventAction,
   transcriptRestorePlan,
@@ -15,6 +16,25 @@ import {
 test('calculates transcript distance from the bottom', () => {
   assert.equal(distanceFromBottom({ scrollHeight: 1200, scrollTop: 700, clientHeight: 500 }), 0)
   assert.equal(distanceFromBottom({ scrollHeight: 1500, scrollTop: 700, clientHeight: 500 }), 300)
+})
+
+test('ordinary transcript interaction pins only when the reader is away from the latest output', () => {
+  const bottom = { scrollHeight: 1200, scrollTop: 700, clientHeight: 500 }
+  const readingHistory = { scrollHeight: 1500, scrollTop: 700, clientHeight: 500 }
+
+  assert.equal(shouldPinTranscriptOnTakeover({ metrics: bottom }), false)
+  assert.equal(shouldPinTranscriptOnTakeover({ metrics: readingHistory }), true)
+  assert.equal(shouldPinTranscriptOnTakeover({ metrics: bottom, hasLaterTurns: true }), true)
+})
+
+test('transcript pointer takeover does not unconditionally pin the latest window', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('function handleTranscriptUserTakeover(')
+  const end = source.indexOf('\nfunction handleTranscriptKeyboardTakeover', start)
+  const takeover = source.slice(start, end)
+
+  assert.match(takeover, /if \(shouldPinTranscriptOnTakeover\(\{ metrics: transcript, hasLaterTurns \}\)\) \{[\s\S]*transcriptScrollFollower\.pause\(\)[\s\S]*transcriptPresentationCache\.pinCurrent\(key\)/u)
+  assert.match(takeover, /else \{\s*transcriptScrollFollower\.reset\(\)/u)
 })
 
 test('content growth alone does not disable an active follower', () => {
@@ -99,7 +119,7 @@ test('the transcript restoration transaction consumes authoritative misses and r
   assert.ok(restore.indexOf('pendingTranscriptViewRestore = null') < restore.indexOf("plan.type === 'anchor'"))
   assert.match(source, /prepareTranscriptEntryForRestore\(\)/u)
   assert.ok(prepare.indexOf('transcriptRestoreContext({') < prepare.lastIndexOf('currentPresentationEntry()'))
-  assert.match(source, /catch \(error\) \{\s*(?:if \(backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch\) return\s*)?if \(state\.backend !== backend \|\| state\.selectedId !== id\) return\s*abandonTranscriptHistoryRestore\(\)/u)
+  assert.match(source, /catch \(error\) \{\s*(?:if \(backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch\) return\s*)?if \(state\.backend !== backend \|\| state\.selectedId !== id\) return\s*if \(!cachedVisible\) \{\s*abandonTranscriptHistoryRestore\(\)/u)
   assert.match(context, /if \(!pending\) return/u)
   assert.doesNotMatch(context, /scrollState\(/u)
   assert.match(capture, /if \(pendingTranscriptViewRestore\?\.key === key\) return/u)
@@ -163,6 +183,24 @@ test('submitting a new turn cancels a pinned reading position and follows the la
   assert.ok(helper.indexOf('transcriptScrollFollower.reset()') < helper.indexOf('transcriptPresentationCache.followLatest(key, model)'))
   assert.match(composer, /beginTranscriptFollowingLatest\(targetModel\)/u)
   assert.ok(composer.indexOf('beginTranscriptFollowingLatest(targetModel)') < composer.indexOf('beginOptimisticCodexTurn('))
+})
+
+test('starting the selected session queue follows latest while background queues leave the visible transcript alone', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('async function runNextQueuedMessage(')
+  const end = source.indexOf('\nasync function sendComposer(', start)
+  const queue = source.slice(start, end)
+
+  assert.match(queue, /if \(key === selectedStateKey\(\)\) \{\s*beginTranscriptFollowingLatest\(model\)\s*renderComposerState\(\)/u)
+  assert.ok(queue.indexOf('beginTranscriptFollowingLatest(model)') < queue.indexOf('startTurnWithPreparation({'))
+})
+
+test('a hidden newer window is presented as a direct jump to latest rather than a turn count', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+
+  assert.match(source, /data-jump-latest[^>]*>\$\{t\('Jump to latest'\)\}/u)
+  assert.doesNotMatch(source, /data-load-later|\{count\} later turns/u)
+  assert.match(source, /closest\('\[data-jump-latest\]'\)[\s\S]*beginTranscriptFollowingLatest\(\)[\s\S]*renderTranscript\(\)/u)
 })
 
 test('right-rail layout mutations preserve a live anchor independently of session restore state', () => {

@@ -149,8 +149,14 @@ export class TranscriptPresentationCache {
 
   followLatest(threadKey, model) {
     const entry = this.get(threadKey, model)
+    const visibleEnd = entry.orderedIds.length
+    const visibleStart = Math.max(0, visibleEnd - this.visibleTurns)
+    const windowChanged = entry.visibleStart !== visibleStart || entry.visibleEnd !== visibleEnd
     entry.windowMode = 'latest'
     entry.historyWindow = this.visibleTurns
+    entry.visibleStart = visibleStart
+    entry.visibleEnd = visibleEnd
+    if (windowChanged) syncVisibleTurns(entry)
     return entry
   }
 

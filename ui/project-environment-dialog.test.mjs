@@ -54,6 +54,7 @@ test('configured environments reuse the selected history resume and are generati
   assert.match(apply, /appServerGenerations\[backend\]/u)
   assert.match(apply, /profileRevision/u)
   assert.match(apply, /appliedEnvironmentProfiles\.has\(key\)/u)
-  assert.match(apply, /JSON\.stringify\(\{ root, threadId, backend, includeThread \}\)/u)
+  assert.match(apply, /JSON\.stringify\(\{[\s\S]*root,[\s\S]*threadId,[\s\S]*backend,[\s\S]*includeThread,[\s\S]*excludeTurns: incremental,[\s\S]*initialTurnsPage/u)
+  assert.match(apply, /isHistoryPaginationCompatibilityError\(error\)[\s\S]*rememberHistoryTailCapability\(backend, threadId, false\)[\s\S]*apply\(false\)/u)
   assert.match(app, /environmentProfileSelectionRoot === root/u)
 })

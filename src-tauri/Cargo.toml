@@ -18,14 +18,14 @@ tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
 axum = { version = "0.8.4", features = ["ws"] }
-dirs = "5.0.1"
+dirs = "6.0.0"
 futures-util = "0.3.31"
 libc = "0.2.174"
 portable-pty = "0.9.0"
-reqwest = { version = "0.12.22", default-features = false, features = ["json", "stream"] }
-rusqlite = { version = "0.37.0", features = ["bundled"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "=1.0.115"
+serde_json = "=1.0.151"
 tauri = { version = "2.0.0", features = ["unstable"] }
 tokio = { version = "1.46.1", features = ["io-util", "net", "process", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1.23.5", features = ["v4"] }
@@ -34,15 +34,15 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
-tao = "0.30.8"
+tao = "0.35.3"
 webkit2gtk = "2.0.1"
-wry = "0.46.3"
+wry = "0.51.2"
 
 [target.'cfg(windows)'.dependencies]
-tao = "0.30.8"
-webview2-com = "0.33"
+tao = "0.35.3"
+webview2-com = "0.37"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-wry = "0.46.3"
+wry = "0.51.2"
 
 [dev-dependencies]
 tower = { version = "0.5.2", features = ["util"] }

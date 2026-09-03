@@ -508,6 +508,7 @@ const chinese = {
   'Document review': '文档审阅',
   'Document view': '文档视图',
   'Preview': '预览',
+  'Formatted': '已格式化',
   'Source code': '源码',
   'Search document content…': '搜索文档内容…',
   'No matches found': '未找到匹配内容',

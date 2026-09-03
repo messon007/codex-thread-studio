@@ -18,3 +18,27 @@ export function codexLifecycleEvent(message) {
     notificationStatus: typeof status === 'string' ? status : '',
   }
 }
+
+export function codexLifecycleStreamMessage(payload) {
+  const method = String(payload?.method || '')
+  if (method === 'studio/codexLifecycle/ready') {
+    return {
+      type: 'ready',
+      backends: Array.isArray(payload.params?.backends)
+        ? payload.params.backends
+          .filter((backend) => typeof backend === 'string' && backend)
+          .map(String)
+        : [],
+    }
+  }
+  if (method !== 'studio/codexLifecycle/event') return null
+  const backend = String(payload.params?.backend || '')
+  const message = payload.params?.message
+  const eventMethod = String(message?.method || '')
+  if (!backend || !message || (
+    !CODEX_LIFECYCLE_METHODS.has(eventMethod)
+    && eventMethod !== 'studio/appServer/status'
+    && eventMethod !== 'studio/appServer/lagged'
+  )) return null
+  return { type: 'event', backend, message }
+}

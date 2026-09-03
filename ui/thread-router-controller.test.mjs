@@ -26,6 +26,7 @@ function controllerFixture(overrides = {}) {
     ...overrides.state,
   }
   const calls = []
+  const activity = []
   const dispatch = overrides.dispatch || {
     supports: () => true,
     backends: () => ['codex'],
@@ -51,7 +52,7 @@ function controllerFixture(overrides = {}) {
       threadTitle: (thread) => thread.name,
       threadStatus: () => 'idle',
       mergeThread: () => {},
-      updateLoadedThreadTimestamp: () => {},
+      updateLoadedThreadTimestamp: (backend, id, options) => activity.push({ backend, id, options }),
     },
     model: {
       ensureSessionModel: async () => ({ turns: [], status: 'idle' }),
@@ -71,7 +72,7 @@ function controllerFixture(overrides = {}) {
     },
     persistPreferences: async () => {},
   })
-  return { calls, controller, state }
+  return { activity, calls, controller, state }
 }
 
 test('Router runtime factories do not share mutable coordination state', () => {
@@ -84,7 +85,7 @@ test('Router runtime factories do not share mutable coordination state', () => {
 })
 
 test('Router controller refreshes candidates before starting a structured routing turn', async () => {
-  const { calls, controller, state } = controllerFixture()
+  const { activity, calls, controller, state } = controllerFixture()
   await controller.startTurn('Please prepare a design')
   assert.deepEqual(calls.map((call) => call.type), ['refresh', 'start'])
   const start = calls[1]
@@ -95,6 +96,7 @@ test('Router controller refreshes candidates before starting a structured routin
   assert.ok(start.options.additionalContext['codex-thread-studio/thread-router'])
   assert.equal(state.routerRuntime.pending.has('codex:route-turn'), true)
   assert.equal(state.routerRuntime.dispatches.get('codex:route-turn').status, 'routing')
+  assert.deepEqual(activity, [{ backend: 'codex', id: 'router', options: { status: 'active' } }])
   for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
 })
 

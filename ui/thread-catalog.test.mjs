@@ -5,6 +5,7 @@ import test from 'node:test'
 import { installBackendRegistry } from './backends.mjs'
 
 import {
+  catalogActivityTimestamp,
   catalogCountsWithAttention,
   catalogTimestamp,
   compactSidebarText,
@@ -51,6 +52,13 @@ test('keeps equal IDs from different backends as separate sessions', () => {
 test('normalizes second and millisecond epoch timestamps for cross-backend ordering', () => {
   assert.equal(catalogTimestamp(1_784_881_800), 1_784_881_800_000)
   assert.equal(catalogTimestamp(1_784_881_800_123), 1_784_881_800_123)
+})
+
+test('runtime activity can reorder a session without replacing its backend update clock', () => {
+  const thread = { updatedAt: 1_784_881_800_020, activityAt: 1_784_881_800_030 }
+  assert.equal(catalogActivityTimestamp(thread), 1_784_881_800_030)
+  thread.updatedAt = 1_784_881_800_040
+  assert.equal(catalogActivityTimestamp(thread), 1_784_881_800_040)
 })
 
 test('treats the Codex validation second as uncertain when checking cached history', () => {

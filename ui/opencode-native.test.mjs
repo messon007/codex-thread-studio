@@ -767,11 +767,19 @@ test('Studio leaves OpenCode message identity to the server', () => {
   assert.doesNotMatch(source.slice(adapterStart, adapterEnd), /clientUserMessageId|messageID/u)
 })
 
-test('OpenCode ignores the initial connected event but refreshes after an SSE reconnect', () => {
+test('OpenCode keeps one cross-backend event stream and refreshes after an SSE continuity gap', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const connect = source.slice(
     source.indexOf('async function connectOpenCode('),
     source.indexOf('\nfunction cleanupSocket', source.indexOf('async function connectOpenCode(')),
+  )
+  const stream = source.slice(
+    source.indexOf('function startOpenCodeEventStream('),
+    source.indexOf('\nfunction connectCodexLifecycleStream', source.indexOf('function startOpenCodeEventStream(')),
+  )
+  const cleanup = source.slice(
+    source.indexOf('function cleanupConnections('),
+    source.indexOf('\nfunction beginTurnLatencyTrace', source.indexOf('function cleanupConnections(')),
   )
   const events = source.slice(
     source.indexOf('function handleOpenCodeServerEvent('),
@@ -781,11 +789,15 @@ test('OpenCode ignores the initial connected event but refreshes after an SSE re
     events.indexOf("if (payload.type === 'server.connected')"),
     events.indexOf("if (payload.type.startsWith('session.'))"),
   )
-  assert.match(connect, /openCodeEventStreamOpenCount = 0[\s\S]*events\.onopen[\s\S]*openCodeEventStreamOpenCount \+= 1/u)
+  assert.match(stream, /if \(openCodeEventStream\) return openCodeEventStream/u)
+  assert.match(stream, /events\.onopen[\s\S]*openCodeEventStreamOpenCount \+= 1/u)
   assert.match(connectedBranch, /server\.connected[\s\S]*EventSource\.onopen owns the continuity epoch/u)
   assert.doesNotMatch(connectedBranch, /scheduleOpenCodeListRefresh/u)
-  assert.match(connect, /openCodeHistoryEpoch \+= 1[\s\S]*openCodeEventStreamOpenCount > 0 \|\| initialSelectionStarted[\s\S]*openCodeHistoryEpoch \+= 1[\s\S]*scheduleOpenCodeListRefresh\(\{ forceSelectedHistory: true \}\)/u)
-  assert.match(connect, /await Promise\.race\([\s\S]*eventStreamOpen[\s\S]*initialSelectionStarted = true[\s\S]*loadThreads\(\)/u)
+  assert.match(stream, /openCodeEventStreamOpenCount > 0[\s\S]*openCodeSelectionStartedWithoutEventBarrier[\s\S]*openCodeHistoryEpoch \+= 1[\s\S]*scheduleOpenCodeListRefresh/u)
+  assert.match(connect, /await waitForOpenCodeEventStream\(\)[\s\S]*openCodeSelectionStartedWithoutEventBarrier = true[\s\S]*loadThreads\(\)/u)
+  assert.doesNotMatch(cleanup, /openCodeEventStream|openCodeStatusReconcileTimers/u)
+  assert.match(events, /const selectedTarget = state\.backend === 'opencode' && eventThreadId === state\.selectedId/u)
+  assert.match(source, /state\.backend === 'opencode' && state\.ready[\s\S]*refreshOpenCodeThreadList[\s\S]*refreshBackendCatalog\('opencode'\)/u)
   assert.match(source, /backend === 'opencode' && cached\.historyEpoch !== openCodeHistoryEpoch/u)
   assert.match(source, /historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null/u)
   assert.match(source, /backend === 'opencode' \? \{ historyEpoch \}/u)

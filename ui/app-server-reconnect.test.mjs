@@ -9,7 +9,7 @@ test('same-process Codex reconnects reuse only a catalog-fresh cached history', 
   const end = source.indexOf("if (message.method === 'studio/appServer/log')", start)
   const statusHandler = source.slice(start, end)
 
-  assert.match(statusHandler, /const appServerRestarted = previousGeneration != null && nextGeneration !== previousGeneration/u)
+  assert.match(statusHandler, /const appServerRestarted = codexBackendsNeedingRestartRecovery\.delete\(backend\)[\s\S]*previousGeneration != null && nextGeneration !== previousGeneration/u)
   assert.match(statusHandler, /if \(!appServerRestarted && freshThreadModel\(backend, selectedId, \{ reconnectValidation: true \}\)\) return/u)
   assert.match(statusHandler, /if \(state\.backend !== backend[\s\S]*state\.socketGeneration !== socketGeneration[\s\S]*sessionManagement\.archive\.isOpen\(\)[\s\S]*!state\.selectedId\) return/u)
   assert.doesNotMatch(statusHandler, /const reconnecting = previousGeneration != null/u)

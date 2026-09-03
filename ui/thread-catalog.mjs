@@ -80,11 +80,18 @@ export function groupCatalogEntries(entries = []) {
 }
 
 function compareCatalogEntriesByActivity(left, right) {
-  const leftUpdated = catalogTimestamp(left.thread.updatedAt || left.thread.updated_at || left.thread.createdAt)
-  const rightUpdated = catalogTimestamp(right.thread.updatedAt || right.thread.updated_at || right.thread.createdAt)
+  const leftUpdated = catalogActivityTimestamp(left.thread)
+  const rightUpdated = catalogActivityTimestamp(right.thread)
   if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
   return String(left.thread.name || left.thread.title || left.thread.id)
     .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
+}
+
+export function catalogActivityTimestamp(thread) {
+  return Math.max(
+    catalogTimestamp(thread?.activityAt),
+    catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt),
+  )
 }
 
 export function partitionPinnedCatalogEntries(entries = [], pinned = new Set(), { order = 'pin' } = {}) {

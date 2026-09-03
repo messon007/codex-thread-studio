@@ -4,6 +4,9 @@ import test from 'node:test'
 
 import {
   addLoadedThread,
+  preserveCatalogActivity,
+  restoreCatalogThreadActivity,
+  updateCatalogThreadActivity,
   updateLoadedCatalogTimestamp,
 } from './thread-workset.mjs'
 
@@ -23,7 +26,54 @@ test('only loaded sessions receive a dynamic catalog timestamp', () => {
   const loaded = new Set(['codex:loaded'])
   assert.equal(updateLoadedCatalogTimestamp(catalogs, loaded, 'codex', 'cold', 30), false)
   assert.equal(updateLoadedCatalogTimestamp(catalogs, loaded, 'codex', 'loaded', 40), true)
-  assert.deepEqual(catalogs.codex.map(({ updatedAt }) => updatedAt), [40, 20])
+  assert.deepEqual(catalogs.codex, [
+    { id: 'loaded', updatedAt: 10, activityAt: 40 },
+    { id: 'cold', updatedAt: 20 },
+  ])
+})
+
+test('catalog refreshes preserve a newer runtime activity clock without replacing backend metadata', () => {
+  const refreshed = preserveCatalogActivity(
+    [{ id: 'thread-1', status: 'idle', updatedAt: 50 }],
+    [{ id: 'thread-1', status: 'active', updatedAt: 10, activityAt: 60 }],
+  )
+  assert.deepEqual(refreshed, [{ id: 'thread-1', status: 'idle', updatedAt: 50, activityAt: 60 }])
+})
+
+test('catalog activity updates status and time as one reversible mutation', () => {
+  const catalogs = {
+    codex: [{ id: 'thread-1', status: 'idle', updatedAt: 10 }],
+  }
+  const change = updateCatalogThreadActivity(catalogs, 'codex', 'thread-1', {
+    status: 'active',
+    timestamp: 40,
+  })
+  assert.equal(change.statusChanged, true)
+  assert.equal(change.timestampChanged, true)
+  assert.deepEqual(catalogs.codex[0], { id: 'thread-1', status: 'active', updatedAt: 10, activityAt: 40 })
+  assert.ok(restoreCatalogThreadActivity(catalogs, change))
+  assert.deepEqual(catalogs.codex[0], { id: 'thread-1', status: 'idle', updatedAt: 10 })
+})
+
+test('an authoritative lifecycle update prevents an optimistic activity rollback', () => {
+  const catalogs = {
+    codex: [{ id: 'thread-1', status: 'idle', updatedAt: 10 }],
+  }
+  const optimistic = updateCatalogThreadActivity(catalogs, 'codex', 'thread-1', {
+    status: 'active',
+    timestamp: 40,
+  })
+  updateCatalogThreadActivity(catalogs, 'codex', 'thread-1', {
+    status: { type: 'active' },
+    timestamp: 41,
+  })
+  assert.equal(restoreCatalogThreadActivity(catalogs, optimistic), null)
+  assert.deepEqual(catalogs.codex[0], {
+    id: 'thread-1',
+    status: { type: 'active' },
+    updatedAt: 10,
+    activityAt: 41,
+  })
 })
 
 test('Studio starts with an empty runtime workset and adds a session after loading history', () => {
@@ -36,10 +86,40 @@ test('Studio starts with an empty runtime workset and adds a session after loadi
   )
   assert.ok(resume.indexOf('cacheThreadModel(') > resume.indexOf("rpc('thread/resume'"))
   assert.match(source, /function cacheThreadModel[\s\S]*markThreadLoaded\(backend, id\)/)
+  assert.match(source, /function installBackendCatalog[\s\S]*preserveCatalogActivity\([\s\S]*function refreshRouterCatalogs/)
+  assert.match(source, /function setActiveThreads[\s\S]*preserveCatalogActivity\([\s\S]*function sidebarThreadsForBackend/)
 })
 
-test('completed replies update timestamps without changing loaded membership', () => {
+test('turn boundaries update catalog status and activity without streaming-list churn', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  assert.match(source, /function updateCodexReplyTime[\s\S]*message\.method !== 'turn\/completed'[\s\S]*isCodexBackend\(state\.backend\)[\s\S]*updateLoadedThreadTimestamp\(backend/)
-  assert.match(source, /function updateOpenCodeReplyTime[\s\S]*payload\.type !== 'session\.idle'[\s\S]*updateLoadedThreadTimestamp\('opencode'/)
+  const codexLifecycle = source.slice(
+    source.indexOf('function handleCodexLifecycleNotification('),
+    source.indexOf('\nfunction handleAppServerMessage(', source.indexOf('function handleCodexLifecycleNotification(')),
+  )
+  const catalogLifecycle = source.slice(
+    source.indexOf('function updateCodexCatalogActivity('),
+    source.indexOf('\nfunction updateLoadedThreadTimestamp(', source.indexOf('function updateCodexCatalogActivity(')),
+  )
+  assert.match(codexLifecycle, /updateCodexCatalogActivity\(backend, message, event, threadId\)/)
+  assert.match(catalogLifecycle, /event\.method === 'turn\/started'[\s\S]*status: 'active', touch: true/)
+  assert.match(catalogLifecycle, /event\.method !== 'turn\/completed'[\s\S]*status, touch: true/)
+  assert.match(catalogLifecycle, /payload\.type === 'session\.idle'[\s\S]*status: 'idle', touch: true/)
+  assert.doesNotMatch(catalogLifecycle, /message\.part\.delta[\s\S]*touch: true/)
+})
+
+test('composer and queued sends optimistically activate one catalog row and roll back rejected starts', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const queue = source.slice(
+    source.indexOf('async function runNextQueuedMessage('),
+    source.indexOf('\nasync function sendComposer(', source.indexOf('async function runNextQueuedMessage(')),
+  )
+  const composer = source.slice(
+    source.indexOf('async function sendComposer('),
+    source.indexOf('\nfunction isRouterThread(', source.indexOf('async function sendComposer(')),
+  )
+  assert.match(queue, /setCatalogThreadActivity\(ref\.backend, ref\.id, \{ status: 'active', touch: true \}\)/)
+  assert.match(queue, /if \(!accepted\) rollbackCatalogThreadActivity\(catalogActivity\)/)
+  assert.match(composer, /setCatalogThreadActivity\(backend, threadId, \{ status: 'active', touch: true \}\)/)
+  assert.match(composer, /if \(!turnAccepted\) rollbackCatalogThreadActivity\(catalogActivity\)/)
+  assert.match(source, /function refreshCatalogActivity[\s\S]*state\.filter === 'attention'[\s\S]*patchThreadCatalogRow\(change\.backend, change\.thread\)/)
 })

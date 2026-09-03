@@ -7,7 +7,6 @@ import {
   resolveCodexApproval,
   resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
-  selectedThreadStatusChange,
   textFromUserContent,
 } from './codex-native.mjs'
 import {
@@ -23,6 +22,7 @@ import {
   openCodeCommandTurn,
   openCodeModelList,
   openCodeThreadFromHistory,
+  normalizeOpenCodeStatus,
   replayOpenCodeEventsAfterHistory,
   selectOpenCodeStartedUserMessage,
   sliceOpenCodeMessageTail,
@@ -178,6 +178,7 @@ import { createWorkspaceTools } from './workspace-tools.mjs'
 import { createSessionResourcesUI } from './session-resources-ui.mjs'
 import { rightRailWidthBounds } from './right-rail-layout.mjs'
 import {
+  catalogActivityTimestamp,
   catalogCountsWithAttention,
   catalogTimestamp,
   compactSidebarText,
@@ -192,7 +193,9 @@ import {
 } from './thread-catalog.mjs'
 import {
   addLoadedThread,
-  updateLoadedCatalogTimestamp,
+  preserveCatalogActivity,
+  restoreCatalogThreadActivity,
+  updateCatalogThreadActivity,
 } from './thread-workset.mjs'
 import {
   catalogsWithSingleRouter,
@@ -213,7 +216,11 @@ import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dis
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
-import { codexLifecycleEvent } from './codex-lifecycle-diagnostics.mjs'
+import { transcriptModelRevision } from './model-revision.mjs'
+import {
+  codexLifecycleEvent,
+  codexLifecycleStreamMessage,
+} from './codex-lifecycle-diagnostics.mjs'
 import {
   DEFAULT_TURN_TAIL_PAGE_SIZE,
   collectCodexTurnTail,
@@ -298,7 +305,6 @@ const state = {
   selectedByBackend: emptyBackendSelections(),
   startupRouterSelectionPending: true,
   socket: null,
-  eventSource: null,
   socketGeneration: 0,
   reconnectTimer: null,
   ready: false,
@@ -410,7 +416,12 @@ let transcriptUserScrollIntentUntil = 0
 let transcriptPointerScrollActive = false
 let openCodeListRefreshTimer = null
 let openCodeListRefreshNeedsHistory = false
+let openCodeEventStream = null
+let openCodeEventStreamReady = false
+let openCodeSelectionStartedWithoutEventBarrier = false
+const openCodeEventStreamWaiters = new Set()
 let openCodeEventStreamOpenCount = 0
+let openCodeLifecycleReconciliation = null
 let openCodeHistoryEpoch = 0
 const openCodeStatusReconcileTimers = new Map()
 const openCodeLoopAbortRequests = new Set()
@@ -428,6 +439,16 @@ const startedThreadsAwaitingCatalog = new Map()
 const startedThreadCatalogTimers = new Map()
 const codexCatalogRecoveryStarted = new Set()
 let inactiveCatalogRefreshScheduled = false
+let codexLifecycleSocket = null
+let codexLifecycleReconnectTimer = null
+let codexLifecycleConnectionGeneration = 0
+let codexLifecycleStreamReady = false
+let codexLifecycleOpenCount = 0
+const handledCodexTurnLifecycleEvents = new Map()
+const recentCodexStatusLifecycleEvents = new Map()
+const codexBackendsNeedingRestartRecovery = new Set()
+const codexOffscreenHistoryRefreshes = new Map()
+const codexOffscreenHistoryRefreshRetries = new Map()
 const transcriptScrollFollower = createTranscriptScrollFollower()
 const transcriptContentObserver = createTranscriptContentObserver({ onResize: handleTranscriptContentResize })
 const composerDrafts = createComposerDraftStore()
@@ -735,6 +756,11 @@ async function init() {
   bindUI()
   await loadBackendRegistry()
   await loadPreferences()
+  // Establish the low-volume cross-backend event barrier while the remaining
+  // companion state loads. Active RPC connections are opened separately below
+  // and continue to carry full transcript traffic.
+  const codexLifecycleConnection = connectCodexLifecycleStream()
+  startOpenCodeEventStream()
   setLanguage(state.language)
   startTranslationObserver()
   applyAppearance()
@@ -751,6 +777,7 @@ async function init() {
   // loads its metadata as part of connectOpenCode(), so it is not requested
   // twice and cannot block initial catalog discovery.
   if (isCodexBackend(state.backend)) loadBackendInfo()
+  await codexLifecycleConnection
   connectBackend()
 }
 
@@ -1526,6 +1553,344 @@ function currentBackend() {
   return backendDescriptor(state.backend)
 }
 
+function waitForOpenCodeEventStream(timeoutMs = 1_500) {
+  if (openCodeEventStreamReady) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (ready) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      openCodeEventStreamWaiters.delete(finish)
+      resolve(ready)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    openCodeEventStreamWaiters.add(finish)
+  })
+}
+
+function renderOpenCodeConnectionState(kind, label, caption) {
+  state.backendStates.opencode = { kind, label, caption }
+  if (state.backend === 'opencode') {
+    const connection = $('#thread-connection')
+    if (connection) connection.className = `thread-connection ${kind}`
+    const copy = kind === 'online' ? 'Connected' : kind === 'checking' ? 'Connecting…' : 'Disconnected'
+    $('#native-connection').textContent = t(copy)
+  }
+  if ($('#connections-dialog').open) renderConnectionsDialog()
+  if ($('#backend-dialog').open) renderBackendDialog()
+}
+
+function startOpenCodeEventStream() {
+  if (openCodeEventStream) return openCodeEventStream
+  const events = gatewayEventSource('/opencode/global/event')
+  openCodeEventStream = events
+  events.onopen = () => {
+    const needsReconciliation = openCodeEventStreamOpenCount > 0
+      || openCodeSelectionStartedWithoutEventBarrier
+    openCodeEventStreamOpenCount += 1
+    openCodeEventStreamReady = true
+    openCodeSelectionStartedWithoutEventBarrier = false
+    for (const waiter of [...openCodeEventStreamWaiters]) waiter(true)
+    renderOpenCodeConnectionState('online', 'OpenCode Server', 'Background event connection')
+    if (needsReconciliation) {
+      openCodeHistoryEpoch += 1
+      scheduleOpenCodeListRefresh({ forceSelectedHistory: state.backend === 'opencode' })
+      scheduleOpenCodeLifecycleReconciliation()
+    }
+    reportSessionLifecycle('opencode-event-stream', {
+      state: needsReconciliation ? 'reconnected' : 'connected',
+      historyEpoch: openCodeHistoryEpoch,
+    })
+  }
+  events.onmessage = (event) => {
+    try { handleOpenCodeServerEvent(JSON.parse(event.data)) }
+    catch (error) { console.error('Invalid OpenCode SSE event', error, event.data) }
+  }
+  events.onerror = () => {
+    openCodeEventStreamReady = false
+    renderOpenCodeConnectionState('checking', 'Reconnecting to OpenCode', 'SSE event stream')
+  }
+  return events
+}
+
+function scheduleOpenCodeLifecycleReconciliation() {
+  if (openCodeLifecycleReconciliation) return openCodeLifecycleReconciliation
+  openCodeLifecycleReconciliation = new Promise((resolve) => {
+    scheduleStudioIdleWork(resolve, { delay: 300, timeout: 1_500 })
+  }).then(async () => {
+    await refreshBackendCatalog('opencode')
+    const catalog = state.threadsByBackend.opencode || []
+    const staleRunningIds = [...state.threadModels.entries()]
+      .filter(([key, cached]) => key.startsWith('opencode:')
+        && (cached.model?.activeTurnId || cached.model?.status === 'running'))
+      .map(([key]) => key.slice('opencode:'.length))
+      .filter((id) => {
+        const status = threadStatus(catalog.find((thread) => thread.id === id))
+        return status !== 'active' && status !== 'running' && status !== 'inProgress'
+      })
+    for (const id of staleRunningIds) {
+      let model
+      if (state.backend === 'opencode' && state.selectedId === id && state.ready) {
+        await refreshSelectedThread({ quiet: true })
+        model = state.model
+      } else {
+        model = await ensureSessionModel({ backend: 'opencode', id })
+      }
+      const lastTurn = model?.turns?.at(-1)
+      if (!model?.activeTurnId && lastTurn) {
+        handleQueuedTurnCompletion(
+          { backend: 'opencode', id },
+          lastTurn.status || model.status || 'completed',
+        )
+      }
+    }
+  }).catch((error) => {
+    console.debug('Unable to reconcile OpenCode after an event-stream gap', error)
+  }).finally(() => {
+    openCodeLifecycleReconciliation = null
+  })
+  return openCodeLifecycleReconciliation
+}
+
+function connectCodexLifecycleStream() {
+  clearTimeout(codexLifecycleReconnectTimer)
+  codexLifecycleReconnectTimer = null
+  if (codexLifecycleSocket) {
+    codexLifecycleSocket.onclose = null
+    codexLifecycleSocket.close()
+  }
+  codexLifecycleStreamReady = false
+  codexLifecycleConnectionGeneration += 1
+  const generation = codexLifecycleConnectionGeneration
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex-lifecycle`)
+  codexLifecycleSocket = socket
+
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = (ready) => {
+      if (settled) return
+      settled = true
+      clearTimeout(barrierTimer)
+      resolve(ready)
+    }
+    // This is only an initialization ordering barrier. The connection stays
+    // alive and can become authoritative after a slow local WebSocket upgrade.
+    const barrierTimer = setTimeout(() => settle(false), 750)
+
+    socket.onmessage = (event) => {
+      if (generation !== codexLifecycleConnectionGeneration) return
+      let envelope
+      try { envelope = codexLifecycleStreamMessage(JSON.parse(event.data)) }
+      catch (error) {
+        console.error('Invalid cross-backend Codex lifecycle message', error, event.data)
+        return
+      }
+      if (!envelope) return
+      if (envelope.type === 'ready') {
+        const reconnected = codexLifecycleOpenCount > 0
+        codexLifecycleOpenCount += 1
+        codexLifecycleStreamReady = true
+        settle(true)
+        reportSessionLifecycle('codex-lifecycle-stream', {
+          state: reconnected ? 'reconnected' : 'connected',
+          backendCount: envelope.backends.length,
+        })
+        if (reconnected) scheduleCodexLifecycleReconciliation()
+        return
+      }
+      if (!isCodexBackend(envelope.backend)) return
+      if (envelope.message.method === 'studio/appServer/status') {
+        handleInactiveCodexAppServerStatus(envelope.backend, envelope.message)
+      } else if (envelope.message.method === 'studio/appServer/lagged') {
+        handleCodexLifecycleLag(envelope.backend, envelope.message)
+      } else {
+        handleCodexLifecycleNotification(envelope.backend, envelope.message)
+      }
+    }
+    socket.onerror = () => {
+      if (generation !== codexLifecycleConnectionGeneration) return
+      codexLifecycleStreamReady = false
+    }
+    socket.onclose = () => {
+      if (generation !== codexLifecycleConnectionGeneration) return
+      codexLifecycleStreamReady = false
+      codexLifecycleSocket = null
+      settle(false)
+      reportSessionLifecycle('codex-lifecycle-stream', { state: 'disconnected' })
+      codexLifecycleReconnectTimer = setTimeout(() => {
+        if (generation !== codexLifecycleConnectionGeneration) return
+        connectCodexLifecycleStream()
+      }, 1_800)
+    }
+  })
+}
+
+function invalidateCodexBackendModelValidation(backend) {
+  for (const [key, cached] of state.threadModels) {
+    if (key.startsWith(`${backend}:`)) cached.validatedAt = 0
+  }
+}
+
+function handleInactiveCodexAppServerStatus(backend, message) {
+  if (backend === state.backend) return
+  const descriptor = backendDescriptor(backend)
+  const status = message.params?.state
+  const previousGeneration = state.appServerGenerations[backend]
+  const nextGeneration = message.params?.generation ?? previousGeneration
+  if (status === 'ready') {
+    if (previousGeneration != null && nextGeneration !== previousGeneration) {
+      sessionDispatch.clearPrepared(backend)
+      clearStartedThreadsForBackend(backend, 'app-server-restarted')
+      invalidateCodexBackendModelValidation(backend)
+      codexBackendsNeedingRestartRecovery.add(backend)
+    }
+    state.appServerGenerations[backend] = nextGeneration
+    state.backendStates[backend] = {
+      kind: 'online',
+      label: `${descriptor.name} App Server`,
+      caption: 'Background lifecycle connection',
+    }
+  } else if (status === 'starting') {
+    state.backendStates[backend] = {
+      kind: 'checking',
+      label: `Starting ${descriptor.name}`,
+      caption: message.params?.binary || 'App Server',
+    }
+  } else if (status === 'error' || status === 'stopped') {
+    sessionDispatch.clearPrepared(backend)
+    state.backendStates[backend] = {
+      kind: 'error',
+      label: `${descriptor.name} Unavailable`,
+      caption: message.params?.message || message.params?.reason || 'App Server stopped',
+    }
+  }
+  if ($('#connections-dialog').open) renderConnectionsDialog()
+  if ($('#backend-dialog').open) renderBackendDialog()
+}
+
+function handleCodexLifecycleLag(backend, message) {
+  const skipped = Number(message.params?.skipped || 0)
+  reportSessionLifecycle('codex-lifecycle-lag', { backend, skipped })
+  // The selected backend still has its full event connection and performs its
+  // own lag recovery. This stream only needs to reconcile offscreen backends.
+  if (backend === state.backend) return
+  reconcileCodexLifecycleBackend(backend).catch((error) => {
+    console.warn(`Unable to reconcile ${backend} after lifecycle event lag`, error)
+  })
+}
+
+function scheduleCodexLifecycleReconciliation() {
+  scheduleStudioIdleWork(() => Promise.all(
+    BACKEND_IDS
+      .filter((backend) => backend !== state.backend && isCodexBackend(backend))
+      .map((backend) => reconcileCodexLifecycleBackend(backend).catch((error) => {
+        console.debug(`Unable to reconcile reconnected ${backend} lifecycle state`, error)
+      })),
+  ), { delay: 250, timeout: 1_500 })
+}
+
+async function reconcileCodexLifecycleBackend(backend) {
+  if (!isCodexBackend(backend) || backend === state.backend) return
+  await refreshBackendCatalog(backend)
+  if (backend === state.backend) return
+  const catalog = state.threadsByBackend[backend] || []
+  const staleRunning = [...state.threadModels.entries()]
+    .filter(([key, cached]) => key.startsWith(`${backend}:`)
+      && (cached.model?.activeTurnId || cached.model?.status === 'running'))
+    .map(([key, cached]) => ({
+      id: key.slice(backend.length + 1),
+      model: cached.model,
+    }))
+    .filter(({ id }) => {
+      const status = threadStatus(catalog.find((thread) => thread.id === id))
+      return status !== 'active' && status !== 'running' && status !== 'inProgress'
+    })
+  for (const entry of staleRunning) {
+    if (backend === state.backend) return
+    markCachedModelUnvalidated(backend, entry.model)
+    await refreshOffscreenCodexHistoryAfterCompletion(
+      backend,
+      entry.id,
+      entry.model,
+      { advanceQueue: true },
+    )
+  }
+}
+
+function refreshOffscreenCodexHistoryAfterCompletion(
+  backend,
+  threadId,
+  sourceModel,
+  { advanceQueue = false } = {},
+) {
+  if (!threadId || backend === state.backend) return
+  const key = threadCatalogKey(backend, threadId)
+  if (codexOffscreenHistoryRefreshes.has(key)) {
+    codexOffscreenHistoryRefreshRetries.set(
+      key,
+      Boolean(codexOffscreenHistoryRefreshRetries.get(key) || advanceQueue),
+    )
+    return codexOffscreenHistoryRefreshes.get(key)
+  }
+  const sourceRevision = transcriptModelRevision(sourceModel)
+  let refresh
+  refresh = (async () => {
+    const loaded = await loadCodexHistoryForBackground(backend, threadId, { model: sourceModel })
+    if (backend === state.backend) return
+    const current = cachedThreadModel(backend, threadId)
+    if (current?.model !== sourceModel) return
+    if (transcriptModelRevision(sourceModel) !== sourceRevision) {
+      if (!sourceModel.activeTurnId && sourceModel.status !== 'running') {
+        codexOffscreenHistoryRefreshRetries.set(
+          key,
+          Boolean(codexOffscreenHistoryRefreshRetries.get(key) || advanceQueue),
+        )
+      }
+      return
+    }
+    const model = createCodexViewModel()
+    hydrateCodexThread(model, loaded.result.thread)
+    model.historyComplete = loaded.result.historyComplete !== false
+    mergeThreadIntoCatalog(backend, loaded.result.thread)
+    cacheThreadModel(backend, threadId, model)
+    const lastTurn = model.turns.at(-1)
+    if (advanceQueue && !model.activeTurnId && lastTurn) {
+      handleQueuedTurnCompletion(
+        { backend, id: threadId },
+        lastTurn.status || model.status || 'completed',
+      )
+    }
+    reportSessionLifecycle('codex-background-history', {
+      backend,
+      threadId,
+      historyMode: loaded.historyMode,
+      pageCount: loaded.tail?.pageCount || 0,
+      appendedTurnCount: loaded.tail?.appendedTurnCount || 0,
+    })
+  })().catch((error) => {
+    console.debug(`Unable to refresh completed offscreen ${backend} session`, error)
+  }).finally(() => {
+    if (codexOffscreenHistoryRefreshes.get(key) === refresh) codexOffscreenHistoryRefreshes.delete(key)
+    const retryAdvanceQueue = codexOffscreenHistoryRefreshRetries.get(key)
+    codexOffscreenHistoryRefreshRetries.delete(key)
+    if (retryAdvanceQueue != null && backend !== state.backend) {
+      queueMicrotask(() => {
+        const current = cachedThreadModel(backend, threadId)?.model
+        if (current) refreshOffscreenCodexHistoryAfterCompletion(
+          backend,
+          threadId,
+          current,
+          { advanceQueue: retryAdvanceQueue },
+        )
+      })
+    }
+  })
+  codexOffscreenHistoryRefreshes.set(key, refresh)
+  return refresh
+}
+
 function connectBackend({ backendInfoReady = false } = {}) {
   if (state.backend === 'opencode') connectOpenCode({ backendInfoReady }).catch(showError)
   else connectAppServer()
@@ -1538,7 +1903,12 @@ async function switchBackend(backend, { selectedId } = {}) {
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
   const transitionGeneration = state.socketGeneration
-  state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
+  const backgroundConnected = isCodexBackend(previousBackend)
+    ? codexLifecycleStreamReady
+    : previousBackend === 'opencode' && openCodeEventStreamReady
+  if (!backgroundConnected) {
+    state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
+  }
   rejectPending(new Error('Backend switched'))
   state.backend = backend
   if (selectedId) state.selectedByBackend[backend] = selectedId
@@ -1633,51 +2003,19 @@ async function connectOpenCode({ backendInfoReady = false } = {}) {
     return
   }
   state.ready = true
-  // A new OpenCode connection cannot prove continuity with events observed by
-  // the previous stream. Cached histories remain displayable, but must be
-  // revalidated in this epoch before they can skip an authoritative read.
-  openCodeHistoryEpoch += 1
-  setBackendState('online', 'OpenCode Server', 'Native structured connection')
-  $('#native-connection').textContent = 'Connected'
   loadBackendModels().catch((error) => console.debug('Unable to load OpenCode models', error))
-  openCodeEventStreamOpenCount = 0
-  let initialSelectionStarted = false
-  let markEventStreamOpen
-  const eventStreamOpen = new Promise((resolve) => { markEventStreamOpen = resolve })
-  const events = gatewayEventSource('/opencode/global/event')
-  state.eventSource = events
-  events.onopen = () => {
-    if (generation !== state.socketGeneration) return
-    if (openCodeEventStreamOpenCount > 0 || initialSelectionStarted) {
-      openCodeHistoryEpoch += 1
-      scheduleOpenCodeListRefresh({ forceSelectedHistory: true })
-    }
-    openCodeEventStreamOpenCount += 1
-    markEventStreamOpen()
-    setBackendState('online', 'OpenCode Server', 'Native structured connection')
-    $('#native-connection').textContent = 'Connected'
-  }
-  events.onmessage = (event) => {
-    if (generation !== state.socketGeneration) return
-    try { handleOpenCodeServerEvent(JSON.parse(event.data)) }
-    catch (error) { console.error('Invalid OpenCode SSE event', error, event.data) }
-  }
-  events.onerror = () => {
-    if (generation !== state.socketGeneration) return
-    setBackendState('checking', 'Reconnecting to OpenCode', 'SSE event stream')
-    $('#native-connection').textContent = 'Reconnecting event stream…'
-  }
+  startOpenCodeEventStream()
   // Prefer establishing the event barrier before taking the history snapshot.
   // If the stream is slow to open, the late first onopen advances the epoch and
   // schedules a second authoritative read so the gap still cannot be hidden.
-  let eventStreamWaitTimer
-  await Promise.race([
-    eventStreamOpen,
-    new Promise((resolve) => { eventStreamWaitTimer = setTimeout(resolve, 1_500) }),
-  ])
-  clearTimeout(eventStreamWaitTimer)
+  const eventStreamReady = await waitForOpenCodeEventStream()
   if (generation !== state.socketGeneration || state.backend !== 'opencode') return
-  initialSelectionStarted = true
+  if (!eventStreamReady) openCodeSelectionStartedWithoutEventBarrier = true
+  renderOpenCodeConnectionState(
+    eventStreamReady ? 'online' : 'checking',
+    eventStreamReady ? 'OpenCode Server' : 'Connecting to OpenCode events',
+    eventStreamReady ? 'Native structured connection' : 'HTTP ready · SSE event stream',
+  )
   const selectionLoad = loadThreads()
   backendSelectionLoads.set('opencode', selectionLoad)
   try {
@@ -1699,19 +2037,10 @@ function cleanupSocket() {
 function cleanupConnections() {
   clearTimeout(state.reconnectTimer)
   clearTimeout(threadCatalogRetryTimer)
-  clearTimeout(openCodeListRefreshTimer)
-  openCodeListRefreshTimer = null
-  openCodeListRefreshNeedsHistory = false
-  for (const timer of openCodeStatusReconcileTimers.values()) clearTimeout(timer)
-  openCodeStatusReconcileTimers.clear()
   threadCatalogRetryTimer = null
   threadCatalogRetryAttempt = 0
   threadCatalogErrorMessage = null
   cleanupSocket()
-  if (state.eventSource) {
-    state.eventSource.close()
-    state.eventSource = null
-  }
   state.socketGeneration += 1
 }
 
@@ -1758,10 +2087,10 @@ function finishTurnLatencyTrace(trace, phase = 'complete') {
   if (trace.turnId) turnLatencyTraces.delete(`turn:${trace.turnId}`)
 }
 
-function observeCodexTurnLatency(message) {
+function observeCodexTurnLatency(message, backend = state.backend) {
   const params = message?.params || {}
   const turnId = params.turnId || params.turn?.id
-  const threadId = params.threadId || params.thread?.id || state.selectedId
+  const threadId = params.threadId || params.thread?.id || (state.backend === backend ? state.selectedId : null)
   let trace = turnId ? turnLatencyTraces.get(`turn:${turnId}`) : null
   if (!trace && message?.method === 'turn/started') {
     trace = bindTurnLatencyTrace(pendingTurnLatencyTrace(threadId), turnId)
@@ -1775,6 +2104,118 @@ function observeCodexTurnLatency(message) {
   }
 }
 
+function rememberBoundedLifecycleEvent(collection, key, value, limit = 1_024) {
+  collection.delete(key)
+  collection.set(key, value)
+  while (collection.size > limit) collection.delete(collection.keys().next().value)
+}
+
+function claimCodexLifecycleNotification(backend, message) {
+  const event = codexLifecycleEvent(message)
+  if (!event) return null
+  if ((event.method === 'turn/started' || event.method === 'turn/completed') && event.turnId) {
+    const key = `${backend}:${event.method}:${event.turnId}`
+    if (handledCodexTurnLifecycleEvents.has(key)) return null
+    rememberBoundedLifecycleEvent(handledCodexTurnLifecycleEvents, key, true)
+    return event
+  }
+  if (event.method === 'thread/status/changed') {
+    const key = `${backend}:${event.threadId}:${JSON.stringify(message.params?.status ?? '')}`
+    const now = performance.now()
+    const previous = recentCodexStatusLifecycleEvents.get(key)
+    if (previous != null && now - previous < 250) return null
+    rememberBoundedLifecycleEvent(recentCodexStatusLifecycleEvents, key, now, 256)
+  }
+  return event
+}
+
+function handleCodexLifecycleNotification(backend, message) {
+  const event = claimCodexLifecycleNotification(backend, message)
+  if (!event) return false
+  if (captureStructuredUtilityNotification(backend, message)) return true
+
+  const threadId = codexLifecycleThreadId(backend, event)
+  if ((event.method === 'turn/started' || event.method === 'turn/completed') && threadId) {
+    scheduleStartedThreadCatalogConfirmation(backend, threadId)
+  }
+  updateCodexCatalogActivity(backend, message, event, threadId)
+  observeCodexTurnLatency(message, backend)
+  if (event.method === 'turn/completed' && threadId) {
+    handleQueuedTurnCompletion(
+      { backend, id: threadId },
+      message.params?.turn?.status || message.params?.status || 'completed',
+    )
+  }
+
+  const targetModel = codexNotificationModel(message, backend)
+  if (!targetModel) {
+    reportCodexLifecycleNotification(backend, message)
+    return true
+  }
+  const beforeModelStatus = targetModel.status || ''
+  const beforeActiveTurnId = targetModel.activeTurnId || ''
+  const applied = applyCodexNotification(targetModel, message)
+  if (!applied) {
+    reportCodexLifecycleNotification(backend, message, {
+      targetModel,
+      beforeModelStatus,
+      beforeActiveTurnId,
+    })
+    return true
+  }
+  const fullEventCoverage = state.backend === backend
+  if (fullEventCoverage) markCachedModelValidated(backend, targetModel)
+  else markCachedModelUnvalidated(backend, targetModel)
+  if (event.method === 'turn/completed') {
+    sessionResources.invalidate(backend, threadId || targetModel.threadId)
+    const completedThread = (state.threadsByBackend[backend] || [])
+      .find((thread) => thread.id === (threadId || targetModel.threadId))
+    notifyDesktop(
+      t('Work completed'),
+      threadTitle(completedThread || { name: t('Untitled session') }),
+      { backend, id: threadId || targetModel.threadId },
+    )
+    threadRouter.completeTurn({
+      backend,
+      turnId: event.turnId,
+      model: targetModel,
+      turn: message.params?.turn,
+    }).catch((error) => console.error('Thread Router dispatch failed', error))
+    if (!fullEventCoverage) {
+      refreshOffscreenCodexHistoryAfterCompletion(backend, threadId || targetModel.threadId, targetModel)
+    }
+  }
+
+  const selected = state.backend === backend && targetModel === state.model
+  if (!selected) {
+    reportCodexLifecycleNotification(backend, message, {
+      targetModel,
+      applied,
+      beforeModelStatus,
+      beforeActiveTurnId,
+    })
+    return true
+  }
+  const updateKind = transcriptUpdateKind(message.method)
+  if (updateKind === 'full') {
+    const turnId = message.params?.turnId || message.params?.turn?.id
+    if (!turnId || !replaceRenderedTurn(turnId)) renderTranscript()
+  }
+  renderComposerState()
+  reportCodexLifecycleNotification(backend, message, {
+    targetModel,
+    applied,
+    beforeModelStatus,
+    beforeActiveTurnId,
+  })
+  if (event.method === 'turn/completed') {
+    sessionMap.processInlineUpdate(backend, threadId || state.selectedId, targetModel, event.turnId).catch((error) => {
+      console.warn('Session Map inline update failed', error)
+    })
+  }
+  return true
+}
+
 function handleAppServerMessage(message) {
   const backend = state.backend
   const descriptor = backendDescriptor(backend)
@@ -1784,7 +2225,8 @@ function handleAppServerMessage(message) {
       const firstReady = !state.ready
       const previousGeneration = state.appServerGenerations[backend]
       const nextGeneration = message.params?.generation ?? previousGeneration
-      const appServerRestarted = previousGeneration != null && nextGeneration !== previousGeneration
+      const appServerRestarted = codexBackendsNeedingRestartRecovery.delete(backend)
+        || (previousGeneration != null && nextGeneration !== previousGeneration)
       if (appServerRestarted) {
         sessionDispatch.clearPrepared(backend)
         clearStartedThreadsForBackend(backend, 'app-server-restarted')
@@ -1910,12 +2352,12 @@ function handleAppServerMessage(message) {
     return
   }
 
-  if (captureStructuredUtilityNotification(backend, message)) return
-
-  if (message.method === 'turn/started' || message.method === 'turn/completed') {
-    const threadId = message.params?.threadId || message.params?.thread?.id || message.params?.turn?.threadId
-    if (threadId) scheduleStartedThreadCatalogConfirmation(backend, threadId)
+  if (codexLifecycleEvent(message)) {
+    handleCodexLifecycleNotification(backend, message)
+    return
   }
+
+  if (captureStructuredUtilityNotification(backend, message)) return
 
   if (message.method === 'thread/started' && message.params?.thread) {
     if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(sessionRefKey(state.backend, message.params.thread.id))) return
@@ -1985,22 +2427,14 @@ function handleAppServerMessage(message) {
     return
   }
 
-  updateCodexReplyTime(message)
   observeCodexTurnLatency(message)
-  if (message.method === 'turn/completed') {
-    const threadId = message.params?.threadId || message.params?.thread?.id || message.params?.turn?.threadId
-    if (threadId) handleQueuedTurnCompletion(
-      { backend, id: threadId },
-      message.params?.turn?.status || message.params?.status || 'completed',
-    )
-  }
 
   if (message.id != null && message.method) {
     if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
       sessionMap.handleToolCall(message)
       return
     }
-    const targetModel = codexNotificationModel(message)
+    const targetModel = codexNotificationModel(message, backend)
     if (!targetModel) {
       if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
         captureOffscreenInteraction(message).catch((error) => reportClientError(error))
@@ -2021,7 +2455,7 @@ function handleAppServerMessage(message) {
     return
   }
 
-  const targetModel = codexNotificationModel(message)
+  const targetModel = codexNotificationModel(message, backend)
   if (!targetModel) {
     reportCodexLifecycleNotification(backend, message)
     return
@@ -2038,24 +2472,13 @@ function handleAppServerMessage(message) {
     return
   }
   markCachedModelValidated(backend, targetModel)
-  if (message.method === 'item/completed' || message.method === 'turn/completed') {
+  if (message.method === 'item/completed') {
     sessionResources.invalidate(
       backend,
       message.params?.threadId || targetModel.threadId || state.selectedId,
     )
   }
-  if (message.method === 'turn/completed') {
-    const completedThread = state.threads.find((thread) => thread.id === (message.params?.threadId || targetModel.threadId))
-    notifyDesktop(t('Work completed'), threadTitle(completedThread || { name: t('Untitled session') }))
-    threadRouter.completeTurn({
-      backend,
-      turnId: message.params?.turn?.id || message.params?.turnId,
-      model: targetModel,
-      turn: message.params?.turn,
-    }).catch((error) => console.error('Thread Router dispatch failed', error))
-  }
   if (targetModel !== state.model) {
-    updateThreadStatusFromNotification(message)
     reportCodexLifecycleNotification(backend, message, {
       targetModel,
       applied,
@@ -2072,19 +2495,12 @@ function handleAppServerMessage(message) {
     if (!turnId || !replaceRenderedTurn(turnId)) renderTranscript()
   }
   renderComposerState()
-  updateSelectedThreadStatus(message)
   reportCodexLifecycleNotification(backend, message, {
     targetModel,
     applied,
     beforeModelStatus,
     beforeActiveTurnId,
   })
-  if (message.method === 'turn/completed') {
-    const threadId = message.params?.threadId || message.params?.thread?.id || state.selectedId
-    sessionMap.processInlineUpdate(backend, threadId, targetModel, message.params?.turn?.id).catch((error) => {
-      console.warn('Session Map inline update failed', error)
-    })
-  }
 }
 
 async function resynchronizeSelectedThreadAfterLag({ backend, threadId, socketGeneration, skipped }) {
@@ -2123,13 +2539,13 @@ async function captureOffscreenInteraction(message) {
   notifyDesktop(t('Codex is waiting for your input'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
 }
 
-function notifyDesktop(title, body = '') {
+function notifyDesktop(title, body = '', ref = null) {
   if (!state.desktopNotifications || (!document.hidden && document.hasFocus())) return
   if (!('Notification' in window) || Notification.permission !== 'granted') return
   try {
     const notification = new Notification(String(title || 'Codex Thread Studio'), {
       body: String(body || '').slice(0, 240),
-      tag: `codex-thread-studio:${state.backend}:${state.selectedId || 'workspace'}`,
+      tag: `codex-thread-studio:${ref?.backend || state.backend}:${ref?.id || state.selectedId || 'workspace'}`,
     })
     notification.onclick = () => {
       window.focus()
@@ -2213,7 +2629,7 @@ function handleOpenCodeServerEvent(event) {
     deletePersistedSessionState(deletedKey)
     discardComposerSessionState('opencode', deletedId)
     if (threadRouter.removeSession('opencode', deletedId)) persistPreferences()
-    if (deletedId && state.selectedId === deletedId) {
+    if (deletedId && state.backend === 'opencode' && state.selectedId === deletedId) {
       state.selectedId = null
       state.selectedByBackend.opencode = null
       state.model = createCodexViewModel()
@@ -2225,9 +2641,10 @@ function handleOpenCodeServerEvent(event) {
   }
   const completionSignal = Boolean(eventThreadId && openCodeCompletionSignal(payload))
   if (completionSignal) scheduleOpenCodeStatusReconciliation(eventThreadId)
-  updateOpenCodeReplyTime(payload, eventThreadId)
+  updateOpenCodeCatalogActivity(payload, eventThreadId)
   const cached = eventThreadId && state.threadModels.get(threadCatalogKey('opencode', eventThreadId))
-  const targetModel = eventThreadId === state.selectedId
+  const selectedTarget = state.backend === 'opencode' && eventThreadId === state.selectedId
+  const targetModel = selectedTarget
     ? state.model
     : cached?.model
   if (!targetModel) return
@@ -2235,7 +2652,7 @@ function handleOpenCodeServerEvent(event) {
   if (!update.handled) return
   markCachedModelValidated('opencode', targetModel)
   if (completionSignal) sessionResources.invalidate('opencode', eventThreadId)
-  if (targetModel !== state.model) return
+  if (!selectedTarget || targetModel !== state.model) return
   if (update.kind === 'stream') queueStreamingItemPatch({ turnId: update.turnId, itemId: update.itemId })
   else if (update.kind === 'metadata') {
     renderComposerState()
@@ -2284,11 +2701,13 @@ function scheduleOpenCodeStatusReconciliation(threadId) {
   clearTimeout(openCodeStatusReconcileTimers.get(threadId))
   const timer = setTimeout(async () => {
     openCodeStatusReconcileTimers.delete(threadId)
-    if (state.backend !== 'opencode' || !state.ready) return
     const thread = state.threadsByBackend.opencode.find((candidate) => candidate.id === threadId)
     if (!thread) return
     try {
-      const statuses = await openCodeFetch(withDirectory('/session/status', thread.cwd), { timeoutMs: 10_000 })
+      const statuses = await openCodeFetch(withDirectory('/session/status', thread.cwd), {
+        timeoutMs: 10_000,
+        allowInactive: true,
+      })
       handleOpenCodeServerEvent({
         type: 'session.status',
         properties: { sessionID: threadId, status: statuses?.[threadId] || { type: 'idle' } },
@@ -2306,7 +2725,10 @@ function scheduleOpenCodeListRefresh({ forceSelectedHistory = false } = {}) {
   openCodeListRefreshTimer = setTimeout(() => {
     const refreshSelectedHistory = openCodeListRefreshNeedsHistory
     openCodeListRefreshNeedsHistory = false
-    refreshOpenCodeThreadList({ forceSelectedHistory: refreshSelectedHistory }).catch(console.error)
+    const refresh = state.backend === 'opencode' && state.ready
+      ? refreshOpenCodeThreadList({ forceSelectedHistory: refreshSelectedHistory })
+      : refreshBackendCatalog('opencode')
+    refresh.catch(console.error)
   }, 180)
 }
 
@@ -2848,6 +3270,7 @@ function reportCodexLifecycleNotification(backend, message, {
     activeTurnId: targetModel?.activeTurnId || '',
     catalogStatus: lifecycleStatusValue(thread?.status),
     catalogUpdatedAt: threadUpdatedAt(thread),
+    catalogActivityAt: catalogActivityTimestamp(thread),
     cacheValidatedAt: Number(cache?.validatedAt || 0),
     socketGeneration: state.socketGeneration,
   })
@@ -2865,6 +3288,7 @@ function reportCodexSelectionCacheDecision(backend, id, { fresh = null, cached =
     activeTurnId: cached?.model?.activeTurnId || '',
     catalogStatus: lifecycleStatusValue(thread?.status),
     catalogUpdatedAt: threadUpdatedAt(thread),
+    catalogActivityAt: catalogActivityTimestamp(thread),
     cacheValidatedAt: Number(cached?.validatedAt || 0),
     socketGeneration: state.socketGeneration,
   })
@@ -2963,7 +3387,10 @@ function clearStartedThreadsForBackend(backend, reason) {
 }
 
 function installBackendCatalog(backend, threads) {
-  const visible = reconcileCatalogWithStartedThreads(backend, threads)
+  const visible = preserveCatalogActivity(
+    reconcileCatalogWithStartedThreads(backend, threads),
+    state.threadsByBackend[backend],
+  )
     .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
   if (backend === state.backend) state.threads = visible
@@ -3419,7 +3846,10 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
 }
 
 function setActiveThreads(threads, backend = state.backend) {
-  const visible = reconcileCatalogWithStartedThreads(backend, threads)
+  const visible = preserveCatalogActivity(
+    reconcileCatalogWithStartedThreads(backend, threads),
+    state.threadsByBackend[backend],
+  )
     .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
   if (state.backend === backend) state.threads = visible
@@ -3529,12 +3959,14 @@ function syncThreadCatalogRow(backend, thread, previous = null) {
     renderThreadList()
     return
   }
+  if (!patchThreadCatalogRow(backend, thread)) renderThreadList()
+}
+
+function patchThreadCatalogRow(backend, thread) {
+  if (!thread) return false
   const row = [...$('#thread-list').querySelectorAll('.thread-row')]
     .find((candidate) => candidate.dataset.backend === backend && candidate.dataset.threadId === thread.id)
-  if (!row) {
-    renderThreadList()
-    return
-  }
+  if (!row) return false
   const status = threadStatus(thread)
   row.querySelector('.status-dot').className = `status-dot ${status}`
   row.querySelector('.thread-copy strong').textContent = threadTitle(thread)
@@ -3543,6 +3975,7 @@ function syncThreadCatalogRow(backend, thread, previous = null) {
   pathElement.textContent = path
   pathElement.title = path
   renderThreadCatalogCounts()
+  return true
 }
 
 function syncThreadListSelection() {
@@ -3662,31 +4095,97 @@ function markThreadLoaded(backend, id) {
   else renderThreadCatalogCounts()
 }
 
-function updateCodexReplyTime(message, model = null) {
-  if (message.method !== 'turn/completed') return
-  const backend = isCodexBackend(state.backend) ? state.backend : 'codex'
-  const threadId = message.params?.threadId
-    || message.params?.thread?.id
-    || message.params?.turn?.threadId
-    || threadIdForCachedModel(backend, model)
-    || (state.backend === backend ? state.selectedId : null)
-  if (!threadId) return
-  updateLoadedThreadTimestamp(backend, threadId)
+function catalogThread(backend, id) {
+  return (state.threadsByBackend[backend] || []).find((thread) => thread.id === id) || null
 }
 
-function updateOpenCodeReplyTime(payload, threadId) {
-  if (!threadId || payload.type !== 'session.idle') return
-  updateLoadedThreadTimestamp('opencode', threadId)
+function nextCatalogActivityTimestamp(thread) {
+  return Math.max(Date.now(), catalogActivityTimestamp(thread) + 1)
 }
 
-function updateLoadedThreadTimestamp(backend, id) {
-  if (updateLoadedCatalogTimestamp(
-    state.threadsByBackend,
-    state.attentionThreads,
-    backend,
-    id,
-    Date.now(),
-  ) && state.filter === 'attention') renderThreadList()
+function refreshCatalogActivity(change) {
+  if (!change?.thread || (!change.statusChanged && !change.timestampChanged)) return
+  const structuralChange = (state.filter === 'attention' && change.timestampChanged)
+    || (state.filter === 'active' && change.statusChanged)
+  if (structuralChange) renderThreadList()
+  else if (!patchThreadCatalogRow(change.backend, change.thread)) renderThreadList()
+}
+
+function setCatalogThreadActivity(backend, id, options = {}) {
+  const thread = catalogThread(backend, id)
+  if (!thread) return null
+  const mutation = {}
+  if (Object.hasOwn(options, 'status')) mutation.status = options.status
+  if (options.touch) mutation.timestamp = nextCatalogActivityTimestamp(thread)
+  const change = updateCatalogThreadActivity(state.threadsByBackend, backend, id, mutation)
+  refreshCatalogActivity(change)
+  return change
+}
+
+function rollbackCatalogThreadActivity(change) {
+  const restored = restoreCatalogThreadActivity(state.threadsByBackend, change)
+  refreshCatalogActivity(restored)
+  return Boolean(restored)
+}
+
+function updateCodexCatalogActivity(backend, message, event, threadId) {
+  if (!threadId) return null
+  if (event.method === 'thread/status/changed') {
+    if (!Object.hasOwn(message.params || {}, 'status')) return null
+    const status = lifecycleStatusValue(message.params.status) || message.params.status
+    const alreadyActive = ['active', 'running', 'inProgress'].includes(threadStatus(catalogThread(backend, threadId)))
+    return setCatalogThreadActivity(backend, threadId, {
+      status,
+      touch: ['active', 'running', 'inProgress'].includes(lifecycleStatusValue(status)) && !alreadyActive,
+    })
+  }
+  if (event.method === 'turn/started') {
+    return setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
+  }
+  if (event.method !== 'turn/completed') return null
+  const terminalStatus = lifecycleStatusValue(message.params?.turn?.status || message.params?.status)
+  const status = ['failed', 'systemError'].includes(terminalStatus)
+    ? 'failed'
+    : terminalStatus === 'interrupted' ? 'interrupted' : 'idle'
+  return setCatalogThreadActivity(backend, threadId, { status, touch: true })
+}
+
+function updateOpenCodeCatalogActivity(payload, threadId) {
+  if (!threadId) return null
+  const thread = catalogThread('opencode', threadId)
+  if (!thread) return null
+  const currentStatus = threadStatus(thread)
+  if (payload.type === 'session.status') {
+    const status = normalizeOpenCodeStatus(payload.properties?.status)
+    return setCatalogThreadActivity('opencode', threadId, {
+      status,
+      touch: status === 'running' && currentStatus !== 'running',
+    })
+  }
+  if (payload.type === 'session.idle') {
+    return setCatalogThreadActivity('opencode', threadId, { status: 'idle', touch: true })
+  }
+  if (payload.type === 'session.error') {
+    return setCatalogThreadActivity('opencode', threadId, { status: 'failed', touch: true })
+  }
+  if (payload.type === 'session.abort') {
+    return setCatalogThreadActivity('opencode', threadId, { status: 'interrupted', touch: true })
+  }
+  if (payload.type === 'message.updated' && payload.properties?.info?.role === 'user') {
+    return setCatalogThreadActivity('opencode', threadId, {
+      status: 'running',
+      touch: currentStatus !== 'running',
+    })
+  }
+  if (openCodeCompletionSignal(payload)) {
+    return setCatalogThreadActivity('opencode', threadId, { touch: true })
+  }
+  return null
+}
+
+function updateLoadedThreadTimestamp(backend, id, options = {}) {
+  if (!state.attentionThreads.has(threadCatalogKey(backend, id))) return null
+  return setCatalogThreadActivity(backend, id, { ...options, touch: true })
 }
 
 function threadUpdatedAt(thread) {
@@ -3840,6 +4339,47 @@ async function loadCodexHistoryForSelection(backend, id, cached, {
       tail: null,
     }
   }
+}
+
+async function loadCodexHistoryForBackground(backend, id, cached) {
+  const canReusePrefix = cached?.model?.threadId === id
+    && Array.isArray(cached.model.turns)
+    && cached.model.turns.length > 0
+  if (canReusePrefix && historyTailCapability(backend, id) !== false) {
+    try {
+      const initialPage = await dispatchBackendRpc(backend, 'thread/turns/list', {
+        threadId: id,
+        limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
+        sortDirection: 'desc',
+        itemsView: 'full',
+      })
+      const tail = await collectCodexTurnTail({
+        cachedTurns: cached.model.turns,
+        initialPage,
+        fetchPage: (cursor) => dispatchBackendRpc(backend, 'thread/turns/list', {
+          threadId: id,
+          cursor,
+          limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
+          sortDirection: 'desc',
+          itemsView: 'full',
+        }),
+      })
+      rememberHistoryTailCapability(backend, id, true)
+      if (tail.matched) {
+        const metadata = threadForRef({ backend, id }) || {}
+        return {
+          result: { thread: { ...metadata, id, turns: tail.turns } },
+          historyMode: 'tail',
+          tail,
+        }
+      }
+    } catch (error) {
+      if (!isHistoryPaginationCompatibilityError(error)) throw error
+      rememberHistoryTailCapability(backend, id, false)
+    }
+  }
+  const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: true })
+  return { result, historyMode: 'full', tail: null }
 }
 
 async function resumeThread(id, { environmentRoot = '', environmentRevision = '' } = {}) {
@@ -4114,6 +4654,15 @@ function markCachedModelValidated(backend, model) {
   }
 }
 
+function markCachedModelUnvalidated(backend, model) {
+  for (const [key, cached] of state.threadModels) {
+    if (key.startsWith(`${backend}:`) && cached.model === model) {
+      cached.validatedAt = 0
+      return
+    }
+  }
+}
+
 function threadIdForCachedModel(backend, model) {
   if (state.backend === backend && state.model === model) return state.selectedId
   for (const [key, cached] of state.threadModels) {
@@ -4122,8 +4671,10 @@ function threadIdForCachedModel(backend, model) {
   return null
 }
 
-function codexNotificationModel(message) {
-  const backend = isCodexBackend(state.backend) ? state.backend : 'codex'
+function codexNotificationModel(
+  message,
+  backend = isCodexBackend(state.backend) ? state.backend : 'codex',
+) {
   const params = message.params || {}
   const explicitId = params.threadId || params.thread?.id || params.turn?.threadId
   if (explicitId && state.hiddenCodexThreads.has(sessionRefKey(backend, explicitId))) return null
@@ -4139,7 +4690,7 @@ function codexNotificationModel(message) {
       if (cached.model.activeTurnId === turnId || cached.model.turns.some((turn) => turn.id === turnId)) return cached.model
     }
   }
-  return state.model
+  return state.backend === backend ? state.model : null
 }
 
 function openCodeEventThreadId(payload) {
@@ -4150,14 +4701,6 @@ function openCodeEventThreadId(payload) {
     || properties.info?.id
     || properties.part?.sessionID
     || null
-}
-
-function updateThreadStatusFromNotification(message) {
-  if (message.method !== 'thread/status/changed') return
-  const threadId = message.params?.threadId
-  const thread = state.threadsByBackend[state.backend]?.find((candidate) => candidate.id === threadId)
-  if (thread) thread.status = message.params.status
-  renderThreadList()
 }
 
 function hydrateOpenCodeModelMetadata(thread, model = state.model, historyComplete = true) {
@@ -7004,12 +7547,14 @@ async function runNextQueuedMessage(ref) {
   state.runningMessageQueues.add(key)
   state.messageQueueErrors.delete(key)
   let accepted = false
+  let catalogActivity = null
   if (key === selectedStateKey()) {
     beginTranscriptFollowingLatest(model)
     renderComposerState()
   }
   try {
     const clientUserMessageId = randomId()
+    catalogActivity = setCatalogThreadActivity(ref.backend, ref.id, { status: 'active', touch: true })
     const result = await startTurnWithPreparation({
       registry: sessionDispatch,
       ref,
@@ -7026,8 +7571,9 @@ async function runNextQueuedMessage(ref) {
       )),
       recoverThreadNotFound: isCodexBackend(ref.backend),
     })
-    if (result?.turn && model) applyTurnAcknowledgement(model, result.turn, ref.id)
     accepted = true
+    if (result?.turn && model) applyTurnAcknowledgement(model, result.turn, ref.id)
+    if (model) markCachedModelValidated(ref.backend, model)
     const current = state.messageQueues[key] || []
     if (current[0]?.id === message.id) current.shift()
     if (!current.length) {
@@ -7040,6 +7586,7 @@ async function runNextQueuedMessage(ref) {
       toast(t('Queued message sent'))
     }
   } catch (error) {
+    if (!accepted) rollbackCatalogThreadActivity(catalogActivity)
     if (accepted) {
       const current = state.messageQueues[key] || (state.messageQueues[key] = [])
       if (!current.some((entry) => entry.id === message.id)) current.unshift(message)
@@ -7125,14 +7672,18 @@ async function sendComposer(event) {
   let optimisticTurnId = null
   let latencyTrace = null
   let composerCleared = false
+  let catalogActivity = null
+  let turnAccepted = false
   try {
     if (state.model.activeTurnId) {
+      catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
       await rpc('turn/steer', {
         threadId,
         expectedTurnId: state.model.activeTurnId,
         clientUserMessageId: randomId(),
         input: turnInput,
       })
+      turnAccepted = true
       toast('Message added to the current turn')
     } else {
       const clientUserMessageId = randomId()
@@ -7149,6 +7700,7 @@ async function sendComposer(event) {
         renderComposerState()
         renderTranscript()
       }
+      catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
       const result = await startTurnWithPreparation({
         registry: sessionDispatch,
         ref,
@@ -7165,12 +7717,14 @@ async function sendComposer(event) {
         )),
         recoverThreadNotFound: isCodexBackend(backend),
       })
+      turnAccepted = true
       if (result?.turn) {
         if (isCodexBackend(backend) && optimisticTurnId) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)
           bindTurnLatencyTrace(latencyTrace, result.turn.id)
           markTurnLatency(latencyTrace, 'turn_start_ack')
         } else applyTurnAcknowledgement(targetModel, result.turn, threadId)
+        markCachedModelValidated(backend, targetModel)
         if (targetModel === state.model) renderTranscript()
       }
     }
@@ -7183,6 +7737,7 @@ async function sendComposer(event) {
     hideComposerMenu()
     renderComposerState()
   } catch (error) {
+    if (!turnAccepted) rollbackCatalogThreadActivity(catalogActivity)
     if (optimisticTurnId) {
       rollbackOptimisticCodexTurn(targetModel, optimisticTurnId)
       finishTurnLatencyTrace(latencyTrace, 'failed')
@@ -8497,15 +9052,6 @@ function setBackendState(kind, label, caption) {
 function setNativeError(message) {
   $('#native-error').classList.toggle('hidden', !message)
   $('#native-error-message').textContent = t(message || '')
-}
-
-function updateSelectedThreadStatus(message) {
-  const thread = selectedThread()
-  if (!thread) return
-  const status = selectedThreadStatusChange(message, thread.id)
-  if (status == null) return
-  thread.status = status
-  renderWorkspace()
 }
 
 function threadTitle(thread) {

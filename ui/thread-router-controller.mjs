@@ -131,6 +131,7 @@ export function createThreadRouterController({
     runtime.dispatches.set(key, { status: 'routing' })
     applyNotification(controllerModel, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
     cacheThreadModel(controller.backend, controller.id, controllerModel)
+    updateLoadedThreadTimestamp(controller.backend, controller.id, { status: 'active' })
     if (state.backend === controller.backend && state.selectedId === controller.id && state.model === controllerModel) {
       renderTranscript()
     }
@@ -183,7 +184,7 @@ export function createThreadRouterController({
       if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
       applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
       cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
-      updateLoadedThreadTimestamp(targetRef.backend, targetRef.id)
+      updateLoadedThreadTimestamp(targetRef.backend, targetRef.id, { status: 'active' })
       runtime.dispatches.set(key, {
         status: 'running', decision, targetTurnId: String(result.turn.id || ''),
       })

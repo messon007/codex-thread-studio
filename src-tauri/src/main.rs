@@ -8,13 +8,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
 use axum::{Json, Router};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -832,6 +833,7 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(undo_session_map),
         )
         .route("/ws/codex", get(codex_app_server_ws))
+        .route("/ws/codex-lifecycle", get(codex_lifecycle_ws))
         .route("/ws/codex/{backend}", get(codex_instance_ws))
         .route("/ws/terminal", get(terminal_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
@@ -2427,6 +2429,101 @@ async fn codex_instance_ws(
         .into_response()
 }
 
+async fn codex_lifecycle_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    let protocol = state.security.websocket_protocol();
+    ws.protocols([protocol])
+        .on_upgrade(move |socket| async move {
+            bridge_codex_lifecycle(socket, state.codex_backends).await
+        })
+}
+
+async fn bridge_codex_lifecycle(
+    socket: WebSocket,
+    backends: Arc<BTreeMap<String, CodexBackendInstance>>,
+) {
+    let (mut output, mut input) = socket.split();
+    let (outbound, mut events) = tokio::sync::mpsc::channel::<String>(512);
+    let mut forwarders = Vec::with_capacity(backends.len());
+
+    for (backend, instance) in backends.iter() {
+        let backend = backend.clone();
+        let mut receiver = instance.server.subscribe_lifecycle();
+        let outbound = outbound.clone();
+        forwarders.push(tokio::spawn(async move {
+            loop {
+                let message = match receiver.recv().await {
+                    Ok(payload) => serde_json::from_str::<serde_json::Value>(&payload)
+                        .unwrap_or_else(|_| {
+                            json!({
+                                "method": "studio/appServer/protocolError",
+                                "params": { "message": "Invalid lifecycle event JSON" }
+                            })
+                        }),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => json!({
+                        "method": "studio/appServer/lagged",
+                        "params": { "skipped": skipped }
+                    }),
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                if outbound
+                    .send(codex_lifecycle_envelope(&backend, message))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+    drop(outbound);
+
+    let ready = json!({
+        "method": "studio/codexLifecycle/ready",
+        "params": { "backends": backends.keys().collect::<Vec<_>>() }
+    })
+    .to_string();
+    if output.send(Message::Text(ready.into())).await.is_err() {
+        for forwarder in forwarders {
+            forwarder.abort();
+        }
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            browser_message = input.next() => {
+                let Some(Ok(browser_message)) = browser_message else { break };
+                match browser_message {
+                    Message::Close(_) => break,
+                    Message::Ping(value) => {
+                        if output.send(Message::Pong(value)).await.is_err() { break; }
+                    }
+                    _ => {}
+                }
+            }
+            event = events.recv() => {
+                let Some(payload) = event else { break };
+                if output.send(Message::Text(payload.into())).await.is_err() { break; }
+            }
+        }
+    }
+
+    for forwarder in forwarders {
+        forwarder.abort();
+    }
+}
+
+fn codex_lifecycle_envelope(backend: &str, message: serde_json::Value) -> String {
+    json!({
+        "method": "studio/codexLifecycle/event",
+        "params": { "backend": backend, "message": message }
+    })
+    .to_string()
+}
+
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
@@ -3723,6 +3820,21 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_envelopes_keep_the_originating_backend() {
+        let payload = codex_lifecycle_envelope(
+            "ept-codex",
+            json!({
+                "method": "turn/completed",
+                "params": { "threadId": "thread-1", "turn": { "id": "turn-1" } }
+            }),
+        );
+        let value: serde_json::Value = serde_json::from_str(&payload).expect("valid envelope");
+        assert_eq!(value["method"], "studio/codexLifecycle/event");
+        assert_eq!(value["params"]["backend"], "ept-codex");
+        assert_eq!(value["params"]["message"]["method"], "turn/completed");
+    }
+
+    #[test]
     fn protects_gateway_data_and_websocket_from_untrusted_pages() {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
@@ -3768,19 +3880,22 @@ mod tests {
                 .expect("authorized response");
             assert_eq!(authorized.status(), StatusCode::OK);
 
-            let websocket = router
-                .oneshot(
-                    Request::builder()
-                        .uri("/ws/codex")
-                        .header(header::ORIGIN, "https://untrusted.example")
-                        .header(header::HOST, "127.0.0.1:41234")
-                        .header(header::SEC_WEBSOCKET_PROTOCOL, protocol)
-                        .body(Body::empty())
-                        .expect("foreign websocket request"),
-                )
-                .await
-                .expect("foreign websocket response");
-            assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+            for path in ["/ws/codex", "/ws/codex-lifecycle"] {
+                let websocket = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::ORIGIN, "https://untrusted.example")
+                            .header(header::HOST, "127.0.0.1:41234")
+                            .header(header::SEC_WEBSOCKET_PROTOCOL, protocol.clone())
+                            .body(Body::empty())
+                            .expect("foreign websocket request"),
+                    )
+                    .await
+                    .expect("foreign websocket response");
+                assert_eq!(websocket.status(), StatusCode::FORBIDDEN, "{path}");
+            }
         });
     }
 

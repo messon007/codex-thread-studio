@@ -15,17 +15,31 @@ import {
   lineNumberAt,
   locateQuote,
   normalizeAnnotationTarget,
+  renderStructuredTextPreview,
   resolveMarkdownFileLink,
   resolveMarkdownImagePath,
   snapshotAnnotationSelection,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
+  structuredPreviewSourceRange,
+  structuredTextPreviewKind,
 } from './document-review.mjs'
 
 const documentReviewHtml = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const documentReviewApp = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 const documentReviewStyles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 const documentWorkspaceSource = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
+const reviewNotesSource = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
+
+function textFromHighlightedMarkup(html) {
+  return String(html || '')
+    .replace(/<span class="artifact-token-[a-z]+">|<\/span>/gu, '')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&')
+}
 
 test('locates a selected file range and preserves nearby anchors', () => {
   const file = { path: '/work/docs/guide.md', root: '/work', hash: 'abc', content: 'one\ntwo\nthree' }
@@ -192,6 +206,102 @@ test('artifact identity uses the available header width before truncating', () =
 test('static HTML preview blocks executable and externally loaded content', () => {
   for (const tag of ['script', 'iframe', 'object', 'form', 'style']) assert.ok(STATIC_HTML_FORBIDDEN_TAGS.includes(tag))
   for (const attribute of ['src', 'href', 'style', 'srcdoc']) assert.ok(STATIC_HTML_FORBIDDEN_ATTRIBUTES.includes(attribute))
+})
+
+test('recognizes common structured text formats without treating source code as a preview', () => {
+  assert.deepEqual(structuredTextPreviewKind('/work/settings.json'), { language: 'json', label: 'JSON' })
+  assert.deepEqual(structuredTextPreviewKind('/work/events.ndjson'), { language: 'json', label: 'NDJSON' })
+  assert.deepEqual(structuredTextPreviewKind('C:\\work\\compose.yaml'), { language: 'yaml', label: 'YAML' })
+  assert.deepEqual(structuredTextPreviewKind('/work/feed.atom'), { language: 'xml', label: 'ATOM' })
+  assert.deepEqual(structuredTextPreviewKind('/work/pyproject.toml'), { language: 'toml', label: 'TOML' })
+  assert.deepEqual(structuredTextPreviewKind('/work/.env.local'), { language: 'config', label: 'ENV' })
+  assert.deepEqual(structuredTextPreviewKind('/work/.editorconfig'), { language: 'config', label: 'EDITORCONFIG' })
+  assert.deepEqual(structuredTextPreviewKind('/work/Cargo.lock'), { language: 'toml', label: 'TOML' })
+  assert.equal(structuredTextPreviewKind('/work/server.log'), null)
+  assert.equal(structuredTextPreviewKind('/work/query.sql'), null)
+  assert.equal(structuredTextPreviewKind('/work/app.js'), null)
+})
+
+test('structured previews highlight safe display text and escape executable markup', () => {
+  const samples = [
+    ['/work/settings.json', '{\n  "name": "<script>alert(1)</script>",\n  "enabled": true\n}\n'],
+    ['/work/compose.yaml', 'services:\n  app: &app\n    image: "demo:1" # local\n'],
+    ['/work/feed.xml', '<?xml version="1.0"?>\n<root attr="x">&amp; value</root>\n'],
+    ['/work/pyproject.toml', '[project]\nname = "studio"\nenabled = true\n'],
+    ['/work/.env', 'API_URL = https://example.test?a=1&b=2\nDEBUG = true\n'],
+  ]
+
+  for (const [path, expected] of samples) {
+    const source = path.endsWith('/.env') ? expected.replaceAll(' = ', '=') : expected
+    const preview = renderStructuredTextPreview(path, source)
+    assert.ok(preview?.highlighted)
+    assert.equal(textFromHighlightedMarkup(preview.html), expected)
+    assert.equal(preview.text, expected)
+    assert.doesNotMatch(preview.html, /<script>/iu)
+  }
+  assert.match(renderStructuredTextPreview('/work/settings.json', '{"enabled":true}').html, /artifact-token-key/u)
+  assert.match(renderStructuredTextPreview('/work/settings.json', '{"enabled":true}').html, /artifact-token-literal/u)
+})
+
+test('structured previews pretty-print nested JSON and XML without changing source values', () => {
+  const jsonSource = '{"name":"studio","nested":{"enabled":true,"items":[1,2]}}'
+  const json = renderStructuredTextPreview('/work/settings.json', jsonSource)
+  assert.equal(json.formatted, true)
+  assert.equal(json.text, [
+    '{',
+    '  "name": "studio",',
+    '  "nested": {',
+    '    "enabled": true,',
+    '    "items": [',
+    '      1,',
+    '      2',
+    '    ]',
+    '  }',
+    '}',
+  ].join('\n'))
+
+  const xml = renderStructuredTextPreview('/work/feed.xml', '<root><item id="1">first</item><item id="2"/></root>')
+  assert.equal(xml.formatted, true)
+  assert.equal(xml.text, '<root>\n  <item id="1">first</item>\n  <item id="2"/>\n</root>')
+
+  const mixedXml = '<p>Hello <strong>there</strong>!</p>'
+  const mixed = renderStructuredTextPreview('/work/page.xml', mixedXml)
+  assert.equal(mixed.formatted, false)
+  assert.equal(mixed.text, mixedXml)
+})
+
+test('formatted structured preview selections map back to exact source offsets', () => {
+  const source = '{"name":"studio","nested":{"enabled":true,"items":[1,2]}}'
+  const preview = renderStructuredTextPreview('/work/settings.json', source)
+  const selected = '"nested": {\n    "enabled": true'
+  const start = preview.text.indexOf(selected)
+  const range = structuredPreviewSourceRange(preview.sourceMap, start, start + selected.length)
+  assert.deepEqual(range, { startOffset: 17, endOffset: 41 })
+  assert.equal(source.slice(range.startOffset, range.endOffset), '"nested":{"enabled":true')
+  assert.equal(structuredPreviewSourceRange(Int32Array.from([-1, -1]), 0, 2), null)
+})
+
+test('structured preview formatting falls back safely for semantic indentation or malformed structure', () => {
+  const yaml = 'services:\n  app:\n    image: demo\n'
+  const yamlPreview = renderStructuredTextPreview('/work/compose.yaml', yaml)
+  assert.equal(yamlPreview.formatted, false)
+  assert.equal(yamlPreview.text, yaml)
+
+  const malformedJson = '{"nested":[1,2}'
+  const jsonPreview = renderStructuredTextPreview('/work/settings.json', malformedJson)
+  assert.equal(jsonPreview.formatted, false)
+  assert.equal(jsonPreview.text, malformedJson)
+})
+
+test('document workspace enables formatted structured previews with source-mapped annotation offsets', () => {
+  assert.match(documentWorkspaceSource, /structuredTextPreviewKind\(result\.path\) \? 'preview' : 'source'/u)
+  assert.match(documentWorkspaceSource, /!markdown && !html && !structured/u)
+  assert.match(documentWorkspaceSource, /artifact-content artifact-structured-preview/u)
+  assert.match(documentWorkspaceSource, /artifact-source artifact-structured-source/u)
+  assert.match(documentWorkspaceSource, /renderStructuredTextPreview\(file\.path, renderedContent\)/u)
+  assert.match(documentReviewStyles, /\.artifact-source \{[^}]*var\(--code-font/u)
+  assert.match(reviewNotesSource, /structuredPreviewSourceRange/u)
+  assert.match(reviewNotesSource, /structuredPreview\.sourceMap/u)
 })
 
 test('keeps an unresolved rendered selection unresolved after normalization', () => {

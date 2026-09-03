@@ -88,7 +88,7 @@ test('filters slash commands and formats file references', () => {
 })
 
 test('enables document preview only for known text file types', () => {
-  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt', 'benchmarks/cases/01-layered-pipeline.d2']) {
+  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', 'feed.atom', 'preferences.plist', 'updates.rss', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt', 'benchmarks/cases/01-layered-pipeline.d2']) {
     assert.equal(isPreviewableTextFile({ path }), true, path)
   }
   for (const path of ['image.png', 'diagram.svg', 'archive.zip', 'program.exe', 'data.bin', 'unknown']) {

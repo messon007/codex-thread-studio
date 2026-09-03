@@ -10,7 +10,7 @@ import {
   documentCommentSource,
   relocateDocumentComment,
 } from './comment-source-providers.mjs'
-import { createFileRangeTarget } from './document-review.mjs'
+import { createFileRangeTarget, structuredPreviewSourceRange } from './document-review.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -235,27 +235,47 @@ function chatSelectionOffsets(range, body, rawText, excerptLength) {
 
 function captureArtifactSelection() {
   const selection = window.getSelection()
-  const text = selection?.toString().trim()
+  const selectedText = selection?.toString() || ''
+  let text = selectedText.trim()
   if (state.artifact?.kind === 'image') return hideSelectionPopover()
   if (!state.artifact || !text || selection.rangeCount === 0) return hideSelectionPopover()
   const range = selection.getRangeAt(0)
   const content = $('#artifact-content')
   if (!content.contains(range.commonAncestorContainer)) return hideSelectionPopover()
   let hintOffset = 0
-  if (state.artifactView === 'source') {
+  let targetFile = state.artifact
+  if (state.artifactView === 'source' || content.classList.contains('artifact-structured-preview')) {
     const source = content.querySelector('.artifact-source')
     if (source) {
       const prefix = document.createRange()
       prefix.selectNodeContents(source)
       prefix.setEnd(range.startContainer, range.startOffset)
       hintOffset = prefix.toString().length
+      if (content.classList.contains('artifact-structured-preview') && state.artifact.structuredPreview) {
+        const suffix = document.createRange()
+        suffix.selectNodeContents(source)
+        suffix.setEnd(range.endContainer, range.endOffset)
+        const mapped = structuredPreviewSourceRange(
+          state.artifact.structuredPreview.sourceMap,
+          hintOffset,
+          suffix.toString().length,
+        )
+        if (mapped) {
+          const originalSource = state.artifact.structuredPreview.source
+          const originalSelection = originalSource.slice(mapped.startOffset, mapped.endOffset)
+          const leadingWhitespace = originalSelection.length - originalSelection.trimStart().length
+          text = originalSelection.trim().slice(0, 16000)
+          hintOffset = mapped.startOffset + leadingWhitespace
+          targetFile = { ...state.artifact, content: originalSource }
+        }
+      }
     }
   }
   state.pendingSelection = {
     quote: text.slice(0, 16000),
     itemId: null,
     turnId: null,
-    source: documentCommentSource(createFileRangeTarget(state.artifact, text, hintOffset)),
+    source: documentCommentSource(createFileRangeTarget(targetFile, text, hintOffset)),
   }
   positionSelectionPopover(range, { allowFavorite: false })
 }

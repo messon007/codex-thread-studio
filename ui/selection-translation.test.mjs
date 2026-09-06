@@ -10,7 +10,7 @@ import {
   translationTurnState,
 } from './selection-translation.mjs'
 
-const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const controller = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')

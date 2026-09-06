@@ -77,7 +77,7 @@ test('an authoritative lifecycle update prevents an optimistic activity rollback
 })
 
 test('Studio starts with an empty runtime workset and adds a session after loading history', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
   assert.match(source, /state\.attentionThreads = new Set\(\)/)
   assert.doesNotMatch(source, /attentionThreads: \[\.\.\.state\.attentionThreads\]/)
   const resume = source.slice(

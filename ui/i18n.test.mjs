@@ -146,7 +146,7 @@ test('every native browser translation source exists in the Chinese catalog', ()
 })
 
 test('saving settings closes the dialog before rerendering dynamic UI', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./settings-application.mjs', import.meta.url), 'utf8')
   const body = source.match(/function saveSettings\(event\) \{([\s\S]*?)\n\}/)?.[1] || ''
   assert.ok(body.indexOf("$('#settings-dialog').close()") >= 0)
   assert.ok(body.indexOf("$('#settings-dialog').close()") < body.indexOf('renderLocalizedUI()'))

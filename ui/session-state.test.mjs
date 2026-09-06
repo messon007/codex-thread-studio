@@ -11,7 +11,8 @@ test('dynamic session state loads beside preferences but is not written back to 
   const loadStart = app.indexOf('async function loadPreferences()')
   const snapshotStart = app.indexOf('function preferencesSnapshot()', loadStart)
   const persistStart = app.indexOf('function persistPreferences()', snapshotStart)
-  const load = app.slice(loadStart, snapshotStart)
+  const settings = readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
+  const load = settings.slice(settings.indexOf('async function loadPreferences()'), settings.indexOf('async function saveSettings('))
   const snapshot = app.slice(snapshotStart, persistStart)
 
   assert.match(load, /Promise\.all\(\[/u)
@@ -26,7 +27,8 @@ test('startup selection comes from Thread Router instead of persisted session st
   const loadStart = app.indexOf('async function loadPreferences()')
   const snapshotStart = app.indexOf('function preferencesSnapshot()', loadStart)
   const persistStart = app.indexOf('function persistPreferences()', snapshotStart)
-  const load = app.slice(loadStart, snapshotStart)
+  const settings = readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
+  const load = settings.slice(settings.indexOf('async function loadPreferences()'), settings.indexOf('async function saveSettings('))
   const snapshot = app.slice(snapshotStart, persistStart)
 
   assert.match(load, /state\.router = normalizeThreadRouter\(saved\.router\)/u)

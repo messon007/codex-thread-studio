@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 
 test('active turns expose Queue independently from Stop and Steer', () => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/settings-application.mts', import.meta.url), 'utf8')
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8')
 const ollama = readFileSync(new URL('../src-tauri/src/ollama.rs', import.meta.url), 'utf8')

@@ -997,6 +997,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/composer-send.mjs", get(composer_send_js))
         .route("/background-sessions.mjs", get(background_sessions_js))
         .route("/opencode-protocol.mjs", get(opencode_protocol_js))
+        .route("/settings-application.mjs", get(settings_application_js))
         .route(
             "/active-codex-connection.mjs",
             get(active_codex_connection_js),
@@ -2319,6 +2320,10 @@ async fn opencode_protocol_js() -> impl IntoResponse {
 
 async fn active_codex_connection_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/active-codex-connection.mjs"))
+}
+
+async fn settings_application_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/settings-application.mjs"))
 }
 
 async fn session_operations_js() -> impl IntoResponse {
@@ -4636,6 +4641,7 @@ mod tests {
                 "/background-sessions.mjs",
                 "/opencode-protocol.mjs",
                 "/active-codex-connection.mjs",
+                "/settings-application.mjs",
                 "/session-operations.mjs",
                 "/submission-controller.mjs",
                 "/preferences-snapshot.mjs",

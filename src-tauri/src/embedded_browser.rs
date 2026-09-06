@@ -50,6 +50,7 @@ enum BrowserAction {
     Open(String, Option<i32>),
     Resize(i32),
     SetTranslations(HashMap<String, String>),
+    SetTypography(crate::browser_runtime::BrowserTypography),
     Exit,
     Navigate(String),
     NewTab(Option<String>),
@@ -171,6 +172,7 @@ struct EmbeddedBrowserWorkspace {
     info_dialog: Option<gtk::Dialog>,
     downloads_dialog: Option<gtk::Dialog>,
     translations: HashMap<String, String>,
+    typography: Option<crate::browser_runtime::BrowserTypography>,
 }
 
 pub fn is_supported() -> bool {
@@ -527,6 +529,7 @@ pub fn build(
             info_dialog: None,
             downloads_dialog: None,
             translations: HashMap::new(),
+            typography: None,
         });
     });
     split_signal.connect_position_notify(|split| {
@@ -940,6 +943,7 @@ fn dispatch_action(action: BrowserAction) {
                     dialog.close();
                 }
             }
+            BrowserAction::SetTypography(profile) => workspace.typography = Some(profile),
             BrowserAction::Navigate(raw) => {
                 match validate_browser_url(&raw, &workspace.preferences) {
                     Ok(url) => {
@@ -2346,6 +2350,7 @@ fn sync_toolbar() {
                 "zoomPercent": active.map(|tab| (tab.zoom * 100.0).round() as u32).unwrap_or(100),
                 "fitWidth": active.is_some_and(|tab| tab.fit_width),
                 "translations": workspace.translations,
+                "typography": workspace.typography,
             });
             evaluate(
                 toolbar_webview,
@@ -2449,6 +2454,9 @@ fn parse_action(raw: &str) -> Option<BrowserAction> {
         "set-browser-translations" => query_value(&url, "messages")
             .and_then(|value| serde_json::from_str(&value).ok())
             .map(BrowserAction::SetTranslations),
+        "set-browser-typography" => query_value(&url, "profile")
+            .and_then(|value| crate::browser_runtime::parse_browser_typography(&value))
+            .map(BrowserAction::SetTypography),
         "navigate" => query_value(&url, "url").map(BrowserAction::Navigate),
         "new-tab" => Some(BrowserAction::NewTab(query_value(&url, "url"))),
         "activate-tab" => query_u64(&url, "id").map(BrowserAction::ActivateTab),

@@ -6,6 +6,31 @@ const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
+test('typography standard covers profile-owned emphasis and native toolbar synchronization', () => {
+  assert.match(styles, /--ui-font-xxs: max\(10px, calc\(var\(--ui-font-size\) - 4px\)\)/u)
+  assert.match(styles, /--ui-font-xs: max\(11px, calc\(var\(--ui-font-size\) - 3px\)\)/u)
+  assert.match(styles, /strong, b, h1, h2, h3, h4, h5, h6 \{ font-weight: var\(--ui-font-emphasis\);/u)
+  assert.match(app, /--content-font-emphasis', Math\.min\(700, state\.typography\.contentFontWeight \+ 100\)/u)
+  assert.match(app, /set-browser-typography\?profile=/u)
+  const toolbar = readFileSync(new URL('./embedded-browser.html', import.meta.url), 'utf8')
+  assert.match(toolbar, /root\.setProperty\('--ui-font-family', typography\.fontFamily\)/u)
+  for (const platform of ['embedded_browser.rs', 'embedded_browser_windows.rs']) {
+    const source = readFileSync(new URL(`../src-tauri/src/${platform}`, import.meta.url), 'utf8')
+    assert.match(source, /SetTypography/u)
+    assert.match(source, /"typography": (?:workspace|w)\.typography/u)
+  }
+  assert.match(styles, /\.artifact-editor-gutter \{[^}]*font: var\(--code-font-weight\) var\(--code-font-size\)\/1\.72/u)
+})
+
+test('readable compact controls and hints follow the configured interface profile', () => {
+  const rules = styles.slice(styles.indexOf('/* Readable interface labels:'))
+  for (const selector of ['.studio-entry-copy small', '.selection-popover button', '.segmented-control button', '.check-field strong', '.translation-speak-button']) {
+    assert.ok(rules.includes(selector))
+  }
+  assert.match(rules, /font-size: var\(--ui-font-compact\);\s*font-weight: var\(--ui-font-weight\);/u)
+  assert.match(rules, /\.artifact-footer,[\s\S]*?font-size: var\(--ui-font-label\);\s*font-weight: var\(--ui-font-weight\);\s*color: var\(--muted\);/u)
+})
+
 test('defines independent interface, reading-content, and code typography settings', () => {
   const expected = '"Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif'
   assert.match(app, new RegExp(`const defaultUiFontFamily = '${expected}'`, 'u'))
@@ -62,7 +87,7 @@ test('uses interface typography for application chrome and workspace tools', () 
   assert.match(styles, /\.studio-entry-copy small \{[^}]*font-size: var\(--ui-font-sm\);/u)
   assert.match(styles, /\.action-menu button \{[^}]*font-size: var\(--ui-font-compact\);[^}]*font-weight: var\(--ui-font-weight\);/u)
   assert.match(styles, /\.studio-menu-count \{[^}]*font-size: var\(--ui-font-xxs\);[^}]*font-weight: var\(--ui-font-emphasis\);/u)
-  assert.match(styles, /\.browser-menu-status small \{[^}]*font-size: var\(--ui-font-xxs\);/u)
+  assert.match(styles, /\.browser-menu-status small \{[^}]*font-size: var\(--ui-font-label\);/u)
   assert.match(app, /--ui-font-emphasis', Math\.min\(700, state\.typography\.uiFontWeight \+ 100\)/u)
   assert.doesNotMatch(styles, /--workspace-font-/u)
 })

@@ -26,6 +26,14 @@ test('resolves explicit and system languages', () => {
   assert.equal(resolveLanguage('system', 'de-DE'), 'en-US')
 })
 
+test('keeps Chinese continuation and steering actions concise', () => {
+  setLanguage('zh-CN')
+  assert.equal(t('Continue'), '\u7ee7\u7eed')
+  assert.equal(t('Steer'), '\u8ffd\u52a0')
+  assert.equal(t('Resume'), '\u6062\u590d')
+  setLanguage('en-US')
+})
+
 test('translates interface text and interpolates values', () => {
   setLanguage('en-US')
   assert.equal(getLocale(), 'en-US')
@@ -153,10 +161,10 @@ test('comments and favorites use compact right-area launchers without add menus'
   assert.match(html, /id="thread-comments-count"[^>]*workspace-tool-count[^>]*hidden/)
   assert.match(html, /id="thread-favorites-count"[^>]*workspace-tool-count[^>]*hidden/)
   assert.match(html, /id="thread-resources-count"[^>]*workspace-tool-count[^>]*hidden/)
-  assert.match(styles, /\.workspace-tool-count \{[^}]*top: -4px;[^}]*right: -4px;[^}]*font-size: 7px;[^}]*font-variant-numeric: tabular-nums;/u)
+  assert.match(styles, /\.workspace-tool-count \{[^}]*top: -4px;[^}]*right: -4px;[^}]*font-size: var\(--ui-font-xxs\);[^}]*font-variant-numeric: tabular-nums;/u)
   assert.doesNotMatch(styles, /\.workspace-tool-count,[^\n]*font-size: var\(--ui-font-xxs\)/u)
   assert.match(styles, /\.annotation-rail h2, \.resources-heading h2, \.favorites-rail h2 \{[^}]*display: flex;[^}]*align-items: center;[^}]*gap: 6px;/u)
-  assert.match(styles, /\.annotation-count \{[^}]*height: 19px;[^}]*align-items: center;[^}]*justify-content: center;[^}]*font-variant-numeric: tabular-nums;/u)
+  assert.match(styles, /\.annotation-count \{[^}]*height: max\(19px, calc\(var\(--ui-font-xxs\) \+ 4px\)\);[^}]*align-items: center;[^}]*justify-content: center;[^}]*font-variant-numeric: tabular-nums;/u)
   assert.doesNotMatch(html, /id="(?:annotation|favorite)-menu-button"/)
   assert.doesNotMatch(html, /id="(?:open-annotation-rail|open-session-favorites)"/)
   assert.doesNotMatch(source, /(?:annotation|favorite)-menu-button/)

@@ -184,7 +184,7 @@ test('document outline stays inside the document shell as a wide overlay drawer'
   assert.ok(shellPosition >= 0 && shellPosition < outlinePosition && outlinePosition < contentPosition)
   assert.match(documentReviewStyles, /\.artifact-reader-shell\.outline-open \.artifact-outline-backdrop \{ display: block; \}/u)
   assert.match(documentReviewStyles, /\.artifact-outline \{ width: min\(420px, calc\(100% - 20px\)\);[\s\S]*position: absolute;/u)
-  assert.match(documentReviewStyles, /font: 550 12px\/1\.45 var\(--ui-font-family\)/u)
+  assert.match(documentReviewStyles, /font: var\(--ui-font-emphasis\) var\(--ui-font-compact\)\/1\.45 var\(--ui-font-family\)/u)
   assert.doesNotMatch(documentReviewStyles, /artifact-reader-shell\.compact/u)
   assert.doesNotMatch(documentReviewApp, /artifactOutlineOpen:/u)
 })

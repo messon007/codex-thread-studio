@@ -12,19 +12,28 @@
         --soft: #f3f5f8;
         --active: #ffffff;
         --brand: #176b5d;
-        font-family: Ubuntu, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+        --ui-font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+        --ui-font-size: 14px;
+        --ui-font-weight: 500;
+        --ui-font-emphasis: 600;
+        --ui-font-compact: max(12px, calc(var(--ui-font-size) - 2px));
+        --ui-font-label: max(11px, calc(var(--ui-font-size) - 3px));
+        font-family: var(--ui-font-family);
+        font-size: var(--ui-font-compact);
+        font-weight: var(--ui-font-weight);
       }
       * { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #fff; }
       body { display: grid; grid-template-rows: 32px 43px; border-bottom: 1px solid var(--line); }
       button, input { font: inherit; }
       button { cursor: pointer; }
+      strong, b { font-weight: var(--ui-font-emphasis); }
       .tabs-row { display: flex; min-width: 0; align-items: end; gap: 4px; padding: 4px 10px 0; background: #f1f3f6; border-bottom: 1px solid var(--line); }
       .tabs { display: flex; min-width: 0; max-width: calc(100% - 68px); flex: 0 1 auto; align-items: end; gap: 3px; overflow: hidden; }
       .tab { display: flex; min-width: 78px; max-width: 190px; height: 27px; flex: 0 1 190px; align-items: center; gap: 6px; padding: 0 7px 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); cursor: pointer; }
       .tab:hover { background: rgb(255 255 255 / 68%); color: var(--text); }
       .tab.active { background: var(--active); border-color: var(--line); color: var(--text); }
-      .tab-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12px; }
+      .tab-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: var(--ui-font-compact); }
       .tab-close { width: 17px; height: 17px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #8992a3; line-height: 15px; }
       .tab-close:hover { background: #e4e7ec; color: #283246; }
       .new-tab { width: 27px; height: 27px; flex: 0 0 auto; margin-bottom: 1px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 18px; }
@@ -36,25 +45,25 @@
       .icon { width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; display: grid; place-items: center; background: transparent; color: var(--muted); font-size: 17px; line-height: 1; }
       .icon svg { width: 17px; height: 17px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
       .icon:hover { background: var(--soft); color: var(--text); }
-      .browser-menu { min-width: 35px; width: 35px; border: 1px solid #ccd4e0; background: #fff; font-size: 12px; font-weight: 750; letter-spacing: -1px; }
+      .browser-menu { min-width: 35px; width: 35px; border: 1px solid #ccd4e0; background: #fff; font-size: var(--ui-font-compact); font-weight: var(--ui-font-emphasis); letter-spacing: -1px; }
       .browser-menu:hover { border-color: #aeb8c6; }
       .address { width: 100%; height: 34px; border: 1px solid #d4dae4; border-radius: 9px; outline: 0; background: #f7f8fa; color: var(--text); padding: 0 11px; }
       .address:focus { border-color: #7aa99f; box-shadow: 0 0 0 3px rgb(23 107 93 / 11%); background: white; }
-      .zoom { min-width: 45px; width: auto; padding: 0 5px; font-size: 11px; }
+      .zoom { min-width: 45px; width: auto; padding: 0 5px; font-size: var(--ui-font-label); }
       .fit.active { background: #e8f3f0; color: var(--brand); }
-      .comment { height: 31px; border: 1px solid #ccd4e0; border-radius: 8px; background: white; color: #3d4960; padding: 0 9px; white-space: nowrap; font-size: 12px; }
+      .comment { height: 31px; border: 1px solid #ccd4e0; border-radius: 8px; background: white; color: #3d4960; padding: 0 9px; white-space: nowrap; font-size: var(--ui-font-compact); }
       .comment:hover { border-color: #8eb7ad; color: var(--brand); background: #f4f9f7; }
-      .browser-panel { position: fixed; z-index: 2; right: 8px; top: 68px; display: none; width: min(340px, calc(100% - 16px)); max-height: calc(100% - 76px); overflow: auto; padding: 7px; border: 1px solid #d7dde6; border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgb(23 32 51 / 18%); color: var(--text); font-size: 12px; }
+      .browser-panel { position: fixed; z-index: 2; right: 8px; top: 68px; display: none; width: min(340px, calc(100% - 16px)); max-height: calc(100% - 76px); overflow: auto; padding: 7px; border: 1px solid #d7dde6; border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgb(23 32 51 / 18%); color: var(--text); font-size: var(--ui-font-compact); }
       .browser-panel.open { display: block; }
       .browser-panel button { width: 100%; min-height: 31px; padding: 5px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; }
       .browser-panel button:hover { background: var(--soft); color: var(--brand); }
       .browser-panel hr { border: 0; border-top: 1px solid var(--line); margin: 5px 0; }
-      .browser-panel h2 { margin: 4px 7px 7px; font-size: 12px; }
+      .browser-panel h2 { margin: 4px 7px 7px; font-size: var(--ui-font-compact); }
       .browser-panel p { margin: 5px 7px; color: var(--muted); overflow-wrap: anywhere; }
       .download-item { padding: 7px; border-top: 1px solid var(--line); }
       .download-item:first-child { border-top: 0; }
       .download-item strong, .download-item span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .download-item span { margin-top: 2px; color: var(--muted); font-size: 11px; }
+      .download-item span { margin-top: 2px; color: var(--muted); font-size: var(--ui-font-label); }
       @media (max-width: 620px) {
         .toolbar { gap: 4px; padding-inline: 6px; }
         .nav .icon:nth-child(2), .zoom-control { display: none; }
@@ -163,6 +172,14 @@
       })
       window.__embeddedBrowserToolbar = {
         setState(value) {
+          const typography = value?.typography
+          if (typography) {
+            const root = document.documentElement.style
+            root.setProperty('--ui-font-family', typography.fontFamily)
+            root.setProperty('--ui-font-size', `${typography.fontSize}px`)
+            root.setProperty('--ui-font-weight', typography.fontWeight)
+            root.setProperty('--ui-font-emphasis', Math.min(700, typography.fontWeight + 100))
+          }
           translations = value?.translations || {}
           applyTranslations()
           renderTabs(value?.tabs)

@@ -210,6 +210,7 @@ struct EmbeddedBrowserWorkspace {
     recent_recoveries: HashMap<u64, (u8, std::time::Instant)>,
     downloads: Vec<BrowserDownload>,
     translations: HashMap<String, String>,
+    typography: Option<crate::browser_runtime::BrowserTypography>,
 }
 
 pub fn is_supported() -> bool {
@@ -274,6 +275,7 @@ pub fn build(
         recent_recoveries: HashMap::new(),
         downloads: Vec::new(),
         translations: HashMap::new(),
+        typography: None,
     };
     WORKSPACE.with(|slot| *slot.borrow_mut() = Some(workspace));
     window.on_window_event(|event| {
@@ -1047,6 +1049,16 @@ fn dispatch_toolbar_action(action: ToolbarAction) {
         ToolbarAction::OpenDownloadsDirectory => open_downloads_directory(),
         ToolbarAction::SetBrowserWidth(width) => set_browser_width(width),
         ToolbarAction::SetTranslations(translations) => set_browser_translations(translations),
+        ToolbarAction::SetTypography(profile) => {
+            WORKSPACE.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut() {
+                    if let Some(workspace) = slot.as_mut() {
+                        workspace.typography = Some(profile);
+                    }
+                }
+            });
+            sync_toolbar();
+        }
     }
 }
 
@@ -2394,6 +2406,7 @@ fn sync_toolbar() {
             "title": active.map(|tab| display_title(&tab.title, &tab.url)).unwrap_or_else(|| "Browser".to_owned()),
             "zoomPercent": active.map(|tab| (tab.zoom * 100.0).round() as u32).unwrap_or(100), "fitWidth": active.is_some_and(|tab| tab.fit_width),
             "translations": w.translations,
+            "typography": w.typography,
         });
         evaluate(toolbar, "window.__embeddedBrowserToolbar?.setState", &state);
         if let Some(panel) = w.browser_panel_webview.as_ref() {

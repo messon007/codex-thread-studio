@@ -1367,6 +1367,21 @@ function syncEmbeddedBrowserTranslations() {
   if (!usesEmbeddedBrowser()) return
   const messages = Object.fromEntries(embeddedBrowserTranslationSources.map((source) => [source, t(source)]))
   dispatchEmbeddedBrowserAction(`studio-action://set-browser-translations?messages=${encodeURIComponent(JSON.stringify(messages))}`)
+  syncEmbeddedBrowserTypography()
+}
+
+let syncedEmbeddedBrowserTypography = ''
+function syncEmbeddedBrowserTypography() {
+  if (!usesEmbeddedBrowser()) return
+  const profile = {
+    fontFamily: state.typography.uiFontFamily,
+    fontSize: state.typography.uiFontSize,
+    fontWeight: state.typography.uiFontWeight,
+  }
+  const serialized = JSON.stringify(profile)
+  if (serialized === syncedEmbeddedBrowserTypography) return
+  dispatchEmbeddedBrowserAction(`studio-action://set-browser-typography?profile=${encodeURIComponent(serialized)}`)
+  syncedEmbeddedBrowserTypography = serialized
 }
 
 function usesEmbeddedBrowser() {
@@ -9011,10 +9026,12 @@ function applyAppearance() {
   root.style.setProperty('--content-font-family', state.typography.contentFontFamily)
   root.style.setProperty('--content-font-size', `${state.typography.contentFontSize}px`)
   root.style.setProperty('--content-font-weight', state.typography.contentFontWeight)
+  root.style.setProperty('--content-font-emphasis', Math.min(700, state.typography.contentFontWeight + 100))
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
   workspaceTools.refreshTypography()
+  syncEmbeddedBrowserTypography()
   resetMermaidRendering()
 }
 

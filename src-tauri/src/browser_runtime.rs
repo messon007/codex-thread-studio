@@ -54,8 +54,31 @@ pub const fn embedded_browser_platform_available() -> bool {
     cfg!(any(target_os = "linux", target_os = "windows"))
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserTypography {
+    pub font_family: String,
+    pub font_size: f64,
+    pub font_weight: u16,
+}
+
+pub fn parse_browser_typography(raw: &str) -> Option<BrowserTypography> {
+    if raw.len() > 4096 {
+        return None;
+    }
+    let value: BrowserTypography = serde_json::from_str(raw).ok()?;
+    if value.font_family.trim().is_empty()
+        || value.font_family.len() > 2048
+        || !(11.0..=20.0).contains(&value.font_size)
+        || ![400, 500, 600].contains(&value.font_weight)
+    {
+        return None;
+    }
+    Some(value)
+}
+
 #[cfg(any(windows, test))]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ToolbarAction {
     Toggle,
     Show,
@@ -82,6 +105,7 @@ pub enum ToolbarAction {
     OpenDownloadsDirectory,
     SetBrowserWidth(u32),
     SetTranslations(HashMap<String, String>),
+    SetTypography(BrowserTypography),
 }
 
 #[cfg(any(windows, test))]
@@ -118,6 +142,9 @@ pub fn parse_toolbar_action(raw: &str) -> Option<ToolbarAction> {
         "set-browser-translations" => query_value(&url, "messages")
             .and_then(|value| serde_json::from_str(&value).ok())
             .map(ToolbarAction::SetTranslations),
+        "set-browser-typography" => query_value(&url, "profile")
+            .and_then(|value| parse_browser_typography(&value))
+            .map(ToolbarAction::SetTypography),
         _ => None,
     }
 }
@@ -514,6 +541,32 @@ fn is_private_network(url: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_typography_validates_and_routes_the_ui_profile() {
+        let profile = r#"{"fontFamily":"Test Sans, sans-serif","fontSize":20,"fontWeight":600}"#;
+        assert_eq!(parse_browser_typography(profile).unwrap().font_size, 20.0);
+        assert_eq!(
+            parse_browser_typography(&profile.replace("20", "14.5"))
+                .unwrap()
+                .font_size,
+            14.5
+        );
+        let mut url = Url::parse("studio-action://set-browser-typography").unwrap();
+        url.query_pairs_mut().append_pair("profile", profile);
+        assert!(matches!(
+            parse_toolbar_action(url.as_str()),
+            Some(ToolbarAction::SetTypography(_))
+        ));
+        for invalid in [
+            profile.replace("20", "21"),
+            profile.replace("600", "800"),
+            profile.replace("Test Sans, sans-serif", ""),
+            "{}".to_string(),
+        ] {
+            assert!(parse_browser_typography(&invalid).is_none());
+        }
+    }
 
     #[test]
     fn browser_platform_availability_is_explicit_and_safe() {

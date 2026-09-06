@@ -5,6 +5,7 @@ import {
   formatCommentPromptEntry,
 } from './comment-core.mjs'
 import { locateCommentIntervals } from './comment-markers.mjs'
+import { CommentSubmissionCoordinator, insertCommentPrompt } from './comment-submission.mjs'
 import {
   chatCommentSource,
   documentCommentSource,
@@ -77,6 +78,7 @@ export function createReviewNotesController({
     renderMarkdown,
     renderedItem,
     setComposerValue,
+    submitComposer,
     pauseTranscript,
     preserveTranscriptLayout,
     switchBackend,
@@ -102,6 +104,7 @@ export function createReviewNotesController({
   let nativeTranslationSpeechAvailable = false
   let nativeTranslationSpeechRequest = null
   const deactivatedChatCommentMarkers = new Set()
+  const commentSubmissions = new CommentSubmissionCoordinator()
 
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
@@ -909,14 +912,14 @@ function insertAnnotations() {
   const key = selectedStateKey()
   const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
   const composer = $('#composer-input')
-  setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
+  setComposerValue(insertCommentPrompt(composer.value, prompt))
   closeAnnotationRail()
   composer.focus()
   renderComposerReviewContext()
   toast('Comment draft inserted into the composer')
 }
 
-function sendAndClearAnnotations() {
+async function sendAndClearAnnotations() {
   const drafts = currentAnnotations()
   const form = $('#composer-form')
   const sendButton = $('#send-message')
@@ -926,23 +929,27 @@ function sendAndClearAnnotations() {
     return
   }
   const key = selectedStateKey()
+  if (commentSubmissions.isPending(key)) return
   const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
   const composer = $('#composer-input')
-  setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
   try {
-    form.requestSubmit(sendButton)
+    const outcome = await commentSubmissions.submit({
+      key, store: state, prompt, composerText: composer.value,
+      insert: setComposerValue,
+      send: submitComposer,
+      persist: persistAnnotationState,
+    })
+    if (outcome !== 'sent') return
+    if (selectedStateKey() === key) {
+      renderAnnotationRail()
+      closeAnnotationRail()
+      composer.focus()
+    }
+    toast('Comment draft sent and cleared')
   } catch (error) {
     showError(error)
-    composer.focus()
-    return
+    if (selectedStateKey() === key) composer.focus()
   }
-  delete state.annotationDrafts[key]
-  delete state.annotationAdditional[key]
-  persistAnnotationState(key)
-  renderAnnotationRail()
-  closeAnnotationRail()
-  composer.focus()
-  toast('Comment draft sent and cleared')
 }
 
 async function favoriteRequest(path, options = {}) {

@@ -1035,6 +1035,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
+        .route("/comment-submission.mjs", get(comment_submission_js))
         .route("/comment-markers.mjs", get(comment_markers_js))
         .route(
             "/browser-comment-provider.mjs",
@@ -2367,6 +2368,10 @@ async fn workspace_editor_js() -> impl IntoResponse {
 
 async fn comment_core_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/comment-core.mjs"))
+}
+
+async fn comment_submission_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/comment-submission.mjs"))
 }
 
 async fn comment_markers_js() -> impl IntoResponse {
@@ -4510,6 +4515,7 @@ mod tests {
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
                 "/comment-markers.mjs",
+                "/comment-submission.mjs",
                 "/session-resources.mjs",
                 "/session-resources-ui.mjs",
                 "/favorites.mjs",

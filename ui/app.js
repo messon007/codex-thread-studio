@@ -643,6 +643,7 @@ const reviewNotes = createReviewNotesController({
     renderMarkdown,
     renderedItem,
     setComposerValue: setCurrentComposerValue,
+    submitComposer: () => sendComposer({ preventDefault() {} }),
     pauseTranscript: beginTranscriptProgrammaticNavigation,
     preserveTranscriptLayout,
     switchBackend,
@@ -7547,9 +7548,10 @@ async function sendComposer(event) {
       state.pendingImages[stateKey] = []
       hideComposerMenu()
       renderComposerState()
+      return true
     } catch (error) { showError(error) }
     finally { renderComposerState() }
-    return
+    return false
   }
   const backend = state.backend
   const threadId = state.selectedId
@@ -7645,6 +7647,7 @@ async function sendComposer(event) {
     showError(error)
   }
   finally { renderComposerState() }
+  return turnAccepted
 }
 
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {

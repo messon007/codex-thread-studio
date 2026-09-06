@@ -77,6 +77,7 @@ try {
     const { localSessionOccurrences } = await import('/session-search.mjs')
     const { createSerializedStateWriter } = await import('/serialized-state-writer.mjs')
     const { CommentSourceRegistry, createCommentDraft } = await import('/comment-core.mjs')
+    const { CommentSubmissionCoordinator } = await import('/comment-submission.mjs')
     const { createChatCommentProvider, createDocumentCommentProvider } = await import('/comment-source-providers.mjs')
     const { createBrowserCommentProvider } = await import('/browser-comment-provider.mjs')
     const { createPdfCommentProvider } = await import('/pdf-comment-provider.mjs')
@@ -88,6 +89,9 @@ try {
     const comments = new CommentSourceRegistry()
     for (const factory of [createChatCommentProvider, createDocumentCommentProvider, createBrowserCommentProvider, createPdfCommentProvider, createEpubCommentProvider, createTableCommentProvider]) comments.register(factory())
     const comment = createCommentDraft({ excerpt: 'fixture', source: { provider: 'chat', anchor: {} } }, { registry: comments })
+    const commentStore = { annotationDrafts: { fixture: [comment] }, annotationAdditional: {} }
+    const commentSend = await new CommentSubmissionCoordinator().submit({ key: 'fixture', store: commentStore, prompt: 'fixture', composerText: '', insert() {}, send: async () => false, persist() { throw Error('failed send persisted a clear') } })
+    check(commentSend === 'retained' && commentStore.annotationDrafts.fixture.length === 1, 'failed comment send lost drafts')
     check(locateCommentIntervals('a fixture', [comment])[0].start === 2, 'comment source/marker modules failed')
     check(parseRouterDecision(JSON.stringify({ action: 'dispatch', targetSessionKey: 'codex:fixture', forwardedPrompt: 'hello' }), ['codex:fixture']).forwardedPrompt === 'hello', 'Router decision module failed')
     check(normalizeSessionMap({ id: 'map', backend: 'codex', threadId: 'fixture' }).revision === 0, 'Session Map normalization failed')

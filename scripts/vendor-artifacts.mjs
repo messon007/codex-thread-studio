@@ -1,4 +1,5 @@
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 
 const root = new URL('../', import.meta.url)
@@ -13,8 +14,8 @@ for (const name of ['pdf.min.mjs', 'pdf.worker.min.mjs']) {
 }
 
 await build({
-  entryPoints: [new URL('ui/artifact-table-vendor-entry.mjs', root).pathname],
-  outfile: new URL('artifact-table.mjs', vendor).pathname,
+  entryPoints: [fileURLToPath(new URL('ui/artifact-table-vendor-entry.mjs', root))],
+  outfile: fileURLToPath(new URL('artifact-table.mjs', vendor)),
   bundle: true,
   format: 'esm',
   platform: 'browser',

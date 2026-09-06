@@ -1,9 +1,10 @@
-import { buildSessionResourceIndex, resourceGroup, resourceIcon } from './session-resources.mjs'
+import { buildSessionResourceIndex, resourceGroup, resourceIcon, sessionResourceRevision } from './session-resources.mjs'
 
 export function createSessionResourcesUI({
   getModel,
   getThread,
   getBackend,
+  getSharedDocumentDirectories = () => [],
   activate,
   deactivate,
   openResource,
@@ -11,9 +12,13 @@ export function createSessionResourcesUI({
   favoriteResource,
   translate = (value) => value,
   notify = () => {},
+  buildIndex = buildSessionResourceIndex,
+  scheduleIdle = scheduleLazyResourceScan,
+  performanceMonitor = null,
 }) {
   const states = new Map()
   let developerContext = null
+  let pendingLazyScan = null
   const element = (id) => document.getElementById(id)
   const currentThread = () => developerContext?.thread || getThread?.() || null
   const currentModel = () => developerContext?.model || getModel?.() || null
@@ -31,11 +36,16 @@ export function createSessionResourcesUI({
     if (!states.has(key)) {
       states.set(key, {
         key,
-        index: buildSessionResourceIndex(null),
+        index: buildIndex(null),
         query: '',
         filter: 'all',
         selectedId: '',
         built: false,
+        builtRevision: '',
+        builtModel: null,
+        builtLatestTurn: null,
+        builtSharedDirectories: '',
+        dirty: true,
       })
     }
     return states.get(key)
@@ -64,43 +74,98 @@ export function createSessionResourcesUI({
     element('resources-list')?.addEventListener('click', handleListClick)
   }
 
-  function sync({ rebuild: shouldRebuild = false } = {}) {
+  function sync({ rebuild: shouldRebuild = false, contentChanged = false } = {}) {
     const state = stateForCurrent()
     const button = element('open-thread-resources')
     if (button) button.disabled = !state
     if (!state) {
+      cancelLazyScan()
       close()
       syncLauncher(0)
       return
     }
-    if (shouldRebuild || !state.built) rebuild()
+    if (shouldRebuild || contentChanged || sourceChanged(state)) state.dirty = true
+    if (!isOpen()) {
+      // Keep the last known badge visible immediately, then refresh it after
+      // the transcript has painted. Only the latest Turn is indexed.
+      syncLauncher(knownCount(state))
+      if (state.dirty) scheduleLazyRebuild(state)
+      else cancelLazyScan()
+      return
+    }
+    cancelLazyScan()
+    const revision = currentRevision()
+    state.dirty = state.builtRevision !== revision
+    if (shouldRebuild || (isOpen() && state.dirty)) rebuild({ revision })
     else {
-      syncLauncher(state.index.counts().all)
-      if (isOpen()) render()
+      syncLauncher(state.built ? state.index.counts().all : 0)
+      render()
     }
   }
 
-  function rebuild() {
+  function syncSelection() {
+    const state = stateForCurrent()
+    const button = element('open-thread-resources')
+    if (button) button.disabled = !state
+    if (!state) {
+      cancelLazyScan()
+      close()
+      syncLauncher(0)
+      return
+    }
+    if (isOpen()) sync()
+    else {
+      if (sourceChanged(state)) state.dirty = true
+      syncLauncher(knownCount(state))
+      if (state.dirty) scheduleLazyRebuild(state)
+      else cancelLazyScan()
+    }
+  }
+
+  function rebuild({ revision = currentRevision() } = {}) {
+    cancelLazyScan()
     const state = stateForCurrent()
     const thread = currentThread()
     if (!state || !thread) return null
-    state.index = buildSessionResourceIndex(currentModel(), {
-      backend: currentBackend(),
-      threadId: thread.id,
-      root: thread.cwd || '',
+    const model = currentModel()
+    const backend = currentBackend()
+    const sharedDocumentDirectories = getSharedDocumentDirectories()
+    const finishMeasurement = performanceMonitor?.start?.('resources.scan', {
+      backend,
+      threadKey: `${backend}:${thread.id}`,
+      turnCount: Array.isArray(model?.turns) ? model.turns.length : 0,
     })
+    try {
+      state.index = buildIndex(model, {
+        backend,
+        threadId: thread.id,
+        root: thread.cwd || '',
+        sharedDocumentDirectories,
+      })
+    } catch (error) {
+      finishMeasurement?.({ outcome: 'failed' })
+      throw error
+    }
     state.built = true
+    state.builtRevision = revision
+    state.builtModel = model
+    state.builtLatestTurn = latestTurn(model)
+    state.builtSharedDirectories = sharedDocumentDirectories.join('\n')
+    state.dirty = false
     if (state.selectedId && !state.index.resourcesById.has(state.selectedId)) state.selectedId = ''
-    syncLauncher(state.index.counts().all)
+    const resourceCount = state.index.counts().all
+    finishMeasurement?.({ outcome: 'loaded', resourceCount })
+    syncLauncher(resourceCount)
     if (isOpen()) render()
     return state.index
   }
 
   function open() {
     if (!stateForCurrent()) return
+    cancelLazyScan()
     activate?.('resources')
     element('resources-rail')?.classList.remove('hidden')
-    rebuild()
+    sync()
     setTimeout(() => element('resources-search')?.focus(), 30)
   }
 
@@ -108,7 +173,9 @@ export function createSessionResourcesUI({
     element('resources-rail')?.classList.add('hidden')
     deactivate?.('resources')
     developerContext = null
-    syncLauncher(stateForCurrent()?.index.counts().all || 0)
+    const state = stateForCurrent()
+    syncLauncher(knownCount(state))
+    if (state?.dirty) scheduleLazyRebuild(state)
   }
 
   function isOpen() {
@@ -218,6 +285,56 @@ export function createSessionResourcesUI({
     button.setAttribute('aria-label', title)
   }
 
+  function knownCount(state) {
+    return state?.built ? state.index.counts().all : 0
+  }
+
+  function sourceChanged(state) {
+    const model = currentModel()
+    return !state?.built
+      || state.builtModel !== model
+      || state.builtLatestTurn !== latestTurn(model)
+      || state.builtSharedDirectories !== getSharedDocumentDirectories().join('\n')
+  }
+
+  function invalidate(backend, threadId, { force = false } = {}) {
+    const key = threadId ? `${backend || 'codex'}:${threadId}` : ''
+    const state = key && states.get(key)
+    if (!state) return
+    state.dirty = true
+    if (force) state.builtRevision = ''
+    if (currentKey() !== key) return
+    if (isOpen()) sync()
+    else {
+      syncLauncher(knownCount(state))
+      scheduleLazyRebuild(state)
+    }
+  }
+
+  function cancelLazyScan() {
+    pendingLazyScan?.cancel?.()
+    pendingLazyScan = null
+  }
+
+  function scheduleLazyRebuild(state) {
+    cancelLazyScan()
+    const key = state?.key
+    if (!key) return
+    const job = { key, cancel: null }
+    job.cancel = scheduleIdle(() => {
+      if (pendingLazyScan !== job) return
+      pendingLazyScan = null
+      if (isOpen() || currentKey() !== key || stateForCurrent() !== state) return
+      const revision = currentRevision()
+      if (!state.built || state.builtRevision !== revision) rebuild({ revision })
+      else {
+        state.dirty = false
+        syncLauncher(knownCount(state))
+      }
+    })
+    pendingLazyScan = job
+  }
+
   function openForDebug(root) {
     const path = String(root || '')
     developerContext = {
@@ -237,7 +354,57 @@ export function createSessionResourcesUI({
     open()
   }
 
-  return { bind, sync, rebuild, open, openForDebug, close, isOpen, render, currentIndex: () => stateForCurrent()?.index || null }
+  function currentRevision() {
+    const thread = currentThread()
+    if (!thread) return 'none'
+    return `${currentBackend()}:${thread.id}:${thread.cwd || ''}:${sessionResourceRevision(currentModel())}`
+  }
+
+  return { bind, sync, syncSelection, invalidate, rebuild, open, openForDebug, close, isOpen, render, currentIndex: () => stateForCurrent()?.index || null }
+}
+
+function latestTurn(model) {
+  return Array.isArray(model?.turns) ? model.turns.at(-1) || null : null
+}
+
+function scheduleLazyResourceScan(callback) {
+  let cancelled = false
+  let frameHandle = null
+  let paintTimer = null
+  let idleHandle = null
+  let idleTimer = null
+
+  const run = () => {
+    if (!cancelled) callback()
+  }
+  const afterPaint = () => {
+    frameHandle = null
+    paintTimer = null
+    if (cancelled) return
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      idleHandle = globalThis.requestIdleCallback(run, { timeout: 2_000 })
+    } else {
+      idleTimer = setTimeout(run, 0)
+    }
+  }
+
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    frameHandle = globalThis.requestAnimationFrame(afterPaint)
+  } else {
+    paintTimer = setTimeout(afterPaint, 0)
+  }
+
+  return () => {
+    cancelled = true
+    if (frameHandle != null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(frameHandle)
+    }
+    if (paintTimer != null) clearTimeout(paintTimer)
+    if (idleHandle != null && typeof globalThis.cancelIdleCallback === 'function') {
+      globalThis.cancelIdleCallback(idleHandle)
+    }
+    if (idleTimer != null) clearTimeout(idleTimer)
+  }
 }
 
 function favoriteSvg() {

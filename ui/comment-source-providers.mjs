@@ -9,13 +9,15 @@ import {
 export const CHAT_COMMENT_PROVIDER = 'chat'
 export const DOCUMENT_COMMENT_PROVIDER = 'document'
 
-export function chatCommentSource({ turnId = null, itemId = null } = {}) {
+export function chatCommentSource({ turnId = null, itemId = null, startOffset = null, endOffset = null } = {}) {
   return {
     provider: CHAT_COMMENT_PROVIDER,
     version: 1,
     anchor: {
       turnId: boundedIdentifier(turnId),
       itemId: boundedIdentifier(itemId),
+      startOffset: boundedOffset(startOffset),
+      endOffset: boundedOffset(endOffset),
     },
   }
 }
@@ -44,10 +46,6 @@ export function createChatCommentProvider() {
       const index = Number(context.index) + 1
       const turnId = draft.source.anchor.turnId
       return `${context.translate?.('Reply comment {index}', { index }) || `Comment ${index}`}${turnId ? ` · ${turnId.slice(0, 8)}` : ''}`
-    },
-    promptAnchor(draft) {
-      const { turnId, itemId } = draft.source.anchor
-      return [turnId && `Turn ${turnId}`, itemId && `Item ${itemId}`].filter(Boolean).join(' / ')
     },
   }
 }
@@ -92,6 +90,8 @@ function normalizeChatAnchor(anchor = {}) {
   return {
     turnId: boundedIdentifier(anchor.turnId),
     itemId: boundedIdentifier(anchor.itemId),
+    startOffset: boundedOffset(anchor.startOffset),
+    endOffset: boundedOffset(anchor.endOffset),
   }
 }
 
@@ -107,4 +107,10 @@ function fileTarget(anchor = {}) {
 
 function boundedIdentifier(value) {
   return value ? String(value).slice(0, 256) : null
+}
+
+function boundedOffset(value) {
+  if (value == null || value === '') return null
+  const offset = Number(value)
+  return Number.isSafeInteger(offset) && offset >= 0 ? offset : null
 }

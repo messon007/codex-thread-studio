@@ -12,17 +12,25 @@ function rule(selector) {
 }
 
 test('brand geometry matches the Agent Deck Studio sidebar contract', () => {
-  assert.match(html, /<strong>Codex Thread Studio<\/strong>\s*<span>Codex Desktop<\/span>/)
+  assert.match(html, /<div class="brand-copy">\s*<strong>Codex Thread Studio<\/strong>\s*<\/div>/)
+  assert.doesNotMatch(html, /Codex Desktop/u)
   assert.match(rule('.brand-row'), /height:\s*74px/)
+  assert.match(rule('.brand-row'), /display:\s*flex/)
+  assert.match(rule('.brand-row'), /gap:\s*9px/)
   assert.doesNotMatch(rule('.brand-row'), /border-bottom/)
   assert.match(rule('.brand-row'), /padding:\s*16px 18px/)
   assert.match(rule('.brand-mark'), /width:\s*38px/)
   assert.match(rule('.brand-mark'), /height:\s*38px/)
   assert.match(rule('.brand-mark'), /border-radius:\s*11px/)
+  assert.match(html, /class="brand-mark"[^>]*><svg viewBox="0 0 24 24">/u)
+  assert.match(rule('.brand-mark svg'), /width:\s*21px/)
   assert.match(rule('.brand-copy strong'), /font-size:\s*16px/)
   assert.match(rule('.brand-copy strong'), /white-space:\s*nowrap/)
-  assert.match(rule('.brand-copy span'), /font-size:\s*11px/)
-  assert.match(rule('.brand-copy span'), /margin-top:\s*3px/)
+  assert.match(rule('.brand-copy'), /height:\s*38px/)
+  assert.match(rule('.brand-copy'), /align-items:\s*center/)
+  assert.match(rule('.brand-copy'), /justify-content:\s*flex-start/)
+  assert.match(html, /class="studio-avatar"[^>]*><svg viewBox="0 0 24 24">/u)
+  assert.match(rule('.studio-avatar svg'), /width:\s*16px/)
 })
 
 test('application actions live in an extensible footer menu instead of the brand row', () => {
@@ -38,30 +46,30 @@ test('application actions live in an extensible footer menu instead of the brand
   assert.match(rule('.action-menu.studio-menu'), /bottom:\s*calc\(100% \+ 7px\)/)
 })
 
-test('settings dialog scrolls its body inside the native viewport', () => {
+test('settings dialog keeps categorized panes inside the native viewport', () => {
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
-  assert.match(styles, /\.settings-dialog \{[^}]*width: min\(650px, calc\(100vw - 48px\)\)[^}]*max-height: min\(820px, calc\(100vh - 32px\)\)/u)
-  assert.match(styles, /\.settings-dialog \.dialog-body \{[^}]*overflow: auto/u)
-  assert.match(styles, /\.settings-dialog form \{[^}]*display: flex; flex-direction: column/u)
+  assert.match(styles, /\.settings-dialog \{[^}]*width: min\(1040px, calc\(100vw - 48px\)\)[^}]*max-height: min\(760px, calc\(100vh - 32px\)\)/u)
+  assert.match(styles, /\.settings-layout \{[^}]*grid-template-columns: 218px minmax\(0, 1fr\)[^}]*overflow: hidden/u)
+  assert.match(styles, /\.settings-panes \{[^}]*overflow: auto/u)
+  assert.match(styles, /\.settings-dialog form \{[^}]*display: flex;[^}]*flex-direction: column/u)
 })
 
 test('Windows WSL backend settings use a full-width grouped layout', () => {
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 
-  assert.match(html, /id="wsl-settings" class="settings-section wsl-settings-card full hidden"/u)
+  assert.match(html, /id="settings-backends-navigation"[^>]*data-settings-pane="backends"/u)
+  assert.match(html, /id="wsl-settings" class="settings-section wsl-settings-card hidden"/u)
   assert.match(html, /class="wsl-restart-badge">Applies after restart/u)
   assert.match(html, /class="wsl-environment-card"/u)
   assert.equal((html.match(/class="field wsl-command-field"/gu) || []).length, 2)
-  assert.match(styles, /\.settings-section\.full \{ grid-column: 1 \/ -1;/u)
-  assert.match(styles, /html\[data-host-platform="windows"\] \.settings-dialog \{[^}]*width: min\(720px, calc\(100vw - 48px\)\)/u)
-  assert.match(styles, /html\[data-host-platform="windows"\] \.settings-dialog \.dialog-body \{[^}]*grid-auto-rows: max-content[^}]*align-content: start/u)
   assert.doesNotMatch(rule('.wsl-settings-card'), /overflow:\s*hidden/u)
   assert.match(styles, /\.wsl-settings-layout \{[^}]*grid-template-columns: minmax\(0, \.9fr\) minmax\(0, 1\.1fr\)/u)
   assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wsl-settings-layout \{ grid-template-columns: 1fr;/u)
   assert.match(app, /hostPlatform: window\.__CODEX_THREAD_STUDIO_GATEWAY__\?\.hostPlatform \|\| null/u)
   assert.match(app, /root\.dataset\.hostPlatform = state\.hostPlatform \|\| 'unknown'/u)
+  assert.match(app, /settings-backends-navigation'\)\.classList\.toggle\('hidden', !windowsHost\)/u)
 })
 
 test('filters use the same flat label-and-number structure as Agent Deck Studio', () => {
@@ -82,4 +90,20 @@ test('the preparing spinner shares the conversation-track center with message ic
   assert.match(rule('.work-placeholder'), /padding:\s*0 3px/u)
   assert.match(rule('.work-placeholder'), /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
   assert.match(rule('.work-placeholder'), /gap:\s*9px/u)
+})
+
+test('turn dividers own equal spacing above and below the boundary', () => {
+  assert.match(rule('.turn'), /padding:\s*0 0 22px/u)
+  assert.match(rule('.turn + .turn'), /padding-top:\s*22px/u)
+  assert.match(rule('.turn > :last-child'), /margin-bottom:\s*0/u)
+})
+
+test('turn failures use the conversation track and preserve message text alignment', () => {
+  assert.match(app, /class="message-track-mark turn-error-mark"[^>]*>\$\{conversationTrackIcon\('failed'\)\}/u)
+  assert.match(app, /class="turn-error-content"><strong>\$\{t\('Execution failed'\)\}<\/strong><span>/u)
+  assert.match(rule('.turn-error'), /padding:\s*0 3px/u)
+  assert.match(rule('.turn-error'), /grid-template-columns:\s*18px minmax\(0, 1fr\)/u)
+  assert.match(rule('.turn-error'), /gap:\s*9px/u)
+  assert.match(rule('.turn-error-content'), /margin-inline:\s*-8px/u)
+  assert.match(rule('.turn-error-content'), /padding:\s*6px 8px/u)
 })

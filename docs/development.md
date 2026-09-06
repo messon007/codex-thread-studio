@@ -67,6 +67,7 @@ target/debug/codex-thread-studio --dev-open-workspace /absolute/project/root rev
 target/debug/codex-thread-studio --dev-open-resources /absolute/project/root
 target/debug/codex-thread-studio --dev-open-environment-settings /absolute/project/root
 target/debug/codex-thread-studio --dev-click '[data-table-chart]'
+target/debug/codex-thread-studio --dev-drag '[data-table-column-resizer="0"]' 120 0
 target/debug/codex-thread-studio --dev-input '[data-pdf-search]' Git
 ```
 
@@ -151,7 +152,10 @@ Stable APIs are used by default. Do not add experimental fields without setting 
 
 Run `npm test` with a locally installed Codex to regenerate its experimental App Server schema in a temporary directory and verify the structured-interaction contract. CI without Codex skips only that generated-schema assertion; checked-in protocol fixtures and the remaining UI tests still run. Refresh PDF.js/ExcelJS browser bundles with `npm run vendor:artifacts` and commit the generated assets and license files.
 
-For OpenCode protocol work, inspect the exact installed schema at the child server's `GET /doc`. Cross-project listing uses `/experimental/session`; all project-scoped requests must include `directory`. Never expose `OPENCODE_SERVER_PASSWORD` to the WebView.
+For OpenCode protocol work, generate the complete schema from the exact installed CLI with
+`opencode generate --pure`. The child server's `GET /doc` is useful for inspection but is not the
+sole compatibility source. Cross-project listing uses `/experimental/session`; all project-scoped
+requests must include `directory`. Never expose `OPENCODE_SERVER_PASSWORD` to the WebView.
 
 Protocol responsibilities are split as follows:
 
@@ -165,6 +169,9 @@ Protocol responsibilities are split as follows:
 - `ui/vendor`: lockfile-pinned Marked, DOMPurify, Mermaid, GitHub Markdown CSS, and license texts for offline rendering.
 
 ## Compatibility checks
+
+The repository's weekly version, used-contract, dependency, security, and toolchain checks are
+described in [`ecosystem-monitoring.md`](ecosystem-monitoring.md).
 
 Before accepting a Codex CLI upgrade:
 

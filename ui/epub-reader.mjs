@@ -56,10 +56,26 @@ export function epubPaperTheme(name) {
   return { background: '#fffdfa', foreground: '#263234', muted: '#687476', link: '#137c70' }
 }
 
+export function normalizeEpubTypography(value = {}) {
+  const fontFamily = String(value.fontFamily || 'Georgia, "Noto Serif CJK SC", "Source Han Serif SC", serif')
+    .replace(/!important/giu, '')
+    .replace(/[;{}]/gu, '')
+    .trim()
+    .slice(0, 512)
+  const fontSize = Number(value.fontSize)
+  const fontWeight = Number(value.fontWeight)
+  return {
+    fontFamily: fontFamily || 'Georgia, "Noto Serif CJK SC", "Source Han Serif SC", serif',
+    fontSize: Number.isFinite(fontSize) ? clamp(fontSize, 11, 24) : 15,
+    fontWeight: [400, 500, 600].includes(fontWeight) ? fontWeight : 400,
+  }
+}
+
 export async function createEpubReader({
   container,
   bytes,
   initialState,
+  typography,
   translate = (value) => value,
   onSelection = () => {},
   onRelocate = () => {},
@@ -69,6 +85,7 @@ export async function createEpubReader({
   if (!(bytes instanceof ArrayBuffer)) throw new Error('EPUB reader requires an ArrayBuffer')
 
   const readerState = normalizeEpubReaderState(initialState)
+  const readingTypography = normalizeEpubTypography(typography)
   const shell = buildShell(container, translate)
   const book = ePub(bytes, { replacements: 'blobUrl' })
   let rendition = null
@@ -91,7 +108,9 @@ export async function createEpubReader({
         'color': `${palette.foreground} !important`,
       },
       'body': {
-        'font-family': 'Georgia, "Noto Serif CJK SC", "Source Han Serif SC", serif !important',
+        'font-family': `${readingTypography.fontFamily} !important`,
+        'font-size': `${readingTypography.fontSize * readerState.fontScale}px !important`,
+        'font-weight': `${readingTypography.fontWeight} !important`,
         'line-height': '1.72 !important',
         'padding-left': 'clamp(16px, 5vw, 54px) !important',
         'padding-right': 'clamp(16px, 5vw, 54px) !important',
@@ -103,7 +122,6 @@ export async function createEpubReader({
     }
     rendition.themes.register('studio-reader', rules)
     rendition.themes.select('studio-reader')
-    rendition.themes.fontSize(`${Math.round(readerState.fontScale * 100)}%`)
     shell.root.dataset.paper = readerState.theme
   }
 

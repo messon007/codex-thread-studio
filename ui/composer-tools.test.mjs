@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CONTINUE_PROMPTS,
   composerTrigger,
   createComposerDraftStore,
   isPreviewableImageFile,
   isPreviewableTextFile,
   matchingSkills,
   matchingSlashCommands,
+  randomContinuePrompt,
   replaceComposerTrigger,
   previewableFileKind,
   reviewableFileKind,
@@ -16,6 +18,19 @@ import {
   shellCommandFromComposer,
   transcriptUpdateKind,
 } from './composer-tools.mjs'
+
+test('selects quick Continue prompts from a small explicit phrase set', () => {
+  assert.deepEqual(CONTINUE_PROMPTS, [
+    'Continue.',
+    'Go on.',
+    'Keep going.',
+    'Please continue.',
+    'Continue with the task.',
+  ])
+  assert.equal(randomContinuePrompt(() => 0), 'Continue.')
+  assert.equal(randomContinuePrompt(() => 0.41), 'Keep going.')
+  assert.equal(randomContinuePrompt(() => 0.999), 'Continue with the task.')
+})
 
 test('keeps composer drafts isolated by backend and session', () => {
   const drafts = createComposerDraftStore()
@@ -73,7 +88,7 @@ test('filters slash commands and formats file references', () => {
 })
 
 test('enables document preview only for known text file types', () => {
-  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt', 'benchmarks/cases/01-layered-pipeline.d2']) {
+  for (const path of ['README', 'LICENSE.md', 'docs/guide.markdown', 'src/main.rs', 'config.yaml', 'feed.atom', 'preferences.plist', 'updates.rss', '.gitignore', 'hooks/commit-msg.sample', 'config/app.conf.example', 'build/CMakeLists.txt', 'benchmarks/cases/01-layered-pipeline.d2']) {
     assert.equal(isPreviewableTextFile({ path }), true, path)
   }
   for (const path of ['image.png', 'diagram.svg', 'archive.zip', 'program.exe', 'data.bin', 'unknown']) {

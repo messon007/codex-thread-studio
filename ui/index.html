@@ -16,10 +16,9 @@
     <div class="app-shell">
       <aside id="sidebar" class="sidebar">
         <header class="brand-row">
-          <div class="brand-mark" aria-hidden="true">C</div>
+          <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 7.2A7 7 0 1 0 17 16.8" /></svg></div>
           <div class="brand-copy">
             <strong>Codex Thread Studio</strong>
-            <span>Codex Desktop</span>
           </div>
         </header>
 
@@ -42,7 +41,7 @@
         <footer class="studio-footer">
           <div class="menu-anchor studio-menu-anchor">
             <button id="studio-menu-button" class="studio-entry" type="button" aria-haspopup="menu" aria-expanded="false">
-              <span class="studio-avatar" aria-hidden="true">⌂</span>
+              <span class="studio-avatar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 11.5 7-6.5 7 6.5V19H5Z"/><path d="M9.5 19v-5h5v5"/></svg></span>
               <span class="studio-entry-copy"><strong>Local workspace</strong><small>Local workspace</small></span>
               <span class="chevron">›</span>
             </button>
@@ -102,10 +101,11 @@
               </button>
             </div>
             <div class="menu-anchor">
-              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="More session actions" aria-expanded="false">•••</button>
+              <button id="thread-more-button" class="toolbar-button icon-only" type="button" aria-label="More session actions" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="19" cy="12" r="1.35"/></svg></button>
               <div id="thread-more-menu" class="action-menu thread-action-menu hidden" role="menu">
                 <button id="rename-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span>Rename session</span></button>
                 <button id="fork-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M8 5h3a5 5 0 0 1 5 5"/></svg><span>Fork session</span></button>
+                <button id="pin-thread" type="button" role="menuitem" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 6 0-1 5 3 3v2H7v-2l3-3zM12 14v6"/></svg><span>Pin session</span></button>
                 <button id="archive-thread" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM3 4h18v4H3z"/><path d="M9 12h6"/></svg><span>Archive session</span></button>
                 <button id="delete-thread" class="danger-text" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg><span>Delete session</span></button>
                 <span class="menu-separator"></span>
@@ -145,6 +145,7 @@
           <nav id="turn-navigator" class="turn-navigator hidden" aria-label="Turn navigation for the current session"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
           <div id="selection-popover" class="selection-popover hidden">
             <button id="selection-comment" type="button">Comments</button>
+            <button id="selection-translate" type="button">Translate</button>
             <button id="selection-favorite" type="button">Favorites</button>
           </div>
 
@@ -155,8 +156,13 @@
               <span><strong id="composer-review-count">0 comments</strong><small id="composer-review-source">Waiting to be added</small></span>
               <button id="composer-review-open" type="button">View</button>
               <button id="composer-review-insert" type="button">Insert</button>
+              <button id="composer-review-send-clear" type="button">Send and Clear</button>
             </div>
             <div id="composer-images" class="composer-images hidden" aria-label="Attached images"></div>
+            <section id="composer-message-queue" class="composer-message-queue hidden" aria-label="Queued messages">
+              <header><span><strong>Queue</strong><small id="composer-queue-status"></small></span><button id="resume-message-queue" class="subtle-button hidden" type="button">Resume</button></header>
+              <div id="composer-queue-items" class="composer-queue-items"></div>
+            </section>
             <textarea
               id="composer-input"
               rows="3"
@@ -179,6 +185,8 @@
               </div>
               <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
+                <button id="queue-message" class="subtle-button hidden" type="button">Queue</button>
+                <button id="continue-thread" class="subtle-button" type="button" title="Draft the next message with the current session model · Ctrl/Cmd+Shift+Enter">Continue</button>
                 <button id="send-message" class="primary-button" type="submit">Send</button>
               </div>
             </div>
@@ -198,9 +206,8 @@
             <h2>Map</h2>
           </div>
           <div class="session-map-header-actions">
-            <span id="session-map-sync-state" class="session-map-sync-state" title="Map sync status"><i></i></span>
             <div class="menu-anchor">
-              <button id="session-map-more" class="icon-button" type="button" aria-label="Map actions" aria-expanded="false">•••</button>
+              <button id="session-map-more" class="icon-button" type="button" aria-label="Map actions" aria-expanded="false"><svg class="overflow-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="19" cy="12" r="1.35"/></svg></button>
               <div id="session-map-menu" class="action-menu hidden" role="menu">
                 <button id="session-map-add-root" type="button" role="menuitem">Add</button>
                 <button id="session-map-ai-generate" type="button" role="menuitem">Generate with AI</button>
@@ -210,7 +217,7 @@
                 <button id="session-map-delete" class="danger-text" type="button" role="menuitem">Delete Map</button>
               </div>
             </div>
-            <button id="close-session-map" class="icon-button" type="button" aria-label="Close Map">×</button>
+            <button id="close-session-map" class="icon-button right-workspace-close" type="button" title="Close Map" aria-label="Close Map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
           </div>
         </header>
         <section class="session-map-goal">
@@ -232,7 +239,7 @@
         </div>
         <footer class="session-map-footer">
           <span id="session-map-progress">0 items</span>
-          <span id="session-map-revision">rev 0</span>
+          <span class="session-map-footer-status"><span id="session-map-sync-state" class="session-map-sync-state" title="Map sync status"><i></i></span><span id="session-map-revision">rev 0</span></span>
         </footer>
       </aside>
 
@@ -247,7 +254,7 @@
             <button id="refresh-resources" class="icon-button artifact-action-icon" type="button" title="Refresh resources" aria-label="Refresh resource index">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"/><path d="M19 4v4h-4"/></svg>
             </button>
-            <button id="close-resources" class="icon-button artifact-action-icon" type="button" title="Close resources" aria-label="Close resources">
+            <button id="close-resources" class="icon-button artifact-action-icon right-workspace-close" type="button" title="Close resources" aria-label="Close resources">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
             </button>
           </div>
@@ -334,7 +341,7 @@
             <span class="workspace-tools-mark" aria-hidden="true">⌘</span>
             <div><h2 id="workspace-tools-title">Workspace</h2><p id="workspace-tools-path" data-no-i18n></p></div>
           </div>
-          <button id="close-workspace-tools" class="icon-button" type="button" aria-label="Close project workspace">×</button>
+          <button id="close-workspace-tools" class="icon-button right-workspace-close" type="button" title="Close project workspace" aria-label="Close project workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
         </header>
         <section id="workspace-files-pane" class="workspace-tool-pane workspace-files-pane">
           <div class="workspace-file-toolbar">
@@ -383,13 +390,13 @@
 
       <aside id="annotation-rail" class="annotation-rail hidden">
         <div id="annotation-resizer" class="artifact-resizer app-right-rail-resizer" role="separator" aria-orientation="vertical" aria-label="Resize right workspace" tabindex="0"><span></span></div>
-        <header><div><span class="eyebrow">REVIEW DRAFT</span><h2>Reply draft <span id="annotation-count" class="annotation-count">0</span></h2></div><button id="close-annotation-rail" class="icon-button">×</button></header>
+        <header><div><span class="eyebrow">REVIEW DRAFT</span><h2>Reply draft <span id="annotation-count" class="annotation-count">0</span></h2></div><button id="close-annotation-rail" class="icon-button right-workspace-close" type="button" title="Close comments" aria-label="Close comments"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button></header>
         <div class="annotation-content"><div id="annotation-empty" class="annotation-empty"><strong>No comments yet</strong><p>Select text in the structured output, then choose Comments → Add.</p></div><div id="annotation-list" class="annotation-list"></div></div>
         <footer class="annotation-footer">
           <label for="annotation-additional">Overall note (optional)</label>
           <textarea id="annotation-additional" rows="3" placeholder="For example: respond to each point before continuing."></textarea>
-          <div class="annotation-footer-actions"><button id="clear-annotations" class="subtle-button">Clear</button><button id="insert-annotations" class="primary-button">Insert into composer</button></div>
-          <small>Only inserts into the composer; it does not send.</small>
+          <div class="annotation-footer-actions"><button id="clear-annotations" class="subtle-button" type="button">Clear</button><button id="insert-annotations" class="subtle-button" type="button">Insert</button><button id="send-clear-annotations" class="primary-button" type="button">Send and Clear</button></div>
+          <small>Insert keeps comments; Send and Clear submits them immediately.</small>
         </footer>
       </aside>
 
@@ -401,7 +408,7 @@
             <button id="export-favorites" class="icon-button" type="button" title="Export favorites" aria-label="Export favorites">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 17v2.5h14V17"/></svg>
             </button>
-            <button id="close-favorites" class="icon-button" type="button" aria-label="Close favorites">×</button>
+            <button id="close-favorites" class="icon-button right-workspace-close" type="button" title="Close favorites" aria-label="Close favorites"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
           </div>
         </header>
         <div class="favorites-search-wrap">
@@ -463,10 +470,32 @@
 
     <dialog id="annotation-dialog" class="dialog annotation-dialog">
       <form id="annotation-form">
-        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2>Comment on selection</h2><p id="annotation-source-hint">The original location is preserved and sent to the current session.</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
+        <header class="dialog-header"><div><span class="eyebrow">COMMENT SELECTION</span><h2 id="annotation-dialog-title">Comment on selection</h2><p id="annotation-source-hint">The original location is preserved and sent to the current session.</p></div><button id="close-annotation-dialog" class="icon-button" type="button">×</button></header>
         <div class="dialog-body"><blockquote id="annotation-quote"></blockquote><label class="field full"><span>Your comment (optional)</span><textarea id="annotation-comment" rows="5" placeholder="Describe the issue and expected change, or add the selection directly to the draft."></textarea></label><div id="annotation-error" class="form-error hidden"></div></div>
-        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Add to draft</button></footer>
+        <footer class="dialog-footer"><button id="cancel-annotation" class="subtle-button" type="button">Cancel</button><button id="save-annotation" class="primary-button" type="submit">Add to draft</button></footer>
       </form>
+    </dialog>
+
+    <dialog id="selection-translation-dialog" class="dialog selection-translation-dialog" aria-labelledby="selection-translation-title">
+      <header class="dialog-header">
+        <div><span class="eyebrow">AI TRANSLATION</span><h2 id="selection-translation-title">Translate to Chinese</h2><p id="selection-translation-backend">Translated by the current backend.</p></div>
+        <button id="close-selection-translation" class="icon-button" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="selection-translation-body">
+        <section class="selection-translation-source">
+          <header><span>Selected text</span><button id="speak-selection-translation-source" class="translation-speak-button" type="button" aria-label="Listen to English" title="Listen to English" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5Z"/><path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/></svg><span>Listen</span></button></header>
+          <div id="selection-translation-source" data-no-i18n></div>
+          <div id="selection-translation-source-pronunciation" class="selection-translation-pronunciation hidden"><span class="selection-translation-pronunciation-label">English pronunciation · IPA</span><div data-no-i18n></div></div>
+        </section>
+        <section class="selection-translation-result">
+          <header><span>Chinese translation</span><button id="speak-selection-translation-output" class="translation-speak-button" type="button" aria-label="Listen to Chinese" title="Listen to Chinese" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5Z"/><path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/></svg><span>Listen</span></button></header>
+          <div id="selection-translation-loading" class="selection-translation-loading"><span class="artifact-spinner"></span><span>Translating with the current backend…</span></div>
+          <div id="selection-translation-output" class="selection-translation-output hidden" data-no-i18n></div>
+          <div id="selection-translation-output-pronunciation" class="selection-translation-pronunciation hidden"><span class="selection-translation-pronunciation-label">Chinese pronunciation · Pinyin</span><div data-no-i18n></div></div>
+          <div id="selection-translation-error" class="form-error hidden"></div>
+        </section>
+      </div>
+      <footer class="dialog-footer"><button id="done-selection-translation" class="subtle-button" type="button">Close</button><button id="copy-selection-translation" class="primary-button" type="button" disabled>Copy translation</button></footer>
     </dialog>
 
     <dialog id="thread-info-dialog" class="dialog thread-info-dialog">
@@ -568,42 +597,121 @@
     <dialog id="settings-dialog" class="dialog settings-dialog">
       <form id="settings-form">
         <header class="dialog-header"><div><span class="eyebrow">STUDIO SETTINGS</span><h2>Studio settings</h2></div><button id="close-settings" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body">
-          <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
-          <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
-          <label class="field"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
-          <label class="field full"><span>UI font</span><input id="ui-font-family" /></label>
-          <label class="field full"><span>Workspace font</span><input id="workspace-font-family" /></label>
-          <label class="field full"><span>Code, diff, and terminal font</span><input id="code-font-family" /></label>
-          <label class="field"><span>UI weight</span><select id="ui-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
-          <label class="field"><span>Workspace size</span><input id="workspace-font-size" type="number" min="11" max="20" /></label>
-          <label class="field"><span>Code weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
-          <label class="field"><span>Code, diff, and terminal size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
-          <label class="check-field"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
-          <label class="check-field"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
-          <section id="wsl-settings" class="settings-section wsl-settings-card full hidden">
-            <header class="wsl-settings-header">
-              <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>Run Codex and OpenCode in WSL2 using the Linux environment configuration and credentials.</small></div></div>
-              <span class="wsl-restart-badge">Applies after restart</span>
-            </header>
-            <div class="wsl-settings-layout">
-              <section class="wsl-environment-card">
-                <header><strong>Linux runtime</strong><small>Leave blank to use the system default distribution and user.</small></header>
-                <div class="wsl-identity-grid">
-                  <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="Default WSL distribution" /></label>
-                  <label class="field"><span>Linux user</span><input id="wsl-user" maxlength="128" placeholder="Distribution default user" /></label>
+        <div class="settings-layout">
+          <nav id="settings-navigation" class="settings-navigation" aria-label="Settings categories">
+            <span class="settings-navigation-label">Categories</span>
+            <button class="settings-navigation-item active" type="button" role="tab" aria-selected="true" aria-controls="settings-pane-general" data-settings-pane="general"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>General</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-chat" data-settings-pane="chat"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 3zM8 9h8M8 12h5"/></svg></span><span>Chat</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-typography" data-settings-pane="typography"><span class="settings-navigation-icon typography">Aa</span><span>Typography</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-translation" data-settings-pane="translation"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h8M9 4v2c0 4-2 7-5 9M7 11c1 2 3 4 6 5M14 19l3-8 3 8M15 16h4"/></svg></span><span>Translation</span></button>
+            <button id="settings-backends-navigation" class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-backends" data-settings-pane="backends"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M7 12h10M9 17h6"/></svg></span><span>Backends</span></button>
+            <button class="settings-navigation-item" type="button" role="tab" aria-selected="false" aria-controls="settings-pane-comments" data-settings-pane="comments"><span class="settings-navigation-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3z"/></svg></span><span>Comments</span></button>
+          </nav>
+
+          <div class="settings-panes">
+            <section id="settings-pane-general" class="settings-pane active" role="tabpanel" data-settings-pane-content="general">
+              <header class="settings-pane-header"><h3>General</h3><p>Language, appearance, and notifications used across Studio.</p></header>
+              <section class="settings-section settings-field-grid">
+                <label class="field"><span>Language</span><select id="language-select"><option value="system">Use system language</option><option value="zh-CN">Simplified Chinese</option><option value="en-US">English</option></select></label>
+                <label class="field"><span>Theme</span><select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+                <label class="field full"><span>Content width</span><select id="content-width"><option value="comfortable">Comfortable · 960px</option><option value="wide">Wide · 1280px</option><option value="full">Full width · adaptive</option></select></label>
+                <label class="check-field full"><input id="desktop-notifications" type="checkbox" /><span><strong>Desktop notifications</strong><small>Notify when work completes or needs input while the window is inactive</small></span></label>
+                <label class="check-field full"><input id="high-contrast" type="checkbox" /><span><strong>Increase text contrast</strong><small>Darken secondary text and code output</small></span></label>
+              </section>
+            </section>
+
+            <section id="settings-pane-chat" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="chat">
+              <header class="settings-pane-header"><h3>Chat</h3><p>Configure message flow and shared document access across sessions.</p></header>
+              <div class="chat-settings">
+                <section class="settings-section settings-field-grid chat-settings-section">
+                  <header class="full"><strong>Message flow</strong><small>Control queued follow-up messages and what Continue does while a session is idle.</small></header>
+                  <label class="field"><span>Message queue depth</span><select id="queue-depth"><option value="1">1 message</option><option value="2">2 messages</option><option value="3">3 messages</option></select><small>Per session; queued messages pause after Stop, failure, or restart.</small></label>
+                  <label class="field"><span>Continue behavior</span><select id="continue-behavior"><option value="sessionModelDraft">Session model draft · review first</option><option value="ollamaDraft">Ollama draft · review first</option><option value="quickSend">Quick send · random prompt</option></select><small>Draft modes fill Chat for review using an isolated task; Quick send immediately sends a short continue phrase.</small></label>
+                </section>
+                <section class="settings-section settings-field-grid chat-settings-section">
+                  <header class="full"><strong>Shared documents</strong><small>Allow every session to open files from read-only directories you trust.</small></header>
+                  <label class="field full"><span>Shared document directories</span><textarea id="shared-document-directories" rows="4" spellcheck="false" placeholder="One absolute directory per line"></textarea><small>Add multiple directories on separate lines (no commas). Use absolute paths such as /tmp or C:\Shared. Files in each directory and its subdirectories are available read-only to every session.</small></label>
+                </section>
+              </div>
+            </section>
+
+            <section id="settings-pane-typography" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="typography">
+              <header class="settings-pane-header"><h3>Typography</h3><p>Use separate, consistent type systems for application controls, reading content, and technical output.</p></header>
+              <div class="typography-settings">
+                <section class="typography-profile settings-section">
+                  <header><span class="typography-profile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8.5 9h7M8.5 13h5"/></svg></span><div><strong>Interface</strong><small>Menus, navigation, controls, session lists, Files, and Git Review.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="ui-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="ui-font-size" type="number" min="11" max="20" /></label>
+                  <label class="field"><span>Weight</span><select id="ui-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+                <section class="typography-profile settings-section reading">
+                  <header><span class="typography-profile-icon typography">T</span><div><strong>Reading content</strong><small>Chat messages, progress text, document previews, comments, and saved excerpts.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="content-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="content-font-size" type="number" min="11" max="24" /></label>
+                  <label class="field"><span>Weight</span><select id="content-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+                <section class="typography-profile settings-section code">
+                  <header><span class="typography-profile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 4 4-4 4M11.5 17H19"/></svg></span><div><strong>Code, diff, and terminal</strong><small>Code blocks, source editors, Git diffs, command output, and terminal text.</small></div></header>
+                  <label class="field typography-family"><span>Font</span><input id="code-font-family" /></label>
+                  <label class="field"><span>Base size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
+                  <label class="field"><span>Weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+              </div>
+            </section>
+
+            <section id="settings-pane-translation" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="translation">
+              <header class="settings-pane-header"><h3>Translation</h3><p>Use the current session backend or a local Ollama model without changing the chat model.</p></header>
+              <section class="settings-section settings-field-grid">
+                <label class="field full"><span>Translation engine</span><select id="translation-engine"><option value="backend">Current session backend</option><option value="ollama">Local Ollama</option></select><small>Local Ollama runs independently from the selected Codex or OpenCode session.</small></label>
+                <header class="full translation-backend-setting"><strong id="translation-settings-backend">Current backend</strong><small>Each session backend keeps its own translation model and effort choices.</small></header>
+                <label class="field full translation-backend-setting"><span>Translation model</span><input id="translation-model" list="translation-model-options" maxlength="256" placeholder="Use the current session model" /><datalist id="translation-model-options"></datalist><small>Leave blank to use the current session model; choose a fast model here when one is available.</small></label>
+                <label class="field full translation-backend-setting"><span>Translation reasoning effort</span><select id="translation-effort"><option value="">Model default</option><option value="minimal">Minimal</option><option value="low">Low · recommended for speed</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select><small>Codex translations default to Low. This does not alter the chat composer.</small></label>
+                <label id="translation-ollama-model-field" class="field full"><span>Local Ollama model</span><select id="translation-ollama-model"><option value="gemma3:4b">gemma3:4b</option></select><small>Lists every model managed by local Ollama. Used for local translation and Continue drafts; the selected model stays loaded for 30 minutes.</small></label>
+              </section>
+            </section>
+
+            <section id="settings-pane-backends" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="backends">
+              <header class="settings-pane-header"><h3>Backends</h3><p>Configure commands used to run backends on this machine.</p></header>
+              <section id="wsl-settings" class="settings-section wsl-settings-card hidden">
+                <header class="wsl-settings-header">
+                  <div class="wsl-settings-heading"><span class="wsl-mark">WSL</span><div><strong>WSL backend</strong><small>Run Codex and OpenCode in WSL2 using the Linux environment configuration and credentials.</small></div></div>
+                  <span class="wsl-restart-badge">Applies after restart</span>
+                </header>
+                <div class="wsl-settings-layout">
+                  <section class="wsl-environment-card">
+                    <header><strong>Linux runtime</strong><small>Leave blank to use the system default distribution and user.</small></header>
+                    <div class="wsl-identity-grid">
+                      <label class="field"><span>Distribution</span><input id="wsl-distribution" maxlength="128" placeholder="Default WSL distribution" /></label>
+                      <label class="field"><span>Linux user</span><input id="wsl-user" maxlength="128" placeholder="Distribution default user" /></label>
+                    </div>
+                  </section>
+                  <section class="wsl-command-list">
+                    <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex command</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>Command name or absolute path inside WSL</small></label>
+                    <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode command</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>Command name or absolute path inside WSL</small></label>
+                  </section>
                 </div>
               </section>
-              <section class="wsl-command-list">
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark codex">CX</b>Codex command</span><input id="wsl-codex-binary" maxlength="4096" placeholder="codex" /><small>Command name or absolute path inside WSL</small></label>
-                <label class="field wsl-command-field"><span class="wsl-command-heading"><b class="wsl-command-mark opencode">OC</b>OpenCode command</span><input id="wsl-opencode-binary" maxlength="4096" placeholder="opencode" /><small>Command name or absolute path inside WSL</small></label>
+            </section>
+
+            <section id="settings-pane-comments" class="settings-pane hidden" role="tabpanel" data-settings-pane-content="comments">
+              <header class="settings-pane-header"><h3>Comments</h3><p>Customize how selected text and review notes are sent to the current session.</p></header>
+              <section class="settings-section">
+                <label class="field full"><span>Comment prompt template</span><textarea id="annotation-template" rows="10"></textarea><small>Must contain <code>{{annotations}}</code>; optional <code>{{additional}}</code>.</small></label>
               </section>
-            </div>
-          </section>
-          <label class="field full"><span>Comment prompt template</span><textarea id="annotation-template" rows="7"></textarea><small>Must contain <code>{{annotations}}</code>; optional <code>{{additional}}</code>.</small></label>
-          <div id="settings-error" class="form-error hidden"></div>
+            </section>
+
+            <div id="settings-error" class="form-error hidden"></div>
+          </div>
         </div>
-        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button" type="button">Restore defaults</button><button class="primary-button" type="submit">Save</button></footer>
+        <footer class="dialog-footer"><button id="reset-settings" class="subtle-button push-left" type="button">Restore defaults</button><button id="cancel-settings" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="edit-queued-message-dialog" class="dialog small-dialog">
+      <form id="edit-queued-message-form">
+        <header class="dialog-header"><div><span class="eyebrow">MESSAGE QUEUE</span><h2>Edit queued message</h2></div><button id="close-edit-queued-message" class="icon-button" type="button">×</button></header>
+        <div class="dialog-body"><label class="field full"><span>Message</span><textarea id="edit-queued-message-text" rows="8" maxlength="65536" required></textarea></label><p id="edit-queued-message-note" class="field-note hidden"></p></div>
+        <footer class="dialog-footer"><button id="cancel-edit-queued-message" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 

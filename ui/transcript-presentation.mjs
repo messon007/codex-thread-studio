@@ -1,3 +1,5 @@
+import { transcriptModelRevision } from './model-revision.mjs'
+
 const DEFAULT_VISIBLE_TURNS = 30
 const OUTPUT_PREVIEW_LINES = 5
 
@@ -8,21 +10,47 @@ export class TranscriptPresentationCache {
   }
 
   get(threadKey, model) {
+    return this._prepareEntry(threadKey, model)
+  }
+
+  _prepareEntry(threadKey, model, { present = true } = {}) {
     const key = String(threadKey || '')
     let entry = this.threads.get(key)
     if (!entry) {
+      const turnCount = model?.turns?.length || 0
       entry = {
         turns: new Map(),
+        sourceModel: null,
+        sourceRevision: null,
+        sourceTurns: [],
         orderedIds: [],
         historyWindow: this.visibleTurns,
-        visibleStart: Math.max(0, (model?.turns?.length || 0) - this.visibleTurns),
+        visibleStart: Math.max(0, turnCount - this.visibleTurns),
+        visibleEnd: turnCount,
+        windowMode: 'latest',
         scrollTop: null,
         scrollState: null,
       }
       this.threads.set(key, entry)
     }
-    syncEntry(entry, model)
+    const revision = transcriptModelRevision(model)
+    if (revision != null && entry.sourceModel === model && entry.sourceRevision === revision) return entry
+    syncEntry(entry, model, this.visibleTurns, { present })
+    entry.sourceModel = model
+    entry.sourceRevision = revision
     return entry
+  }
+
+  peek(threadKey) {
+    return this.threads.get(String(threadKey || '')) || null
+  }
+
+  peekCurrent(threadKey, model) {
+    const entry = this.peek(threadKey)
+    const revision = transcriptModelRevision(model)
+    return revision != null && entry?.sourceModel === model && entry.sourceRevision === revision
+      ? entry
+      : null
   }
 
   invalidateTurn(threadKey, turnId) {
@@ -58,34 +86,100 @@ export class TranscriptPresentationCache {
     if (!entry || entry.orderedIds.length !== turns.length) return this.get(key, model)
     const turn = turns.find((candidate) => String(candidate?.id || '') === id)
     if (!turn) return this.get(key, model)
+    entry.sourceTurns = turns
     syncTurn(entry, turn)
+    entry.sourceModel = model
+    entry.sourceRevision = transcriptModelRevision(model)
     return entry
   }
 
   showTurn(threadKey, model, turnId) {
-    const entry = this.get(threadKey, model)
+    const entry = this.revealTurn(this.get(threadKey, model), turnId)
+    pinWindow(entry, this.visibleTurns)
+    return entry
+  }
+
+  restoreTurn(threadKey, model, turnId) {
+    const entry = this.revealTurn(this._prepareEntry(threadKey, model, { present: false }), turnId, { force: true, centered: true })
+    pinWindow(entry, this.visibleTurns)
+    return entry
+  }
+
+  revealTurn(entry, turnId, { force = false, centered = force } = {}) {
+    if (!entry) return entry
     const index = entry.orderedIds.indexOf(String(turnId || ''))
-    if (index >= 0 && index < entry.visibleStart) {
-      entry.visibleStart = Math.max(0, index - 2)
-      entry.historyWindow = Math.max(entry.historyWindow, entry.orderedIds.length - entry.visibleStart)
+    if (index >= 0 && (force || index < entry.visibleStart || index >= entry.visibleEnd)) {
+      const turnCount = entry.orderedIds.length
+      const contextBefore = centered
+        ? Math.floor(this.visibleTurns / 2)
+        : Math.min(2, Math.max(0, this.visibleTurns - 1))
+      let visibleStart = Math.max(0, index - contextBefore)
+      const visibleEnd = Math.min(turnCount, visibleStart + this.visibleTurns)
+      visibleStart = Math.max(0, visibleEnd - this.visibleTurns)
+      entry.visibleStart = visibleStart
+      entry.visibleEnd = visibleEnd
+      entry.windowMode = 'fixed'
+      entry.historyWindow = this.visibleTurns
+      syncVisibleTurns(entry)
+    } else if (index < 0) {
+      // restoreTurn prepares metadata without presenting the previous window.
+      // A missing target still needs a usable bounded fallback presentation.
+      syncVisibleTurns(entry)
     }
     return entry
   }
 
   showEarlier(threadKey, model, count = 20) {
     const entry = this.get(threadKey, model)
-    entry.historyWindow += Math.max(1, count)
-    entry.visibleStart = Math.max(0, entry.orderedIds.length - entry.historyWindow)
+    const previousStart = entry.visibleStart
+    entry.visibleStart = Math.max(0, entry.visibleStart - Math.max(1, count))
+    pinWindow(entry, this.visibleTurns)
+    if (entry.visibleStart !== previousStart) syncVisibleTurns(entry)
+    return entry
+  }
+
+  showLater(threadKey, model, count = 20) {
+    const entry = this.get(threadKey, model)
+    const previousEnd = entry.visibleEnd
+    entry.visibleEnd = Math.min(entry.orderedIds.length, entry.visibleEnd + Math.max(1, count))
+    pinWindow(entry, this.visibleTurns)
+    if (entry.visibleEnd !== previousEnd) syncVisibleTurns(entry)
+    return entry
+  }
+
+  followLatest(threadKey, model) {
+    const entry = this.get(threadKey, model)
+    const visibleEnd = entry.orderedIds.length
+    const visibleStart = Math.max(0, visibleEnd - this.visibleTurns)
+    const windowChanged = entry.visibleStart !== visibleStart || entry.visibleEnd !== visibleEnd
+    entry.windowMode = 'latest'
+    entry.historyWindow = this.visibleTurns
+    entry.visibleStart = visibleStart
+    entry.visibleEnd = visibleEnd
+    if (windowChanged) syncVisibleTurns(entry)
+    return entry
+  }
+
+  pinCurrent(threadKey) {
+    const entry = this.peek(threadKey)
+    pinWindow(entry, this.visibleTurns)
     return entry
   }
 }
 
+function pinWindow(entry, visibleTurns) {
+  if (!entry) return
+  entry.windowMode = 'fixed'
+  entry.historyWindow = visibleTurns
+}
+
 export function presentTurn(turn) {
   const items = Array.isArray(turn?.items) ? turn.items : []
-  const lastAssistantIndex = findLastAssistantIndex(items)
+  const finalAssistant = findFinalAssistant(items, turn?.status)
   const blocks = []
   let activityItems = []
   let activityIndex = 0
+  let deferredAssistantBlock = null
 
   const flushActivity = () => {
     if (!activityItems.length) return
@@ -101,9 +195,13 @@ export function presentTurn(turn) {
       return
     }
     if (item?.type === 'agentMessage' || item?.type === 'plan') {
-      if (index === lastAssistantIndex) {
-        flushActivity()
-        blocks.push({ type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' })
+      if (index === finalAssistant.index) {
+        const assistantBlock = { type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' }
+        if (finalAssistant.deferUntilAfterActivity) deferredAssistantBlock = assistantBlock
+        else {
+          flushActivity()
+          blocks.push(assistantBlock)
+        }
       } else {
         activityItems.push({ kind: 'progress', itemId: item.id, item })
       }
@@ -112,6 +210,7 @@ export function presentTurn(turn) {
     activityItems.push(activityEntry(item))
   })
   flushActivity()
+  if (deferredAssistantBlock) blocks.push(deferredAssistantBlock)
 
   if (turn?.status === 'failed' || turn?.error?.message) {
     blocks.push({ type: 'error', message: turn?.error?.message || 'Turn failed' })
@@ -147,9 +246,9 @@ export function activityOutputPreview(value, lineLimit = OUTPUT_PREVIEW_LINES) {
   const text = String(value || '')
   let lineStart = 0
   let lineCount = 0
-  for (let index = 0; index <= text.length; index += 1) {
-    if (index !== text.length && text[index] !== '\n') continue
-    if (index === text.length && lineStart === text.length) break
+  while (lineStart < text.length) {
+    const newline = text.indexOf('\n', lineStart)
+    const index = newline < 0 ? text.length : newline
     let line = text.slice(lineStart, index)
     if (line.endsWith('\r')) line = line.slice(0, -1)
     lineCount += 1
@@ -195,10 +294,11 @@ export function reasoningStage(item) {
   const parts = Array.isArray(item?.summary) && item.summary.length
     ? item.summary
     : Array.isArray(item?.content) ? item.content : [item?.summary || item?.content || '']
-  const text = parts.map(String).map((part) => part.trim()).filter(Boolean).join('\n\n')
+  const text = firstBoundedStagePart(parts)
   const bold = text.match(/^\*\*([^*]+)\*\*/u)?.[1]
-  const first = bold || text.split('\n').map((line) => line.trim()).find(Boolean) || ''
-  return truncateText(first.replace(/^[-*•]\s*/u, ''), 140)
+  const lineEnd = text.search(/[\r\n]/u)
+  const first = bold || (lineEnd >= 0 ? text.slice(0, lineEnd) : text)
+  return boundedTextSummary(first.replace(/^[-*•]\s*/u, ''), 140)
 }
 
 export function commandKind(command) {
@@ -210,14 +310,62 @@ export function commandKind(command) {
   return 'commands'
 }
 
-function syncEntry(entry, model) {
+function syncEntry(entry, model, visibleTurns, { present = true } = {}) {
   const turns = Array.isArray(model?.turns) ? model.turns : []
   const nextIds = turns.map((turn) => String(turn?.id || ''))
-  const activeIds = new Set(nextIds)
-  for (const id of entry.turns.keys()) if (!activeIds.has(id)) entry.turns.delete(id)
-  for (const turn of turns) syncTurn(entry, turn)
+  const previousIds = entry.orderedIds
+  if (entry.windowMode === 'fixed') {
+    syncFixedWindow(entry, previousIds, nextIds, visibleTurns)
+  } else {
+    entry.visibleEnd = nextIds.length
+    entry.visibleStart = Math.max(0, nextIds.length - entry.historyWindow)
+  }
   entry.orderedIds = nextIds
-  entry.visibleStart = Math.max(0, nextIds.length - entry.historyWindow)
+  entry.sourceTurns = turns
+  if (present) syncVisibleTurns(entry)
+}
+
+function syncVisibleTurns(entry) {
+  const visibleIds = new Set(entry.orderedIds.slice(entry.visibleStart, entry.visibleEnd))
+  for (const id of entry.turns.keys()) {
+    if (!visibleIds.has(id)) entry.turns.delete(id)
+  }
+  for (let index = entry.visibleStart; index < entry.visibleEnd; index += 1) {
+    const turn = entry.sourceTurns[index]
+    if (turn && String(turn?.id || '') === entry.orderedIds[index]) syncTurn(entry, turn)
+  }
+}
+
+function syncFixedWindow(entry, previousIds, nextIds, visibleTurns) {
+  const previousStart = Math.max(0, Math.min(previousIds.length, entry.visibleStart))
+  const previousEnd = Math.max(previousStart, Math.min(previousIds.length, entry.visibleEnd))
+  const previousSpan = previousEnd - previousStart
+  const nextIndexes = new Map()
+  nextIds.forEach((id, index) => {
+    if (!nextIndexes.has(id)) nextIndexes.set(id, index)
+  })
+
+  let stable = null
+  for (let index = previousStart; index < previousEnd; index += 1) {
+    const nextIndex = nextIndexes.get(previousIds[index])
+    if (nextIndex == null) continue
+    stable = { nextIndex, offset: index - previousStart }
+    break
+  }
+
+  if (!stable || previousSpan === 0) {
+    entry.windowMode = 'latest'
+    entry.historyWindow = visibleTurns
+    entry.visibleEnd = nextIds.length
+    entry.visibleStart = Math.max(0, nextIds.length - visibleTurns)
+    return
+  }
+
+  const span = Math.min(previousSpan, nextIds.length)
+  let visibleStart = stable.nextIndex - Math.min(stable.offset, Math.max(0, span - 1))
+  visibleStart = Math.max(0, Math.min(visibleStart, nextIds.length - span))
+  entry.visibleStart = visibleStart
+  entry.visibleEnd = visibleStart + span
 }
 
 function syncTurn(entry, turn) {
@@ -242,18 +390,20 @@ function itemSignature(item) {
   const changes = Array.isArray(item?.changes) ? item.changes : []
   return [
     item?.id || '', item?.type || '', item?.status || '',
-    textFingerprint(item?.text), textFingerprint(arrayText(item?.summary)), valueFingerprint(item?.content),
+    textFingerprint(item?.text), arrayTextFingerprint(item?.summary), valueFingerprint(item?.content),
     textFingerprint(item?.aggregatedOutput), changesFingerprint(changes), valueFingerprint(item?.result), valueFingerprint(item?.error),
   ].join(':')
 }
 
 function buildActivityBlock(turn, entries, activityIndex = 0) {
   const active = turn?.status === 'inProgress' || entries.some((entry) => entry.status === 'inProgress')
-  const latestStage = [...entries].reverse().map((entry) => {
-    if (entry.kind === 'reasoning') return reasoningStage(entry.item)
-    if (entry.kind === 'progress') return truncateText(entry.item?.text || '', 180)
-    return ''
-  }).find(Boolean) || ''
+  let latestStage = ''
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry.kind === 'reasoning') latestStage = reasoningStage(entry.item)
+    else if (entry.kind === 'progress') latestStage = boundedTextSummary(entry.item?.text, 180)
+    if (latestStage) break
+  }
   return {
     type: 'activity',
     id: `activity-${turn?.id || 'turn'}-${activityIndex}`,
@@ -291,22 +441,61 @@ function activityEntry(item) {
   return { ...common, kind: 'unknown' }
 }
 
-function findLastAssistantIndex(items) {
+function findFinalAssistant(items, turnStatus) {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const type = items[index]?.type
     if (type === 'contextCompaction' || type === 'stepFinish') continue
-    return type === 'agentMessage' || type === 'plan' ? index : -1
+    if (type === 'agentMessage' || type === 'plan') {
+      return { index, deferUntilAfterActivity: false }
+    }
+    break
   }
-  return -1
-}
 
-function arrayText(value) {
-  if (Array.isArray(value)) return value.map(String).join('\n')
-  return String(value || '')
+  // Some provider adapters reuse an earlier assistant item id for the final
+  // answer. App-server history then keeps that item's old position while
+  // replacing its content, leaving completed commands after the final text.
+  // Recover only completed, phase-less/final assistant messages; explicit
+  // commentary remains progress so active and incomplete turns are unchanged.
+  if (turnStatus === 'completed') {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item?.type === 'userMessage') break
+      if (item?.type !== 'agentMessage') continue
+      if (item.phase === 'commentary') return { index: -1, deferUntilAfterActivity: false }
+      return { index, deferUntilAfterActivity: true }
+    }
+  }
+
+  return { index: -1, deferUntilAfterActivity: false }
 }
 
 function changesFingerprint(changes) {
   return changes.map((change) => [change?.kind, change?.path, textFingerprint(change?.diff)].join(',')).join(';')
+}
+
+function arrayTextFingerprint(value) {
+  if (!Array.isArray(value)) return textFingerprint(value)
+  let totalLength = Math.max(0, value.length - 1)
+  let prefix = ''
+  let tail = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const text = index in value ? String(value[index]) : ''
+    totalLength += text.length
+    if (prefix.length < 256) {
+      if (index > 0) prefix += '\n'
+      prefix += text.slice(0, Math.max(0, 256 - prefix.length))
+    }
+    if (index > 0) tail = appendTailSample(tail, '\n')
+    tail = appendTailSample(tail, text)
+  }
+  if (!totalLength) return '0'
+  const sample = totalLength <= 256 ? prefix : `${prefix.slice(0, 128)}${tail.slice(-128)}`
+  return fingerprintTextSample(totalLength, sample)
+}
+
+function appendTailSample(tail, text) {
+  if (text.length >= 128) return text.slice(-128)
+  return `${tail}${text}`.slice(-128)
 }
 
 function valueFingerprint(value, depth = 0) {
@@ -327,15 +516,63 @@ function textFingerprint(value) {
   const text = String(value || '')
   if (!text) return '0'
   const sample = text.length <= 256 ? text : `${text.slice(0, 128)}${text.slice(-128)}`
+  return fingerprintTextSample(text.length, sample)
+}
+
+function fingerprintTextSample(length, sample) {
   let hash = 2166136261
   for (let index = 0; index < sample.length; index += 1) {
     hash ^= sample.charCodeAt(index)
     hash = Math.imul(hash, 16777619)
   }
-  return `${text.length}.${(hash >>> 0).toString(36)}`
+  return `${length}.${(hash >>> 0).toString(36)}`
 }
 
-function truncateText(value, max) {
-  const text = String(value || '').replace(/\s+/gu, ' ').trim()
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`
+const STAGE_SCAN_CHARS = 2_048
+const STAGE_SCAN_PARTS = 32
+
+function boundedTextSummary(value, maxLength, scanLimit = STAGE_SCAN_CHARS) {
+  const source = String(value || '')
+  const maximum = Math.max(1, Math.floor(Number(maxLength) || 1))
+  const limit = Math.max(maximum, Math.floor(Number(scanLimit) || STAGE_SCAN_CHARS))
+  const sampleLength = Math.min(source.length, limit)
+  let output = ''
+  let pendingSpace = false
+  let overflow = source.length > sampleLength
+
+  for (let index = 0; index < sampleLength; index += 1) {
+    const character = source[index]
+    if (/\s/u.test(character)) {
+      if (output) pendingSpace = true
+      continue
+    }
+    if (pendingSpace && output) {
+      if (output.length < maximum) output += ' '
+      else overflow = true
+      pendingSpace = false
+    }
+    if (output.length < maximum) output += character
+    else {
+      overflow = true
+      break
+    }
+  }
+
+  if (!output) return ''
+  if (!overflow) return output
+  if (maximum === 1) return '…'
+  return `${output.slice(0, maximum - 1).trimEnd()}…`
+}
+
+function firstBoundedStagePart(parts) {
+  let remaining = STAGE_SCAN_CHARS
+  const count = Math.min(parts.length, STAGE_SCAN_PARTS)
+  for (let index = 0; index < count && remaining > 0; index += 1) {
+    const source = String(parts[index] || '')
+    const sample = source.slice(0, remaining)
+    remaining -= sample.length
+    const trimmed = sample.trimStart()
+    if (trimmed) return trimmed
+  }
+  return ''
 }

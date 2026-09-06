@@ -13,7 +13,7 @@ Status: implemented on `experiment/session-map`; not yet a release commitment.
 
 ## Storage and API
 
-Studio stores Maps in `session-maps.sqlite3` beside `settings.json` and `favorites.sqlite3` under the normal platform configuration directory. Rust owns four tables: Maps, Items, Relations, and revisioned change snapshots.
+Studio stores Maps in `session-maps.sqlite3` beside `settings.json` and `studio.sqlite3` under the normal platform configuration directory. Rust owns four tables: Maps, Items, Relations, and revisioned change snapshots.
 
 The loopback gateway exposes:
 

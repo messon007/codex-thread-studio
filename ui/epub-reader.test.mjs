@@ -6,6 +6,7 @@ import {
   epubPaperTheme,
   flattenEpubToc,
   normalizeEpubReaderState,
+  normalizeEpubTypography,
 } from './epub-reader.mjs'
 
 test('EPUB reader state validates persistent presentation values', () => {
@@ -13,6 +14,14 @@ test('EPUB reader state validates persistent presentation values', () => {
     cfi: 'epubcfi(/6/2!/4/2)', progress: 2, fontScale: 0.2, theme: 'unknown', flow: 'bad', tocOpen: 1,
   }), {
     cfi: 'epubcfi(/6/2!/4/2)', chapterLabel: '', progress: 1, fontScale: 0.75, theme: 'light', flow: 'paginated', tocOpen: true,
+  })
+})
+
+test('EPUB typography follows bounded reading-content settings', () => {
+  assert.deepEqual(normalizeEpubTypography({
+    fontFamily: 'Noto Sans; } !important', fontSize: 40, fontWeight: 500,
+  }), {
+    fontFamily: 'Noto Sans', fontSize: 24, fontWeight: 500,
   })
 })
 

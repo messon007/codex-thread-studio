@@ -1,0 +1,87 @@
+diff --git a/ui/transcript-presentation.mjs b/ui/transcript-presentation.mjs
+index 2f64a1a..b29102a 100644
+--- a/ui/transcript-presentation.mjs
++++ b/ui/transcript-presentation.mjs
+@@ -178 +178 @@ export function presentTurn(turn) {
+-  const lastAssistantIndex = findLastAssistantIndex(items)
++  const finalAssistant = findFinalAssistant(items, turn?.status)
+@@ -181,0 +182 @@ export function presentTurn(turn) {
++  let deferredAssistantBlock = null
+@@ -197,3 +198,7 @@ export function presentTurn(turn) {
+-      if (index === lastAssistantIndex) {
+-        flushActivity()
+-        blocks.push({ type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' })
++      if (index === finalAssistant.index) {
++        const assistantBlock = { type: 'assistant', itemId: item.id, item, variant: item.type === 'plan' ? 'plan' : 'message' }
++        if (finalAssistant.deferUntilAfterActivity) deferredAssistantBlock = assistantBlock
++        else {
++          flushActivity()
++          blocks.push(assistantBlock)
++        }
+@@ -207,0 +213 @@ export function presentTurn(turn) {
++  if (deferredAssistantBlock) blocks.push(deferredAssistantBlock)
+@@ -438 +444 @@ function activityEntry(item) {
+-function findLastAssistantIndex(items) {
++function findFinalAssistant(items, turnStatus) {
+@@ -442 +448,19 @@ function findLastAssistantIndex(items) {
+-    return type === 'agentMessage' || type === 'plan' ? index : -1
++    if (type === 'agentMessage' || type === 'plan') {
++      return { index, deferUntilAfterActivity: false }
++    }
++    break
++  }
++
++  // Some provider adapters reuse an earlier assistant item id for the final
++  // answer. App-server history then keeps that item's old position while
++  // replacing its content, leaving completed commands after the final text.
++  // Recover only completed, phase-less/final assistant messages; explicit
++  // commentary remains progress so active and incomplete turns are unchanged.
++  if (turnStatus === 'completed') {
++    for (let index = items.length - 1; index >= 0; index -= 1) {
++      const item = items[index]
++      if (item?.type === 'userMessage') break
++      if (item?.type !== 'agentMessage') continue
++      if (item.phase === 'commentary') return { index: -1, deferUntilAfterActivity: false }
++      return { index, deferUntilAfterActivity: true }
++    }
+@@ -444 +468,2 @@ function findLastAssistantIndex(items) {
+-  return -1
++
++  return { index: -1, deferUntilAfterActivity: false }
+diff --git a/ui/transcript-presentation.test.mjs b/ui/transcript-presentation.test.mjs
+index 082da7b..61a6e10 100644
+--- a/ui/transcript-presentation.test.mjs
++++ b/ui/transcript-presentation.test.mjs
+@@ -82,0 +83,32 @@ test('keeps a progress message inside activity until a trailing final answer exi
++test('recovers a phase-less final answer displaced before trailing activity in completed history', () => {
++  const presentation = presentTurn({
++    id: 'turn-displaced-final',
++    status: 'completed',
++    items: [
++      { id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Organize it' }] },
++      { id: 'rs_0', type: 'reasoning', summary: ['Done. Summarize the result.'] },
++      { id: 'msg_1', type: 'agentMessage', phase: null, text: 'The completed summary.' },
++      { id: 'command-1', type: 'commandExecution', command: 'read files', status: 'completed' },
++      { id: 'command-2', type: 'commandExecution', command: 'write docs', status: 'completed' },
++    ],
++  })
++
++  assert.deepEqual(presentation.blocks.map((block) => block.type), ['user', 'activity', 'assistant'])
++  assert.deepEqual(presentation.blocks[1].entries.map((entry) => entry.itemId), ['rs_0', 'command-1', 'command-2'])
++  assert.equal(presentation.blocks[2].itemId, 'msg_1')
++})
++
++test('does not promote explicit commentary from a completed turn with no final answer', () => {
++  const presentation = presentTurn({
++    id: 'turn-commentary-only',
++    status: 'completed',
++    items: [
++      { id: 'progress', type: 'agentMessage', phase: 'commentary', text: 'Still checking.' },
++      { id: 'command', type: 'commandExecution', command: 'inspect', status: 'completed' },
++    ],
++  })
++
++  assert.deepEqual(presentation.blocks.map((block) => block.type), ['activity'])
++  assert.deepEqual(presentation.blocks[0].entries.map((entry) => entry.itemId), ['progress', 'command'])
++})
++

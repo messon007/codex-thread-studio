@@ -49,6 +49,21 @@ test('restored sessions are installed before the bounded live catalog reload', (
   assert.ok(restore.indexOf('installBackendCatalog(selected.backend') < restore.indexOf('archive.close({ restoredId:'))
 })
 
+test('archive preview switches use the shared transcript viewport transaction', () => {
+  const close = sessionManagement.slice(
+    sessionManagement.indexOf('async close('),
+    sessionManagement.indexOf('async load(', sessionManagement.indexOf('async close(')),
+  )
+  const open = sessionManagement.slice(
+    sessionManagement.indexOf('async openSession('),
+    sessionManagement.indexOf('async restore()', sessionManagement.indexOf('async openSession(')),
+  )
+  assert.doesNotMatch(close, /state\.selectedId = returnId[\s\S]*createViewModel\(\)/u)
+  assert.match(close, /renderThreadList\(\)[\s\S]*selectThread\(returnId, \{ force: true \}\)/u)
+  assert.ok(open.indexOf('captureTranscriptView?.()') < open.indexOf('state.selectedId = threadId'))
+  assert.ok(open.indexOf('prepareTranscriptView?.({') < open.indexOf('renderTranscript()'))
+})
+
 test('session search is a middle-workspace surface with shared suggestion styling', () => {
   assert.match(html, /id="open-thread-search"/u)
   assert.match(html, /id="thread-content-search-results"[^>]*role="listbox"/u)

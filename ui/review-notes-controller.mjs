@@ -2,13 +2,15 @@ import { backendDescriptor } from './backends.mjs'
 import {
   commentSelectionSnapshot,
   createCommentDraft,
+  formatCommentPromptEntry,
 } from './comment-core.mjs'
+import { locateCommentIntervals } from './comment-markers.mjs'
 import {
   chatCommentSource,
   documentCommentSource,
   relocateDocumentComment,
 } from './comment-source-providers.mjs'
-import { createFileRangeTarget } from './document-review.mjs'
+import { createFileRangeTarget, structuredPreviewSourceRange } from './document-review.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -29,6 +31,7 @@ export function createReviewNotesState() {
     annotationAdditional: {},
     pendingSelection: null,
     pendingAnnotation: null,
+    editingAnnotationId: null,
     favorites: [],
     favoriteIndex: [],
     favoriteTotal: 0,
@@ -40,13 +43,20 @@ export function createReviewNotesState() {
   }
 }
 
+export function deactivateChatCommentMarker(marker) {
+  marker.classList.remove('chat-comment-anchor')
+  for (const attribute of ['data-comment-ids', 'role', 'tabindex', 'title', 'aria-label']) {
+    marker.removeAttribute(attribute)
+  }
+}
+
 export function createReviewNotesController({
   state,
   commentSources,
   gatewayFetch,
   view,
   randomId,
-  persistPreferences,
+  persistAnnotationState,
   notify = () => {},
   reportError = console.error,
 }) {
@@ -68,10 +78,13 @@ export function createReviewNotesController({
     renderedItem,
     setComposerValue,
     pauseTranscript,
+    preserveTranscriptLayout,
     switchBackend,
     waitForBackend,
     loadThreads,
     selectThread,
+    translateSelection,
+    translationProfile,
   } = view
   const $ = (selector) => document.querySelector(selector)
   const $$ = (selector) => [...document.querySelectorAll(selector)]
@@ -83,23 +96,41 @@ export function createReviewNotesController({
   const reopenEpubComment = reopenEpubSource
   let annotationPersistTimer = null
   let favoritesSearchTimer = null
+  let translationGeneration = 0
+  let activeTranslationSpeechButton = null
+  let activeTranslationSpeechMode = null
+  let nativeTranslationSpeechAvailable = false
+  let nativeTranslationSpeechRequest = null
+  const deactivatedChatCommentMarkers = new Set()
 
   function bind() {
     $('#composer-review-open')?.addEventListener('click', openAnnotationRail)
     $('#composer-review-insert')?.addEventListener('click', insertAnnotations)
+    $('#composer-review-send-clear')?.addEventListener('click', sendAndClearAnnotations)
     $('#transcript')?.addEventListener('mouseup', captureTranscriptSelection)
+    $('#transcript')?.addEventListener('click', handleCommentMarkerClick)
+    $('#transcript')?.addEventListener('keydown', handleCommentMarkerKeydown)
     $('#artifact-content')?.addEventListener('mouseup', captureArtifactSelection)
     $('#open-thread-comments')?.addEventListener('click', openAnnotationRail)
     $('#open-thread-favorites')?.addEventListener('click', () => openFavoritesRail('session'))
     $('#selection-popover')?.addEventListener('mousedown', (event) => event.preventDefault())
     $('#selection-comment')?.addEventListener('click', openAnnotationFromSelection)
+    $('#selection-translate')?.addEventListener('click', () => openTranslationFromSelection().catch(showError))
     $('#selection-favorite')?.addEventListener('click', openFavoriteFromSelection)
+    $('#close-selection-translation')?.addEventListener('click', closeSelectionTranslation)
+    $('#done-selection-translation')?.addEventListener('click', closeSelectionTranslation)
+    $('#selection-translation-dialog')?.addEventListener('close', resetSelectionTranslation)
+    $('#copy-selection-translation')?.addEventListener('click', () => copySelectionTranslation().catch(showError))
+    $('#speak-selection-translation-source')?.addEventListener('click', () => speakSelectionTranslation('source').catch(showError))
+    $('#speak-selection-translation-output')?.addEventListener('click', () => speakSelectionTranslation('output').catch(showError))
     $('#close-annotation-rail')?.addEventListener('click', closeAnnotationRail)
     $('#annotation-form')?.addEventListener('submit', addAnnotation)
+    $('#annotation-comment')?.addEventListener('keydown', handleAnnotationCommentKeydown)
     $('#close-annotation-dialog')?.addEventListener('click', closeAnnotationDialog)
     $('#cancel-annotation')?.addEventListener('click', closeAnnotationDialog)
     $('#clear-annotations')?.addEventListener('click', clearAnnotations)
     $('#insert-annotations')?.addEventListener('click', insertAnnotations)
+    $('#send-clear-annotations')?.addEventListener('click', sendAndClearAnnotations)
     $('#annotation-additional')?.addEventListener('input', saveAnnotationAdditional)
     $('#open-favorites')?.addEventListener('click', () => {
       closeActionMenus()
@@ -165,8 +196,10 @@ export function createReviewNotesController({
 
 function captureTranscriptSelection() {
   const selection = window.getSelection()
-  const text = selection?.toString().trim()
+  const rawText = selection?.toString() || ''
+  const text = rawText.trim()
   if (!text || selection.rangeCount === 0) return hideSelectionPopover()
+  const excerpt = text.slice(0, 16000)
   const range = selection.getRangeAt(0)
   const transcript = $('#transcript')
   if (!transcript.contains(range.commonAncestorContainer)) return hideSelectionPopover()
@@ -175,41 +208,74 @@ function captureTranscriptSelection() {
     : range.commonAncestorContainer.parentElement
   const item = element?.closest('[data-item-id]')
   const turn = element?.closest('[data-turn-id]')
+  const body = item?.querySelector('.markdown-body')
+  const offsets = chatSelectionOffsets(range, body, rawText, excerpt.length)
   state.pendingSelection = {
-    quote: text.slice(0, 16000),
+    quote: excerpt,
     itemId: item?.dataset.itemId || null,
     turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
     source: chatCommentSource({
       itemId: item?.dataset.itemId || null,
       turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
+      ...offsets,
     }),
   }
   positionSelectionPopover(range, { allowFavorite: true })
 }
 
+function chatSelectionOffsets(range, body, rawText, excerptLength) {
+  if (!body || !body.contains(range.startContainer) || !body.contains(range.endContainer)) return {}
+  const prefix = document.createRange()
+  prefix.selectNodeContents(body)
+  prefix.setEnd(range.startContainer, range.startOffset)
+  const leadingWhitespace = rawText.length - rawText.trimStart().length
+  const startOffset = prefix.toString().length + leadingWhitespace
+  return { startOffset, endOffset: startOffset + excerptLength }
+}
+
 function captureArtifactSelection() {
   const selection = window.getSelection()
-  const text = selection?.toString().trim()
+  const selectedText = selection?.toString() || ''
+  let text = selectedText.trim()
   if (state.artifact?.kind === 'image') return hideSelectionPopover()
   if (!state.artifact || !text || selection.rangeCount === 0) return hideSelectionPopover()
   const range = selection.getRangeAt(0)
   const content = $('#artifact-content')
   if (!content.contains(range.commonAncestorContainer)) return hideSelectionPopover()
   let hintOffset = 0
-  if (state.artifactView === 'source') {
+  let targetFile = state.artifact
+  if (state.artifactView === 'source' || content.classList.contains('artifact-structured-preview')) {
     const source = content.querySelector('.artifact-source')
     if (source) {
       const prefix = document.createRange()
       prefix.selectNodeContents(source)
       prefix.setEnd(range.startContainer, range.startOffset)
       hintOffset = prefix.toString().length
+      if (content.classList.contains('artifact-structured-preview') && state.artifact.structuredPreview) {
+        const suffix = document.createRange()
+        suffix.selectNodeContents(source)
+        suffix.setEnd(range.endContainer, range.endOffset)
+        const mapped = structuredPreviewSourceRange(
+          state.artifact.structuredPreview.sourceMap,
+          hintOffset,
+          suffix.toString().length,
+        )
+        if (mapped) {
+          const originalSource = state.artifact.structuredPreview.source
+          const originalSelection = originalSource.slice(mapped.startOffset, mapped.endOffset)
+          const leadingWhitespace = originalSelection.length - originalSelection.trimStart().length
+          text = originalSelection.trim().slice(0, 16000)
+          hintOffset = mapped.startOffset + leadingWhitespace
+          targetFile = { ...state.artifact, content: originalSource }
+        }
+      }
     }
   }
   state.pendingSelection = {
     quote: text.slice(0, 16000),
     itemId: null,
     turnId: null,
-    source: documentCommentSource(createFileRangeTarget(state.artifact, text, hintOffset)),
+    source: documentCommentSource(createFileRangeTarget(targetFile, text, hintOffset)),
   }
   positionSelectionPopover(range, { allowFavorite: false })
 }
@@ -218,10 +284,220 @@ function positionSelectionPopover(range, { allowFavorite }) {
   const rect = typeof range?.getBoundingClientRect === 'function' ? range.getBoundingClientRect() : range
   if (!rect) return hideSelectionPopover()
   const popover = $('#selection-popover')
-  popover.style.left = `${Math.min(window.innerWidth - 150, Math.max(8, rect.left + rect.width / 2 - 55))}px`
-  popover.style.top = `${Math.max(8, rect.top - 39)}px`
   $('#selection-favorite').classList.toggle('hidden', !allowFavorite)
   popover.classList.remove('hidden')
+  const width = popover.offsetWidth || 190
+  const height = popover.offsetHeight || 34
+  popover.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2))}px`
+  popover.style.top = `${Math.max(8, rect.top - height - 7)}px`
+}
+
+async function openTranslationFromSelection() {
+  if (!state.pendingSelection?.quote) {
+    captureTranscriptSelection()
+    if (!state.pendingSelection?.quote) return toast(t('Select text to translate first'), 'error')
+  }
+  const quote = String(state.pendingSelection.quote).slice(0, 16_000)
+  const generation = ++translationGeneration
+  const dialog = $('#selection-translation-dialog')
+  stopSelectionTranslationSpeech()
+  $('#selection-translation-source').textContent = quote
+  const profile = translationProfile()
+  const modelSource = t(profile.modelSource === 'local'
+    ? 'Local setting'
+    : profile.modelSource === 'translation'
+      ? 'Translation setting'
+      : profile.modelSource === 'session' ? 'Session setting' : 'Backend default')
+  const profileTemplate = profile.engine === 'ollama'
+    ? '{backend} · Model: {model} · {source}'
+    : '{backend} · Model: {model} · {source} · Effort: {effort}'
+  $('#selection-translation-backend').textContent = t(profileTemplate, {
+    backend: profile.backendName,
+    model: profile.displayModel,
+    source: modelSource,
+    effort: profile.effort || t('Model default'),
+  })
+  $('#selection-translation-output').textContent = ''
+  $('#selection-translation-output').classList.add('hidden')
+  setSelectionTranslationPronunciation('source', '')
+  setSelectionTranslationPronunciation('output', '')
+  $('#selection-translation-error').textContent = ''
+  $('#selection-translation-error').classList.add('hidden')
+  $('#selection-translation-loading span:last-child').textContent = t(profile.engine === 'ollama'
+    ? 'Translating with local Ollama…'
+    : 'Translating with the current backend…')
+  $('#selection-translation-loading').classList.remove('hidden')
+  $('#copy-selection-translation').disabled = true
+  setSelectionTranslationSpeechButton('source', true)
+  setSelectionTranslationSpeechButton('output', false)
+  hideSelectionPopover(false)
+  if (dialog.open) dialog.close()
+  dialog.showModal()
+  dialog.setAttribute('aria-busy', 'true')
+  ensureNativeTranslationSpeechSupport()
+  try {
+    const result = await translateSelection(quote)
+    if (generation !== translationGeneration || !dialog.open) return
+    const translation = typeof result === 'string' ? result : String(result?.translation || '')
+    $('#selection-translation-output').textContent = translation
+    $('#selection-translation-output').classList.remove('hidden')
+    setSelectionTranslationPronunciation('source', result?.sourcePronunciation)
+    setSelectionTranslationPronunciation('output', result?.translationPronunciation)
+    setSelectionTranslationSpeechButton('output', Boolean(translation))
+    $('#copy-selection-translation').disabled = false
+  } catch (error) {
+    if (generation !== translationGeneration || !dialog.open) return
+    $('#selection-translation-error').textContent = t(error?.message || 'Translation failed')
+    $('#selection-translation-error').classList.remove('hidden')
+  } finally {
+    if (generation === translationGeneration && dialog.open) {
+      $('#selection-translation-loading').classList.add('hidden')
+      dialog.setAttribute('aria-busy', 'false')
+    }
+  }
+}
+
+function closeSelectionTranslation() {
+  $('#selection-translation-dialog').close()
+}
+
+function resetSelectionTranslation() {
+  translationGeneration += 1
+  stopSelectionTranslationSpeech()
+  state.pendingSelection = null
+  window.getSelection()?.removeAllRanges()
+}
+
+function selectionTranslationSpeechSupported() {
+  return nativeTranslationSpeechAvailable || (typeof window.speechSynthesis?.speak === 'function'
+    && typeof window.SpeechSynthesisUtterance === 'function'
+  )
+}
+
+function browserTranslationSpeechSupported() {
+  return typeof window.speechSynthesis?.speak === 'function'
+    && typeof window.SpeechSynthesisUtterance === 'function'
+}
+
+function ensureNativeTranslationSpeechSupport() {
+  if (nativeTranslationSpeechRequest) return nativeTranslationSpeechRequest
+  nativeTranslationSpeechRequest = gatewayFetch('/studio/speech', { cache: 'no-store' })
+    .then(async (response) => {
+      const result = await response.json().catch(() => ({}))
+      nativeTranslationSpeechAvailable = response.ok && result.available === true
+      setSelectionTranslationSpeechButton('source', Boolean($('#selection-translation-source')?.textContent?.trim()))
+      setSelectionTranslationSpeechButton('output', Boolean($('#selection-translation-output')?.textContent?.trim()))
+      return nativeTranslationSpeechAvailable
+    })
+    .catch(() => false)
+  return nativeTranslationSpeechRequest
+}
+
+function setSelectionTranslationSpeechButton(kind, hasText) {
+  const button = $(`#speak-selection-translation-${kind}`)
+  if (!button) return
+  const supported = selectionTranslationSpeechSupported()
+  const label = kind === 'source' ? 'Listen to English' : 'Listen to Chinese'
+  button.disabled = !supported || !hasText
+  button.title = t(supported ? label : 'Speech synthesis is unavailable on this system')
+  button.setAttribute('aria-label', button.title)
+}
+
+function setSelectionTranslationPronunciation(kind, value) {
+  const container = $(`#selection-translation-${kind}-pronunciation`)
+  if (!container) return
+  const pronunciation = String(value || '').trim()
+  container.querySelector('div').textContent = pronunciation
+  container.classList.toggle('hidden', !pronunciation)
+}
+
+function resetSelectionTranslationSpeechButton(button) {
+  if (!button) return
+  button.setAttribute('aria-pressed', 'false')
+  const label = button.querySelector('span')
+  if (label) label.textContent = t('Listen')
+}
+
+function stopSelectionTranslationSpeech() {
+  const button = activeTranslationSpeechButton
+  const mode = activeTranslationSpeechMode
+  activeTranslationSpeechButton = null
+  activeTranslationSpeechMode = null
+  if (mode === 'browser' && browserTranslationSpeechSupported()) window.speechSynthesis.cancel()
+  if (mode === 'native') {
+    const stopping = gatewayFetch('/studio/speech/stop', { method: 'POST' }).catch(() => {})
+    resetSelectionTranslationSpeechButton(button)
+    return stopping
+  }
+  resetSelectionTranslationSpeechButton(button)
+  return Promise.resolve()
+}
+
+async function speakSelectionTranslation(kind) {
+  await ensureNativeTranslationSpeechSupport()
+  if (!selectionTranslationSpeechSupported()) return
+  const button = $(`#speak-selection-translation-${kind}`)
+  if (!button || button.disabled) return
+  if (activeTranslationSpeechButton === button) {
+    stopSelectionTranslationSpeech()
+    return
+  }
+  await stopSelectionTranslationSpeech()
+  const text = $(`#selection-translation-${kind}`)?.textContent?.trim()
+  if (!text) return
+  activeTranslationSpeechButton = button
+  button.setAttribute('aria-pressed', 'true')
+  const label = button.querySelector('span')
+  if (label) label.textContent = t('Stop')
+  if (nativeTranslationSpeechAvailable) {
+    activeTranslationSpeechMode = 'native'
+    const pronunciation = kind === 'output'
+      ? $('#selection-translation-output-pronunciation div')?.textContent?.trim()
+      : ''
+    const response = await gatewayFetch('/studio/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: pronunciation || text,
+        language: kind === 'source' ? 'en-US' : pronunciation ? 'zh-CN-pinyin' : 'zh-CN',
+      }),
+    })
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}))
+      if (activeTranslationSpeechButton === button) stopSelectionTranslationSpeech()
+      throw new Error(result?.error?.message || t('Unable to play speech'))
+    }
+    if (activeTranslationSpeechButton === button) {
+      activeTranslationSpeechButton = null
+      activeTranslationSpeechMode = null
+      resetSelectionTranslationSpeechButton(button)
+    }
+    return
+  }
+  activeTranslationSpeechMode = 'browser'
+  const utterance = new window.SpeechSynthesisUtterance(text)
+  utterance.lang = kind === 'source' ? 'en-US' : 'zh-CN'
+  utterance.onend = () => {
+    if (activeTranslationSpeechButton !== button) return
+    activeTranslationSpeechButton = null
+    activeTranslationSpeechMode = null
+    resetSelectionTranslationSpeechButton(button)
+  }
+  utterance.onerror = (event) => {
+    if (activeTranslationSpeechButton !== button) return
+    activeTranslationSpeechButton = null
+    activeTranslationSpeechMode = null
+    resetSelectionTranslationSpeechButton(button)
+    if (!['canceled', 'interrupted'].includes(event.error)) toast(t('Unable to play speech'), 'error')
+  }
+  window.speechSynthesis.speak(utterance)
+}
+
+async function copySelectionTranslation() {
+  const translation = $('#selection-translation-output').textContent || ''
+  if (!translation) return
+  await navigator.clipboard.writeText(translation)
+  toast(t('Translation copied'))
 }
 
 function openAnnotationFromSelection() {
@@ -231,16 +507,31 @@ function openAnnotationFromSelection() {
   }
   state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
   if (!state.pendingAnnotation) return toast('Select the text to comment on again', 'error')
-  $('#annotation-quote').textContent = state.pendingAnnotation.excerpt
-  $('#annotation-source-hint').textContent = commentSources.describe(state.pendingAnnotation, commentProviderContext(0))
-  $('#annotation-comment').value = ''
-  $('#annotation-comment').placeholder = state.pendingAnnotation.source?.provider === 'epub'
+  populateAnnotationDialog(state.pendingAnnotation)
+}
+
+function populateAnnotationDialog(annotation, { editing = false } = {}) {
+  state.pendingAnnotation = annotation
+  state.editingAnnotationId = editing ? annotation.id : null
+  $('#annotation-dialog-title').textContent = t(editing ? 'Edit comment' : 'Comment on selection')
+  $('#save-annotation').textContent = t(editing ? 'Save changes' : 'Add to draft')
+  $('#annotation-quote').textContent = annotation.excerpt
+  $('#annotation-source-hint').textContent = commentSources.describe(annotation, commentProviderContext(0))
+  $('#annotation-comment').value = editing ? annotation.note || '' : ''
+  $('#annotation-comment').placeholder = annotation.source?.provider === 'epub'
     ? t('For example: explain the core meaning, context, and key concepts in this passage.')
     : t('Describe the issue and expected change, or add the selection directly to the draft.')
   $('#annotation-error').classList.add('hidden')
   hideSelectionPopover(false)
   $('#annotation-dialog').showModal()
   setTimeout(() => $('#annotation-comment').focus(), 30)
+}
+
+function openAnnotationEditor(id) {
+  const annotation = currentAnnotations().find((draft) => draft.id === id)
+  if (!annotation) return
+  hideSelectionPopover()
+  populateAnnotationDialog(annotation, { editing: true })
 }
 
 function openFavoriteFromSelection() {
@@ -282,6 +573,7 @@ function hideSelectionPopover(clear = true) {
 function closeAnnotationDialog() {
   $('#annotation-dialog').close()
   state.pendingAnnotation = null
+  state.editingAnnotationId = null
   state.pendingSelection = null
   window.getSelection()?.removeAllRanges()
 }
@@ -300,33 +592,50 @@ function addAnnotation(event) {
     errorBox.classList.remove('hidden')
     return
   }
+  const key = selectedStateKey()
   const drafts = currentAnnotations()
-  if (drafts.length >= 32) {
+  const editingId = state.editingAnnotationId
+  if (!editingId && drafts.length >= 32) {
     errorBox.textContent = 'A session can keep up to 32 comments.'
     errorBox.classList.remove('hidden')
     return
   }
   const draft = createCommentDraft({ ...annotation, note: comment }, { registry: commentSources })
-  state.annotationDrafts[selectedStateKey()] = [...drafts, draft]
-  persistPreferences()
+  if (editingId) {
+    if (!drafts.some((candidate) => candidate.id === editingId)) return closeAnnotationDialog()
+    state.annotationDrafts[key] = drafts.map((candidate) => candidate.id === editingId ? draft : candidate)
+  } else {
+    state.annotationDrafts[key] = [...drafts, draft]
+  }
+  persistAnnotationState(key)
   closeAnnotationDialog()
   renderAnnotationRail()
   renderComposerReviewContext()
-  toast('Comment added to reply draft')
-}
+  toast(editingId ? 'Comment updated' : 'Comment added to reply draft')
+  }
 
-function openAnnotationRail() {
+  function handleAnnotationCommentKeydown(event) {
+    if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return
+    event.preventDefault()
+    $('#annotation-form')?.requestSubmit($('#save-annotation'))
+  }
+
+  function openAnnotationRail() {
   activateRightWorkspace('comments')
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
-  $('#annotation-rail').classList.add('hidden')
-  if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
-  syncRightWorkspaceLaunchers()
-  if ($('#favorites-rail').classList.contains('hidden')) {
-    if (state.artifact) renderArtifact()
-    else renderSessionMap()
+  const close = () => {
+    $('#annotation-rail').classList.add('hidden')
+    if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
+    syncRightWorkspaceLaunchers()
+    if ($('#favorites-rail').classList.contains('hidden')) {
+      if (state.artifact) renderArtifact()
+      else renderSessionMap()
+    }
   }
+  if (preserveTranscriptLayout) preserveTranscriptLayout(close)
+  else close()
 }
 
 function renderAnnotationRail() {
@@ -348,7 +657,133 @@ function renderAnnotationRail() {
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
   $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
+  $$('.annotation-card').forEach((card) => card.addEventListener('click', (event) => {
+    if (!event.target.closest('button')) openAnnotationEditor(card.dataset.draftId)
+  }))
+  renderChatCommentMarkers()
   renderComposerReviewContext()
+}
+
+function renderChatCommentMarkers() {
+  const transcript = $('#transcript')
+  if (!transcript) return
+  const byItem = new Map()
+  for (const draft of currentAnnotations()) {
+    if (draft.source?.provider !== 'chat') continue
+    const { turnId, itemId } = draft.source.anchor || {}
+    if (!turnId || !itemId) continue
+    const key = `${turnId}\u0000${itemId}`
+    if (!byItem.has(key)) byItem.set(key, { turnId, itemId, drafts: [] })
+    byItem.get(key).drafts.push(draft)
+  }
+  if (!byItem.size) {
+    deactivateChatCommentMarkers(transcript)
+    return
+  }
+  clearChatCommentMarkers(transcript)
+  for (const group of byItem.values()) {
+    const body = renderedItem(group.turnId, group.itemId)?.querySelector('.markdown-body')
+    if (!body) continue
+    applyCommentIntervals(body, locateCommentIntervals(body.textContent || '', group.drafts))
+  }
+}
+
+function deactivateChatCommentMarkers(transcript) {
+  for (const marker of deactivatedChatCommentMarkers) {
+    if (!transcript.contains(marker)) deactivatedChatCommentMarkers.delete(marker)
+  }
+  transcript.querySelectorAll('.chat-comment-anchor').forEach((marker) => {
+    deactivateChatCommentMarker(marker)
+    deactivatedChatCommentMarkers.add(marker)
+  })
+}
+
+function clearChatCommentMarkers(transcript) {
+  const parents = new Set()
+  const markers = new Set(transcript.querySelectorAll('.chat-comment-anchor'))
+  for (const marker of deactivatedChatCommentMarkers) {
+    if (transcript.contains(marker)) markers.add(marker)
+  }
+  deactivatedChatCommentMarkers.clear()
+  markers.forEach((marker) => {
+    const parent = marker.parentNode
+    marker.replaceWith(...marker.childNodes)
+    if (parent) parents.add(parent)
+  })
+  parents.forEach((parent) => parent.normalize())
+}
+
+function applyCommentIntervals(root, intervals) {
+  if (!intervals.length) return
+  const nodes = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const start = offset
+    offset += node.data.length
+    if (node.data && intervals.some((interval) => interval.start < offset && interval.end > start)) {
+      nodes.push({ node, start, end: offset })
+    }
+  }
+  const keyboardMarkers = new Set()
+  for (const entry of nodes) {
+    const boundaries = new Set([0, entry.node.data.length])
+    const overlaps = intervals.filter((interval) => interval.start < entry.end && interval.end > entry.start)
+    overlaps.forEach((interval) => {
+      boundaries.add(Math.max(0, interval.start - entry.start))
+      boundaries.add(Math.min(entry.node.data.length, interval.end - entry.start))
+    })
+    const points = [...boundaries].sort((left, right) => left - right)
+    const fragment = document.createDocumentFragment()
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index]
+      const end = points[index + 1]
+      const value = entry.node.data.slice(start, end)
+      const ids = overlaps.filter((interval) => interval.start < entry.start + end && interval.end > entry.start + start).map((interval) => interval.id)
+      if (!ids.length) {
+        fragment.append(value)
+        continue
+      }
+      const marker = document.createElement('span')
+      marker.className = 'chat-comment-anchor'
+      marker.dataset.commentIds = JSON.stringify(ids)
+      marker.setAttribute('role', 'button')
+      const keyboardId = ids.find((id) => !keyboardMarkers.has(id))
+      marker.tabIndex = keyboardId ? 0 : -1
+      if (keyboardId) keyboardMarkers.add(keyboardId)
+      marker.title = t(ids.length > 1 ? 'View {count} comments' : 'View comment', { count: ids.length })
+      marker.setAttribute('aria-label', marker.title)
+      marker.textContent = value
+      fragment.append(marker)
+    }
+    entry.node.replaceWith(fragment)
+  }
+}
+
+function handleCommentMarkerClick(event) {
+  const marker = event.target.closest('.chat-comment-anchor')
+  if (!marker) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  openCommentsForMarker(marker)
+}
+
+function handleCommentMarkerKeydown(event) {
+  if (!['Enter', ' '].includes(event.key)) return
+  const marker = event.target.closest('.chat-comment-anchor')
+  if (!marker) return
+  event.preventDefault()
+  openCommentsForMarker(marker)
+}
+
+function openCommentsForMarker(marker) {
+  let ids = []
+  try { ids = JSON.parse(marker.dataset.commentIds || '[]') } catch { ids = [] }
+  if (ids.length === 1) return openAnnotationEditor(ids[0])
+  openAnnotationRail()
+  const card = ids.map((id) => $(`.annotation-card[data-draft-id="${CSS.escape(id)}"]`)).find(Boolean)
+  card?.scrollIntoView({ block: 'center' })
 }
 
 function annotationSourceLabel(draft, index) {
@@ -383,6 +818,13 @@ async function reopenDocumentComment(target, excerpt) {
 function renderComposerReviewContext() {
   const drafts = currentAnnotations()
   const context = $('#composer-review-context')
+  const sendAndClearDisabled = !drafts.length
+      || Boolean($('#send-message')?.disabled)
+      || Boolean($('#composer-form')?.classList.contains('hidden'))
+      || Boolean($('#composer-form')?.classList.contains('shell-mode'))
+  for (const sendAndClear of [$('#send-clear-annotations'), $('#composer-review-send-clear')]) {
+    if (sendAndClear) sendAndClear.disabled = sendAndClearDisabled
+  }
   context.classList.toggle('hidden', !drafts.length)
   if (!drafts.length) return
   $('#composer-review-count').textContent = t('{count} comments ready to send', { count: drafts.length })
@@ -394,42 +836,43 @@ function deleteAnnotation(id) {
   const key = selectedStateKey()
   state.annotationDrafts[key] = currentAnnotations().filter((draft) => draft.id !== id)
   if (!state.annotationDrafts[key].length) delete state.annotationDrafts[key]
-  persistPreferences()
+  persistAnnotationState(key)
   renderAnnotationRail()
 }
 
 function clearAnnotations() {
   if (!state.selectedId || !confirm(t('Clear all comment drafts for this session?'))) return
-  delete state.annotationDrafts[selectedStateKey()]
-  delete state.annotationAdditional[selectedStateKey()]
-  persistPreferences()
+  const key = selectedStateKey()
+  delete state.annotationDrafts[key]
+  delete state.annotationAdditional[key]
+  persistAnnotationState(key)
   renderAnnotationRail()
 }
 
 function saveAnnotationAdditional(event) {
   if (!state.selectedId) return
+  const key = selectedStateKey()
   const value = event.target.value.slice(0, 32000)
-  if (value) state.annotationAdditional[selectedStateKey()] = value
-  else delete state.annotationAdditional[selectedStateKey()]
+  if (value) state.annotationAdditional[key] = value
+  else delete state.annotationAdditional[key]
   clearTimeout(annotationPersistTimer)
-  annotationPersistTimer = setTimeout(persistPreferences, 300)
+  annotationPersistTimer = setTimeout(() => persistAnnotationState(key), 300)
 }
 
 function buildAnnotationPrompt(drafts, additional = '') {
+  const numberWidth = String(drafts.length).length
   const annotations = drafts.map((draft, index) => {
     const anchor = commentSources.promptAnchor(draft, commentProviderContext(index))
-    const quote = draft.excerpt.split('\n').map((line) => `> ${line}`).join('\n')
-    return t(anchor
-      ? 'Comment {index} ({anchor})\nQuote:\n{quote}\n\nMy comment:\n{comment}'
-      : 'Comment {index}\nQuote:\n{quote}\n\nMy comment:\n{comment}', {
-      index: index + 1,
+    return formatCommentPromptEntry({
+      index,
+      numberWidth,
       anchor,
-      quote,
-      comment: draft.note || t('No additional comment'),
+      excerpt: draft.excerpt,
+      note: draft.note,
     })
-  }).join('\n\n---\n\n')
+  }).join('\n\n')
   const additionalBlock = additional.trim() ? t('Overall note:\n{text}', { text: additional.trim() }) : ''
-  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.annotationPromptTemplate
+  return [...commentSources.promptInstructions(drafts, commentProviderContext()), state.activeAnnotationPromptTemplate
     .replaceAll('{{annotations}}', annotations)
     .replaceAll('{{additional}}', additionalBlock)
     .replace(/\n{3,}/g, '\n\n')
@@ -463,13 +906,43 @@ async function reopenTableComment(anchor) {
 function insertAnnotations() {
   const drafts = currentAnnotations()
   if (!drafts.length) return
-  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[selectedStateKey()] || '')
+  const key = selectedStateKey()
+  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
   const composer = $('#composer-input')
   setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
   closeAnnotationRail()
   composer.focus()
   renderComposerReviewContext()
   toast('Comment draft inserted into the composer')
+}
+
+function sendAndClearAnnotations() {
+  const drafts = currentAnnotations()
+  const form = $('#composer-form')
+  const sendButton = $('#send-message')
+  if (!drafts.length) return
+  if (!form || !sendButton || sendButton.disabled || form.classList.contains('hidden') || form.classList.contains('shell-mode')) {
+    toast('Comments cannot be sent right now', 'error')
+    return
+  }
+  const key = selectedStateKey()
+  const prompt = buildAnnotationPrompt(drafts, state.annotationAdditional[key] || '')
+  const composer = $('#composer-input')
+  setComposerValue([composer.value.trim(), prompt].filter(Boolean).join('\n\n'))
+  try {
+    form.requestSubmit(sendButton)
+  } catch (error) {
+    showError(error)
+    composer.focus()
+    return
+  }
+  delete state.annotationDrafts[key]
+  delete state.annotationAdditional[key]
+  persistAnnotationState(key)
+  renderAnnotationRail()
+  closeAnnotationRail()
+  composer.focus()
+  toast('Comment draft sent and cleared')
 }
 
 async function favoriteRequest(path, options = {}) {
@@ -827,6 +1300,7 @@ function formatFavoriteDate(value) {
     openFavorites: openFavoritesRail,
     positionSelection: positionSelectionPopover,
     renderAnnotations: renderAnnotationRail,
+    renderCommentMarkers: renderChatCommentMarkers,
     renderComposerContext: renderComposerReviewContext,
     renderFavorites: renderFavoritesRail,
     renderSessionFavoriteCount,

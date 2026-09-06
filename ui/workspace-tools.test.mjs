@@ -140,8 +140,10 @@ test('workspace tools use one right-side slot without nested tool tabs', () => {
   const sessionMap = readFileSync(new URL('./session-map-controller.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(html, /id="workspace-(?:files|terminal)-tab"/u)
   assert.match(app, /function activateRightWorkspace\(tool\)/u)
+  assert.match(app, /function deactivateRightWorkspace\(tool\)/u)
   assert.match(app, /if \(tool !== 'browser'\) \{[\s\S]{0,220}studio-action:\/\/hide-browser/u)
   assert.match(sessionMap, /\|\| workspaceTools\.isOpen\(\)/u)
+  assert.match(sessionMap, /function closeSessionMapRail\(\)[\s\S]{0,500}deactivateRightWorkspace\('map'\)/u)
 })
 
 test('document actions use consistent SVG icon buttons', () => {
@@ -150,7 +152,7 @@ test('document actions use consistent SVG icon buttons', () => {
     assert.match(html, new RegExp(`id="${id}"[\\s\\S]{0,420}<svg`, 'u'))
   }
   assert.match(html, /id="refresh-resources"[^>]*class="icon-button artifact-action-icon"/u)
-  assert.match(html, /id="close-resources"[^>]*class="icon-button artifact-action-icon"/u)
+  assert.match(html, /id="close-resources"[^>]*class="icon-button artifact-action-icon right-workspace-close"/u)
 })
 
 test('session resources provide an explicit favorite action', () => {

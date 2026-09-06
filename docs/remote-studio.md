@@ -1,7 +1,7 @@
 # Remote Studio over SSH
 
-Status: experimental prototype on `feature/ssh-remote-studio`. This is a test-only branch and is
-not intended to be merged into `main` until the remote workflow is evaluated further.
+Status: experimental feature on `feature/ssh-remote-studio`, integrated with current `main`.
+Desktop and SSH workflows still require platform acceptance testing before merging into `main`.
 
 ## Goal
 
@@ -44,8 +44,16 @@ Start the headless remote server with `--serve`:
 `127.0.0.1:38080` is also the default when `--listen` is omitted. Do not change the listener to
 `0.0.0.0`; SSH is the only intended network boundary.
 
-Do not run both modes concurrently with the same user configuration. They share Studio JSON
-preferences, which do not yet have a cross-process lock.
+Both modes acquire an exclusive OS-backed `studio-instance.lock` in the configuration
+directory before reading or writing settings. A second instance using that profile exits
+with an error instead of overwriting settings. The lock is released when the owning process
+exits, including after a crash; the lock file itself may remain and must not be deleted while
+Studio is running. Stop older Studio versions first, since they do not acquire this lock.
+
+For independent simultaneous instances, use distinct configuration directories, for example
+`XDG_CONFIG_HOME=/path/to/remote-profile ./target/release/codex-thread-studio --serve`.
+That profile has separate settings and Studio databases; it does not automatically isolate
+the underlying Codex/OpenCode accounts or their session histories.
 
 ## Connect from Windows
 
@@ -67,12 +75,16 @@ After authentication succeeds, leave the PowerShell window running and open the 
 the Linux server in the Windows browser. It looks like:
 
 ```text
-http://127.0.0.1:38080/?token=0123456789abcdef0123456789abcdef
+http://127.0.0.1:38080/#token=0123456789abcdef0123456789abcdef
 ```
 
-Keep the SSH process running and open that URL on Windows. The query supplies the random gateway
-credential to the page and is removed from the address bar immediately after bootstrap. A
-`#token=...` fragment is also accepted when opening the URL manually.
+Keep the SSH process running and open that URL on Windows. The fragment supplies the random
+gateway credential without sending it in an HTTP request URL. Bootstrap stores it in the
+tab's origin-scoped `sessionStorage`, then removes it from the address bar. Refresh therefore
+keeps authentication. Legacy `?token=...` URLs are also accepted and cleaned up.
+If storage is disabled, a fragment is retained to support refresh. Treat the startup URL and
+terminal output as credentials; do not share them. After restarting the server, open its newly
+printed URL to replace the old tab credential. A fresh browser session needs that URL again.
 Closing PowerShell stops the tunnel but does not stop a server that was started separately on
 Linux. Stop the Linux server with `Ctrl+C` when it is no longer needed.
 
@@ -110,9 +122,29 @@ absolute paths with the existing `CODEX_THREAD_STUDIO_CODEX_BIN` and
   tab; document and workspace resources remain inside Studio.
 - Remote deployment, version negotiation, reconnect, SSH ControlMaster reuse, and saved host
   profiles are not automated yet.
-- Do not run desktop and server modes concurrently against the same preference files. SQLite
-  stores tolerate multiple processes, but JSON preference updates do not yet have a cross-process
-  lock.
+- Desktop/server processes using this version cannot concurrently own the same profile.
+  Older binaries and external editors do not participate in this lock.
+
+## Integration verification
+
+The branch passes the JavaScript and Rust test suites, including recursive frontend-route
+validation, profile locking, LF/CRLF tests, and desktop bootstrap preservation. A Linux
+headless executable smoke test also covers HTTP authentication, browser refresh, duplicate
+desktop/server rejection, unchanged settings on rejected startup, and lock release after
+process termination. It does not launch Codex/OpenCode sessions or access the real profile.
+
+To repeat that smoke test with an installed Playwright package:
+
+```bash
+STUDIO_REMOTE_BINARY=/absolute/path/to/codex-thread-studio \
+STUDIO_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+STUDIO_CHROMIUM_PATH=/absolute/path/to/chrome \
+node scripts/smoke-remote-studio.mjs
+```
+
+The browser overrides are optional with a normal Playwright installation. Native Windows
+and macOS desktop interaction checks are still required before claiming cross-platform UI
+regression coverage. This uses the standard-library file locking API (Rust 1.89+).
 
 ## Next slice
 

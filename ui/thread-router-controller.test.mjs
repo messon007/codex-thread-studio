@@ -26,6 +26,7 @@ function controllerFixture(overrides = {}) {
     ...overrides.state,
   }
   const calls = []
+  const activity = []
   const dispatch = overrides.dispatch || {
     supports: () => true,
     backends: () => ['codex'],
@@ -44,18 +45,20 @@ function controllerFixture(overrides = {}) {
       refreshCatalogs: async () => calls.push({ type: 'refresh' }),
       loadBackendInfo: async () => ({ routerWorkspace: '/router' }),
       configuredTurnOptions: () => ({ effort: 'high' }),
+      ...overrides.backend,
     },
     catalog: {
       sidebarCatalogs: () => state.threadsByBackend,
       threadTitle: (thread) => thread.name,
       threadStatus: () => 'idle',
       mergeThread: () => {},
-      updateLoadedThreadTimestamp: () => {},
+      updateLoadedThreadTimestamp: (backend, id, options) => activity.push({ backend, id, options }),
     },
     model: {
       ensureSessionModel: async () => ({ turns: [], status: 'idle' }),
       applyNotification: () => {},
       cacheThreadModel: () => {},
+      ...overrides.model,
     },
     view: {
       closeActionMenus: () => {},
@@ -65,10 +68,11 @@ function controllerFixture(overrides = {}) {
       renderComposerState: () => {},
       renderItem: () => '',
       selectThread: async () => {},
+      ...overrides.view,
     },
     persistPreferences: async () => {},
   })
-  return { calls, controller, state }
+  return { activity, calls, controller, state }
 }
 
 test('Router runtime factories do not share mutable coordination state', () => {
@@ -81,7 +85,7 @@ test('Router runtime factories do not share mutable coordination state', () => {
 })
 
 test('Router controller refreshes candidates before starting a structured routing turn', async () => {
-  const { calls, controller, state } = controllerFixture()
+  const { activity, calls, controller, state } = controllerFixture()
   await controller.startTurn('Please prepare a design')
   assert.deepEqual(calls.map((call) => call.type), ['refresh', 'start'])
   const start = calls[1]
@@ -92,6 +96,7 @@ test('Router controller refreshes candidates before starting a structured routin
   assert.ok(start.options.additionalContext['codex-thread-studio/thread-router'])
   assert.equal(state.routerRuntime.pending.has('codex:route-turn'), true)
   assert.equal(state.routerRuntime.dispatches.get('codex:route-turn').status, 'routing')
+  assert.deepEqual(activity, [{ backend: 'codex', id: 'router', options: { status: 'active' } }])
   for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
 })
 
@@ -102,6 +107,45 @@ test('Router keeps image attachments with the routing request', async () => {
   assert.deepEqual(calls[1].input, [{ type: 'text', text: 'Inspect this screenshot' }, image])
   assert.deepEqual(state.routerRuntime.pending.get('codex:route-turn').attachments, [image])
   for (const timer of state.routerRuntime.monitors.values()) clearTimeout(timer)
+})
+
+test('Router acknowledgement stays bound to its original model across a session switch', async () => {
+  let releaseRefresh
+  let markRefreshStarted
+  let fixtureState
+  const refreshStarted = new Promise((resolve) => { markRefreshStarted = resolve })
+  const refreshReady = new Promise((resolve) => { releaseRefresh = resolve })
+  const routerModel = { activeTurnId: null, turns: [] }
+  const otherModel = { activeTurnId: null, turns: [] }
+  const appliedModels = []
+  const cachedModels = []
+  const fixture = controllerFixture({
+    state: { model: routerModel },
+    backend: {
+      refreshCatalogs: async () => {
+        markRefreshStarted()
+        await refreshReady
+      },
+      configuredTurnOptions: () => ({ selectedAtSend: fixtureState.selectedId }),
+    },
+    model: {
+      applyNotification: (model) => appliedModels.push(model),
+      cacheThreadModel: (backend, id, model) => cachedModels.push({ backend, id, model }),
+    },
+  })
+  fixtureState = fixture.state
+  const started = fixture.controller.startTurn('Route this safely')
+  await refreshStarted
+  fixture.state.selectedId = 'worker'
+  fixture.state.model = otherModel
+  releaseRefresh()
+  await started
+
+  assert.deepEqual(appliedModels, [routerModel])
+  assert.deepEqual(cachedModels, [{ backend: 'codex', id: 'router', model: routerModel }])
+  assert.equal(fixture.calls.at(-1).options.turnOptions.selectedAtSend, 'router')
+  assert.equal(otherModel.turns.length, 0)
+  for (const timer of fixture.state.routerRuntime.monitors.values()) clearTimeout(timer)
 })
 
 test('removing a session repairs Router controllers and fallback references', () => {

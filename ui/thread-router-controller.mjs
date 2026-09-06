@@ -105,6 +105,8 @@ export function createThreadRouterController({
     if (!isThread() || state.model.activeTurnId) throw new Error(t('The Router is still processing the previous request.'))
     const controller = routerControllerRef(state.router)
     if (!controller || !dispatch.supports(controller.backend)) throw new Error(t('The Router backend is currently unavailable.'))
+    const controllerModel = state.model
+    const turnOptions = configuredTurnOptions()
     await refreshCatalogs()
     const candidates = currentCandidates()
     if (!candidates.length) throw new Error(t('The Router has no available target session. Open Router settings first.'))
@@ -116,7 +118,7 @@ export function createThreadRouterController({
         ? { additionalContext: routerApplicationContext(candidates) }
         : { developerInstructions }),
       outputSchema: routerDecisionSchema(candidates.map((candidate) => candidate.key)),
-      turnOptions: configuredTurnOptions(),
+      turnOptions,
     })
     if (!result?.turn) throw new Error(t('The Router could not start a new turn.'))
     const turnId = String(result.turn.id || '')
@@ -127,9 +129,12 @@ export function createThreadRouterController({
       attachments: imageInputs,
     })
     runtime.dispatches.set(key, { status: 'routing' })
-    applyNotification(state.model, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
-    cacheThreadModel(controller.backend, controller.id, state.model)
-    renderTranscript()
+    applyNotification(controllerModel, { method: 'turn/started', params: { threadId: controller.id, turn: result.turn } })
+    cacheThreadModel(controller.backend, controller.id, controllerModel)
+    updateLoadedThreadTimestamp(controller.backend, controller.id, { status: 'active' })
+    if (state.backend === controller.backend && state.selectedId === controller.id && state.model === controllerModel) {
+      renderTranscript()
+    }
     monitorTurn(controller, turnId)
   }
 
@@ -179,7 +184,7 @@ export function createThreadRouterController({
       if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
       applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
       cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
-      updateLoadedThreadTimestamp(targetRef.backend, targetRef.id)
+      updateLoadedThreadTimestamp(targetRef.backend, targetRef.id, { status: 'active' })
       runtime.dispatches.set(key, {
         status: 'running', decision, targetTurnId: String(result.turn.id || ''),
       })

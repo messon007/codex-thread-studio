@@ -8,13 +8,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{any, get};
 use axum::{Json, Router};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -34,8 +35,11 @@ mod epub_reader;
 mod favorites;
 mod gateway_security;
 mod git_review;
+mod ollama;
 mod opencode_server;
 mod session_map;
+mod session_state;
+mod speech;
 mod terminal_runtime;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
@@ -76,8 +80,9 @@ struct GatewayState {
     opencode: OpenCodeServer,
     preferences_path: Arc<PathBuf>,
     preferences_lock: Arc<Mutex<()>>,
-    favorites_path: Arc<PathBuf>,
-    favorites_lock: Arc<Mutex<()>>,
+    shared_document_directories: Arc<Mutex<Vec<String>>>,
+    studio_path: Arc<PathBuf>,
+    studio_lock: Arc<Mutex<()>>,
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
     epub_reading_path: Arc<PathBuf>,
@@ -107,7 +112,15 @@ struct BackendRegistryInfo {
 #[serde(rename_all = "camelCase")]
 struct TypographyPreferences {
     ui_font_family: String,
+    #[serde(default = "default_ui_font_size")]
+    ui_font_size: f64,
     ui_font_weight: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_font_weight: Option<u16>,
     #[serde(default = "default_workspace_font_family")]
     workspace_font_family: String,
     #[serde(default = "default_workspace_font_size")]
@@ -118,8 +131,12 @@ struct TypographyPreferences {
     high_contrast: bool,
 }
 
+fn default_ui_font_size() -> f64 {
+    14.0
+}
+
 fn default_workspace_font_family() -> String {
-    "Ubuntu, \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif".to_string()
+    "\"Noto Sans CJK SC\", \"Noto Sans SC\", \"Microsoft YaHei\", system-ui, sans-serif".to_string()
 }
 
 fn default_workspace_font_size() -> f64 {
@@ -271,11 +288,47 @@ impl Default for MarkdownPreferences {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranslationPreferences {
+    #[serde(default = "default_translation_engine")]
+    engine: String,
+    #[serde(default = "default_ollama_model")]
+    ollama_model: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    models: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    efforts: BTreeMap<String, String>,
+}
+
+impl Default for TranslationPreferences {
+    fn default() -> Self {
+        Self {
+            engine: default_translation_engine(),
+            ollama_model: default_ollama_model(),
+            models: BTreeMap::new(),
+            efforts: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_translation_engine() -> String {
+    "backend".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "gemma3:4b".to_string()
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StudioPreferences {
     #[serde(default)]
     desktop_notifications: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    queue_depth: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continue_behavior: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -284,6 +337,8 @@ struct StudioPreferences {
     content_width: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hidden_session_directories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    shared_document_directories: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     session_directory_ignore: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -301,26 +356,22 @@ struct StudioPreferences {
     #[serde(default)]
     markdown: MarkdownPreferences,
     #[serde(default)]
+    translation: TranslationPreferences,
+    #[serde(default)]
     browser: BrowserPreferences,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    selected_thread: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    selected_backend: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    selected_threads: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     thread_activity: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attention_threads: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    // These fields are transient validation containers for the dedicated
+    // session-state API and are never read from or written to settings.json.
+    #[serde(skip)]
     annotation_drafts: BTreeMap<String, Vec<AnnotationDraft>>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(skip)]
     annotation_additional: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    annotation_prompt_template: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     annotation_prompt_templates: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(skip)]
     opening_messages: BTreeMap<String, OpeningMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     router: Option<ThreadRouterPreferences>,
@@ -364,6 +415,54 @@ struct FavoriteQuery {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AnnotationStateRequest {
+    session_key: String,
+    #[serde(default)]
+    drafts: Vec<AnnotationDraft>,
+    #[serde(default)]
+    additional: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpeningMessageStateRequest {
+    session_key: String,
+    message: Option<OpeningMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinSessionStateRequest {
+    session_key: String,
+    pinned: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnOptionsStateRequest {
+    session_key: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    effort: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageQueueStateRequest {
+    session_key: String,
+    #[serde(default)]
+    messages: Vec<session_state::QueuedMessage>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteSessionStateRequest {
+    session_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ReviewFileRequest {
     root: String,
     path: String,
@@ -381,6 +480,7 @@ struct ReviewFileRequestWithHash {
 #[serde(rename_all = "camelCase")]
 struct ReviewFileResponse {
     root: String,
+    document_root: String,
     path: String,
     relative_path: String,
     content: String,
@@ -388,6 +488,7 @@ struct ReviewFileResponse {
     size: u64,
     line_count: usize,
     language: String,
+    read_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -514,7 +615,11 @@ fn main() {
     let embedded_browser = embedded_browser_windows::is_supported();
     #[cfg(not(any(target_os = "linux", windows)))]
     let embedded_browser = false;
-    let (state, startup_preferences) = initialize_gateway(security, embedded_browser);
+    let (state, startup_preferences, _profile_lock) =
+        initialize_gateway(security, embedded_browser).unwrap_or_else(|error| {
+            eprintln!("Codex Thread Studio could not open its profile: {error}");
+            std::process::exit(2);
+        });
     let embedded_browser_preferences = startup_preferences.browser.clone();
 
     tauri::Builder::default()
@@ -623,8 +728,8 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
         .map_err(|error| format!("unable to read the server address: {error}"))?;
     let origin = format!("http://{address}");
     let security = GatewaySecurity::new(origin.clone());
-    let access_url = format!("{origin}/?token={}", security.token());
-    let (state, _) = initialize_gateway(security, false);
+    let access_url = format!("{origin}/#token={}", security.token());
+    let (state, _, _profile_lock) = initialize_gateway(security, false)?;
     let router = gateway_router(state);
 
     println!("Codex Thread Studio remote server is listening on {origin}");
@@ -647,17 +752,15 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
 fn initialize_gateway(
     security: GatewaySecurity,
     embedded_browser: bool,
-) -> (GatewayState, StudioPreferences) {
+) -> Result<(GatewayState, StudioPreferences, fs::File), String> {
     let cli_path = augmented_cli_path();
     let preferences_path = studio_preferences_path();
-    let favorites_path = preferences_path.with_file_name("favorites.sqlite3");
+    let profile_lock = lock_studio_profile(&preferences_path)?;
+    let studio_path = preferences_path.with_file_name("studio.sqlite3");
     let session_maps_path = preferences_path.with_file_name("session-maps.sqlite3");
     let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
     let environment_path = preferences_path.with_file_name("environments.json");
     let backend_config_path = backend_config::configuration_path(&preferences_path);
-    if let Err(error) = migrate_legacy_preferences(&preferences_path) {
-        eprintln!("Codex Thread Studio could not migrate legacy settings: {error}");
-    }
     let startup_preferences = match load_preferences(&preferences_path) {
         Ok(preferences) => {
             if let Err(error) = save_preferences(&preferences_path, &preferences) {
@@ -683,8 +786,11 @@ fn initialize_gateway(
         configured_backends.backends,
         runtime.clone(),
     );
-    if let Err(error) = favorites::initialize(&favorites_path) {
+    if let Err(error) = favorites::initialize(&studio_path) {
         eprintln!("Codex Thread Studio could not initialize favorites: {error}");
+    }
+    if let Err(error) = session_state::initialize(&studio_path) {
+        eprintln!("Codex Thread Studio could not initialize session state: {error}");
     }
     if let Err(error) = session_map::initialize(&session_maps_path) {
         eprintln!("Codex Thread Studio could not initialize session maps: {error}");
@@ -701,8 +807,11 @@ fn initialize_gateway(
         opencode: OpenCodeServer::new(opencode_binary, runtime),
         preferences_path: Arc::new(preferences_path),
         preferences_lock: Arc::new(Mutex::new(())),
-        favorites_path: Arc::new(favorites_path),
-        favorites_lock: Arc::new(Mutex::new(())),
+        shared_document_directories: Arc::new(Mutex::new(
+            startup_preferences.shared_document_directories.clone(),
+        )),
+        studio_path: Arc::new(studio_path),
+        studio_lock: Arc::new(Mutex::new(())),
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
         epub_reading_path: Arc::new(epub_reading_path),
@@ -712,7 +821,29 @@ fn initialize_gateway(
         security,
         embedded_browser,
     };
-    (state, startup_preferences)
+    Ok((state, startup_preferences, profile_lock))
+}
+
+// Keep the returned handle alive for the entire desktop/server lifetime. Never
+// unlink this file: doing so would let another process lock a different inode.
+fn lock_studio_profile(preferences_path: &std::path::Path) -> Result<fs::File, String> {
+    let parent = preferences_path
+        .parent()
+        .ok_or("profile path has no parent")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let path = parent.join("studio-instance.lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    file.try_lock().map_err(|error| format!(
+        "profile {} is already in use or cannot be locked ({error}); close the other desktop/server instance or use a separate XDG_CONFIG_HOME",
+        parent.display(),
+    ))?;
+    Ok(file)
 }
 
 fn gateway_router(state: GatewayState) -> Router {
@@ -726,6 +857,31 @@ fn gateway_router(state: GatewayState) -> Router {
             "/studio/preferences",
             get(get_preferences).put(put_preferences),
         )
+        .route("/studio/session-state", get(get_session_state))
+        .route(
+            "/studio/session-state/annotations",
+            axum::routing::put(put_annotation_state),
+        )
+        .route(
+            "/studio/session-state/opening-message",
+            axum::routing::put(put_opening_message_state),
+        )
+        .route(
+            "/studio/session-state/pin",
+            axum::routing::put(put_session_pin),
+        )
+        .route(
+            "/studio/session-state/turn-options",
+            axum::routing::put(put_turn_options_state),
+        )
+        .route(
+            "/studio/session-state/message-queue",
+            axum::routing::put(put_message_queue_state),
+        )
+        .route(
+            "/studio/session-state/session",
+            axum::routing::delete(delete_session_state),
+        )
         .route(
             "/studio/environment",
             get(get_environment_profile).put(put_environment_profile),
@@ -735,6 +891,17 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(apply_environment_profile),
         )
         .route("/studio/client-log", axum::routing::post(client_log))
+        .route("/studio/speech", get(speech::status).post(speech::speak))
+        .route("/studio/speech/stop", axum::routing::post(speech::stop))
+        .route("/studio/ollama/models", get(ollama::models))
+        .route(
+            "/studio/ollama/translate",
+            axum::routing::post(ollama::translate),
+        )
+        .route(
+            "/studio/ollama/continue-draft",
+            axum::routing::post(ollama::continue_draft),
+        )
         .route(
             "/studio/workspace/list",
             axum::routing::post(list_workspace_directory),
@@ -790,6 +957,7 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(undo_session_map),
         )
         .route("/ws/codex", get(codex_app_server_ws))
+        .route("/ws/codex-lifecycle", get(codex_lifecycle_ws))
         .route("/ws/codex/{backend}", get(codex_instance_ws))
         .route("/ws/terminal", get(terminal_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
@@ -805,9 +973,19 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/app.js", get(app_js))
         .route("/i18n.mjs", get(i18n_js))
         .route("/codex-native.mjs", get(codex_native_js))
+        .route(
+            "/codex-lifecycle-diagnostics.mjs",
+            get(codex_lifecycle_diagnostics_js),
+        )
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route("/thread-history-tail.mjs", get(thread_history_tail_js))
+        .route("/model-revision.mjs", get(model_revision_js))
+        .route("/performance-monitor.mjs", get(performance_monitor_js))
+        .route("/selection-translation.mjs", get(selection_translation_js))
+        .route("/continuation-draft.mjs", get(continuation_draft_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
+        .route("/message-queue.mjs", get(message_queue_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
         .route("/session-management.mjs", get(session_management_js))
         .route("/thread-catalog.mjs", get(thread_catalog_js))
@@ -839,6 +1017,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
         .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
+        .route("/comment-markers.mjs", get(comment_markers_js))
         .route(
             "/browser-comment-provider.mjs",
             get(browser_comment_provider_js),
@@ -866,6 +1045,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
+        .route("/transcript-dom.mjs", get(transcript_dom_js))
         .route(
             "/transcript-presentation.mjs",
             get(transcript_presentation_js),
@@ -944,40 +1124,36 @@ async fn index() -> impl IntoResponse {
 async fn remote_bootstrap_js() -> impl IntoResponse {
     let host_platform =
         serde_json::to_string(std::env::consts::OS).expect("host platform is JSON text");
-    javascript_owned(format!(
-        r#"(() => {{
-  if (window.__CODEX_THREAD_STUDIO_GATEWAY__) return;
-  const fragment = new URLSearchParams(window.location.hash.slice(1));
-  const query = new URLSearchParams(window.location.search);
-  const token = fragment.get('token') || query.get('token') || '';
-  if (!/^[a-f0-9]{{32}}$/u.test(token)) return;
-  Object.defineProperty(window, '__CODEX_THREAD_STUDIO_GATEWAY__', {{
-    value: Object.freeze({{ token, hostPlatform: {host_platform}, remote: true }}),
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  }});
-  query.delete('token');
-  const remaining = query.toString();
-  window.history.replaceState(null, '', `${{window.location.pathname}}${{remaining ? `?${{remaining}}` : ''}}`);
-}})();"#
-    ))
+    javascript_owned(
+        include_str!("../../ui/remote-bootstrap.js")
+            .replace("__STUDIO_HOST_PLATFORM__", &host_platform),
+    )
 }
 
 async fn read_review_file(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
-        return match _state
+    if state.codex.execution_environment() == "wsl" {
+        let shared_directories = match configured_shared_document_directories(&state) {
+            Ok(value) => value,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        return match state
             .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_FILE_BYTES)
+            .read_wsl_file(
+                &request.root,
+                &request.path,
+                MAX_REVIEW_FILE_BYTES,
+                &shared_directories,
+            )
             .await
         {
             Ok(file) => match decode_review_text(file.content) {
                 Ok(content) => {
                     let response = ReviewFileResponse {
+                        document_root: file.document_root,
                         root: file.root,
                         path: file.path.clone(),
                         relative_path: file.relative_path,
@@ -990,6 +1166,7 @@ async fn read_review_file(
                         },
                         language: review_language(std::path::Path::new(&file.path)).to_string(),
                         content,
+                        read_only: file.read_only,
                     };
                     json_response(StatusCode::OK, &response)
                 }
@@ -1006,24 +1183,32 @@ async fn read_review_file(
             }
         };
     }
-    match load_review_file(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    match load_review_file_with_shared(&request, &shared_directories) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
     }
 }
 
 async fn read_review_epub(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
+    if state.codex.execution_environment() == "wsl" {
         return json_error(
             StatusCode::NOT_IMPLEMENTED,
             "opening EPUB files from WSL workspaces is not available yet",
         );
     }
-    let (_, path, _) = match resolve_epub_path(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&request, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -1059,23 +1244,39 @@ async fn read_review_spreadsheet(
 }
 
 async fn read_review_binary(
-    _state: &GatewayState,
+    state: &GatewayState,
     request: ReviewFileRequest,
     expected: &'static str,
 ) -> Response<Body> {
     #[cfg(windows)]
-    let loaded = if _state.codex.execution_environment() == "wsl" {
-        _state
-            .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_DOCUMENT_BYTES)
-            .await
-            .map(|file| (file.content, file.path))
-            .map_err(|error| error.to_string())
+    let loaded = if state.codex.execution_environment() == "wsl" {
+        match configured_shared_document_directories(state) {
+            Ok(shared_directories) => state
+                .codex
+                .read_wsl_file(
+                    &request.root,
+                    &request.path,
+                    MAX_REVIEW_DOCUMENT_BYTES,
+                    &shared_directories,
+                )
+                .await
+                .map(|file| (file.content, file.path))
+                .map_err(|error| error.to_string()),
+            Err((_, message)) => Err(message),
+        }
     } else {
-        load_review_binary(&request).map_err(|(_, message)| message)
+        match shared_document_directories(state) {
+            Ok(shared_directories) => load_review_binary_with_shared(&request, &shared_directories)
+                .map_err(|(_, message)| message),
+            Err((_, message)) => Err(message),
+        }
     };
     #[cfg(not(windows))]
-    let loaded = load_review_binary(&request).map_err(|(_, message)| message);
+    let loaded = match shared_document_directories(state) {
+        Ok(shared_directories) => load_review_binary_with_shared(&request, &shared_directories)
+            .map_err(|(_, message)| message),
+        Err((_, message)) => Err(message),
+    };
 
     let (bytes, path) = match loaded {
         Ok(value) => value,
@@ -1153,11 +1354,16 @@ fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn load_review_binary(
+fn load_review_binary_with_shared(
     request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
 ) -> Result<(Vec<u8>, String), (StatusCode, String)> {
-    let (_root, path, _metadata) =
-        resolve_review_path(request, MAX_REVIEW_DOCUMENT_BYTES, "50 MiB document")?;
+    let (_root, path, _metadata, _document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_DOCUMENT_BYTES,
+        "50 MiB document",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1182,7 +1388,11 @@ async fn get_epub_reading_state(
         root: request.root,
         path: request.path,
     };
-    let (_, path, _) = match resolve_epub_path(&review) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&review, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -1212,7 +1422,11 @@ async fn put_epub_reading_state(
         root: reading.root.clone(),
         path: reading.path.clone(),
     };
-    let (_, path, _) = match resolve_epub_path(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let (_, path, _, _) = match resolve_epub_path_with_shared(&request, &shared_directories) {
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
@@ -1387,7 +1601,8 @@ async fn mutate_git_paths(
             output,
         );
     }
-    match load_git_status(state, &status.root).await {
+    // The root was resolved and validated above in this same operation.
+    match load_git_status_at_root(state, status.root).await {
         Ok(status) => json_response(StatusCode::OK, &status),
         Err((status, message)) => json_error(status, &message),
     }
@@ -1436,6 +1651,13 @@ async fn load_git_status(
     }
     let root = git_review::parse_repository_root(&root_output.stdout)
         .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
+    load_git_status_at_root(state, root).await
+}
+
+async fn load_git_status_at_root(
+    state: &GatewayState,
+    root: String,
+) -> Result<GitStatusResponse, (StatusCode, String)> {
     let arguments = git_review::status_arguments(&root);
     let output = run_git(state, &arguments, true)
         .await
@@ -1563,16 +1785,22 @@ fn persist_workspace_file(
         .map_err(|(status, message)| WorkspaceSaveError::Http(status, message))
 }
 
-fn resolve_epub_path(
+fn resolve_epub_path_with_shared(
     request: &ReviewFileRequest,
-) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
+    shared_directories: &[PathBuf],
+) -> Result<(PathBuf, PathBuf, fs::Metadata, PathBuf), (StatusCode, String)> {
     if !request.path.to_ascii_lowercase().ends_with(".epub") {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "only .epub publications can be opened by the EPUB reader".to_owned(),
         ));
     }
-    resolve_review_path(request, epub_reader::MAX_EPUB_BYTES, "128 MiB EPUB")
+    resolve_review_path_with_shared(
+        request,
+        epub_reader::MAX_EPUB_BYTES,
+        "128 MiB EPUB",
+        shared_directories,
+    )
 }
 
 fn load_workspace_directory(
@@ -1666,14 +1894,23 @@ fn load_workspace_directory(
 }
 
 async fn read_review_image(
-    State(_state): State<GatewayState>,
+    State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
     #[cfg(windows)]
-    if _state.codex.execution_environment() == "wsl" {
-        return match _state
+    if state.codex.execution_environment() == "wsl" {
+        let shared_directories = match configured_shared_document_directories(&state) {
+            Ok(value) => value,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        return match state
             .codex
-            .read_wsl_file(&request.root, &request.path, MAX_REVIEW_IMAGE_BYTES)
+            .read_wsl_file(
+                &request.root,
+                &request.path,
+                MAX_REVIEW_IMAGE_BYTES,
+                &shared_directories,
+            )
             .await
         {
             Ok(file) => match review_image_mime(std::path::Path::new(&file.path), &file.content) {
@@ -1694,7 +1931,11 @@ async fn read_review_image(
             }
         };
     }
-    match load_review_image(&request) {
+    let shared_directories = match shared_document_directories(&state) {
+        Ok(value) => value,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    match load_review_image_with_shared(&request, &shared_directories) {
         Ok((bytes, mime)) => review_image_response(bytes, mime),
         Err((status, message)) => json_error(status, &message),
     }
@@ -1710,11 +1951,23 @@ fn review_image_response(bytes: Vec<u8>, mime: &'static str) -> Response<Body> {
         .expect("valid image response")
 }
 
+#[cfg(test)]
 fn load_review_image(
     request: &ReviewFileRequest,
 ) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
-    let (_root, path, _metadata) =
-        resolve_review_path(request, MAX_REVIEW_IMAGE_BYTES, "25 MiB image")?;
+    load_review_image_with_shared(request, &[])
+}
+
+fn load_review_image_with_shared(
+    request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
+) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
+    let (_root, path, _metadata, _document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_IMAGE_BYTES,
+        "25 MiB image",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1763,8 +2016,19 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 fn load_review_file(
     request: &ReviewFileRequest,
 ) -> Result<ReviewFileResponse, (StatusCode, String)> {
-    let (root, path, metadata) =
-        resolve_review_path(request, MAX_REVIEW_FILE_BYTES, "5 MiB review")?;
+    load_review_file_with_shared(request, &[])
+}
+
+fn load_review_file_with_shared(
+    request: &ReviewFileRequest,
+    shared_directories: &[PathBuf],
+) -> Result<ReviewFileResponse, (StatusCode, String)> {
+    let (root, path, metadata, document_root) = resolve_review_path_with_shared(
+        request,
+        MAX_REVIEW_FILE_BYTES,
+        "5 MiB review",
+        shared_directories,
+    )?;
     let bytes = fs::read(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1775,12 +2039,13 @@ fn load_review_file(
         .map_err(|message| (StatusCode::UNSUPPORTED_MEDIA_TYPE, message.to_string()))?;
 
     let relative_path = path
-        .strip_prefix(&root)
+        .strip_prefix(&document_root)
         .unwrap_or(&path)
         .to_string_lossy()
         .replace('\\', "/");
     Ok(ReviewFileResponse {
         root: root.to_string_lossy().into_owned(),
+        document_root: document_root.to_string_lossy().into_owned(),
         path: path.to_string_lossy().into_owned(),
         relative_path,
         hash: stable_content_hash(content.as_bytes()),
@@ -1792,6 +2057,7 @@ fn load_review_file(
         },
         language: review_language(&path).to_string(),
         content,
+        read_only: !path.starts_with(&root),
     })
 }
 
@@ -1823,6 +2089,16 @@ fn resolve_review_path(
     max_bytes: u64,
     limit_label: &str,
 ) -> Result<(PathBuf, PathBuf, fs::Metadata), (StatusCode, String)> {
+    resolve_review_path_with_shared(request, max_bytes, limit_label, &[])
+        .map(|(root, path, metadata, _)| (root, path, metadata))
+}
+
+fn resolve_review_path_with_shared(
+    request: &ReviewFileRequest,
+    max_bytes: u64,
+    limit_label: &str,
+    shared_directories: &[PathBuf],
+) -> Result<(PathBuf, PathBuf, fs::Metadata, PathBuf), (StatusCode, String)> {
     let root = fs::canonicalize(&request.root).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -1837,12 +2113,19 @@ fn resolve_review_path(
     };
     let path = fs::canonicalize(candidate)
         .map_err(|_| (StatusCode::NOT_FOUND, "file does not exist".to_string()))?;
-    if !path.starts_with(&root) {
+    let document_root = if path.starts_with(&root) {
+        root.clone()
+    } else if let Some(shared_root) = shared_directories
+        .iter()
+        .find(|shared_root| path.starts_with(shared_root))
+    {
+        shared_root.clone()
+    } else {
         return Err((
             StatusCode::FORBIDDEN,
-            "file is outside the project directory".to_string(),
+            "file is outside the project directory and shared document directories".to_string(),
         ));
-    }
+    };
     let metadata = fs::metadata(&path).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -1861,7 +2144,7 @@ fn resolve_review_path(
             format!("file exceeds the {limit_label} limit"),
         ));
     }
-    Ok((root, path, metadata))
+    Ok((root, path, metadata, document_root))
 }
 
 fn stable_content_hash(bytes: &[u8]) -> String {
@@ -1912,8 +2195,32 @@ async fn codex_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/codex-native.mjs"))
 }
 
+async fn codex_lifecycle_diagnostics_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/codex-lifecycle-diagnostics.mjs"))
+}
+
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn thread_history_tail_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/thread-history-tail.mjs"))
+}
+
+async fn model_revision_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/model-revision.mjs"))
+}
+
+async fn performance_monitor_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/performance-monitor.mjs"))
+}
+
+async fn selection_translation_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/selection-translation.mjs"))
+}
+
+async fn continuation_draft_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/continuation-draft.mjs"))
 }
 
 async fn backends_js() -> impl IntoResponse {
@@ -1922,6 +2229,10 @@ async fn backends_js() -> impl IntoResponse {
 
 async fn model_display_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/model-display.mjs"))
+}
+
+async fn message_queue_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/message-queue.mjs"))
 }
 
 async fn session_catalog_js() -> impl IntoResponse {
@@ -1934,6 +2245,10 @@ async fn session_management_js() -> impl IntoResponse {
 
 async fn transcript_presentation_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/transcript-presentation.mjs"))
+}
+
+async fn transcript_dom_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/transcript-dom.mjs"))
 }
 
 async fn thread_catalog_js() -> impl IntoResponse {
@@ -2010,6 +2325,10 @@ async fn workspace_editor_js() -> impl IntoResponse {
 
 async fn comment_core_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/comment-core.mjs"))
+}
+
+async fn comment_markers_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/comment-markers.mjs"))
 }
 
 async fn browser_comment_provider_js() -> impl IntoResponse {
@@ -2267,6 +2586,101 @@ async fn codex_instance_ws(
         .into_response()
 }
 
+async fn codex_lifecycle_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    let protocol = state.security.websocket_protocol();
+    ws.protocols([protocol])
+        .on_upgrade(move |socket| async move {
+            bridge_codex_lifecycle(socket, state.codex_backends).await
+        })
+}
+
+async fn bridge_codex_lifecycle(
+    socket: WebSocket,
+    backends: Arc<BTreeMap<String, CodexBackendInstance>>,
+) {
+    let (mut output, mut input) = socket.split();
+    let (outbound, mut events) = tokio::sync::mpsc::channel::<String>(512);
+    let mut forwarders = Vec::with_capacity(backends.len());
+
+    for (backend, instance) in backends.iter() {
+        let backend = backend.clone();
+        let mut receiver = instance.server.subscribe_lifecycle();
+        let outbound = outbound.clone();
+        forwarders.push(tokio::spawn(async move {
+            loop {
+                let message = match receiver.recv().await {
+                    Ok(payload) => serde_json::from_str::<serde_json::Value>(&payload)
+                        .unwrap_or_else(|_| {
+                            json!({
+                                "method": "studio/appServer/protocolError",
+                                "params": { "message": "Invalid lifecycle event JSON" }
+                            })
+                        }),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => json!({
+                        "method": "studio/appServer/lagged",
+                        "params": { "skipped": skipped }
+                    }),
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                if outbound
+                    .send(codex_lifecycle_envelope(&backend, message))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+    drop(outbound);
+
+    let ready = json!({
+        "method": "studio/codexLifecycle/ready",
+        "params": { "backends": backends.keys().collect::<Vec<_>>() }
+    })
+    .to_string();
+    if output.send(Message::Text(ready.into())).await.is_err() {
+        for forwarder in forwarders {
+            forwarder.abort();
+        }
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            browser_message = input.next() => {
+                let Some(Ok(browser_message)) = browser_message else { break };
+                match browser_message {
+                    Message::Close(_) => break,
+                    Message::Ping(value) => {
+                        if output.send(Message::Pong(value)).await.is_err() { break; }
+                    }
+                    _ => {}
+                }
+            }
+            event = events.recv() => {
+                let Some(payload) = event else { break };
+                if output.send(Message::Text(payload.into())).await.is_err() { break; }
+            }
+        }
+    }
+
+    for forwarder in forwarders {
+        forwarder.abort();
+    }
+}
+
+fn codex_lifecycle_envelope(backend: &str, message: serde_json::Value) -> String {
+    json!({
+        "method": "studio/codexLifecycle/event",
+        "params": { "backend": backend, "message": message }
+    })
+    .to_string()
+}
+
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
@@ -2312,6 +2726,12 @@ struct ApplyEnvironmentRequest {
     root: String,
     thread_id: String,
     backend: String,
+    #[serde(default)]
+    include_thread: bool,
+    #[serde(default)]
+    exclude_turns: bool,
+    #[serde(default)]
+    initial_turns_page: Option<serde_json::Value>,
 }
 
 async fn apply_environment_profile(
@@ -2334,17 +2754,22 @@ async fn apply_environment_profile(
             "environment backend must be a configured Codex-compatible instance",
         );
     };
+    let mut resume_params = json!({
+        "threadId": request.thread_id,
+        "config": { "shell_environment_policy": { "inherit": "all", "set": environment } }
+    });
+    if request.exclude_turns {
+        resume_params["excludeTurns"] = json!(true);
+    }
+    if let Some(initial_turns_page) = request.initial_turns_page {
+        resume_params["initialTurnsPage"] = initial_turns_page;
+    }
     match instance
         .server
-        .request(
-            "thread/resume",
-            json!({
-                "threadId": request.thread_id,
-                "config": { "shell_environment_policy": { "inherit": "all", "set": environment } }
-            }),
-        )
+        .request("thread/resume", resume_params)
         .await
     {
+        Ok(result) if request.include_thread => json_response(StatusCode::OK, &result),
         Ok(_) => json_response(StatusCode::OK, &json!({ "applied": true })),
         Err(message) => json_error(StatusCode::BAD_GATEWAY, &message),
     }
@@ -2359,6 +2784,278 @@ async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
         Ok(preferences) => json_response(StatusCode::OK, &preferences),
         Err(error) => gateway_error(&format!("failed to read Studio preferences: {error}")),
     }
+}
+
+// SQLite (including its busy timeout and the shared database mutex) must not
+// block the async workers that deliver session notifications and HTTP streams.
+async fn run_studio_database(
+    operation: impl FnOnce() -> Response<Body> + Send + 'static,
+) -> Response<Body> {
+    match tokio::task::spawn_blocking(operation).await {
+        Ok(response) => response,
+        Err(error) => gateway_error(&format!("Studio database task failed: {error}")),
+    }
+}
+
+async fn get_session_state(State(state): State<GatewayState>) -> Response<Body> {
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::load(&state.studio_path) {
+            Ok(snapshot) => json_response(StatusCode::OK, &snapshot),
+            Err(error) => gateway_error(&format!("failed to read session state: {error}")),
+        }
+    })
+    .await
+}
+
+async fn put_annotation_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let mut preferences = StudioPreferences::default();
+        preferences
+            .annotation_drafts
+            .insert(request.session_key.clone(), request.drafts.clone());
+        if !request.additional.is_empty() {
+            preferences
+                .annotation_additional
+                .insert(request.session_key.clone(), request.additional.clone());
+        }
+        if let Err(message) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::replace_annotations(
+            &state.studio_path,
+            &request.session_key,
+            &request.drafts,
+            &request.additional,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save annotation state: {error}")),
+        }
+    })
+    .await
+}
+
+async fn put_opening_message_state(
+    State(state): State<GatewayState>,
+    body: String,
+) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<OpeningMessageStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let mut preferences = StudioPreferences::default();
+        if let Some(message) = &request.message {
+            preferences
+                .opening_messages
+                .insert(request.session_key.clone(), message.clone());
+        }
+        if let Err(message) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::put_opening_message(
+            &state.studio_path,
+            &request.session_key,
+            request.message.as_ref(),
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save opening message: {error}")),
+        }
+    })
+    .await
+}
+
+async fn delete_session_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<DeleteSessionStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::delete_session(&state.studio_path, &request.session_key) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to delete session state: {error}")),
+        }
+    })
+    .await
+}
+
+async fn put_session_pin(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<PinSessionStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::set_pinned(&state.studio_path, &request.session_key, request.pinned) {
+            Ok(pinned_sessions) => json_response(
+                StatusCode::OK,
+                &json!({ "pinnedSessions": pinned_sessions }),
+            ),
+            Err(error) if error == session_state::PIN_LIMIT_ERROR => {
+                json_error(StatusCode::BAD_REQUEST, &error)
+            }
+            Err(error) => gateway_error(&format!("failed to save pinned session: {error}")),
+        }
+    })
+    .await
+}
+
+async fn put_turn_options_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<TurnOptionsStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+            || (!request.model.is_empty() && !valid_runtime_value(&request.model, 256))
+            || (!request.effort.is_empty() && !valid_runtime_value(&request.effort, 64))
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session turn options are invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::put_turn_options(
+            &state.studio_path,
+            &request.session_key,
+            &request.model,
+            &request.effort,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
+        }
+    })
+    .await
+}
+
+async fn put_message_queue_state(
+    State(state): State<GatewayState>,
+    body: String,
+) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        let invalid_message = request.messages.len() > 3
+            || request.messages.iter().any(|message| {
+                message.id.is_empty()
+                    || !valid_runtime_value(&message.id, 128)
+                    || message.text.len() > 256 * 1024
+                    || message.input.len() > 32
+                    || message.input.iter().any(|item| {
+                        item.get("type").and_then(|value| value.as_str()) == Some("text")
+                    })
+            });
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+            || invalid_message
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session message queue is invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::replace_message_queue(
+            &state.studio_path,
+            &request.session_key,
+            &request.messages,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save message queue: {error}")),
+        }
+    })
+    .await
+}
+
+fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, Response<Body>> {
+    if body.len() > MAX_PREFERENCES_BODY {
+        return Err(json_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "session state payload is too large",
+        ));
+    }
+    serde_json::from_str(body).map_err(|error| {
+        json_error(
+            StatusCode::BAD_REQUEST,
+            &format!("invalid session state: {error}"),
+        )
+    })
+}
+
+fn shared_document_directories(state: &GatewayState) -> Result<Vec<PathBuf>, (StatusCode, String)> {
+    let configured = configured_shared_document_directories(state)?;
+    Ok(configured
+        .iter()
+        .filter_map(|directory| fs::canonicalize(directory).ok())
+        .filter(|directory| directory.is_dir())
+        .collect())
+}
+
+fn configured_shared_document_directories(
+    state: &GatewayState,
+) -> Result<Vec<String>, (StatusCode, String)> {
+    state
+        .shared_document_directories
+        .lock()
+        .map(|value| value.clone())
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "shared document directory lock is unavailable".to_string(),
+            )
+        })
 }
 
 async fn put_preferences(State(state): State<GatewayState>, body: String) -> Response<Body> {
@@ -2385,7 +3082,13 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
         Err(_) => return gateway_error("preferences lock is unavailable"),
     };
     match save_preferences(&state.preferences_path, &preferences) {
-        Ok(()) => json_response(StatusCode::OK, &preferences),
+        Ok(()) => {
+            let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
+                return gateway_error("shared document directory lock is unavailable");
+            };
+            *shared_directories = preferences.shared_document_directories.clone();
+            json_response(StatusCode::OK, &preferences)
+        }
         Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
     }
 }
@@ -2400,44 +3103,53 @@ async fn list_favorites(
     State(state): State<GatewayState>,
     Query(query): Query<FavoriteQuery>,
 ) -> Response<Body> {
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::list(&state.favorites_path, &query.q, query.limit.unwrap_or(100)) {
-        Ok(items) => json_response(StatusCode::OK, &items),
-        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::list(&state.studio_path, &query.q, query.limit.unwrap_or(100)) {
+            Ok(items) => json_response(StatusCode::OK, &items),
+            Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn get_favorite(
     State(state): State<GatewayState>,
     AxumPath(id): AxumPath<String>,
 ) -> Response<Body> {
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::find(&state.favorites_path, &id) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::find(&state.studio_path, &id) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn create_favorite(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let favorite = match parse_favorite_body(&body) {
-        Ok(favorite) => favorite,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::insert(&state.favorites_path, favorite) {
-        Ok(favorite) => json_response(StatusCode::CREATED, &favorite),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_studio_database(move || {
+        let favorite = match parse_favorite_body(&body) {
+            Ok(favorite) => favorite,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::insert(&state.studio_path, favorite) {
+            Ok(favorite) => json_response(StatusCode::CREATED, &favorite),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn update_favorite(
@@ -2445,53 +3157,62 @@ async fn update_favorite(
     AxumPath(id): AxumPath<String>,
     body: String,
 ) -> Response<Body> {
-    let favorite = match parse_favorite_body(&body) {
-        Ok(favorite) => favorite,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::update(&state.favorites_path, &id, favorite) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_studio_database(move || {
+        let favorite = match parse_favorite_body(&body) {
+            Ok(favorite) => favorite,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::update(&state.studio_path, &id, favorite) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn delete_favorite(
     State(state): State<GatewayState>,
     AxumPath(id): AxumPath<String>,
 ) -> Response<Body> {
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::remove(&state.favorites_path, &id) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => gateway_error(&format!("failed to save favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::remove(&state.studio_path, &id) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => gateway_error(&format!("failed to save favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn export_favorites(State(state): State<GatewayState>) -> Response<Body> {
-    let _guard = match state.favorites_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::export_markdown(&state.favorites_path) {
-        Ok(markdown) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
-            .header(
-                header::CONTENT_DISPOSITION,
-                "attachment; filename=\"codex-thread-studio-favorites.md\"",
-            )
-            .body(Body::from(markdown))
-            .expect("valid favorites export response"),
-        Err(error) => gateway_error(&format!("failed to export favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::export_markdown(&state.studio_path) {
+            Ok(markdown) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"codex-thread-studio-favorites.md\"",
+                )
+                .body(Body::from(markdown))
+                .expect("valid favorites export response"),
+            Err(error) => gateway_error(&format!("failed to export favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn get_session_map(
@@ -2633,34 +3354,6 @@ fn studio_router_workspace_path() -> PathBuf {
     env::temp_dir().join("codex-thread-studio-router")
 }
 
-fn legacy_preferences_path() -> PathBuf {
-    if let Some(path) = env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
-        return PathBuf::from(path)
-            .join("agent-deck-studio")
-            .join("codex-native-settings.json");
-    }
-    if let Some(home) = env::var_os("HOME") {
-        return PathBuf::from(home).join(".config/agent-deck-studio/codex-native-settings.json");
-    }
-    env::temp_dir().join("agent-deck-studio-codex-native-settings.json")
-}
-
-fn migrate_legacy_preferences(target: &std::path::Path) -> Result<(), String> {
-    migrate_preferences_file(&legacy_preferences_path(), target)
-}
-
-fn migrate_preferences_file(
-    legacy: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<(), String> {
-    if target.exists() || !legacy.exists() {
-        return Ok(());
-    }
-    let preferences = load_preferences(legacy)?;
-    validate_preferences(&preferences)?;
-    save_preferences(target, &preferences)
-}
-
 fn load_preferences(path: &std::path::Path) -> Result<StudioPreferences, String> {
     match fs::read(path) {
         Ok(data) => serde_json::from_slice(&data).map_err(|error| error.to_string()),
@@ -2684,6 +3377,23 @@ fn save_preferences(path: &std::path::Path, preferences: &StudioPreferences) -> 
 
 fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     preferences.browser.validate()?;
+    if preferences
+        .queue_depth
+        .is_some_and(|depth| !(1..=3).contains(&depth))
+    {
+        return Err("queue depth must be between 1 and 3".to_string());
+    }
+    if preferences
+        .continue_behavior
+        .as_deref()
+        .is_some_and(|behavior| {
+            !matches!(behavior, "sessionModelDraft" | "ollamaDraft" | "quickSend")
+        })
+    {
+        return Err(
+            "Continue behavior must be sessionModelDraft, ollamaDraft, or quickSend".to_string(),
+        );
+    }
     if preferences
         .language
         .as_deref()
@@ -2712,6 +3422,14 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
             .any(|path| !valid_session_directory(path))
     {
         return Err("hidden session directories are invalid".to_string());
+    }
+    if preferences.shared_document_directories.len() > 256
+        || preferences
+            .shared_document_directories
+            .iter()
+            .any(|path| !valid_shared_document_directory(path))
+    {
+        return Err("shared document directories must be absolute local paths".to_string());
     }
     if preferences.session_directory_ignore.len() > 512
         || preferences
@@ -2743,6 +3461,33 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     ) {
         return Err("Markdown mode must be reading, technical, or compact".to_string());
     }
+    if !matches!(
+        preferences.translation.engine.as_str(),
+        "backend" | "ollama"
+    ) || !valid_runtime_value(&preferences.translation.ollama_model, 256)
+        || preferences.translation.models.len() > 32
+        || preferences.translation.efforts.len() > 32
+        || preferences
+            .translation
+            .models
+            .iter()
+            .any(|(backend, model)| {
+                !valid_runtime_value(backend, 64) || !valid_runtime_value(model, 256)
+            })
+        || preferences
+            .translation
+            .efforts
+            .iter()
+            .any(|(backend, effort)| {
+                !valid_runtime_value(backend, 64)
+                    || !matches!(
+                        effort.as_str(),
+                        "minimal" | "low" | "medium" | "high" | "xhigh"
+                    )
+            })
+    {
+        return Err("translation model or reasoning effort settings are invalid".to_string());
+    }
     if preferences
         .wsl_distribution
         .as_ref()
@@ -2769,30 +3514,6 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     {
         return Err("right rail width ratio must be between 0.2 and 0.65".to_string());
     }
-    if preferences
-        .selected_thread
-        .as_ref()
-        .is_some_and(|value| value.len() > 256)
-    {
-        return Err("selected thread id is too long".to_string());
-    }
-    if preferences
-        .selected_backend
-        .as_deref()
-        .is_some_and(|backend| !backend_config::valid_backend_id(backend))
-    {
-        return Err("selected backend id is invalid".to_string());
-    }
-    if preferences.selected_threads.len() > 18
-        || preferences
-            .selected_threads
-            .iter()
-            .any(|(backend, thread_id)| {
-                !backend_config::valid_backend_id(backend) || thread_id.len() > 256
-            })
-    {
-        return Err("selected backend threads are invalid".to_string());
-    }
     if preferences.thread_activity.len() > 2048
         || preferences
             .thread_activity
@@ -2812,12 +3533,23 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
     if let Some(typography) = &preferences.typography {
         if typography.ui_font_family.trim().is_empty()
             || typography.ui_font_family.len() > 512
+            || !(11.0..=20.0).contains(&typography.ui_font_size)
             || typography.code_font_family.trim().is_empty()
             || typography.code_font_family.len() > 512
             || typography.workspace_font_family.trim().is_empty()
             || typography.workspace_font_family.len() > 512
             || ![400, 500, 600].contains(&typography.ui_font_weight)
             || ![400, 500, 600].contains(&typography.code_font_weight)
+            || typography
+                .content_font_family
+                .as_ref()
+                .is_some_and(|family| family.trim().is_empty() || family.len() > 512)
+            || typography
+                .content_font_size
+                .is_some_and(|size| !(11.0..=24.0).contains(&size))
+            || typography
+                .content_font_weight
+                .is_some_and(|weight| ![400, 500, 600].contains(&weight))
             || !(11.0..=20.0).contains(&typography.workspace_font_size)
             || !(11.0..=20.0).contains(&typography.code_font_size)
         {
@@ -2906,13 +3638,6 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
             .any(|(thread_id, value)| thread_id.len() > 256 || value.len() > 32 * 1024)
     {
         return Err("annotation additional text is too large".to_string());
-    }
-    if preferences
-        .annotation_prompt_template
-        .as_ref()
-        .is_some_and(|template| template.len() > 32 * 1024 || !template.contains("{{annotations}}"))
-    {
-        return Err("annotation template must contain {{annotations}}".to_string());
     }
     if preferences.annotation_prompt_templates.len() > 2
         || preferences
@@ -3015,6 +3740,14 @@ fn valid_session_directory(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 4096
         && !value.chars().any(|character| character.is_control())
+}
+
+fn valid_shared_document_directory(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= 4096
+        && !value.chars().any(|character| character.is_control())
+        && (PathBuf::from(value).is_absolute() || (cfg!(windows) && value.starts_with('/')))
 }
 
 fn backend_configuration(
@@ -3197,6 +3930,51 @@ mod tests {
     use tower::ServiceExt;
 
     #[test]
+    fn studio_profile_lock_excludes_other_instances_and_releases_on_close() {
+        let directory =
+            env::temp_dir().join(format!("studio-profile-lock-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("settings.json");
+        let first = lock_studio_profile(&path).expect("first owner");
+        assert!(
+            lock_studio_profile(&path).is_err(),
+            "second instance must not write preferences"
+        );
+        let separate =
+            lock_studio_profile(&directory.join("other/settings.json")).expect("separate profile");
+        drop(separate);
+        drop(first);
+        let reopened =
+            lock_studio_profile(&path).expect("released OS lock does not leave a stale lock");
+        drop(reopened);
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn desktop_and_server_share_current_main_initialization() {
+        let source = include_str!("main.rs");
+        let initializer = source
+            .split("fn initialize_gateway(")
+            .nth(1)
+            .unwrap()
+            .split("fn lock_studio_profile(")
+            .next()
+            .unwrap();
+        assert!(initializer.contains("studio.sqlite3"));
+        assert!(initializer.contains("session_state::initialize(&studio_path)"));
+        assert!(initializer.contains("shared_document_directories:"));
+        assert!(!initializer.contains("favorites.sqlite3"));
+        assert!(!initializer.contains("migrate_legacy_preferences"));
+        assert!(
+            initializer
+                .find("lock_studio_profile(&preferences_path)")
+                .unwrap()
+                < initializer
+                    .find("load_preferences(&preferences_path)")
+                    .unwrap()
+        );
+    }
+
+    #[test]
     fn remote_server_options_default_to_a_fixed_loopback_port() {
         assert_eq!(
             parse_serve_options(&[OsString::from("--serve")]),
@@ -3233,6 +4011,25 @@ mod tests {
             .contains("unsupported option"));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn database_work_does_not_block_the_async_worker() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let task = tokio::spawn(run_studio_database(move || {
+            let _ = started_tx.send(());
+            let released = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+            assert!(released.is_ok(), "database work blocked the async worker");
+            StatusCode::NO_CONTENT.into_response()
+        }));
+        started_rx.await.expect("database worker starts");
+        release_tx
+            .send(())
+            .expect("async worker remains responsive");
+        assert_eq!(
+            task.await.expect("database request completes").status(),
+            StatusCode::NO_CONTENT
+        );
+    }
     fn test_codex_backends() -> Arc<BTreeMap<String, CodexBackendInstance>> {
         Arc::new(BTreeMap::from([(
             "codex".to_string(),
@@ -3269,10 +4066,11 @@ mod tests {
                 env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.json")),
             ),
             preferences_lock: Arc::new(Mutex::new(())),
-            favorites_path: Arc::new(
+            shared_document_directories: Arc::new(Mutex::new(Vec::new())),
+            studio_path: Arc::new(
                 env::temp_dir().join(format!("codex-thread-studio-security-{suffix}.sqlite3")),
             ),
-            favorites_lock: Arc::new(Mutex::new(())),
+            studio_lock: Arc::new(Mutex::new(())),
             session_maps_path: Arc::new(env::temp_dir().join(format!(
                 "codex-thread-studio-security-maps-{suffix}.sqlite3"
             ))),
@@ -3329,6 +4127,21 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_envelopes_keep_the_originating_backend() {
+        let payload = codex_lifecycle_envelope(
+            "ept-codex",
+            json!({
+                "method": "turn/completed",
+                "params": { "threadId": "thread-1", "turn": { "id": "turn-1" } }
+            }),
+        );
+        let value: serde_json::Value = serde_json::from_str(&payload).expect("valid envelope");
+        assert_eq!(value["method"], "studio/codexLifecycle/event");
+        assert_eq!(value["params"]["backend"], "ept-codex");
+        assert_eq!(value["params"]["message"]["method"], "turn/completed");
+    }
+
+    #[test]
     fn protects_gateway_data_and_websocket_from_untrusted_pages() {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
@@ -3340,6 +4153,8 @@ mod tests {
 
             for path in [
                 "/studio/preferences",
+                "/studio/speech",
+                "/studio/session-state",
                 "/studio/favorites",
                 "/studio/session-map/codex/thread-1",
                 "/studio/epub/state",
@@ -3372,19 +4187,198 @@ mod tests {
                 .expect("authorized response");
             assert_eq!(authorized.status(), StatusCode::OK);
 
-            let websocket = router
+            for path in ["/ws/codex", "/ws/codex-lifecycle"] {
+                let websocket = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::ORIGIN, "https://untrusted.example")
+                            .header(header::HOST, "127.0.0.1:41234")
+                            .header(header::SEC_WEBSOCKET_PROTOCOL, protocol.clone())
+                            .body(Body::empty())
+                            .expect("foreign websocket request"),
+                    )
+                    .await
+                    .expect("foreign websocket response");
+                assert_eq!(websocket.status(), StatusCode::FORBIDDEN, "{path}");
+            }
+        });
+    }
+
+    #[test]
+    fn session_state_routes_round_trip_without_affecting_preferences_routes() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let state = secured_test_gateway(GatewaySecurity::disabled_for_tests());
+            let database_path = state.studio_path.as_ref().clone();
+            let preferences_path = state.preferences_path.as_ref().clone();
+            let router = gateway_router(state);
+            let annotation_body = json!({
+                "sessionKey": "codex:thread-1",
+                "drafts": [{
+                    "id": "draft-1",
+                    "excerpt": "selected text",
+                    "createdAt": "2026-08-31T00:00:00Z"
+                }],
+                "additional": "overall note"
+            })
+            .to_string();
+
+            let response = router
+                .clone()
                 .oneshot(
                     Request::builder()
-                        .uri("/ws/codex")
-                        .header(header::ORIGIN, "https://untrusted.example")
-                        .header(header::HOST, "127.0.0.1:41234")
-                        .header(header::SEC_WEBSOCKET_PROTOCOL, protocol)
-                        .body(Body::empty())
-                        .expect("foreign websocket request"),
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/annotations")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(annotation_body))
+                        .expect("annotation request"),
                 )
                 .await
-                .expect("foreign websocket response");
-            assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+                .expect("annotation response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/message-queue")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"sessionKey":"codex:thread-1","messages":[{"id":"queued-1","text":"later","input":[],"createdAt":1}]}"#,
+                        ))
+                        .expect("message queue request"),
+                )
+                .await
+                .expect("message queue response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/pin")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"sessionKey":"codex:thread-1","pinned":true}"#,
+                        ))
+                        .expect("pin request"),
+                )
+                .await
+                .expect("pin response");
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/session-state/turn-options")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"sessionKey":"codex:thread-1","model":"gpt-session","effort":"high"}"#,
+                        ))
+                        .expect("turn options request"),
+                )
+                .await
+                .expect("turn options response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/session-state")
+                        .body(Body::empty())
+                        .expect("session state request"),
+                )
+                .await
+                .expect("session state response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), MAX_PREFERENCES_BODY)
+                .await
+                .expect("session state body");
+            let value: serde_json::Value =
+                serde_json::from_slice(&body).expect("session state JSON");
+            assert_eq!(
+                value["annotationDrafts"]["codex:thread-1"][0]["id"],
+                "draft-1"
+            );
+            assert_eq!(
+                value["annotationAdditional"]["codex:thread-1"],
+                "overall note"
+            );
+            assert_eq!(value["pinnedSessions"], json!(["codex:thread-1"]));
+            assert_eq!(
+                value["turnOptions"]["codex:thread-1"],
+                json!({ "model": "gpt-session", "effort": "high" })
+            );
+            assert_eq!(
+                value["messageQueues"]["codex:thread-1"][0]["text"],
+                "later"
+            );
+
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri("/studio/preferences")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            json!({
+                                "selectedBackend": "opencode",
+                                "selectedThreads": { "opencode": "legacy-session" },
+                                "translation": {
+                                    "models": { "codex": "gpt-fast" },
+                                    "efforts": { "codex": "low" }
+                                },
+                                "annotationDrafts": {
+                                    "codex:thread-1": [{
+                                        "id": "legacy-copy",
+                                        "excerpt": "must not return to settings",
+                                        "createdAt": "2026-08-31T00:00:00Z"
+                                    }]
+                                }
+                            })
+                            .to_string(),
+                        ))
+                        .expect("preferences request"),
+                )
+                .await
+                .expect("preferences response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let saved_preferences: serde_json::Value =
+                serde_json::from_slice(&fs::read(&preferences_path).expect("saved preferences"))
+                    .expect("preferences JSON");
+            assert!(saved_preferences.get("annotationDrafts").is_none());
+            assert!(saved_preferences.get("annotationAdditional").is_none());
+            assert!(saved_preferences.get("openingMessages").is_none());
+            assert!(saved_preferences.get("selectedBackend").is_none());
+            assert!(saved_preferences.get("selectedThreads").is_none());
+            assert_eq!(
+                saved_preferences["translation"]["models"]["codex"],
+                "gpt-fast"
+            );
+            assert_eq!(saved_preferences["translation"]["efforts"]["codex"], "low");
+
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri("/studio/session-state/session")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(r#"{"sessionKey":"codex:thread-1"}"#))
+                        .expect("delete request"),
+                )
+                .await
+                .expect("delete response");
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            fs::remove_file(database_path).ok();
+            fs::remove_file(preferences_path).ok();
         });
     }
 
@@ -3425,10 +4419,11 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
-                favorites_path: Arc::new(
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
+                studio_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-favorites-test.sqlite3"),
                 ),
-                favorites_lock: Arc::new(Mutex::new(())),
+                studio_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
                 ),
@@ -3453,6 +4448,10 @@ mod tests {
                 "/i18n.mjs",
                 "/codex-native.mjs",
                 "/opencode-native.mjs",
+                "/model-revision.mjs",
+                "/performance-monitor.mjs",
+                "/selection-translation.mjs",
+                "/continuation-draft.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
                 "/session-catalog.mjs",
@@ -3468,6 +4467,7 @@ mod tests {
                 "/document-outline.mjs",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
+                "/comment-markers.mjs",
                 "/session-resources.mjs",
                 "/session-resources-ui.mjs",
                 "/favorites.mjs",
@@ -3480,6 +4480,7 @@ mod tests {
                 "/session-dispatch.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
+                "/transcript-dom.mjs",
                 "/transcript-presentation.mjs",
                 "/vendor/mermaid.min.js",
                 "/vendor/epub.mjs",
@@ -3521,13 +4522,55 @@ mod tests {
             assert!(bootstrap.contains("remote: true"));
             assert!(bootstrap.contains(std::env::consts::OS));
 
-            let app_source = include_str!("../../ui/app.js");
-            for module in app_source.lines().filter_map(|line| {
-                let start = line.find("from './")? + "from '.".len();
-                let remainder = &line[start..];
-                let end = remainder.find('\'')?;
-                Some(remainder[..end].to_string())
-            }) {
+            fn relative_imports(source: &str) -> Vec<String> {
+                source
+                    .lines()
+                    .flat_map(|line| {
+                        [
+                            "from '",
+                            "import '",
+                            "from \"",
+                            "import \"",
+                            "import('",
+                            "import(\"",
+                        ]
+                        .into_iter()
+                        .filter_map(move |marker| {
+                            let start = line.find(marker)? + marker.len();
+                            let remainder = &line[start..];
+                            let quote = marker.chars().last()?;
+                            let end = remainder.find(quote)?;
+                            let specifier = &remainder[..end];
+                            specifier.starts_with("./").then(|| specifier.to_string())
+                        })
+                    })
+                    .collect()
+            }
+
+            fn resolve_import(importer: &str, specifier: &str) -> String {
+                let parent = importer.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let mut segments = parent
+                    .split('/')
+                    .filter(|segment| !segment.is_empty())
+                    .collect::<Vec<_>>();
+                for segment in specifier.split('/') {
+                    match segment {
+                        "" | "." => {}
+                        ".." => {
+                            segments.pop();
+                        }
+                        value => segments.push(value),
+                    }
+                }
+                format!("/{}", segments.join("/"))
+            }
+
+            let mut pending = vec!["/app.js".to_string()];
+            let mut visited = BTreeSet::new();
+            while let Some(module) = pending.pop() {
+                if !visited.insert(module.clone()) {
+                    continue;
+                }
                 let response = router
                     .clone()
                     .oneshot(
@@ -3542,6 +4585,15 @@ mod tests {
                     response.status(),
                     StatusCode::OK,
                     "missing route for imported module {module}"
+                );
+                let source = axum::body::to_bytes(response.into_body(), 5 * 1024 * 1024)
+                    .await
+                    .expect("imported module body");
+                let source = std::str::from_utf8(&source).expect("UTF-8 frontend module");
+                pending.extend(
+                    relative_imports(source)
+                        .into_iter()
+                        .map(|specifier| resolve_import(&module, &specifier)),
                 );
             }
         });
@@ -3568,10 +4620,11 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-test.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
-                favorites_path: Arc::new(
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
+                studio_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-favorites-test.sqlite3"),
                 ),
-                favorites_lock: Arc::new(Mutex::new(())),
+                studio_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
                 ),
@@ -3635,10 +4688,11 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-map-api-settings.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
-                favorites_path: Arc::new(
-                    env::temp_dir().join("codex-thread-studio-map-api-favorites.sqlite3"),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
+                studio_path: Arc::new(
+                    env::temp_dir().join("codex-thread-studio-map-api-studio.sqlite3"),
                 ),
-                favorites_lock: Arc::new(Mutex::new(())),
+                studio_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
                 epub_reading_path: Arc::new(
@@ -3754,7 +4808,7 @@ mod tests {
                     .expect("system time after epoch")
                     .as_nanos()
             );
-            let favorites_path = env::temp_dir().join(unique);
+            let studio_path = env::temp_dir().join(unique);
             let state = GatewayState {
                 codex: CodexAppServer::new(
                     "codex".to_string(),
@@ -3772,8 +4826,9 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-settings.json"),
                 ),
                 preferences_lock: Arc::new(Mutex::new(())),
-                favorites_path: Arc::new(favorites_path.clone()),
-                favorites_lock: Arc::new(Mutex::new(())),
+                shared_document_directories: Arc::new(Mutex::new(Vec::new())),
+                studio_path: Arc::new(studio_path.clone()),
+                studio_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
                 ),
@@ -3874,7 +4929,7 @@ mod tests {
                 .await
                 .expect("delete response");
             assert_eq!(delete.status(), StatusCode::OK);
-            fs::remove_file(favorites_path).ok();
+            fs::remove_file(studio_path).ok();
         });
     }
 
@@ -4061,6 +5116,85 @@ mod tests {
     }
 
     #[test]
+    fn shared_document_reader_is_read_only_and_confined_to_configured_directories() {
+        let base = env::temp_dir().join(format!(
+            "codex-thread-studio-shared-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = base.join("project");
+        let shared = base.join("shared");
+        let outside = base.join("outside");
+        fs::create_dir_all(&root).expect("create project fixture");
+        fs::create_dir_all(shared.join("docs")).expect("create shared fixture");
+        fs::create_dir_all(&outside).expect("create outside fixture");
+        let shared_file = shared.join("docs/guide.md");
+        let outside_file = outside.join("private.md");
+        fs::write(&shared_file, "# Shared\n").expect("write shared file");
+        fs::write(&outside_file, "private\n").expect("write outside file");
+        let shared_root = fs::canonicalize(&shared).expect("canonical shared root");
+
+        let file = load_review_file_with_shared(
+            &ReviewFileRequest {
+                root: root.to_string_lossy().into_owned(),
+                path: shared_file.to_string_lossy().into_owned(),
+            },
+            std::slice::from_ref(&shared_root),
+        )
+        .expect("read configured shared file");
+        assert!(file.read_only);
+        assert_eq!(file.document_root, shared_root.to_string_lossy());
+        assert_eq!(file.relative_path, "docs/guide.md");
+
+        let escaped = load_review_file_with_shared(
+            &ReviewFileRequest {
+                root: root.to_string_lossy().into_owned(),
+                path: outside_file.to_string_lossy().into_owned(),
+            },
+            std::slice::from_ref(&shared_root),
+        );
+        assert!(matches!(escaped, Err((StatusCode::FORBIDDEN, _))));
+
+        let save = persist_workspace_file(&WorkspaceSaveRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: shared_file.to_string_lossy().into_owned(),
+            content: "changed\n".to_string(),
+            expected_hash: file.hash,
+            overwrite: false,
+        });
+        assert!(matches!(
+            save,
+            Err(WorkspaceSaveError::Http(StatusCode::FORBIDDEN, _))
+        ));
+        assert_eq!(fs::read_to_string(&shared_file).unwrap(), "# Shared\n");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_file, shared.join("outside-link.md"))
+                .expect("create escaping symlink");
+            let linked = load_review_file_with_shared(
+                &ReviewFileRequest {
+                    root: root.to_string_lossy().into_owned(),
+                    path: shared
+                        .join("outside-link.md")
+                        .to_string_lossy()
+                        .into_owned(),
+                },
+                std::slice::from_ref(&shared_root),
+            );
+            assert!(matches!(linked, Err((StatusCode::FORBIDDEN, _))));
+            fs::remove_file(shared.join("outside-link.md")).ok();
+        }
+
+        fs::remove_file(shared_file).ok();
+        fs::remove_file(outside_file).ok();
+        fs::remove_dir(shared.join("docs")).ok();
+        fs::remove_dir(shared).ok();
+        fs::remove_dir(outside).ok();
+        fs::remove_dir(root).ok();
+        fs::remove_dir(base).ok();
+    }
+
+    #[test]
     fn workspace_directory_listing_is_lazy_sorted_and_confined_to_root() {
         let base = env::temp_dir().join(format!(
             "codex-thread-studio-workspace-list-{}",
@@ -4215,15 +5349,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_template_without_annotations_slot() {
-        let preferences = StudioPreferences {
-            annotation_prompt_template: Some("no placeholder".to_string()),
-            ..StudioPreferences::default()
-        };
-        assert!(validate_preferences(&preferences).is_err());
-    }
-
-    #[test]
     fn validates_content_width_modes() {
         for width in ["comfortable", "wide", "full"] {
             let preferences = StudioPreferences {
@@ -4234,6 +5359,22 @@ mod tests {
         }
         let preferences = StudioPreferences {
             content_width: Some("unbounded".to_string()),
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn validates_message_queue_depth() {
+        for depth in 1..=3 {
+            let preferences = StudioPreferences {
+                queue_depth: Some(depth),
+                ..StudioPreferences::default()
+            };
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+        let preferences = StudioPreferences {
+            queue_depth: Some(4),
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());
@@ -4268,6 +5409,27 @@ mod tests {
     }
 
     #[test]
+    fn validates_shared_document_directories_as_absolute_paths() {
+        let preferences = StudioPreferences {
+            shared_document_directories: vec![env::temp_dir().to_string_lossy().into_owned()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&preferences).is_ok());
+
+        let relative = StudioPreferences {
+            shared_document_directories: vec!["shared/docs".to_string()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&relative).is_err());
+
+        let controlled = StudioPreferences {
+            shared_document_directories: vec!["/shared\ndocs".to_string()],
+            ..StudioPreferences::default()
+        };
+        assert!(validate_preferences(&controlled).is_err());
+    }
+
+    #[test]
     fn validates_rendering_preferences() {
         let defaults = StudioPreferences::default();
         assert_eq!(defaults.markdown.mode, "technical");
@@ -4286,6 +5448,50 @@ mod tests {
 
         let mut invalid = StudioPreferences::default();
         invalid.mermaid.font_size = 24;
+        assert!(validate_preferences(&invalid).is_err());
+
+        let mut translation = StudioPreferences::default();
+        translation
+            .translation
+            .models
+            .insert("codex".to_string(), "gpt-fast".to_string());
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "low".to_string());
+        assert!(validate_preferences(&translation).is_ok());
+
+        translation.translation.engine = "ollama".to_string();
+        translation.translation.ollama_model = "gemma3:4b".to_string();
+        assert!(validate_preferences(&translation).is_ok());
+
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "unbounded".to_string());
+        assert!(validate_preferences(&translation).is_err());
+
+        translation
+            .translation
+            .efforts
+            .insert("codex".to_string(), "low".to_string());
+        translation.translation.engine = "remote".to_string();
+        assert!(validate_preferences(&translation).is_err());
+    }
+
+    #[test]
+    fn validates_continue_behavior_preferences() {
+        for behavior in ["sessionModelDraft", "ollamaDraft", "quickSend"] {
+            let preferences = StudioPreferences {
+                continue_behavior: Some(behavior.to_string()),
+                ..StudioPreferences::default()
+            };
+            assert!(validate_preferences(&preferences).is_ok());
+        }
+        let invalid = StudioPreferences {
+            continue_behavior: Some("automaticAgent".to_string()),
+            ..StudioPreferences::default()
+        };
         assert!(validate_preferences(&invalid).is_err());
     }
 
@@ -4390,10 +5596,6 @@ mod tests {
         preferences
             .attention_threads
             .push("codex:thread-1".to_string());
-        preferences.selected_backend = Some("company-codex".to_string());
-        preferences
-            .selected_threads
-            .insert("company-codex".to_string(), "session-2".to_string());
         assert!(validate_preferences(&preferences).is_ok());
 
         preferences
@@ -4490,37 +5692,5 @@ mod tests {
         router.responsibilities.clear();
         router.fallbacks.push(router.fallbacks[0].clone());
         assert!(validate_preferences(&preferences).is_err());
-    }
-
-    #[test]
-    fn migrates_legacy_preferences_once() {
-        let unique = format!(
-            "codex-thread-studio-migration-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time after epoch")
-                .as_nanos()
-        );
-        let root = env::temp_dir().join(unique);
-        let legacy = root.join("legacy/settings.json");
-        let target = root.join("current/settings.json");
-        let preferences = StudioPreferences {
-            theme: Some("dark".to_string()),
-            content_width: Some("wide".to_string()),
-            ..StudioPreferences::default()
-        };
-        save_preferences(&legacy, &preferences).expect("write legacy settings");
-        migrate_preferences_file(&legacy, &target).expect("migrate settings");
-        assert_eq!(load_preferences(&target).unwrap(), preferences);
-
-        let replacement = StudioPreferences {
-            theme: Some("light".to_string()),
-            ..StudioPreferences::default()
-        };
-        save_preferences(&legacy, &replacement).expect("replace legacy settings");
-        migrate_preferences_file(&legacy, &target).expect("skip existing target");
-        assert_eq!(load_preferences(&target).unwrap(), preferences);
-        fs::remove_dir_all(root).expect("remove migration test directory");
     }
 }

@@ -6,8 +6,10 @@ import {
   findTextMatchRanges,
   isHtmlFile,
   isMarkdownFile,
+  renderStructuredTextPreview,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
+  structuredTextPreviewKind,
 } from './document-review.mjs'
 import {
   extractHtmlOutline,
@@ -62,6 +64,7 @@ export function createDocumentWorkspaceController({
     openResources,
     renderSessionMap,
     openBrowserUrl,
+    readingTypography = () => ({}),
     reportClientError,
   } = view
   const $ = (selector) => document.querySelector(selector)
@@ -227,7 +230,9 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
     const result = await response.json()
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
     state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, loading: false }
-    state.artifactView = kind === 'table' ? 'table' : isMarkdownFile(result.path) || isHtmlFile(result.path) ? 'preview' : 'source'
+    state.artifactView = kind === 'table'
+      ? 'table'
+      : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
   }
   renderArtifact()
 }
@@ -264,7 +269,11 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
 
 function setArtifactView(view) {
   if (!state.artifact || state.artifact.kind !== 'text') return
-  if (view === 'preview' && !isMarkdownFile(state.artifact.path) && !isHtmlFile(state.artifact.path)) return
+  if (view === 'edit' && state.artifact.readOnly) return
+  if (view === 'preview'
+    && !isMarkdownFile(state.artifact.path)
+    && !isHtmlFile(state.artifact.path)
+    && !structuredTextPreviewKind(state.artifact.path)) return
   if (!['preview', 'source', 'edit'].includes(view)) return
   state.artifactView = view
   renderArtifact()
@@ -539,7 +548,7 @@ function flashArtifactOutlineTarget(element) {
 
 async function saveArtifact({ overwrite = false } = {}) {
   const file = state.artifact
-  if (!file || state.artifactView !== 'edit' || !file.dirty) return
+  if (!file || file.readOnly || state.artifactView !== 'edit' || !file.dirty) return
   const content = artifactEditor?.value() ?? file.editContent ?? file.content
   file.saving = true
   $('#artifact-save').disabled = true
@@ -592,8 +601,12 @@ function renderArtifact() {
   disposeEpubReader()
   applyRightRailWidth()
   rail.classList.remove('hidden')
-  $('#artifact-title').textContent = fileDisplayName(file.path)
-  $('#artifact-path').textContent = file.relativePath || file.path
+  const artifactTitle = fileDisplayName(file.path)
+  const artifactPath = file.relativePath || file.path
+  $('#artifact-title').textContent = artifactTitle
+  $('#artifact-title').title = artifactTitle
+  $('#artifact-path').textContent = artifactPath
+  $('#artifact-path').title = artifactPath
   const closeButton = $('#close-artifact')
   const returnLabel = file.returnTool === 'files' ? t('Back to Files') : file.returnTool === 'review' ? t('Back to Git Review') : file.returnTool === 'resources' ? t('Back to Resources') : t('Close document')
   closeButton.classList.toggle('returning', Boolean(file.returnTool))
@@ -612,22 +625,24 @@ function renderArtifact() {
   $('#artifact-reader-shell').classList.toggle('hidden', !ready)
   content.classList.toggle('hidden', !ready)
   $('#artifact-meta').textContent = textReady
-    ? t('{lines} lines · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })
+    ? `${t('{lines} lines · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })}${file.readOnly ? ` · ${t('Read only')}` : ''}`
     : imageReady ? `${file.mimeType.replace('image/', '').toUpperCase()} · ${formatFileSize(file.size)}`
       : epubReady ? `EPUB · ${formatFileSize(file.size)}`
         : pdfReady ? `PDF · ${formatFileSize(file.size)}`
-          : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : 'CSV'} · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Select a cell to comment' : 'Select text to comment')
+          : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : /\.tsv$/iu.test(file.path) ? 'TSV' : 'CSV'} · ${formatFileSize(file.size)}` : ''
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Drag a column border to resize; select a cell to comment or copy' : 'Select text to comment')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
-  const editable = textReady
+  const structured = textReady ? structuredTextPreviewKind(file.path) : null
+  const editable = textReady && !file.readOnly
   const renderedContent = file.editContent ?? file.content
   $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
-  $('#artifact-view-switch').classList.toggle('hidden', !editable)
-  $('#artifact-preview').disabled = !markdown && !html
+  $('#artifact-view-switch').classList.toggle('hidden', !textReady)
+  $('#artifact-preview').disabled = !markdown && !html && !structured
   $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
   $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
   $('#artifact-edit').classList.toggle('active', state.artifactView === 'edit')
+  $('#artifact-edit').classList.toggle('hidden', !editable)
   $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
   $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
   const canSearch = artifactSearchAvailable(file, state.artifactView)
@@ -646,6 +661,7 @@ function renderArtifact() {
     setArtifactOutline(file, [])
     return
   }
+  delete content.dataset.previewLanguage
   if (imageReady) {
     setArtifactOutline(file, [])
     content.className = 'artifact-content artifact-image-preview'
@@ -706,6 +722,16 @@ function renderArtifact() {
   } else if (html && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body artifact-html-preview'
     content.innerHTML = renderStaticHtml(renderedContent)
+  } else if (structured && state.artifactView === 'preview') {
+    const preview = file.structuredPreview?.source === renderedContent
+      ? file.structuredPreview
+      : renderStructuredTextPreview(file.path, renderedContent)
+    file.structuredPreview = { ...preview, source: renderedContent }
+    content.className = 'artifact-content artifact-structured-preview'
+    content.dataset.previewLanguage = preview.formatted
+      ? `${preview.label} · ${t('Formatted')}`
+      : preview.label
+    content.innerHTML = `<pre class="artifact-source artifact-structured-source" data-no-i18n><code>${preview.html}</code></pre>`
   } else {
     content.className = 'artifact-content'
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
@@ -817,6 +843,7 @@ async function mountEpubReader(file, parent) {
     container: parent,
     bytes: file.bytes,
     initialState: file.readingState,
+    typography: readingTypography(),
     translate: t,
     onSelection: (selection) => captureEpubSelection(file, selection),
     onRelocate: (readingState) => {

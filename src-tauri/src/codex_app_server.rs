@@ -24,6 +24,7 @@ pub struct CodexAppServer {
     runtime: Arc<BackendRuntime>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
     events: broadcast::Sender<String>,
+    lifecycle_events: broadcast::Sender<String>,
     generation: Arc<AtomicU64>,
 }
 
@@ -42,12 +43,14 @@ impl CodexAppServer {
 
     pub fn with_prefix(binary: String, prefix_args: Vec<String>, runtime: BackendRuntime) -> Self {
         let (events, _) = broadcast::channel(2_048);
+        let (lifecycle_events, _) = broadcast::channel(256);
         Self {
             binary: Arc::from(binary),
             prefix_args: Arc::from(prefix_args),
             runtime: Arc::new(runtime),
             process: Arc::new(Mutex::new(None)),
             events,
+            lifecycle_events,
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -82,8 +85,11 @@ impl CodexAppServer {
         root: &str,
         path: &str,
         max_bytes: u64,
+        shared_document_directories: &[String],
     ) -> std::io::Result<RuntimeFile> {
-        self.runtime.read_wsl_file(root, path, max_bytes).await
+        self.runtime
+            .read_wsl_file(root, path, max_bytes, shared_document_directories)
+            .await
     }
 
     async fn ensure_started(&self) -> Result<(), String> {
@@ -186,7 +192,7 @@ impl CodexAppServer {
                         .await;
                     continue;
                 }
-                let _ = events.send(value.to_string());
+                reader_server.emit(value);
             }
         });
 
@@ -340,7 +346,7 @@ impl CodexAppServer {
         let mut events = self.events.subscribe();
         self.send(json!({ "id": id, "method": method, "params": params }))
             .await?;
-        let response = tokio::time::timeout(std::time::Duration::from_secs(15), async move {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(30), async move {
             loop {
                 let payload = events.recv().await.map_err(|error| error.to_string())?;
                 let value: Value =
@@ -364,7 +370,16 @@ impl CodexAppServer {
     }
 
     fn emit(&self, value: Value) {
-        let _ = self.events.send(value.to_string());
+        let lifecycle = is_lifecycle_message(&value);
+        let payload = value.to_string();
+        let _ = self.events.send(payload.clone());
+        if lifecycle {
+            let _ = self.lifecycle_events.send(payload);
+        }
+    }
+
+    pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<String> {
+        self.lifecycle_events.subscribe()
     }
 
     pub async fn bridge(&self, socket: WebSocket) {
@@ -428,6 +443,15 @@ impl CodexAppServer {
             }
         }
     }
+}
+
+fn is_lifecycle_message(value: &Value) -> bool {
+    matches!(
+        value.get("method").and_then(Value::as_str),
+        Some(
+            "studio/appServer/status" | "thread/status/changed" | "turn/started" | "turn/completed"
+        )
+    )
 }
 
 fn studio_client_capabilities() -> Value {
@@ -532,5 +556,56 @@ mod tests {
         );
         assert_eq!(server.binary(), "custom-launcher");
         assert_eq!(server.prefix_args.as_ref(), &["codex-runtime".to_string()]);
+    }
+
+    #[test]
+    fn isolates_low_volume_lifecycle_messages_for_background_subscribers() {
+        for method in [
+            "studio/appServer/status",
+            "thread/status/changed",
+            "turn/started",
+            "turn/completed",
+        ] {
+            assert!(is_lifecycle_message(
+                &json!({ "method": method, "params": {} })
+            ));
+        }
+        for method in [
+            "item/agentMessage/delta",
+            "item/commandExecution/outputDelta",
+            "item/completed",
+            "thread/tokenUsage/updated",
+        ] {
+            assert!(!is_lifecycle_message(
+                &json!({ "method": method, "params": {} })
+            ));
+        }
+    }
+
+    #[test]
+    fn publishes_only_lifecycle_messages_to_the_background_channel() {
+        let server = CodexAppServer::new(
+            "codex".to_string(),
+            BackendRuntime::new(std::ffi::OsString::new(), Default::default()),
+        );
+        let mut lifecycle = server.subscribe_lifecycle();
+        server.emit(json!({
+            "method": "turn/completed",
+            "params": { "threadId": "thread-1", "turn": { "id": "turn-1" } }
+        }));
+        let completed = lifecycle.try_recv().expect("lifecycle event");
+        assert_eq!(
+            serde_json::from_str::<Value>(&completed).expect("valid JSON")["method"],
+            "turn/completed"
+        );
+
+        server.emit(json!({
+            "method": "item/agentMessage/delta",
+            "params": { "delta": "not copied" }
+        }));
+        assert!(matches!(
+            lifecycle.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
     }
 }

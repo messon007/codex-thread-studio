@@ -1,3 +1,5 @@
+import { markTranscriptModelChanged } from './model-revision.mjs'
+
 export function createCodexViewModel() {
   return {
     threadId: null,
@@ -14,11 +16,19 @@ export function createCodexViewModel() {
 
 export function hydrateCodexThread(model, thread) {
   model.threadId = thread?.id || model.threadId
-  model.turns = Array.isArray(thread?.turns) ? structuredCloneSafe(thread.turns) : []
+  // RPC history objects are freshly decoded and are not reused by callers.
+  // Taking ownership avoids cloning an entire large session a second time.
+  model.turns = Array.isArray(thread?.turns) ? thread.turns : []
   model.error = null
-  const active = [...model.turns].reverse().find((turn) => turn?.status === 'inProgress')
+  let active = null
+  for (let index = model.turns.length - 1; index >= 0; index -= 1) {
+    if (model.turns[index]?.status !== 'inProgress') continue
+    active = model.turns[index]
+    break
+  }
   model.activeTurnId = active?.id || null
   model.status = model.activeTurnId ? 'running' : 'idle'
+  markTranscriptModelChanged(model)
   return model
 }
 
@@ -40,6 +50,7 @@ export function beginOptimisticCodexTurn(model, { clientUserMessageId, input }) 
   model.activeTurnId = turnId
   model.status = 'running'
   model.error = null
+  markTranscriptModelChanged(model)
   return turnId
 }
 
@@ -57,6 +68,7 @@ export function reconcileOptimisticCodexTurn(model, optimisticTurnId, incomingTu
   if (user && !turn.items.some((item) => sameUserMessage(item, user))) turn.items.unshift(user)
   model.activeTurnId = terminalStatus ? null : turn.id
   model.status = terminalStatus === 'failed' ? 'failed' : terminalStatus ? 'idle' : 'running'
+  markTranscriptModelChanged(model)
   return turn
 }
 
@@ -66,9 +78,16 @@ export function rollbackOptimisticCodexTurn(model, optimisticTurnId) {
   const active = [...model.turns].reverse().find((turn) => turn?.status === 'inProgress')
   model.activeTurnId = active?.id || null
   model.status = active ? 'running' : 'idle'
+  markTranscriptModelChanged(model)
 }
 
 export function applyCodexNotification(model, message) {
+  const handled = applyCodexNotificationInternal(model, message)
+  if (handled) markTranscriptModelChanged(model)
+  return handled
+}
+
+function applyCodexNotificationInternal(model, message) {
   const method = message?.method
   const params = message?.params || {}
   if (!method) return false

@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{hash_map::DefaultHasher, BTreeMap};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 const MAX_ENTRIES: usize = 128;
 const MAX_VALUE_BYTES: usize = 16 * 1024;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProfile {
     pub root: String,
@@ -28,6 +29,7 @@ pub struct EnvironmentProfile {
 pub struct PublicEnvironmentProfile {
     pub root: String,
     pub configured: bool,
+    pub revision: String,
     pub variables: BTreeMap<String, String>,
     pub secret_names: Vec<String>,
     pub network_policy: NetworkPolicy,
@@ -35,7 +37,7 @@ pub struct PublicEnvironmentProfile {
     pub cache_variables: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NetworkPolicy {
     #[default]
@@ -152,9 +154,13 @@ pub fn app_server_environment(path: &Path, root: &str) -> Result<BTreeMap<String
 }
 
 fn to_public(profile: EnvironmentProfile, configured: bool) -> PublicEnvironmentProfile {
+    let mut hasher = DefaultHasher::new();
+    profile.hash(&mut hasher);
+    let revision = format!("{:016x}", hasher.finish());
     PublicEnvironmentProfile {
         root: profile.root,
         configured,
+        revision,
         variables: profile.variables,
         secret_names: profile.secrets.keys().cloned().collect(),
         network_policy: profile.network_policy,
@@ -267,8 +273,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.secret_names, vec!["TOKEN"]);
+        let first_revision = result.revision.clone();
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("hidden"));
         let environment = process_environment(&store, &base);
         assert_eq!(environment.get("TOKEN").map(String::as_str), Some("hidden"));
+
+        let changed = update(
+            &store,
+            UpdateEnvironmentProfile {
+                root: base.to_string_lossy().into_owned(),
+                variables: BTreeMap::from([("MODE".into(), "test".into())]),
+                secrets: BTreeMap::from([("TOKEN".into(), "changed".into())]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(changed.revision, first_revision);
+        assert!(!serde_json::to_string(&changed).unwrap().contains("changed"));
         let _ = fs::remove_dir_all(base);
     }
 }

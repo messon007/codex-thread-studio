@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { transcriptModelRevision } from './model-revision.mjs'
 
 import {
   applyCodexNotification,
@@ -16,10 +17,25 @@ import {
 
 test('hydrates persisted turns and detects an active turn', () => {
   const model = createCodexViewModel()
-  hydrateCodexThread(model, { id: 'thread-1', turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] })
+  const turns = [{ id: 'turn-1', status: 'inProgress', items: [] }]
+  hydrateCodexThread(model, { id: 'thread-1', turns })
   assert.equal(model.threadId, 'thread-1')
+  assert.equal(model.turns, turns)
   assert.equal(model.activeTurnId, 'turn-1')
   assert.equal(model.status, 'running')
+  assert.equal(transcriptModelRevision(model), 1)
+})
+
+test('advances the presentation revision for handled notifications only', () => {
+  const model = createCodexViewModel()
+  assert.equal(transcriptModelRevision(model), null)
+  assert.equal(applyCodexNotification(model, {
+    method: 'turn/started',
+    params: { turn: { id: 'turn-1', status: 'inProgress', items: [] } },
+  }), true)
+  assert.equal(transcriptModelRevision(model), 1)
+  assert.equal(applyCodexNotification(model, { method: 'unknown', params: {} }), false)
+  assert.equal(transcriptModelRevision(model), 1)
 })
 
 test('assembles streamed structured items and completion state', () => {

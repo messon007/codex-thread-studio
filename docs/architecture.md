@@ -69,7 +69,7 @@ Agent prose and reasoning summaries pass through locally vendored Marked (GFM pa
 
 App Server delta notifications update only the affected Item in the browser model. Studio batches high-frequency updates with `requestAnimationFrame` and patches the active message, plan, reasoning, or command-output node directly. Markdown parsing and sanitization run after Item completion, not once for every token delta. Structural notifications still trigger a full transcript render.
 
-Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. The loaded set and render-model cache are deliberately process-local: after restart, Studio loads the most recently updated session for the selected backend and restores other histories only on first selection. The flat Attention view exposes this loaded workset and orders it by backend session update time. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore a cached model only when it was loaded in the current process and remains valid.
+Codex Threads loaded during the current Studio process remain subscribed so their cached render models can receive routed notifications. The loaded set and render-model cache are deliberately process-local: after restart, Studio opens the configured Thread Router controller and restores other histories only on first selection. The flat Attention view exposes this loaded workset and orders it by backend session update time. OpenCode uses the global SSE stream and routes events by session ID. Backend changes close the old browser transport, reject its pending UI requests, reset transient render state, and restore a cached model only when it was loaded in the current process and remains valid.
 
 Before a Router dispatch, Studio lazily reads the selected target Thread into that same cache. It then sends `turn/start` without changing the active Thread. Notifications are associated with the target model by `threadId`/`turnId`, so the target row changes state immediately and its transcript is ready when opened.
 
@@ -107,27 +107,27 @@ Favorites attach to complete structured AI messages rather than terminal text or
 
 ## Persistence
 
-Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI language, appearance settings, per-backend selection, language-specific comment templates, and explicit comment drafts in:
+Codex and OpenCode own history and credentials in their normal state directories. Studio stores UI language, appearance settings, per-backend selection, and language-specific comment templates in:
 
 ```text
 ~/.config/codex-thread-studio/settings.json
 ```
 
-The global favorites library is intentionally separate because it can contain substantially larger user-selected message content:
+Larger user-authored state is stored in one shared SQLite database:
 
 ```text
-~/.config/codex-thread-studio/favorites.sqlite3
+~/.config/codex-thread-studio/studio.sqlite3
 ```
 
-Favorites use validated, bounded SQLite records. The first database initialization transactionally imports the legacy `favorites.json` once and leaves it intact as a migration source. Search returns summaries; full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
+Separate tables hold Favorites, per-session comment drafts and additional guidance, per-session opening-question/responsibility metadata, and up to ten pinned sessions. Pinned sessions are shown in one global section above directory groups; archiving or deleting a session clears its pin. All records are validated and bounded. Favorite search returns summaries, and full Markdown content is loaded only when a favorite is opened. The global library can be exported as a single UTF-8 Markdown document.
 
 Session Maps use the rollout-isolated `session-maps.sqlite3` database beside Studio settings. The Rust gateway owns schema creation, validation, optimistic revision checks, transactional operation batches, and undo snapshots. Provider history is not copied into these tables. Declarative custom template snapshots remain a later milestone.
 
-Thread Router configuration is small structured metadata stored in `settings.json`: Studio-managed controller identities, up to three fallback session keys with conditions, and per-session opening-question/responsibility metadata. Every unlisted session is a regular target. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
+Thread Router configuration is small structured metadata stored in `settings.json`: Studio-managed controller identities and up to three fallback session keys with conditions. Per-session opening-question/responsibility metadata lives in `studio.sqlite3`. Every unlisted session is a regular target. Routing requests and decisions remain in the Router Thread's native history; Studio does not copy chat history into its preferences.
 
-On first launch, the app imports compatible settings from the former experimental path at `~/.config/agent-deck-studio/codex-native-settings.json` when the new file does not yet exist. Writes use a temporary file plus rename. Payload shape and size are validated in Rust.
+Preference writes use a temporary file plus rename. Payload shape and size are validated in Rust.
 
-The WebView uses a local Chinese-to-English interface catalog for both initial markup and controls rendered after App Server events. Thread titles, project paths, prompts, AI responses, favorites, comments, code, and tool output are protected from translation. Legacy single-template settings are detected and moved to the matching language slot.
+The WebView uses a local Chinese-to-English interface catalog for both initial markup and controls rendered after App Server events. Thread titles, project paths, prompts, AI responses, favorites, comments, code, and tool output are protected from translation. Comment prompt templates are stored independently for Chinese and English.
 
 ## Security boundaries
 

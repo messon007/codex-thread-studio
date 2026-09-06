@@ -2,6 +2,45 @@ import { BACKEND_IDS, backendSearchAliases } from './backends.mjs'
 
 const activeStatuses = new Set(['active', 'running', 'inProgress'])
 
+export const SIDEBAR_TEXT_LIMIT = 200
+
+export function compactSidebarText(value, limit = SIDEBAR_TEXT_LIMIT) {
+  const maximum = Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : SIDEBAR_TEXT_LIMIT)
+  const characters = []
+  let pendingSpace = false
+  let truncated = false
+  for (const character of String(value ?? '')) {
+    if (/\s/u.test(character)) {
+      if (characters.length) pendingSpace = true
+      continue
+    }
+    if (pendingSpace) {
+      if (characters.length >= maximum) {
+        truncated = true
+        break
+      }
+      characters.push(' ')
+      pendingSpace = false
+    }
+    if (characters.length >= maximum) {
+      truncated = true
+      break
+    }
+    characters.push(character)
+  }
+  if (!truncated) return characters.join('')
+  if (maximum === 1) return '…'
+  return `${characters.slice(0, maximum - 1).join('').trimEnd()}…`
+}
+
+export function syncCatalogSelection(rows, backend, selectedId) {
+  for (const row of rows || []) {
+    const selected = row?.dataset?.backend === backend
+      && row?.dataset?.threadId === String(selectedId || '')
+    row?.classList?.toggle('active', selected)
+  }
+}
+
 export function threadCatalogKey(backend, id) {
   return `${backend}:${id}`
 }
@@ -40,6 +79,42 @@ export function groupCatalogEntries(entries = []) {
   }))
 }
 
+function compareCatalogEntriesByActivity(left, right) {
+  const leftUpdated = catalogActivityTimestamp(left.thread)
+  const rightUpdated = catalogActivityTimestamp(right.thread)
+  if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
+  return String(left.thread.name || left.thread.title || left.thread.id)
+    .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
+}
+
+export function catalogActivityTimestamp(thread) {
+  return Math.max(
+    catalogTimestamp(thread?.activityAt),
+    catalogTimestamp(thread?.updatedAt || thread?.updated_at || thread?.createdAt),
+  )
+}
+
+export function partitionPinnedCatalogEntries(entries = [], pinned = new Set(), { order = 'pin' } = {}) {
+  const pinOrder = new Map([...pinned].map((key, index) => [key, index]))
+  const pinnedEntries = []
+  const regularEntries = []
+  for (const entry of entries) {
+    const target = pinned.has(threadCatalogKey(entry.backend, entry.thread.id))
+      ? pinnedEntries
+      : regularEntries
+    target.push(entry)
+  }
+  if (order === 'activity') {
+    pinnedEntries.sort(compareCatalogEntriesByActivity)
+    regularEntries.sort(compareCatalogEntriesByActivity)
+  } else {
+    pinnedEntries.sort((left, right) =>
+      pinOrder.get(threadCatalogKey(left.backend, left.thread.id))
+        - pinOrder.get(threadCatalogKey(right.backend, right.thread.id)))
+  }
+  return { pinnedEntries, regularEntries }
+}
+
 export function filterCatalogEntries(catalogs, {
   filter = 'all',
   search = '',
@@ -66,13 +141,7 @@ export function filterCatalogEntries(catalogs, {
 
   if (filter !== 'attention') return entries
 
-  return entries.sort((left, right) => {
-    const leftUpdated = catalogTimestamp(left.thread.updatedAt || left.thread.updated_at || left.thread.createdAt)
-    const rightUpdated = catalogTimestamp(right.thread.updatedAt || right.thread.updated_at || right.thread.createdAt)
-    if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated
-    return String(left.thread.name || left.thread.title || left.thread.id)
-      .localeCompare(String(right.thread.name || right.thread.title || right.thread.id))
-  })
+  return entries.sort(compareCatalogEntriesByActivity)
 }
 
 export function normalizeHiddenSessionDirectories(values = []) {
@@ -188,6 +257,18 @@ export function catalogTimestamp(value) {
   if (Number.isFinite(numeric)) return normalizeEpoch(numeric)
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+export function isCatalogCacheFresh(updatedAt, validatedAt, { coarse = false } = {}) {
+  const updated = catalogTimestamp(updatedAt)
+  const validated = Number(validatedAt)
+  if (!updated) return true
+  if (!Number.isFinite(validated)) return false
+  // Codex state-db timestamps currently have one-second precision. Treat the
+  // entire validation second as uncertain so an event missed by a reconnect in
+  // that same second cannot be hidden behind an apparently fresh cache.
+  if (coarse) return updated < Math.floor(validated / 1000) * 1000
+  return updated <= validated
 }
 
 function normalizeEpoch(value) {

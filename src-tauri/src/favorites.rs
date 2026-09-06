@@ -13,7 +13,6 @@ const MAX_FAVORITES: usize = 2_000;
 const MAX_CONTENT_BYTES: usize = 192 * 1024;
 const MAX_NOTE_BYTES: usize = 16 * 1024;
 const MAX_RESULTS: usize = 2_000;
-const MAX_LEGACY_STORE_BYTES: u64 = 400 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,13 +58,6 @@ pub struct FavoriteList {
     pub items: Vec<FavoriteSummary>,
     pub total: usize,
     pub all_total: usize,
-}
-
-#[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LegacyFavoriteStore {
-    #[serde(default)]
-    items: Vec<Favorite>,
 }
 
 fn default_scope() -> String {
@@ -284,17 +276,13 @@ fn connection(path: &Path) -> Result<Connection, String> {
         .parent()
         .ok_or_else(|| "favorites database path has no parent directory".to_string())?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut connection = Connection::open(path).map_err(sql_error)?;
+    let connection = Connection::open(path).map_err(sql_error)?;
     connection
         .busy_timeout(Duration::from_secs(3))
         .map_err(sql_error)?;
     connection
         .execute_batch(
             "PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS favorite_meta (
-               key TEXT PRIMARY KEY,
-               value TEXT NOT NULL
-             );
              CREATE TABLE IF NOT EXISTS favorites (
                id TEXT PRIMARY KEY,
                scope TEXT NOT NULL,
@@ -318,58 +306,7 @@ fn connection(path: &Path) -> Result<Connection, String> {
                WHERE scope = 'message';",
         )
         .map_err(sql_error)?;
-    migrate_legacy_json(&mut connection, &path.with_extension("json"))?;
     Ok(connection)
-}
-
-fn migrate_legacy_json(connection: &mut Connection, legacy_path: &Path) -> Result<(), String> {
-    let migrated = connection
-        .query_row(
-            "SELECT value FROM favorite_meta WHERE key = 'legacy_json_imported'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(sql_error)?
-        .is_some();
-    if migrated {
-        return Ok(());
-    }
-    let items = read_legacy_json(legacy_path)?;
-    let transaction = connection.transaction().map_err(sql_error)?;
-    for favorite in &items {
-        validate(favorite)
-            .map_err(|error| format!("invalid legacy favorite {}: {error}", favorite.id))?;
-        insert_row(&transaction, favorite).map_err(sql_error)?;
-    }
-    transaction
-        .execute(
-            "INSERT INTO favorite_meta(key, value) VALUES('legacy_json_imported', '1')",
-            [],
-        )
-        .map_err(sql_error)?;
-    transaction.commit().map_err(sql_error)
-}
-
-fn read_legacy_json(path: &Path) -> Result<Vec<Favorite>, String> {
-    if path
-        .metadata()
-        .is_ok_and(|metadata| metadata.len() > MAX_LEGACY_STORE_BYTES)
-    {
-        return Err("legacy favorites file is too large".to_string());
-    }
-    match fs::read(path) {
-        Ok(data) => {
-            let store = serde_json::from_slice::<LegacyFavoriteStore>(&data)
-                .map_err(|error| format!("invalid legacy favorites file: {error}"))?;
-            if store.items.len() > MAX_FAVORITES {
-                return Err("legacy favorites file contains too many items".to_string());
-            }
-            Ok(store.items)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 fn insert_row(connection: &Connection, favorite: &Favorite) -> rusqlite::Result<usize> {
@@ -572,25 +509,6 @@ mod tests {
         let markdown = export_markdown(&path).unwrap();
         assert!(markdown.contains("# Codex Thread Studio Favorites"));
         assert!(markdown.contains("A durable event log"));
-        cleanup(&path);
-    }
-
-    #[test]
-    fn migrates_legacy_json_once() {
-        let path = database("migration");
-        let legacy = LegacyFavoriteStore {
-            items: vec![favorite("legacy", "Legacy", "Imported content")],
-        };
-        fs::write(
-            path.with_extension("json"),
-            serde_json::to_vec_pretty(&legacy).unwrap(),
-        )
-        .unwrap();
-        initialize(&path).unwrap();
-        assert_eq!(list(&path, "", 20).unwrap().all_total, 1);
-        remove(&path, "legacy").unwrap();
-        initialize(&path).unwrap();
-        assert_eq!(list(&path, "", 20).unwrap().all_total, 0);
         cleanup(&path);
     }
 

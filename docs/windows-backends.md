@@ -12,6 +12,18 @@ silently when WSL fails.
 
 ## Optional fallback: native Windows
 
+There are two independent switches:
+
+| Build | Startup environment variable | Backend used |
+| --- | --- | --- |
+| Default build | Unset or `wsl` | WSL |
+| Built with `--features windows-native` | Unset or `wsl` | WSL |
+| Built with `--features windows-native` | `native` | Native Windows |
+| Default build | `native` | Startup error; native support is not compiled in |
+
+The runtime choice is currently an **environment variable**, not a Settings UI
+option. Compiling native support does not select it automatically.
+
 For machines without WSL, build on Windows with:
 
 ```powershell
@@ -26,6 +38,15 @@ To package installers, use `npm run tauri -- build --features windows-native`.
 An installer built with this feature still uses WSL unless explicitly selected.
 Remove the environment variable or set it to `wsl` to return to WSL mode.
 A WSL-only build rejects a request for native mode with a clear startup error.
+
+The PowerShell assignment above applies to that shell and processes launched from
+it, not to applications launched separately from the Start menu. Restart Studio
+after changing the choice. To restore the default in the current PowerShell:
+
+```powershell
+Remove-Item Env:CODEX_THREAD_STUDIO_WINDOWS_BACKEND -ErrorAction SilentlyContinue
+.\target\release\codex-thread-studio.exe
+```
 
 Native discovery, npm `.cmd`/`.bat` shims, and Windows Job Object cleanup live in
 `src-tauri/src/windows_native.rs`, excluded from ordinary builds. Batch arguments

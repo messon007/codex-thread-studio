@@ -181,6 +181,29 @@ try {
   })
   console.log(await checkComposerAcceptance(page))
   console.log(await checkCommentMarkerScope(page))
+  // Unlike the adapter fixture above, load the complete app for authentication
+  // failures. Startup must stop before opening backend sockets or loading state.
+  for (const invalidToken of ['', '0'.repeat(32)]) {
+    const invalidContext = await browser.newContext()
+    const invalidPage = await invalidContext.newPage()
+    const errors = [], sockets = [], apiPaths = []
+    invalidPage.on('pageerror', error => errors.push(error.message))
+    invalidPage.on('websocket', socket => sockets.push(socket.url()))
+    invalidPage.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (path.startsWith('/studio/')) apiPaths.push(path)
+    })
+    await invalidPage.goto(`${url.origin}/${invalidToken ? `#token=${invalidToken}` : ''}`)
+    await invalidPage.locator('#native-error[role="alert"]').waitFor({ state: 'visible' })
+    await invalidPage.reload()
+    await invalidPage.locator('#native-error[role="alert"]').waitFor({ state: 'visible' })
+    check(await invalidPage.locator('#send-message').isDisabled(), 'invalid auth permits Send')
+    check(await invalidPage.locator('#native-error-message').textContent().then(text => text.includes('#token=')), 'auth recovery instructions missing')
+    check(!errors.length && !sockets.length, 'invalid auth causes JS errors or backend reconnects')
+    check(apiPaths.every(path => path === '/studio/backends'), 'invalid auth continued into state loading')
+    await invalidContext.close()
+  }
+  console.log('PASS: complete app rejects missing/stale credentials, explains recovery, and opens no backend sockets (including reload)')
   const native = await context.newPage()
   await native.addInitScript(() => Object.defineProperty(window,'__CODEX_THREAD_STUDIO_GATEWAY__',{value:Object.freeze({token:'native-credential',hostPlatform:'linux'}),configurable:false}))
   await native.goto(url.origin)

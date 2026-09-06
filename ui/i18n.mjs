@@ -10,6 +10,8 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  'SSH authentication required': 'SSH 需要重新认证',
+  'SSH access has expired or is missing. Open the latest URL printed by the SSH service, including #token=…; refreshing the old page cannot renew access.': 'SSH 访问凭据已失效或缺失。请打开服务启动时输出的最新完整链接（含 #token=…）；刷新旧页面无法更新凭据。',
   'Desktop notifications': '桌面通知',
   'Save the current backend default, {model}, for this session': '为此会话保存后端当前的默认模型 {model}',
   'The backend did not identify a default model': '后端没有标明默认模型',

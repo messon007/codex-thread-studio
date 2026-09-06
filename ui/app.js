@@ -818,8 +818,12 @@ function gatewayEventSource(url) {
 }
 
 async function init() {
+  if (!window.__CODEX_THREAD_STUDIO_GATEWAY__) {
+    showRemoteAuthenticationRequired()
+    return
+  }
+  if (await loadBackendRegistry() === false) return
   bindUI()
-  await loadBackendRegistry()
   await loadPreferences()
   // Establish the low-volume cross-backend event barrier while the remaining
   // companion state loads. Active RPC connections are opened separately below
@@ -849,6 +853,10 @@ async function init() {
 async function loadBackendRegistry() {
   try {
     const response = await gatewayFetch('/studio/backends', { cache: 'no-store' })
+    if (response.status === 401 && window.__CODEX_THREAD_STUDIO_GATEWAY__?.remote) {
+      showRemoteAuthenticationRequired()
+      return false
+    }
     if (!response.ok) throw new Error(`Backend registry HTTP ${response.status}`)
     const registry = await response.json()
     installBackendRegistry(registry?.backends)
@@ -878,6 +886,22 @@ async function loadBackendRegistry() {
     }
   }
   renderBackendChoices()
+  return true
+}
+
+function showRemoteAuthenticationRequired() {
+  state.ready = false
+  const message = t('SSH access has expired or is missing. Open the latest URL printed by the SSH service, including #token=…; refreshing the old page cannot renew access.')
+  $('#empty-workspace').classList.add('hidden')
+  $('#native-workspace').classList.remove('hidden')
+  $('#native-error').classList.remove('hidden')
+  $('#native-error-title').textContent = t('SSH authentication required')
+  $('#native-error-message').textContent = message
+  $('#native-error').setAttribute('role', 'alert')
+  $('#retry-native').classList.add('hidden')
+  $('#native-connection').textContent = t('SSH authentication required')
+  $('#send-message').disabled = true
+  $('#continue-thread').disabled = true
 }
 
 function renderBackendChoices() {

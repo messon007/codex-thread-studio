@@ -127,6 +127,13 @@ absolute paths with the existing `CODEX_THREAD_STUDIO_CODEX_BIN` and
 
 ## Integration verification
 
+Each service start generates a new gateway token. After restarting or upgrading the
+service, reopen the **new complete URL printed by that process**, including its
+`#token=…` fragment. Refreshing an old tab retains its old sessionStorage credential;
+it cannot authenticate to the new process. Ordinary refresh works while the service
+has not restarted. Studio now stops startup and shows recovery instructions when
+the credential is missing or rejected instead of presenting an empty session list.
+
 The branch passes the JavaScript and Rust test suites, including recursive frontend-route
 validation, profile locking, LF/CRLF tests, and desktop bootstrap preservation. A Linux
 headless executable smoke test also covers HTTP authentication, browser refresh, duplicate

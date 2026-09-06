@@ -1,0 +1,79 @@
+Codex Thread Studio — AI-assisted installation and configuration
+
+Purpose
+Ask your AI assistant: "Read llm.txt in this checkout, inspect my environment,
+then help me install, configure, build and verify Codex Thread Studio."
+This file guides setup; it does not authorize destructive commands, credential
+disclosure, paid model requests, or changes to unrelated projects.
+
+1. Inspect before changing anything
+- Read README.md (or README.zh-CN.md), docs/development.md and package.json.
+- Read docs/typescript.md before editing frontend source.
+- Ask whether the user wants a desktop application or browser access over SSH.
+- Detect OS, architecture, shell, Node/npm, Rust/Cargo, Git and installed backend
+  CLIs. Inspect existing configuration without printing tokens or secret values.
+- Preserve existing settings, databases and local modifications. Back up data
+  before migrations. Do not copy the original developer's local paths or tokens.
+
+2. Choose the installation path
+- For desktop, prefer a matching trusted GitHub Release artifact if available.
+  Verify OS/architecture and read that release's notes; do not assume an old tag
+  has the same runtime behavior as main.
+- For building from source, use this checkout's lockfiles. CI uses Node 22 and
+  Rust stable. Do not run npm audit fix --force or upgrade dependencies as part
+  of routine installation.
+- Linux: inspect scripts/install-linux-dev-deps.sh before running it; ask before
+  installing system packages or using elevated privileges.
+- Windows: read docs/development.md and docs/windows-native.md for MSVC/SDK and
+  WebView2 requirements. A native Windows UI does not necessarily mean native
+  Windows backend processes: check the current main/WSL backend configuration.
+  Do not silently merge feature/windows-native or change runtime architecture.
+- SSH/browser mode: read docs/remote-studio.md. Run the service on the remote
+  Linux host; do not expose the gateway directly to an untrusted network.
+
+3. Build and check from the repository root
+  npm ci --ignore-scripts
+  npm run typecheck
+  npm run build:ui
+  npm test
+  cargo fmt --all -- --check
+  cargo test --workspace --locked
+  cargo build --release --locked
+
+Use `npm run tauri build` when installable bundles are wanted. The plain Cargo
+build produces target/release/codex-thread-studio (or .exe on Windows).
+Report failures honestly; do not disable tests to finish installation.
+Edit ui-src/*.mts rather than generated ui/*.mjs. Regenerate and commit generated
+assets plus ui-src/generated.sha256 together. Cargo checks embedded asset hashes.
+
+4. Configure backends
+- Use the user's installed Codex/OpenCode CLI and its own authentication flow.
+  Never request that credentials be pasted into a chat or committed to Git.
+- Consult docs/backend-instances.md for additional Codex-compatible instances.
+  Do not invent private EPT endpoints or credentials; EPT is optional.
+- Ollama is optional. Use only models installed on the user's host; obtain
+  approval before downloading models or starting additional services.
+- Locate the app's actual per-user configuration directory for this OS.
+  settings.json contains preferences; studio.sqlite3 contains per-session data
+  and favorites. Do not replace either with another machine's files.
+- Configure model choices, shared document directories and Router targets with
+  the user. Shared directories grant file access across sessions: keep them narrow.
+
+5. Run and verify
+- Desktop: launch the built application normally.
+- Remote Linux service:
+    ./target/release/codex-thread-studio --serve --listen 127.0.0.1:38080
+- On the client, create an SSH forward (replace USER and HOST):
+    ssh -N -L 38080:127.0.0.1:38080 USER@HOST
+- Open the COMPLETE URL printed by the current server, including #token=....
+  Every server restart rotates this token. An old tab's stored token will fail;
+  reopen the new URL instead of merely refreshing. Treat this URL as a secret.
+- Check that the session list loads and survives repeated browser refresh.
+  With permission, send a harmless test message and verify Send/Steer/Stop/Queue
+  and Continue states before, during and after completion, plus draft retention
+  on errors. Never send tests into an important existing session without consent.
+- Optional automated browser acceptance is documented in docs/remote-studio.md.
+  It requires an installed Playwright/Chromium and uses isolated simulated requests.
+- Report what was installed, changed and verified; provide startup/shutdown and
+  update instructions. Clearly distinguish automated fixtures from live-provider
+  tests and identify checks still needed on the user's actual desktop platform.

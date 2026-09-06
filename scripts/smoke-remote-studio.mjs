@@ -79,6 +79,8 @@ try {
     const { CommentSourceRegistry, createCommentDraft } = await import('/comment-core.mjs')
     const { CommentSubmissionCoordinator } = await import('/comment-submission.mjs')
     const { waitForUtilityResult } = await import('/utility-task.mjs')
+    const { executeQueuedMessage } = await import('/queue-execution.mjs')
+    check(await executeQueuedMessage({ messageQueues: {}, runningMessageQueues: new Set(), pausedMessageQueues: new Set(), messageQueueErrors: new Map() }, 'empty', {}) === false, 'queue execution module failed')
     check((await waitForUtilityResult({ read: async () => ({ status: 'completed', prompt: 'fixture' }), ensureCurrent() {}, intervalMs: 100, timeoutMs: 1000, timeoutMessage: 'timeout', errorMessage: text => text })).prompt === 'fixture', 'utility task module failed')
     const { createChatCommentProvider, createDocumentCommentProvider } = await import('/comment-source-providers.mjs')
     const { createBrowserCommentProvider } = await import('/browser-comment-provider.mjs')

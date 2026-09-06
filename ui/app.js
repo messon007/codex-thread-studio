@@ -156,6 +156,7 @@ import {
   continuationDraftTurnState,
 } from './continuation-draft.mjs'
 import { waitForUtilityResult } from './utility-task.mjs'
+import { executeQueuedMessage } from './queue-execution.mjs'
 
 import {
   annotationPromptDefaults,
@@ -7429,62 +7430,52 @@ async function runNextQueuedMessage(ref) {
   if (!queue.length || state.pausedMessageQueues.has(key) || state.runningMessageQueues.has(key)) return
   const model = messageQueueModel(ref)
   if (model?.activeTurnId) return
-  const message = queue[0]
-  state.runningMessageQueues.add(key)
-  state.messageQueueErrors.delete(key)
-  let accepted = false
   let catalogActivity = null
-  if (key === selectedStateKey()) {
-    beginTranscriptFollowingLatest(model)
-    renderComposerState()
-  }
   try {
-    const clientUserMessageId = randomId()
-    catalogActivity = setCatalogThreadActivity(ref.backend, ref.id, { status: 'active', touch: true })
-    const result = await startTurnWithPreparation({
-      registry: sessionDispatch,
-      ref,
-      prepare: () => prepareComposerTurn(ref),
-      start: () => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams(
-        backendDescriptor(ref.backend).kind,
-        threadForRef(ref),
-        {
-          threadId: ref.id,
-          clientUserMessageId,
-          input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
-          ...queuedTurnOptions(ref),
-        },
-      )),
-      recoverThreadNotFound: isCodexBackend(ref.backend),
+    let acknowledgedResult = null
+    const sent = await executeQueuedMessage(state, key, {
+      send: async (message) => {
+        if (key === selectedStateKey()) {
+          beginTranscriptFollowingLatest(model)
+          renderComposerState()
+        }
+        const clientUserMessageId = randomId()
+        catalogActivity = setCatalogThreadActivity(ref.backend, ref.id, { status: 'active', touch: true })
+        const result = await startTurnWithPreparation({
+          registry: sessionDispatch,
+          ref,
+          prepare: () => prepareComposerTurn(ref),
+          start: () => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams(
+            backendDescriptor(ref.backend).kind,
+            threadForRef(ref),
+            {
+              threadId: ref.id,
+              clientUserMessageId,
+              input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
+              ...queuedTurnOptions(ref),
+            },
+          )),
+          recoverThreadNotFound: isCodexBackend(ref.backend),
+        })
+        return result
+      },
+      acknowledged: (result) => {
+        acknowledgedResult = result
+        if (result?.turn && model) applyTurnAcknowledgement(model, result.turn, ref.id)
+        if (model) markCachedModelValidated(ref.backend, model)
+      },
+      persist: () => persistMessageQueue(key),
+      failed: (error, accepted) => {
+        if (!accepted) rollbackCatalogThreadActivity(catalogActivity)
+        if (key === selectedStateKey()) showError(error)
+      },
+      acceptedPersistenceError: t('The message was accepted, but the queue could not be updated. Verify the conversation before resuming.'),
     })
-    accepted = true
-    if (result?.turn && model) applyTurnAcknowledgement(model, result.turn, ref.id)
-    if (model) markCachedModelValidated(ref.backend, model)
-    const current = state.messageQueues[key] || []
-    if (current[0]?.id === message.id) current.shift()
-    if (!current.length) {
-      delete state.messageQueues[key]
-      state.pausedMessageQueues.delete(key)
-    }
-    await persistMessageQueue(key)
-    if (key === selectedStateKey()) {
-      if (result?.turn) renderTranscript()
+    if (sent && key === selectedStateKey()) {
+      if (acknowledgedResult?.turn) renderTranscript()
       toast(t('Queued message sent'))
     }
-  } catch (error) {
-    if (!accepted) rollbackCatalogThreadActivity(catalogActivity)
-    if (accepted) {
-      const current = state.messageQueues[key] || (state.messageQueues[key] = [])
-      if (!current.some((entry) => entry.id === message.id)) current.unshift(message)
-    }
-    state.pausedMessageQueues.add(key)
-    state.messageQueueErrors.set(key, accepted
-      ? t('The message was accepted, but the queue could not be updated. Verify the conversation before resuming.')
-      : String(error?.message || error))
-    if (key === selectedStateKey()) showError(error)
-    throw error
   } finally {
-    state.runningMessageQueues.delete(key)
     if (key === selectedStateKey()) renderComposerState()
   }
 }

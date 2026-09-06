@@ -11,17 +11,19 @@ export async function checkComposerAcceptance(page) {
       return app.slice(start, end)
     }
     const { createSubmissionController } = await import('/submission-controller.mjs')
+    const { createComposerActions } = await import('/composer-actions.mjs')
     const { createCodexViewModel, applyCodexNotification } = await import('/codex-native.mjs')
     const { applyOpenCodeEvent } = await import('/opencode-native.mjs')
     const { resolveModelDisplay } = await import('/model-display.mjs')
     const reports = []
     for (const backend of ['codex', 'ept-codex', 'opencode']) {
       const fixture = document.createElement('section')
-      fixture.innerHTML = '<textarea id="composer-input"></textarea>' + [
-        'composer-model-backend', 'composer-model-name', 'composer-model', 'composer-form',
+      fixture.innerHTML = '<form id="composer-form"><textarea id="composer-input"></textarea>' + [
+        'composer-model-backend', 'composer-model-name', 'composer-model',
         'interrupt-turn', 'queue-message', 'continue-thread', 'archive-thread', 'delete-thread',
         'send-message', 'composer-add-image',
-      ].map(id => `<button id="${id}"></button>`).join('')
+      ].map(id => `<button type="button" id="${id}"></button>`).join('')
+        + '</form><section id="composer-message-queue"></section><dialog id="edit-queued-message-dialog"><textarea id="edit-queued-message-text"></textarea><p id="edit-queued-message-note"></p></dialog>'
       document.body.append(fixture)
       const $ = selector => fixture.querySelector(selector)
       const state = {
@@ -108,7 +110,39 @@ export async function checkComposerAcceptance(page) {
       await controller.sendComposer({ preventDefault: noop })
       check(errors.length === 1 && $('#composer-input').value === 'keep me', `${backend}: rejection preserves draft`)
       check(!visible('#interrupt-turn') && !$('#send-message').disabled, `${backend}: rejected send unlocks controls`)
-      reports.push(`${backend}: idle, draft, send, running, completion, disconnect, rejection PASS`)
+      let submissions = 0
+      $('#composer-form').addEventListener('submit', event => { event.preventDefault(); submissions++ })
+      const actionRequests = []
+      const actions = createComposerActions(state, {
+        ...dependencies, composerDrafts: { value: () => $('#composer-input').value },
+        setCurrentComposerValue: text => { $('#composer-input').value = text },
+        setComposerDraftValue: (_key, text) => { $('#composer-input').value = text },
+        hideComposerMenu: noop, renderComposerState: render, toast: noop, showError: error => { throw error },
+        randomId: () => 'queued', persistMessageQueue: async () => {},
+        pauseMessageQueue: () => state.pausedMessageQueues.add(key),
+        rpc: async (method) => { actionRequests.push(method); return {} },
+        latestAgentResponseText: () => 'last reply', truncateCharacters: (s, n) => s.slice(0, n),
+        gatewayFetch: async () => new Response(JSON.stringify({ prompt: 'reviewed continuation' })),
+      })
+      $('#composer-input').value = 'queue draft'
+      await actions.queueComposerMessage()
+      check(state.messageQueues[key]?.[0]?.text === 'queue draft' && !$('#composer-input').value, `${backend}: queue action`)
+      actions.openQueuedMessageEditor('queued')
+      check($('#edit-queued-message-dialog').open, `${backend}: queue editor opens`)
+      $('#edit-queued-message-text').value = 'edited queue'
+      await actions.saveEditedQueuedMessage({ preventDefault: noop })
+      check(state.messageQueues[key][0].text === 'edited queue' && !$('#edit-queued-message-dialog').open, `${backend}: queue editor saves`)
+      await actions.deleteQueuedMessage('queued')
+      check(!state.messageQueues[key], `${backend}: queue delete`)
+      render(); actions.quickSendContinueMessage()
+      check(submissions === 1 && $('#composer-input').value.trim(), `${backend}: quick Continue submits`)
+      $('#composer-input').value = ''; state.continueBehavior = 'ollamaDraft'; state.translation = { ollamaModel: 'fixture' }
+      render(); await actions.draftContinueMessage()
+      check($('#composer-input').value === 'reviewed continuation' && submissions === 1, `${backend}: draft Continue never submits`)
+      state.model.activeTurnId = 'stop-fixture'
+      await actions.interruptTurn()
+      check(state.pausedMessageQueues.has(key) && actionRequests.includes('turn/interrupt'), `${backend}: Stop pauses queue and interrupts`)
+      reports.push(`${backend}: idle, draft, send, running, completion, disconnect, rejection, queue edit/delete, Continue, Stop PASS`)
       fixture.remove()
     }
     return reports

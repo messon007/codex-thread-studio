@@ -194,6 +194,24 @@ a substitute for live-provider testing: real Codex/EPT/OpenCode disconnects,
 send/Steer/Queue acknowledgement races and document selection geometry remain
 the highest-risk manual acceptance areas. Tests do not submit paid model turns.
 
+The final planned business-boundary batch brings the total to 70 runtime modules:
+
+- `opencode-protocol`: HTTP errors/timeouts, request adaptation, cursor history,
+  status snapshots, catalog discovery, and server-owned message-ID read-back.
+- `active-codex-connection`: current connection messages, first-ready catalog
+  loading, process-generation recovery, lag recovery and offscreen interactions.
+- `settings-application`: preferences/SQLite loading and normalization, Router
+  startup selection, settings validation/application and reset (without a new
+  storage schema or persistence destination).
+- `composer-actions`: queue add/edit/delete/resume, Stop, and Continue dispatch,
+  including stale-draft checks and persistence-failure rollback.
+
+Pure DOM rendering and event binding remain in JS. The extraction is not a
+claim that all remaining JavaScript should be converted. Browser acceptance now
+also exercises queue dialogs, both quick-send and draft Continue, Stop, and full
+application startup with missing/expired SSH credentials. Service restarts rotate
+the token; use the newly printed complete URL rather than merely refreshing.
+
 ## Source and generated assets
 
 Edit `ui-src/*.mts`, never the corresponding generated `ui/*.mjs` files.

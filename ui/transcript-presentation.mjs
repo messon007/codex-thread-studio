@@ -246,9 +246,9 @@ export function activityOutputPreview(value, lineLimit = OUTPUT_PREVIEW_LINES) {
   const text = String(value || '')
   let lineStart = 0
   let lineCount = 0
-  for (let index = 0; index <= text.length; index += 1) {
-    if (index !== text.length && text[index] !== '\n') continue
-    if (index === text.length && lineStart === text.length) break
+  while (lineStart < text.length) {
+    const newline = text.indexOf('\n', lineStart)
+    const index = newline < 0 ? text.length : newline
     let line = text.slice(lineStart, index)
     if (line.endsWith('\r')) line = line.slice(0, -1)
     lineCount += 1

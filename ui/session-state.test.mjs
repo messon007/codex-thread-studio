@@ -5,6 +5,7 @@ import test from 'node:test'
 const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 const reviewNotes = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
 const persistence = readFileSync(new URL('./session-state-persistence.mjs', import.meta.url), 'utf8')
+const operations = readFileSync(new URL('../ui-src/session-operations.mts', import.meta.url), 'utf8')
 
 test('dynamic session state loads beside preferences but is not written back to settings', () => {
   const loadStart = app.indexOf('async function loadPreferences()')
@@ -53,14 +54,14 @@ test('session model and effort choices persist the concrete backend default', ()
   assert.match(app, /backendDefaultId[\s\S]{0,1200}state\.turnOptions\[key\] = options[\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
   assert.doesNotMatch(app, /if \(useDefault\) \{[\s\S]{0,160}delete state\.turnOptions\[key\]/u)
   assert.match(persistence, /sessionModelPreferencePayload\(key, state\.turnOptions\[key\] \|\| \{\}\)/u)
-  assert.match(app, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(key\)/u)
-  assert.match(app, /async function forkThread[\s\S]*state\.turnOptions\[forkKey\] = sourceOptions[\s\S]*persistSessionTurnOptions\(forkKey\)/u)
+  assert.match(operations, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(selectedStateKey\(createdThreadId, backend\)\)/u)
+  assert.match(operations, /async function forkThread[\s\S]*state\.turnOptions\[forkKey\] = sourceOptions[\s\S]*persistSessionTurnOptions\(forkKey\)/u)
 })
 
 test('pinning is bounded and archive clears the persisted pin', () => {
   assert.match(app, /state\.pinnedSessions\.size >= 10/u)
   assert.match(app, /state\.pinnedSessions = new Set\(\[\.\.\.state\.pinnedSessions, key\]\)/u)
-  assert.match(app, /async function archiveSelectedThread\([\s\S]*persistSessionPin\(key, false\)/u)
+  assert.match(operations, /async function archiveSelectedThread\([\s\S]*persistSessionPin\(key, false\)/u)
   assert.match(app, /partitionPinnedCatalogEntries\([\s\S]{0,120}state\.pinnedSessions,[\s\S]{0,120}order: state\.filter === 'all' \? 'pin' : 'activity'/u)
 })
 

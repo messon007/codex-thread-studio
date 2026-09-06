@@ -33,6 +33,6 @@ test('renders a compact fork action beside each completed response', () => {
   const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
   assert.match(source, /data-fork-turn=/u)
   assert.match(source, /data-favorite-message=[\s\S]{0,900}\$\{forkAction\}/u)
-  assert.match(source, /rpc\('thread\/fork', threadForkParams\(sourceThreadId, lastTurnId\)\)/u)
+  assert.match(readFileSync(new URL('../ui-src/session-operations.mts', import.meta.url), 'utf8'), /rpc\('thread\/fork', threadForkParams\(sourceThreadId, lastTurnId\)\)/u)
   assert.match(styles, /\.message-fork-button/u)
 })

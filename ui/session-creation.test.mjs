@@ -5,6 +5,13 @@ import test from 'node:test'
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 
 function functionSource(name, nextName) {
+  if (['async function createThread', 'function activateStartedThread', 'async function forkThread'].includes(name)) {
+    const operations = readFileSync(new URL('../ui-src/session-operations.mts', import.meta.url), 'utf8')
+    const start = operations.indexOf(`${name}(`)
+    const remaining = operations.slice(start)
+    const end = remaining.slice(1).search(/\n(?:async )?function /u)
+    return end < 0 ? remaining : remaining.slice(0, end + 1)
+  }
   const start = source.indexOf(`${name}(`)
   const end = source.indexOf(`\n${nextName}(`, start)
   assert.ok(start >= 0, `${name} must exist`)

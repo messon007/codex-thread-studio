@@ -30,7 +30,7 @@ test('archive catalog and restore use native Codex protocol methods', () => {
 test('archived previews disable per-turn forks as well as header actions', () => {
   assert.match(app, /forkable: !isArchivedPreview\(\) && isTurnForkable/u)
   assert.match(app, /if \(forkButton\) \{\s+if \(isArchivedPreview\(\)\) return/u)
-  assert.match(app, /if \(!sourceThreadId \|\| isArchivedPreview\(\)\) return/u)
+  assert.match(readFileSync(new URL('../ui-src/session-operations.mts', import.meta.url), 'utf8'), /if \(!sourceThreadId \|\| isArchivedPreview\(\)\) return/u)
 })
 
 test('archive loading retains per-backend failures and pagination state', () => {

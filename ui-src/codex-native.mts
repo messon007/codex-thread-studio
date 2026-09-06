@@ -16,7 +16,7 @@ export function createCodexViewModel(): CodexViewModel {
   }
 }
 
-export function hydrateCodexThread(model: CodexViewModel, thread: { id?: string; turns?: CodexTurn[] } | null) {
+export function hydrateCodexThread(model: CodexViewModel, thread: { id?: string; turns?: CodexTurn[] | undefined } | null) {
   model.threadId = thread?.id || model.threadId
   // RPC history objects are freshly decoded and are not reused by callers.
   // Taking ownership avoids cloning an entire large session a second time.

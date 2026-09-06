@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { createEnvironmentApplication } from './environment-application.mjs'
 import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './history-installation.mjs'
 import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
@@ -493,6 +494,21 @@ let environmentDialogProfile = null
 const environmentSecretRemovals = new Set()
 const appliedEnvironmentProfiles = new Set()
 const environmentApplyRequests = new Map()
+const environmentApplication = createEnvironmentApplication({
+  applied: appliedEnvironmentProfiles,
+  requests: environmentApplyRequests,
+  supports: isCodexBackend,
+  apply: async params => {
+    const response = await gatewayFetch('/studio/environment/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+    })
+    const result = await response.json().catch(() => null)
+    if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+    return result
+  },
+  compatibilityError: isHistoryPaginationCompatibilityError,
+  disableTail: (backend, threadId) => rememberHistoryTailCapability(backend, threadId, false),
+})
 let pendingTranscriptViewRestore = null
 
 const workspaceTools = createWorkspaceTools({
@@ -8369,41 +8385,11 @@ async function applyEnvironmentToCodex(root, {
   excludeTurns = true,
   initialTurnsPage = null,
 } = {}) {
-  if (!isCodexBackend(backend) || !threadId) return null
-  const generation = state.appServerGenerations[backend] ?? 'unknown'
-  const key = `${backend}\u0000${threadId}\u0000${generation}\u0000${root}\u0000${profileRevision}`
-  if (!force && appliedEnvironmentProfiles.has(key)) return null
-  if (!force && environmentApplyRequests.has(key)) return environmentApplyRequests.get(key)
-  const request = (async () => {
-    const apply = async (incremental) => {
-      const response = await gatewayFetch('/studio/environment/apply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          root,
-          threadId,
-          backend,
-          includeThread,
-          excludeTurns: incremental,
-          ...(incremental && initialTurnsPage ? { initialTurnsPage } : {}),
-        }),
-      })
-      const result = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
-      return result
-    }
-    let result
-    try {
-      result = await apply(excludeTurns)
-    } catch (error) {
-      if (!excludeTurns || !isHistoryPaginationCompatibilityError(error)) throw error
-      rememberHistoryTailCapability(backend, threadId, false)
-      result = await apply(false)
-    }
-    appliedEnvironmentProfiles.add(key)
-    return result
-  })().finally(() => environmentApplyRequests.delete(key))
-  environmentApplyRequests.set(key, request)
-  return request
+  return environmentApplication({
+    root, backend, threadId,
+    generation: state.appServerGenerations[backend] ?? 'unknown',
+    includeThread, profileRevision, force, excludeTurns, initialTurnsPage,
+  })
 }
 
 function resetSettings() {

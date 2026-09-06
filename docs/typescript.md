@@ -154,6 +154,13 @@ merge catalog metadata and cache the result. Selection and OpenCode epoch guards
 remain before installation in both callers. Existing reducers and replay
 algorithms are reused; no deep copies, requests or scroll changes are added.
 Transport, error presentation and performance reporting remain in the callers.
+
+`environment-application` brings the total to 62 modules. It owns the existing
+backend/thread/generation/root/revision cache key, in-flight request sharing,
+forced application and the single compatibility fallback from incremental to
+full resume. HTTP decoding and settings/environment forms remain in `app.js`.
+No configuration fields, secret storage, endpoint or activation timing changes
+are part of this extraction; the full settings snapshot is not yet migrated.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

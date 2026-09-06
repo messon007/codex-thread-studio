@@ -995,6 +995,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/queue-execution.mjs", get(queue_execution_js))
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
         .route("/composer-send.mjs", get(composer_send_js))
+        .route(
+            "/environment-application.mjs",
+            get(environment_application_js),
+        )
         .route("/history-installation.mjs", get(history_installation_js))
         .route("/selection-coordinator.mjs", get(selection_coordinator_js))
         .route(
@@ -2294,6 +2298,10 @@ async fn rpc_lifecycle_js() -> impl IntoResponse {
 
 async fn composer_send_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-send.mjs"))
+}
+
+async fn environment_application_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/environment-application.mjs"))
 }
 
 async fn history_installation_js() -> impl IntoResponse {
@@ -4592,6 +4600,7 @@ mod tests {
                 "/queue-execution.mjs",
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
+                "/environment-application.mjs",
                 "/history-installation.mjs",
                 "/selection-coordinator.mjs",
                 "/started-session-catalog.mjs",

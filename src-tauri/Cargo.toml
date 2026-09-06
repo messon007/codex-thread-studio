@@ -14,6 +14,7 @@ required-features = ["wayland-webview-prototype"]
 wayland-webview-prototype = []
 
 [build-dependencies]
+sha2 = "=0.10.9"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]

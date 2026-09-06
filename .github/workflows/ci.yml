@@ -54,6 +54,7 @@ jobs:
 
       - name: Check browser JavaScript
         run: |
+          npm run typecheck
           node --check ui/app.js
           npm test
 

@@ -38,7 +38,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: npm run version:check
       - name: Run browser tests
-        run: npm test
+        run: |
+          npm run typecheck
+          npm test
       - name: Run Rust tests
         run: cargo test --workspace --locked
 

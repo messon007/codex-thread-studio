@@ -315,6 +315,7 @@ const state = {
   backendRegistry: { configPath: '', configurationError: null },
   backendModelLoads: new Map(),
   hostPlatform: window.__CODEX_THREAD_STUDIO_GATEWAY__?.hostPlatform || null,
+  remoteClient: Boolean(window.__CODEX_THREAD_STUDIO_GATEWAY__?.remote),
   wsl: { distribution: '', user: '', codexBinary: 'codex', opencodeBinary: 'opencode' },
   backendStates: Object.fromEntries(BACKEND_IDS.map((backend) => [backend, backend === 'codex'
     ? { kind: 'checking', label: 'Starting Codex', caption: 'App Server · stdio' }
@@ -675,7 +676,10 @@ const documentWorkspace = createDocumentWorkspaceController({
   },
 })
 
-document.addEventListener('DOMContentLoaded', () => init().catch(showError))
+document.addEventListener('DOMContentLoaded', () => {
+  applyRuntimeCopy()
+  init().catch(showError)
+})
 window.addEventListener('error', (event) => reportClientError(event.error || event.message))
 window.addEventListener('unhandledrejection', (event) => reportClientError(event.reason))
 
@@ -1060,7 +1064,15 @@ async function openGlobalBrowser() {
 }
 
 async function openBrowserUrl(url) {
-  if (!usesEmbeddedBrowser()) throw new Error(t('The embedded browser is unavailable on this platform'))
+  if (!usesEmbeddedBrowser()) {
+    if (state.remoteClient) {
+      // With noopener, a successful open also returns null. Do not mistake that
+      // security behavior for popup blocking.
+      window.open(String(url || ''), '_blank', 'noopener,noreferrer')
+      return
+    }
+    throw new Error(t('The embedded browser is unavailable on this platform'))
+  }
   const width = currentRightRailPixelWidth()
   activateRightWorkspace('browser')
   dispatchEmbeddedBrowserAction(`studio-action://open-browser?url=${encodeURIComponent(String(url || ''))}&width=${width}`)
@@ -1958,6 +1970,7 @@ async function switchBackend(backend, { selectedId } = {}) {
 
 function applyBackendCopy() {
   const descriptor = currentBackend()
+  applyRuntimeCopy()
   $('#empty-mark').textContent = descriptor.tag.slice(0, 1)
   $('#tool-avatar').textContent = descriptor.tag
   $('#new-thread-label').textContent = t('New session')
@@ -1973,6 +1986,16 @@ function applyBackendCopy() {
   $('#new-thread-cwd-help').textContent = t(wsl
     ? 'Enter an absolute Linux path inside WSL, such as /home/user/project.'
     : 'Must be an absolute local path.')
+}
+
+function applyRuntimeCopy() {
+  const title = state.remoteClient ? t('Remote workspace') : t('Local workspace')
+  const detail = state.remoteClient ? t('SSH tunnel') : title
+  const copy = $('.studio-entry-copy')
+  if (copy) {
+    copy.querySelector('strong').textContent = title
+    copy.querySelector('small').textContent = detail
+  }
 }
 
 function connectAppServer() {
@@ -9061,7 +9084,7 @@ function renderBackendDialog() {
     <header>${t('Application')}</header>
     <div class="detail-row"><span>${t('Application')}</span><strong>${escapeHtml(appInfo.appName || 'Codex Thread Studio')}</strong></div>
     <div class="detail-row"><span>${t('Version')}</span><strong>v${escapeHtml(appInfo.appVersion || 'unknown')}</strong></div>
-    <div class="detail-row"><span>${t('Runtime mode')}</span><strong>${t('Local workspace')}</strong></div>
+    <div class="detail-row"><span>${t('Runtime mode')}</span><strong>${t(state.remoteClient ? 'Remote workspace' : 'Local workspace')}</strong></div>
   </section>${backendSections}`
 }
 

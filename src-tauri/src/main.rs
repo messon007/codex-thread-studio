@@ -996,6 +996,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
         .route("/composer-send.mjs", get(composer_send_js))
         .route(
+            "/started-session-catalog.mjs",
+            get(started_session_catalog_js),
+        )
+        .route(
             "/hidden-utility-session.mjs",
             get(hidden_utility_session_js),
         )
@@ -2288,6 +2292,10 @@ async fn rpc_lifecycle_js() -> impl IntoResponse {
 
 async fn composer_send_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-send.mjs"))
+}
+
+async fn started_session_catalog_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/started-session-catalog.mjs"))
 }
 
 async fn hidden_utility_session_js() -> impl IntoResponse {
@@ -4574,6 +4582,7 @@ mod tests {
                 "/queue-execution.mjs",
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
+                "/started-session-catalog.mjs",
                 "/hidden-utility-session.mjs",
                 "/lifecycle-connection.mjs",
                 "/session-state-persistence.mjs",

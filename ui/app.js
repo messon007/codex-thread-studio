@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createSessionStatePersistence } from './session-state-persistence.mjs'
 import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
@@ -42,7 +43,6 @@ import {
 import {
   catalogListParams,
   mergeCatalogMetadata,
-  reconcileStartedThreadCatalog,
   shouldRecoverCodexCatalog,
   turnStartParams,
 } from './session-catalog.mjs'
@@ -452,8 +452,16 @@ let threadCatalogErrorMessage = null
 const catalogRefreshes = new Map()
 const catalogRequestGenerations = new Map()
 const backendSelectionLoads = new Map()
-const startedThreadsAwaitingCatalog = new Map()
-const startedThreadCatalogTimers = new Map()
+const startedSessionCatalog = createStartedSessionCatalog({
+  generations: catalogRequestGenerations,
+  key: threadCatalogKey,
+  catalog: backend => state.threadsByBackend[backend] || [],
+  merge: mergeThreadIntoCatalog,
+  report: reportSessionLifecycle,
+  refresh: backend => refreshBackendCatalog(backend, { includeStatuses: false }),
+  refreshError: (backend, error) => console.debug(`Unable to confirm newly started ${backend} session in the catalog`, error),
+  missingId: () => t('The backend created a session without an ID.'),
+})
 const codexCatalogRecoveryStarted = new Set()
 let inactiveCatalogRefreshScheduled = false
 const codexLifecycleConnection = { socket: null, reconnectTimer: null, generation: 0, ready: false, openCount: 0 }
@@ -3135,96 +3143,24 @@ function reportCodexSelectionCacheDecision(backend, id, { fresh = null, cached =
   })
 }
 
-function startedThreadEntries(backend) {
-  const prefix = `${backend}:`
-  return [...startedThreadsAwaitingCatalog.entries()]
-    .filter(([key]) => key.startsWith(prefix))
-    .map(([, entry]) => entry)
-}
-
 function rememberStartedThread(backend, thread, operation) {
-  if (!thread?.id) throw new Error(t('The backend created a session without an ID.'))
-  const key = threadCatalogKey(backend, thread.id)
-  startedThreadsAwaitingCatalog.set(key, {
-    backend,
-    operation,
-    thread: { ...thread, turns: undefined },
-  })
-  // A catalog request that began before thread/start cannot know about this
-  // in-memory session. Invalidate that response before it can replace the
-  // active catalog; later requests retain the provisional entry below.
-  catalogRequestGenerations.set(backend, (catalogRequestGenerations.get(backend) || 0) + 1)
-  mergeThreadIntoCatalog(backend, thread)
-  reportSessionLifecycle('started', {
-    backend,
-    threadId: thread.id,
-    operation,
-    awaitingCatalog: true,
-  })
+  startedSessionCatalog.remember(backend, thread, operation)
 }
 
 function forgetStartedThread(backend, threadId, reason) {
-  if (!threadId) return false
-  const key = threadCatalogKey(backend, threadId)
-  const entry = startedThreadsAwaitingCatalog.get(key)
-  if (!entry) return false
-  startedThreadsAwaitingCatalog.delete(key)
-  clearTimeout(startedThreadCatalogTimers.get(key))
-  startedThreadCatalogTimers.delete(key)
-  reportSessionLifecycle(reason, {
-    backend,
-    threadId,
-    operation: entry.operation,
-    awaitingCatalog: false,
-  })
-  return true
+  return startedSessionCatalog.forget(backend, threadId, reason)
 }
 
 function reconcileCatalogWithStartedThreads(backend, threads) {
-  const entries = startedThreadEntries(backend)
-  if (!entries.length) return Array.isArray(threads) ? threads : []
-  const currentCatalog = state.threadsByBackend[backend] || []
-  const startedThreads = entries.map((entry) => {
-    const current = currentCatalog.find((thread) => thread.id === entry.thread.id)
-    if (current) entry.thread = { ...entry.thread, ...current, turns: undefined }
-    return entry.thread
-  })
-  const reconciled = reconcileStartedThreadCatalog(threads, startedThreads)
-  for (const threadId of reconciled.retainedIds) {
-    const entry = startedThreadsAwaitingCatalog.get(threadCatalogKey(backend, threadId))
-    if (!entry || entry.catalogMissLogged) continue
-    entry.catalogMissLogged = true
-    reportSessionLifecycle('catalog-retained', {
-      backend,
-      threadId,
-      operation: entry.operation,
-      awaitingCatalog: true,
-    })
-  }
-  for (const threadId of reconciled.confirmedIds) {
-    forgetStartedThread(backend, threadId, 'catalog-confirmed')
-  }
-  return reconciled.threads
+  return startedSessionCatalog.reconcile(backend, threads)
 }
 
 function scheduleStartedThreadCatalogConfirmation(backend, threadId, delay = 800) {
-  const key = threadCatalogKey(backend, threadId)
-  if (!startedThreadsAwaitingCatalog.has(key)) return
-  clearTimeout(startedThreadCatalogTimers.get(key))
-  const timer = setTimeout(() => {
-    startedThreadCatalogTimers.delete(key)
-    if (!startedThreadsAwaitingCatalog.has(key)) return
-    refreshBackendCatalog(backend, { includeStatuses: false }).catch((error) => {
-      console.debug(`Unable to confirm newly started ${backend} session in the catalog`, error)
-    })
-  }, delay)
-  startedThreadCatalogTimers.set(key, timer)
+  startedSessionCatalog.schedule(backend, threadId, delay)
 }
 
 function clearStartedThreadsForBackend(backend, reason) {
-  for (const entry of startedThreadEntries(backend)) {
-    forgetStartedThread(backend, entry.thread.id, reason)
-  }
+  startedSessionCatalog.clearBackend(backend, reason)
 }
 
 function installBackendCatalog(backend, threads) {

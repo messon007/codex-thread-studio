@@ -129,6 +129,13 @@ caller; Ollama continues to use its separate gateway. The original timeouts,
 polling intervals and Codex-vs-OpenCode request shapes are retained. Tests cover
 completion before acknowledgement, failed creation, selection change after
 creation and delayed/failed cleanup without invoking a real model.
+
+`started-session-catalog` brings the total to 59 modules. It owns provisional
+new/forked session records, catalog generation invalidation, metadata retention,
+confirmation logging and the existing 800ms debounced catalog confirmation.
+Backend restart/deletion/confirmation cancel only their matching records and
+timers. Actual catalog transport, selected-session activation and DOM updates
+remain injected from `app.js`; no polling loop or extra catalog request is added.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

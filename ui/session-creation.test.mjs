@@ -44,12 +44,10 @@ test('all catalog installation paths retain unconfirmed started sessions', () =>
 
   assert.match(install, /reconcileCatalogWithStartedThreads\(backend, threads\)/u)
   assert.match(active, /reconcileCatalogWithStartedThreads\(backend, threads\)/u)
-  assert.match(remember, /catalogRequestGenerations\.set\(backend/u)
-  assert.match(remember, /mergeThreadIntoCatalog\(backend, thread\)/u)
-  assert.match(reconcile, /currentCatalog\.find\(\(thread\) => thread\.id === entry\.thread\.id\)/u)
-  assert.match(reconcile, /entry\.thread = \{ \.\.\.entry\.thread, \.\.\.current, turns: undefined \}/u)
-  assert.match(reconcile, /reportSessionLifecycle\('catalog-retained'/u)
-  assert.match(reconcile, /forgetStartedThread\(backend, threadId, 'catalog-confirmed'\)/u)
+  assert.match(remember, /startedSessionCatalog\.remember\(backend, thread, operation\)/u)
+  assert.match(reconcile, /startedSessionCatalog\.reconcile\(backend, threads\)/u)
+  assert.match(source, /generations: catalogRequestGenerations/u)
+  assert.match(source, /merge: mergeThreadIntoCatalog/u)
 })
 
 test('forks use the same authoritative activation path', () => {

@@ -12,6 +12,7 @@ export interface OpenCodeTurn {
   error?: { message?: string } | null
 }
 export interface OpenCodeEventModel {
+  threadId?: string | null | undefined
   turns: OpenCodeTurn[]
   activeTurnId: string | null
   status: string
@@ -29,13 +30,25 @@ export interface OpenCodeInfo {
   parentID?: string
   role?: string
   structured?: unknown
-  error?: unknown
+  error?: OpenCodeError
+  finish?: string
+  tokens?: { output?: number }
   [field: string]: unknown
 }
 export interface OpenCodePart {
   id?: string
   sessionID?: string
   messageID?: string
+  type?: string
+  text?: string
+  url?: string
+  path?: string
+  filename?: string
+  mime?: string
+  tool?: string
+  files?: string[]
+  hash?: string
+  state?: { input?: { command?: string; [key: string]: unknown }; title?: string; output?: string; error?: string; status?: string }
   [field: string]: unknown
 }
 export interface OpenCodeProperties {
@@ -48,7 +61,12 @@ export interface OpenCodeProperties {
   info?: OpenCodeInfo
   part?: OpenCodePart
   status?: unknown
-  error?: unknown
+  error?: OpenCodeError
+  data?: { message?: string }
+  message?: string
+  name?: string
+  type?: string
+  text?: string
   diff?: unknown
   id?: string | number
   requestID?: string | number
@@ -71,7 +89,7 @@ export interface OpenCodeReduction {
 /** Shared history conversion helpers remain JS; the live state reducer is typed. */
 export interface OpenCodeReducerHelpers {
   normalizeOpenCodeStatus(status: unknown): string
-  errorText(error: unknown): string
+  errorText(error: OpenCodeError | OpenCodeProperties | null | undefined): string
   ensureTurn(model: OpenCodeEventModel, id: string | null | undefined): OpenCodeTurn
   structuredOutputItem(info: OpenCodeInfo): OpenCodeItem
   upsertItem(turn: OpenCodeTurn, item: OpenCodeItem | null): void
@@ -81,3 +99,5 @@ export interface OpenCodeReducerHelpers {
   forgetMessageItem(items: Record<string, string[]> | undefined, messageId: string, itemId: string): void
   refreshTurnMessageError(model: OpenCodeEventModel, turn: OpenCodeTurn): void
 }
+
+export type OpenCodeError = string | { data?: { message?: string }; message?: string; name?: string }

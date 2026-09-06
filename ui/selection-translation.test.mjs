@@ -131,5 +131,5 @@ test('translation uses independent per-backend model and fast effort preferences
 test('hidden utility sessions never enter the visible catalog and are deleted after use', () => {
   assert.match(app, /filter\(\(thread\) => !hiddenUtilityThread\(backend, thread\)\)/u)
   assert.match(app, /dispatchBackendRpc\(targetBackend, 'thread\/delete'/u)
-  assert.match(app, /hiddenUtilityThread\('opencode', eventThread\)/u)
+assert.match(readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8'), /hiddenUtilityThread\('opencode', eventThread\)/u)
 })

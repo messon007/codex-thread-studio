@@ -334,7 +334,7 @@ test('replays buffered OpenCode deltas without losing history prefixes or duplic
   assert.equal(reasoningHistory.turns[0].items.at(-1).content[0], 'thinking')
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   assert.match(source, /beginOpenCodeHistoryEventBuffer\(id\)[\s\S]*installSelectedHistory\([\s\S]*replayOpenCodeEventsAfterHistory\(model, events, id, options\)[\s\S]*endOpenCodeHistoryEventBuffer\(id, historyEvents\)/u)
-  assert.match(source, /bufferOpenCodeHistoryEvent\(eventThreadId, event\)/u)
+assert.match(readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8'), /bufferOpenCodeHistoryEvent\(eventThreadId, event\)/u)
 })
 
 test('reapplies an authoritative idle snapshot after earlier buffered content events', () => {
@@ -785,10 +785,7 @@ test('OpenCode keeps one cross-backend event stream and refreshes after an SSE c
     source.indexOf('function cleanupConnections('),
     source.indexOf('\nfunction beginTurnLatencyTrace', source.indexOf('function cleanupConnections(')),
   )
-  const events = source.slice(
-    source.indexOf('function handleOpenCodeServerEvent('),
-    source.indexOf('\nasync function abortRepeatedOpenCodeTerminalLoop', source.indexOf('function handleOpenCodeServerEvent(')),
-  )
+const events = readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8')
   const connectedBranch = events.slice(
     events.indexOf("if (payload.type === 'server.connected')"),
     events.indexOf("if (payload.type.startsWith('session.'))"),
@@ -809,7 +806,7 @@ test('OpenCode keeps one cross-backend event stream and refreshes after an SSE c
   assert.match(source, /historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null/u)
   assert.match(source, /storeCachedSession\(state\.threadModels, backend, id, model, historyEpoch, Date\.now\(\)\)/u)
   assert.match(source, /const historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(backend, id, model, \{ historyEpoch \}\)/u)
-  assert.match(source, /const historyEpoch = ref\.backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(ref\.backend, ref\.id, model, \{ historyEpoch \}\)/u)
+  assert.match(events, /const historyEpoch = ref\.backend === 'opencode' \? getOpenCodeHistoryEpoch\(\) : null[\s\S]*cacheThreadModel\(ref\.backend, ref\.id, model, \{ historyEpoch \}\)/u)
 })
 
 test('OpenCode never reuses or installs a history load from an older connection epoch', () => {
@@ -902,7 +899,7 @@ test('Studio aborts a live OpenCode session when the terminal loop guard trips',
   const handlerStart = source.indexOf('function handleOpenCodeServerEvent(')
   const handlerEnd = source.indexOf('\nfunction openCodeCompletionSignal', handlerStart)
   const handler = source.slice(handlerStart, handlerEnd)
-  assert.match(handler, /openCodeLoopGuard\.observe\(payload\)/u)
+assert.match(readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8'), /openCodeLoopGuard\.observe\(payload\)/u)
   assert.match(handler, /\/session\/\$\{encodeURIComponent\(sessionId\)\}\/abort/u)
   assert.match(handler, /openCodeLoopAbortRequests\.has\(sessionId\)/u)
 })

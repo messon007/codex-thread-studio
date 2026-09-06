@@ -92,10 +92,7 @@ test('Studio starts with an empty runtime workset and adds a session after loadi
 
 test('turn boundaries update catalog status and activity without streaming-list churn', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  const codexLifecycle = source.slice(
-    source.indexOf('function handleCodexLifecycleNotification('),
-    source.indexOf('\nfunction handleAppServerMessage(', source.indexOf('function handleCodexLifecycleNotification(')),
-  )
+const codexLifecycle = readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8')
   const catalogLifecycle = source.slice(
     source.indexOf('function updateCodexCatalogActivity('),
     source.indexOf('\nfunction updateLoadedThreadTimestamp(', source.indexOf('function updateCodexCatalogActivity(')),

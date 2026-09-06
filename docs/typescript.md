@@ -172,6 +172,22 @@ new persistence destination is introduced.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 
+The next three full-flow extractions bring the total to 66 runtime modules:
+
+- `submission-controller` owns Composer Send/Steer, queued dispatch, preparation,
+  optimistic acknowledgement, draft/attachment rollback and queue completion.
+- `session-operations` owns creation, fork, rename, archive, deletion, catalog
+  insertion and activation of newly created sessions.
+- `background-sessions` owns Codex/EPT lifecycle routing, OpenCode event routing,
+  reconnect reconciliation, offscreen history installation and stale-result
+  protection. Dynamic backend lists and continuity epochs remain live getters.
+
+DOM adapters, transport primitives and rendering remain injected from `app.js`;
+this is not a conversion of all UI code. Existing request ordering and recovery
+policy are retained. Behavioral tests exercise offscreen completion, restarted
+backends, stale cache replacement, deletion and queue advancement in addition to
+the send and session-management success/rejection paths.
+
 The release browser smoke imports every generated module through the embedded
 HTTP routes, catching missing registrations and transitive imports. This is not
 a substitute for live-provider testing: real Codex/EPT/OpenCode disconnects,

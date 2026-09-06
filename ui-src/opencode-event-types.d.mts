@@ -30,7 +30,7 @@ export interface OpenCodeInfo {
   parentID?: string
   role?: string
   structured?: unknown
-  error?: OpenCodeError
+  error?: OpenCodeError | null
   finish?: string
   tokens?: { output?: number }
   [field: string]: unknown
@@ -61,7 +61,7 @@ export interface OpenCodeProperties {
   info?: OpenCodeInfo
   part?: OpenCodePart
   status?: unknown
-  error?: OpenCodeError
+  error?: OpenCodeError | null
   data?: { message?: string }
   message?: string
   name?: string

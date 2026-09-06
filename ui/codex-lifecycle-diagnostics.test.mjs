@@ -98,7 +98,7 @@ test('the cross-backend lifecycle socket survives active backend cleanup and rou
   const init = source.slice(source.indexOf('async function init()'), source.indexOf('\nasync function loadBackendRegistry'))
   const cleanup = source.slice(source.indexOf('function cleanupConnections()'), source.indexOf('\nfunction beginTurnLatencyTrace'))
   const lifecycle = source.slice(source.indexOf('function connectCodexLifecycleStream()'), source.indexOf('\nfunction connectBackend'))
-  const notification = source.slice(source.indexOf('function handleCodexLifecycleNotification('), source.indexOf('\nfunction handleAppServerMessage'))
+const notification = readFileSync(new URL('../ui-src/background-sessions.mts', import.meta.url), 'utf8')
 
   assert.match(init, /connectCodexLifecycleStream\(\)[\s\S]*await codexLifecycleConnection[\s\S]*connectBackend\(\)/u)
   assert.match(lifecycle, /\/ws\/codex-lifecycle/u)

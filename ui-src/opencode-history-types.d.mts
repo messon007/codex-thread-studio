@@ -19,9 +19,9 @@ export interface OpenCodeHistoryThread extends Partial<Pick<OpenCodeEventModel, 
 }
 export interface BufferedOpenCodeEvent { event: OpenCodeEvent; sequence: number }
 export interface HistoryReplayOptions {
-  messageSnapshots?: Record<string, { afterSequence: number; ambiguousThroughSequence: number }>
-  statusAfterSequence?: number
-  authoritativeStatus?: string | null
+  messageSnapshots?: Record<string, { afterSequence: number; ambiguousThroughSequence: number }> | undefined
+  statusAfterSequence?: number | undefined
+  authoritativeStatus?: string | null | undefined
 }
 export interface OpenCodeProviderResult {
   providers?: OpenCodeProvider[]

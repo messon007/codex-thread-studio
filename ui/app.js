@@ -869,6 +869,9 @@ function bindUI() {
   $('#new-thread').addEventListener('click', openNewThreadDialog)
   $('#studio-menu-button').addEventListener('click', () => {
     toggleActionMenu('studio-menu', 'studio-menu-button')
+    if (!$('#studio-menu').classList.contains('hidden')) {
+      reviewNotes.refreshGlobalFavoriteCount().catch(error => console.warn('Unable to refresh global favorite count', error))
+    }
   })
   $('#toggle-sidebar').addEventListener('click', toggleSidebar)
   $('#empty-new-thread').addEventListener('click', openNewThreadDialog)

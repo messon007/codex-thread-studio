@@ -35,6 +35,55 @@ export function createWorkspaceTools({
   let activeTool = null
   let visibleKey = ''
   let developerThread = null
+  let fileWatch = null
+  let fileWatchRetry = null
+
+  function stopFileWatch() {
+    clearTimeout(fileWatchRetry)
+    fileWatchRetry = null
+    const previous = fileWatch
+    fileWatch = null
+    previous?.socket.close()
+  }
+
+  function watchedPaths(state) {
+    return ['', ...visibleRows(state).filter((row) => row.kind === 'directory' && state.expanded.has(row.path)).map((row) => row.path)].slice(0, 128)
+  }
+
+  function syncFileWatch(state) {
+    if (!gatewayWebSocket || !state || state !== stateForCurrent() || activeTool !== 'files' || !isOpen()) return
+    if (fileWatch && fileWatch.state !== state) stopFileWatch()
+    if (!fileWatch) {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/workspace-files`)
+      const watch = { socket, state, subscription: '' }
+      fileWatch = watch
+      socket.addEventListener('open', () => { if (fileWatch === watch) syncFileWatch(state) })
+      socket.addEventListener('message', (event) => {
+        if (fileWatch !== watch) return
+        let message
+        try { message = JSON.parse(event.data) } catch { return }
+        if (message.type === 'ready' || message.type === 'changed') {
+          const visible = new Set(watchedPaths(state))
+          for (const path of Array.isArray(message.paths) ? message.paths : []) {
+            if (visible.has(path)) void ensureDirectory(state, path, true)
+          }
+        } else if (message.type === 'error') {
+          console.warn('Files automatic refresh:', message.message)
+        }
+      })
+      socket.addEventListener('close', () => {
+        if (fileWatch !== watch) return
+        fileWatch = null
+        fileWatchRetry = setTimeout(() => syncFileWatch(state), 5000)
+      })
+    }
+    const subscription = JSON.stringify({ root: state.root, paths: watchedPaths(state) })
+    if (fileWatch.socket.readyState === 1 && subscription !== fileWatch.subscription) {
+      fileWatch.subscription = subscription
+      fileWatch.socket.send(subscription)
+    }
+  }
 
   const element = (id) => document.getElementById(id)
   const currentThread = () => developerThread || getThread?.() || null
@@ -65,6 +114,7 @@ export function createWorkspaceTools({
         children: new Map(),
         expanded: new Set(['']),
         loading: new Set(),
+        refreshPending: new Set(),
         errors: new Map(),
         selected: '',
         filter: '',
@@ -138,6 +188,7 @@ export function createWorkspaceTools({
   }
 
   function close() {
+    stopFileWatch()
     gitReview.close()
     activeTool = null
     visibleKey = ''
@@ -153,6 +204,7 @@ export function createWorkspaceTools({
   function setTool(tool) {
     if (!['files', 'terminal', 'review'].includes(tool)) return
     if (tool !== 'review') gitReview.close()
+    if (tool !== 'files') stopFileWatch()
     activeTool = tool
     element('workspace-files-pane').classList.toggle('hidden', tool !== 'files')
     element('workspace-terminal-pane').classList.toggle('hidden', tool !== 'terminal')
@@ -176,12 +228,17 @@ export function createWorkspaceTools({
     else gitReview.render()
   }
 
-  async function ensureDirectory(state, relativePath) {
+  async function ensureDirectory(state, relativePath, refresh = false) {
     const path = safeWorkspaceRelativePath(relativePath)
-    if (!state || path == null || state.children.has(path) || state.loading.has(path)) return
+    if (!state || path == null) return
+    if (state.loading.has(path)) {
+      if (refresh) state.refreshPending.add(path)
+      return
+    }
+    if (!refresh && state.children.has(path)) { syncFileWatch(state); return }
     state.loading.add(path)
     state.errors.delete(path)
-    renderFileTree(state)
+    if (state === stateForCurrent() && activeTool === 'files' && !refresh) renderFileTree(state)
     try {
       const response = await gatewayFetch('/studio/workspace/list', {
         method: 'POST',
@@ -197,7 +254,11 @@ export function createWorkspaceTools({
       state.errors.set(path, error.message)
     } finally {
       state.loading.delete(path)
-      if (state === stateForCurrent()) renderFileTree(state)
+      if (state === stateForCurrent() && activeTool === 'files' && isOpen()) {
+        renderFileTree(state)
+        syncFileWatch(state)
+        if (state.refreshPending.delete(path)) void ensureDirectory(state, path, true)
+      } else state.refreshPending.delete(path)
     }
   }
 
@@ -255,6 +316,7 @@ export function createWorkspaceTools({
         await ensureDirectory(state, path)
       }
       renderFileTree(state)
+      syncFileWatch(state)
       return
     }
     renderFileTree(state)
@@ -265,9 +327,7 @@ export function createWorkspaceTools({
   function refreshFiles() {
     const state = stateForCurrent()
     if (!state) return
-    state.children.clear()
-    state.errors.clear()
-    ensureDirectory(state, '').then(() => renderFileTree(state))
+    for (const path of watchedPaths(state)) void ensureDirectory(state, path, true)
   }
 
   function clearTerminal() {

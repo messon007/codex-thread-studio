@@ -41,6 +41,7 @@ mod session_map;
 mod session_state;
 mod speech;
 mod terminal_runtime;
+mod workspace_watch;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
 use backend_runtime::{BackendRuntime, WslSettings};
@@ -934,6 +935,7 @@ fn gateway_router(state: GatewayState) -> Router {
             get(list_favorites).post(create_favorite),
         )
         .route("/studio/favorites/export", get(export_favorites))
+        .route("/studio/favorites/count", get(count_favorites))
         .route(
             "/studio/favorites/{id}",
             get(get_favorite)
@@ -960,6 +962,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/ws/codex-lifecycle", get(codex_lifecycle_ws))
         .route("/ws/codex/{backend}", get(codex_instance_ws))
         .route("/ws/terminal", get(terminal_ws))
+        .route("/ws/workspace-files", get(workspace_files_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2869,6 +2872,14 @@ fn codex_lifecycle_envelope(backend: &str, message: serde_json::Value) -> String
     .to_string()
 }
 
+async fn workspace_files_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    ws.protocols([state.security.websocket_protocol()])
+        .on_upgrade(workspace_watch::serve)
+}
+
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
     ws.protocols([protocol])
@@ -3300,6 +3311,14 @@ async fn list_favorites(
             Ok(items) => json_response(StatusCode::OK, &items),
             Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
         }
+    })
+    .await
+}
+
+async fn count_favorites(State(state): State<GatewayState>) -> Response<Body> {
+    run_studio_database(move || match favorites::count(&state.studio_path) {
+        Ok(count) => json_response(StatusCode::OK, &serde_json::json!({ "count": count })),
+        Err(error) => gateway_error(&format!("failed to count favorites: {error}")),
     })
     .await
 }
@@ -4344,6 +4363,7 @@ mod tests {
                 "/studio/speech",
                 "/studio/session-state",
                 "/studio/favorites",
+                "/studio/favorites/count",
                 "/studio/session-map/codex/thread-1",
                 "/studio/epub/state",
             ] {
@@ -4375,7 +4395,7 @@ mod tests {
                 .expect("authorized response");
             assert_eq!(authorized.status(), StatusCode::OK);
 
-            for path in ["/ws/codex", "/ws/codex-lifecycle"] {
+            for path in ["/ws/codex", "/ws/codex-lifecycle", "/ws/workspace-files"] {
                 let websocket = router
                     .clone()
                     .oneshot(

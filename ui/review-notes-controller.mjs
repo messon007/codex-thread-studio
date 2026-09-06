@@ -965,7 +965,9 @@ async function favoriteRequest(path, options = {}) {
   return value
 }
 
+let favoriteCountRevision = 0
 async function loadFavorites() {
+  const countRevision = ++favoriteCountRevision
   const query = encodeURIComponent(state.favoriteQuery)
   const displayLimit = state.favoriteQuery ? 300 : 2000
   const [result, indexResult] = await Promise.all([
@@ -976,9 +978,28 @@ async function loadFavorites() {
   ])
   state.favorites = Array.isArray(result?.items) ? result.items : []
   state.favoriteIndex = Array.isArray(indexResult?.items) ? indexResult.items : state.favorites
-  state.favoriteTotal = Number(result?.allTotal || 0)
+  if (countRevision === favoriteCountRevision) state.favoriteTotal = Number(result?.allTotal || 0)
   renderFavoritesRail()
   syncFavoriteButtons()
+}
+
+let favoriteCountRequest = null
+async function refreshGlobalFavoriteCount() {
+  if (favoriteCountRequest) return favoriteCountRequest
+  const revision = ++favoriteCountRevision
+  favoriteCountRequest = favoriteRequest('/studio/favorites/count').then((result) => {
+    if (!Number.isSafeInteger(result?.count) || result.count < 0) throw new Error('Invalid favorite count')
+    if (revision !== favoriteCountRevision) return
+    state.favoriteTotal = result.count
+    renderGlobalFavoriteCount()
+  }).finally(() => { favoriteCountRequest = null })
+  return favoriteCountRequest
+}
+
+function renderGlobalFavoriteCount() {
+  const count = state.favoriteTotal
+  $('#favorites-badge').textContent = count > 99 ? '99+' : count
+  $('#favorites-badge').classList.toggle('hidden', count === 0)
 }
 
 function favoriteForSource(backend, threadId, turnId, itemId) {
@@ -1031,8 +1052,7 @@ function renderFavoritesRail() {
   $('#favorites-title').textContent = t(state.favoriteScope === 'session' ? 'Session favorites' : 'Global favorites')
   $('#export-favorites').classList.toggle('hidden', state.favoriteScope !== 'global')
   $('#favorites-count').textContent = count
-  $('#favorites-badge').textContent = count > 99 ? '99+' : count
-  $('#favorites-badge').classList.toggle('hidden', count === 0)
+  renderGlobalFavoriteCount()
   $('#favorites-search-summary').textContent = state.favoriteQuery
     ? t('Found {count} matching favorites', { count: visibleFavorites.length })
     : state.favoriteScope === 'session'
@@ -1298,6 +1318,7 @@ function formatFavoriteDate(value) {
     favoriteForSource,
     hideSelection: hideSelectionPopover,
     loadFavorites,
+    refreshGlobalFavoriteCount,
     openAnnotationFromSelection,
     openAnnotations: openAnnotationRail,
     openCommentForSelection,

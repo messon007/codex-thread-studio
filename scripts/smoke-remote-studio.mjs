@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, access } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, access, mkdir, writeFile, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,7 +45,10 @@ try {
   check(await readFile(settingsPath,'utf8') === settings, 'rejected instance changed settings')
   const unauth = await fetch(new URL('/studio/session-state',url))
   check(unauth.status === 401, 'API accepts missing credentials')
-  browser = await chromium.launch({headless:true,executablePath:process.env.STUDIO_CHROMIUM_PATH})
+  // Playwright-fulfilled bootstrap pages have no real address-space metadata.
+  // Keep that fixture from blocking same-origin loopback WebSockets; gateway
+  // credential/origin checks are still exercised by the server and tests below.
+  browser = await chromium.launch({headless:true,executablePath:process.env.STUDIO_CHROMIUM_PATH,args:['--disable-features=LocalNetworkAccessChecks']})
   const context = await browser.newContext()
   // Exercise the actual served bootstrap and auth API without loading app.js,
   // which would connect to and start backend sessions.
@@ -181,6 +184,40 @@ try {
   })
   console.log(await checkComposerAcceptance(page))
   console.log(await checkCommentMarkerScope(page))
+  const filesRoot = join(profile, 'files-fixture')
+  await mkdir(filesRoot)
+  page.on('console', message => { if (message.type() === 'warning' || message.type() === 'error') console.log('Files browser:', message.text()) })
+  page.on('pageerror', error => console.log('Files browser error:', error.message))
+  await page.evaluate(async ({ root, source }) => {
+    const parsed = new DOMParser().parseFromString(source, 'text/html')
+    document.body.innerHTML = parsed.body.innerHTML
+    const { createWorkspaceTools } = await import('/workspace-tools.mjs')
+    const token = window.__CODEX_THREAD_STUDIO_GATEWAY__.token
+    const gatewayFetch = (url, options = {}) => fetch(url, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } })
+    const count = await gatewayFetch('/studio/favorites/count')
+    if (!count.ok || (await count.json()).count !== 0) throw Error('favorite count route is missing or incorrect')
+    window.filesAcceptance = createWorkspaceTools({
+      getThread: () => ({ id: 'fixture', cwd: root }), gatewayFetch,
+      gatewayWebSocket: url => new WebSocket(url, [`codex-thread-studio.auth.${token}`]),
+    })
+    window.filesAcceptance.bind()
+    await window.filesAcceptance.open('files')
+  }, { root: filesRoot, source: await readFile(new URL('../ui/index.html', import.meta.url), 'utf8') })
+  await writeFile(join(filesRoot, 'created.txt'), 'fixture')
+  await page.waitForFunction(() => document.querySelector('#workspace-file-tree').textContent.includes('created.txt'))
+  await rename(join(filesRoot, 'created.txt'), join(filesRoot, 'renamed.txt'))
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#workspace-file-tree').textContent
+    return text.includes('renamed.txt') && !text.includes('created.txt')
+  })
+  await rm(join(filesRoot, 'renamed.txt'))
+  await page.waitForFunction(() => !document.querySelector('#workspace-file-tree').textContent.includes('renamed.txt'))
+  await page.evaluate(() => window.filesAcceptance.close())
+  await writeFile(join(filesRoot, 'while-closed.txt'), 'fixture')
+  await page.evaluate(() => window.filesAcceptance.open('files'))
+  await page.waitForFunction(() => document.querySelector('#workspace-file-tree').textContent.includes('while-closed.txt'))
+  await page.evaluate(() => window.filesAcceptance.close())
+  console.log('PASS: Files native create/rename/delete events and cached reopen, authenticated global favorite count route')
   // Unlike the adapter fixture above, load the complete app for authentication
   // failures. Startup must stop before opening backend sockets or loading state.
   for (const invalidToken of ['', '0'.repeat(32)]) {

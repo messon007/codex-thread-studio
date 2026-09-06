@@ -104,6 +104,12 @@ pub fn list(path: &Path, query: &str, limit: usize) -> Result<FavoriteList, Stri
     })
 }
 
+pub fn count(path: &Path) -> Result<usize, String> {
+    connection(path)?
+        .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))
+        .map_err(|error| error.to_string())
+}
+
 pub fn insert(path: &Path, favorite: Favorite) -> Result<Favorite, String> {
     validate(&favorite)?;
     let connection = connection(path)?;
@@ -499,8 +505,10 @@ mod tests {
     #[test]
     fn stores_searches_updates_and_exports_sqlite_favorites() {
         let path = database("crud");
+        assert_eq!(count(&path).unwrap(), 0);
         insert(&path, favorite("a", "Architecture", "A durable event log")).unwrap();
         insert(&path, favorite("b", "Testing", "A regression suite")).unwrap();
+        assert_eq!(count(&path).unwrap(), 2);
         assert_eq!(list(&path, "event", 20).unwrap().items[0].id, "a");
         let mut changed = find(&path, "a").unwrap().unwrap();
         changed.note = "Updated note".to_string();
@@ -509,6 +517,8 @@ mod tests {
         let markdown = export_markdown(&path).unwrap();
         assert!(markdown.contains("# Codex Thread Studio Favorites"));
         assert!(markdown.contains("A durable event log"));
+        remove(&path, "a").unwrap();
+        assert_eq!(count(&path).unwrap(), 1);
         cleanup(&path);
     }
 

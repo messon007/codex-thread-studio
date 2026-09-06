@@ -2,7 +2,32 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { createReviewNotesState, deactivateChatCommentMarker } from './review-notes-controller.mjs'
+import { createReviewNotesController, createReviewNotesState, deactivateChatCommentMarker } from './review-notes-controller.mjs'
+
+test('Workspace favorite count is fetched independently, deduplicates requests, and preserves the count on failure', async () => {
+  const previousDocument = globalThis.document
+  const badge = { textContent: '', classList: { toggle() {} } }
+  globalThis.document = { querySelector: () => badge }
+  const state = createReviewNotesState()
+  let requests = 0
+  let success = true
+  try {
+    const controller = createReviewNotesController({ state, view: {}, gatewayFetch: async (url) => {
+      requests++
+      assert.equal(url, '/studio/favorites/count')
+      return { ok: success, status: 500, text: async () => success ? '{"count":7}' : '{"error":{"message":"failed"}}' }
+    } })
+    await Promise.all([controller.refreshGlobalFavoriteCount(), controller.refreshGlobalFavoriteCount()])
+    assert.equal(requests, 1)
+    assert.equal(state.favoriteTotal, 7)
+    assert.equal(badge.textContent, 7)
+    assert.deepEqual(state.favorites, [], 'count does not load favorite bodies')
+    success = false
+    await assert.rejects(controller.refreshGlobalFavoriteCount(), /failed/)
+    assert.equal(state.favoriteTotal, 7)
+    assert.equal(badge.textContent, 7)
+  } finally { globalThis.document = previousDocument }
+})
 
 test('Review Notes state factories isolate mutable collections', () => {
   const first = createReviewNotesState()

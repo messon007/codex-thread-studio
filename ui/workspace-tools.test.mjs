@@ -98,6 +98,55 @@ test('workspace tool launchers remain visible in narrow windows', () => {
   assert.match(styles, /\.workspace-tool-launchers\s*\{[^}]*flex:\s*0 0 auto/u)
 })
 
+test('Files watches visible directories, refreshes changes, and releases the socket when closed', async () => {
+  const previousDocument = globalThis.document
+  const previousLocation = globalThis.location
+  const elements = new Map()
+  globalThis.document = { getElementById(id) {
+    if (!elements.has(id)) elements.set(id, mockElement())
+    return elements.get(id)
+  } }
+  globalThis.location = { protocol: 'http:', host: 'localhost:1234' }
+  const listeners = {}
+  const subscriptions = []
+  let closed = false
+  const socket = {
+    readyState: 1,
+    addEventListener: (name, callback) => { listeners[name] = callback },
+    send: (value) => subscriptions.push(JSON.parse(value)),
+    close: () => { closed = true; listeners.close?.() },
+  }
+  let name = 'before.txt'
+  let requests = 0
+  let tools
+  try {
+    tools = createWorkspaceTools({
+      getThread: () => ({ id: 'a', cwd: '/project' }),
+      gatewayWebSocket: (url) => { assert.equal(url, 'ws://localhost:1234/ws/workspace-files'); return socket },
+      gatewayFetch: async () => {
+        requests++
+        return { ok: true, json: async () => ({ entries: [{ kind: 'file', name, path: name }] }) }
+      },
+    })
+    await tools.open('files')
+    assert.deepEqual(subscriptions, [{ root: '/project', paths: [''] }])
+    name = 'after.txt'
+    listeners.message({ data: JSON.stringify({ type: 'changed', paths: ['', '../outside', 'hidden'] }) })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requests, 2)
+    assert.match(elements.get('workspace-file-tree').innerHTML, /after.txt/)
+    assert.equal(subscriptions.length, 1, 'refresh must not resubscribe in a loop')
+    tools.close()
+    assert.equal(closed, true)
+    listeners.message({ data: JSON.stringify({ type: 'changed', paths: [''] }) })
+    assert.equal(requests, 2, 'closed panels ignore late events')
+  } finally {
+    tools?.close()
+    globalThis.document = previousDocument
+    globalThis.location = previousLocation
+  }
+})
+
 test('session management actions live in More while right areas stay compact', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
   const menu = html.match(/id="thread-more-menu"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/header>/u)?.[0] || ''

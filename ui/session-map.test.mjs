@@ -30,6 +30,24 @@ const map = normalizeSessionMap({
   ],
 })
 
+test('Map workers recover after rejection and disposed queued jobs cannot run', async () => {
+  const pool = new SessionMapWorkerPool()
+  const failed = pool.enqueue('map', () => { throw new Error('fixture failure') })
+  const next = pool.enqueue('map', () => 42)
+  await assert.rejects(failed, /fixture failure/)
+  assert.equal(await next, 42)
+  const pending = pool.enqueue('map', () => { throw new Error('must not execute') })
+  pool.dispose('map')
+  await assert.rejects(pending, /released/)
+  assert.equal(await pool.enqueue('map', () => 'new worker'), 'new worker')
+})
+
+test('Map wire payloads remain unknown until normalized', () => {
+  assert.equal(normalizeSessionMap(null), null)
+  assert.deepEqual(safeAssistantOperations({ operations: [null, 3, { op: 'setState', itemId: 'x', state: 'done' }] }), [])
+  assert.throws(() => parseSessionMapUpdate(`${SESSION_MAP_UPDATE_START}{"baseRevision":"2","operations":[]}${SESSION_MAP_UPDATE_END}`), /missing baseRevision/)
+})
+
 test('normalizes and flattens a hierarchy without archived items', () => {
   assert.deepEqual(flattenSessionMap(map).map(({ item, depth }) => [item.id, depth]), [['root', 0], ['child', 1]])
   assert.deepEqual(mapItemTrail(map).map((item) => item.id), ['root', 'child'])

@@ -43,8 +43,20 @@ search, and environment text parsing are also migrated.
 session state use independent instances; payloads are serialized at enqueue time,
 and a failed request does not stop subsequent writes.
 
+Comment drafts, provider registration, prompt entries, text markers, and the six
+source providers (chat, document, browser, PDF, EPUB, table) are now checked. The
+document-review implementation remains JavaScript behind a narrow declaration
+contract; that declaration does not imply its implementation is type-checked.
+
+Router configuration, candidate selection, decision parsing, and prompt/schema
+construction are checked in `thread-router.mts`. Session Map normalization,
+navigation, bounded context, structured output, safe automatic operations and
+per-map worker serialization are checked in `session-map.mts`. Untrusted Map
+operations remain `unknown` until validation; automatic operations cannot mark
+items done or delete them. Existing server-side validation remains authoritative.
+
 The remaining `app.js` is primarily UI and backend transport orchestration. The
-settings dialogs, annotation/session-map/router controllers, rich document
+settings dialogs, annotation/session-map/router DOM controllers, rich document
 viewers and resource extraction remain JavaScript. Migrating these would require
 separate feature-level contracts; renaming them with weak `any` types would not
 provide the same benefit. This migration does not add a framework, bundle the UI,

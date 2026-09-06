@@ -59,6 +59,7 @@ try {
   // Import real embedded modules in the browser, not just local test files.
   // Fake adapters exercise dispatch without starting paid/backend sessions.
   await page.evaluate(async () => {
+    const check = (value, message) => { if (!value) throw Error(message) }
     const { installBackendRegistry, backendDescriptor } = await import('/backends.mjs')
     const { SessionDispatchRegistry } = await import('/session-dispatch.mjs')
     const { mergeCatalogMetadata } = await import('/session-catalog.mjs')
@@ -75,7 +76,23 @@ try {
     const { filterCatalogEntries } = await import('/thread-catalog.mjs')
     const { localSessionOccurrences } = await import('/session-search.mjs')
     const { createSerializedStateWriter } = await import('/serialized-state-writer.mjs')
-    const check = (value, message) => { if (!value) throw Error(message) }
+    const { CommentSourceRegistry, createCommentDraft } = await import('/comment-core.mjs')
+    const { createChatCommentProvider, createDocumentCommentProvider } = await import('/comment-source-providers.mjs')
+    const { createBrowserCommentProvider } = await import('/browser-comment-provider.mjs')
+    const { createPdfCommentProvider } = await import('/pdf-comment-provider.mjs')
+    const { createEpubCommentProvider } = await import('/epub-comment-provider.mjs')
+    const { createTableCommentProvider } = await import('/table-comment-provider.mjs')
+    const { locateCommentIntervals } = await import('/comment-markers.mjs')
+    const { parseRouterDecision } = await import('/thread-router.mjs')
+    const { normalizeSessionMap, safeAssistantOperations, SessionMapWorkerPool } = await import('/session-map.mjs')
+    const comments = new CommentSourceRegistry()
+    for (const factory of [createChatCommentProvider, createDocumentCommentProvider, createBrowserCommentProvider, createPdfCommentProvider, createEpubCommentProvider, createTableCommentProvider]) comments.register(factory())
+    const comment = createCommentDraft({ excerpt: 'fixture', source: { provider: 'chat', anchor: {} } }, { registry: comments })
+    check(locateCommentIntervals('a fixture', [comment])[0].start === 2, 'comment source/marker modules failed')
+    check(parseRouterDecision(JSON.stringify({ action: 'dispatch', targetSessionKey: 'codex:fixture', forwardedPrompt: 'hello' }), ['codex:fixture']).forwardedPrompt === 'hello', 'Router decision module failed')
+    check(normalizeSessionMap({ id: 'map', backend: 'codex', threadId: 'fixture' }).revision === 0, 'Session Map normalization failed')
+    check(safeAssistantOperations({ operations: [{ op: 'setState', itemId: 'x', state: 'done' }] }).length === 0, 'unsafe Map operation accepted')
+    check(await new SessionMapWorkerPool().enqueue('fixture', () => 42) === 42, 'Map worker result lost')
     installBackendRegistry([{ id: 'ept-codex', kind: 'codex' }])
     check(backendDescriptor('ept-codex').kind === 'codex', 'configured backend missing')
     const registry = new SessionDispatchRegistry()

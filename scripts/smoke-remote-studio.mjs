@@ -62,6 +62,9 @@ try {
     const { installBackendRegistry, backendDescriptor } = await import('/backends.mjs')
     const { SessionDispatchRegistry } = await import('/session-dispatch.mjs')
     const { mergeCatalogMetadata } = await import('/session-catalog.mjs')
+    const { normalizeStoredTurnOptions, sessionModelPreferencePayload } = await import('/session-model-preferences.mjs')
+    const { codexLifecycleStreamMessage, claimLifecycleNotification } = await import('/codex-lifecycle-diagnostics.mjs')
+    const { storeCachedSession, routeCodexNotification } = await import('/session-model-cache.mjs')
     const check = (value, message) => { if (!value) throw Error(message) }
     installBackendRegistry([{ id: 'ept-codex', kind: 'codex' }])
     check(backendDescriptor('ept-codex').kind === 'codex', 'configured backend missing')
@@ -80,6 +83,20 @@ try {
     }
     check(preparations === 3, 'preparation deduplication failed')
     check(mergeCatalogMetadata('codex', { cwd: '/current' }, { cwd: '/old' }).cwd === '/current', 'catalog metadata changed')
+    const preferences = normalizeStoredTurnOptions({ 'ept-codex:one': { model: 'saved-model' } })
+    check(sessionModelPreferencePayload('ept-codex:one', preferences['ept-codex:one']).model === 'saved-model', 'model preference route failed')
+    const notification = { method: 'turn/completed', params: { threadId: 'one', turnId: 'turn' } }
+    const envelope = codexLifecycleStreamMessage({ method: 'studio/codexLifecycle/event', params: { backend: 'ept-codex', message: notification } })
+    check(envelope?.type === 'event' && envelope.backend === 'ept-codex', 'lifecycle decoding failed')
+    check(claimLifecycleNotification('ept-codex', notification, new Map(), new Map(), () => 0), 'lifecycle claim failed')
+    const cache = new Map()
+    const model = { threadId: 'one', activeTurnId: 'turn', turns: [{ id: 'turn' }] }
+    storeCachedSession(cache, 'ept-codex', 'one', model, null, 1)
+    check(routeCodexNotification(notification, {
+      backend: 'ept-codex', selectedBackend: 'codex', selectedId: 'other', selectedModel: {}, cache,
+      hiddenThreads: new Set(), hiddenTurns: new Set(),
+      sessionKey: (backend, id) => `${backend}:${id}`, turnKey: (backend, id) => `${backend}:${id}`,
+    }) === model, 'background notification routing failed')
     installBackendRegistry()
   })
   const native = await context.newPage()

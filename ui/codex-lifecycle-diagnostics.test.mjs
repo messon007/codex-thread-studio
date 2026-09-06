@@ -108,7 +108,7 @@ test('the cross-backend lifecycle socket survives active backend cleanup and rou
   assert.match(notification, /state\.threadsByBackend\[backend\]/u)
   assert.match(notification, /const fullEventCoverage = state\.backend === backend[\s\S]*markCachedModelUnvalidated\(backend, targetModel\)/u)
   assert.match(notification, /refreshOffscreenCodexHistoryAfterCompletion\(backend,/u)
-  assert.match(source, /return state\.backend === backend \? state\.model : null/u)
+  assert.match(source, /routeCodexNotification\(message, \{[\s\S]*selectedBackend: state\.backend/u)
 })
 
 test('offscreen Codex completion refreshes only the changed tail with a full-history fallback', () => {

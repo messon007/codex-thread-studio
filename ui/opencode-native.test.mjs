@@ -804,7 +804,7 @@ test('OpenCode keeps one cross-backend event stream and refreshes after an SSE c
   assert.match(source, /state\.backend === 'opencode' && state\.ready[\s\S]*refreshOpenCodeThreadList[\s\S]*refreshBackendCatalog\('opencode'\)/u)
   assert.match(source, /backend === 'opencode' && cached\.historyEpoch !== openCodeHistoryEpoch/u)
   assert.match(source, /historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null/u)
-  assert.match(source, /backend === 'opencode' \? \{ historyEpoch \}/u)
+  assert.match(source, /storeCachedSession\(state\.threadModels, backend, id, model, historyEpoch, Date\.now\(\)\)/u)
   assert.match(source, /const historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(backend, id, state\.model, \{ historyEpoch \}\)/u)
   assert.match(source, /const historyEpoch = ref\.backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(ref\.backend, ref\.id, model, \{ historyEpoch \}\)/u)
 })

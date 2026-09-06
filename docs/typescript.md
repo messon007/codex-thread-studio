@@ -11,8 +11,21 @@ Dispatch keeps adapter results opaque by default; typed consumers can parameteri
 the registry with adapter-specific result types after validating responses.
 Backend IDs remain extensible strings, while adapter kinds are a closed union.
 The preparation generation counters, in-flight deduplication, and one-time
-thread-not-found recovery retain their existing behavior. Notification handlers
-and model preference persistence in `app.js` are not yet migrated.
+thread-not-found recovery retain their existing behavior.
+
+Further batches extract these typed boundaries from `app.js`:
+
+- `session-model-preferences`: stored preference validation, serialization, and
+  dispatch-time model options (Queue does not snapshot a model).
+- `codex-lifecycle-diagnostics`: unknown event decoding and bounded, backend-scoped
+  duplicate suppression. Reset maps remain owned by the existing connection code.
+- `session-model-cache`: model identity, cache validation bookkeeping, and
+  notification routing to selected or background models.
+
+The async history loaders, cache freshness policy, notification reducers,
+model-selection UI, persistence transport, and DOM/scroll orchestration remain
+JavaScript. They are deliberately not rewritten in these extraction batches.
+No new cache copies, polling, resume requests, or backend model fallback are added.
 
 ## Source and generated assets
 

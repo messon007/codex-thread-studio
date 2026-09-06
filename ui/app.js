@@ -215,6 +215,7 @@ import {
 } from './thread-router-controller.mjs'
 import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dispatch.mjs'
 import { normalizeStoredTurnOptions, sessionModelPreferencePayload, copySessionTurnOptions } from './session-model-preferences.mjs'
+import { cachedSession, storeCachedSession, validateCachedModel, unvalidateCachedModel, cachedModelThreadId, routeCodexNotification } from './session-model-cache.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
@@ -4650,8 +4651,7 @@ function freshThreadModel(backend, id, { reconnectValidation = false } = {}) {
 }
 
 function cachedThreadModel(backend, id) {
-  if (!id) return null
-  return state.threadModels.get(threadCatalogKey(backend, id)) || null
+  return cachedSession(state.threadModels, backend, id)
 }
 
 function cacheThreadModel(
@@ -4660,16 +4660,9 @@ function cacheThreadModel(
   model = state.model,
   { historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null } = {},
 ) {
-  if (!id || !model || model.threadId !== id) return
-  const key = threadCatalogKey(backend, id)
-  const existing = state.threadModels.get(key)
-  state.threadModels.set(key, {
-    ...(existing || {}),
-    model,
-    validatedAt: Date.now(),
-    ...(backend === 'opencode' ? { historyEpoch } : {}),
-  })
-  markThreadLoaded(backend, id)
+  if (storeCachedSession(state.threadModels, backend, id, model, historyEpoch, Date.now())) {
+    markThreadLoaded(backend, id)
+  }
 }
 
 function invalidateThreadModel(backend, id) {
@@ -4682,56 +4675,28 @@ function invalidateThreadModel(backend, id) {
 }
 
 function markCachedModelValidated(backend, model) {
-  for (const [key, cached] of state.threadModels) {
-    if (key.startsWith(`${backend}:`) && cached.model === model) {
-      cached.validatedAt = Date.now()
-      // A delta received after reconnect cannot prove that this model contains
-      // events missed before reconnect. Only an already-current cache may be
-      // extended by live events; a full history read advances stale entries.
-      if (backend === 'opencode' && cached.historyEpoch !== openCodeHistoryEpoch) return
-      if (backend === 'opencode') cached.historyEpoch = openCodeHistoryEpoch
-      return
-    }
-  }
+  validateCachedModel(state.threadModels, backend, model, openCodeHistoryEpoch, Date.now())
 }
 
 function markCachedModelUnvalidated(backend, model) {
-  for (const [key, cached] of state.threadModels) {
-    if (key.startsWith(`${backend}:`) && cached.model === model) {
-      cached.validatedAt = 0
-      return
-    }
-  }
+  unvalidateCachedModel(state.threadModels, backend, model)
 }
 
 function threadIdForCachedModel(backend, model) {
   if (state.backend === backend && state.model === model) return state.selectedId
-  for (const [key, cached] of state.threadModels) {
-    if (key.startsWith(`${backend}:`) && cached.model === model) return key.slice(backend.length + 1)
-  }
-  return null
+  return cachedModelThreadId(state.threadModels, backend, model)
 }
 
 function codexNotificationModel(
   message,
   backend = isCodexBackend(state.backend) ? state.backend : 'codex',
 ) {
-  const params = message.params || {}
-  const explicitId = params.threadId || params.thread?.id || params.turn?.threadId
-  if (explicitId && state.hiddenCodexThreads.has(sessionRefKey(backend, explicitId))) return null
-  if (explicitId) {
-    if (state.backend === backend && state.selectedId === explicitId) return state.model
-    return state.threadModels.get(threadCatalogKey(backend, explicitId))?.model || null
-  }
-  const turnId = params.turnId || params.turn?.id
-  if (turnId && state.hiddenCodexTurns.has(routerRuntimeKey(backend, turnId))) return null
-  if (turnId) {
-    for (const [key, cached] of state.threadModels) {
-      if (!key.startsWith(`${backend}:`)) continue
-      if (cached.model.activeTurnId === turnId || cached.model.turns.some((turn) => turn.id === turnId)) return cached.model
-    }
-  }
-  return state.backend === backend ? state.model : null
+  return routeCodexNotification(message, {
+    backend, selectedBackend: state.backend, selectedId: state.selectedId,
+    selectedModel: state.model, cache: state.threadModels,
+    hiddenThreads: state.hiddenCodexThreads, hiddenTurns: state.hiddenCodexTurns,
+    sessionKey: sessionRefKey, turnKey: routerRuntimeKey,
+  })
 }
 
 function openCodeEventThreadId(payload) {

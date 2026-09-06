@@ -157,6 +157,7 @@ import {
 } from './continuation-draft.mjs'
 import { waitForUtilityResult } from './utility-task.mjs'
 import { executeQueuedMessage } from './queue-execution.mjs'
+import { normalizeTranslationPreferences, normalizeContinueBehavior, normalizeTypography as normalizeTypographyProfile, normalizeContentWidth, normalizeLanguage, normalizeAdditional, normalizeOpeningMessages } from './preference-normalization.mjs'
 
 import {
   annotationPromptDefaults,
@@ -8945,55 +8946,10 @@ function truncateCharacters(value, limit) { return [...String(value || '')].slic
 function isTypingTarget(target) { return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]) }
 
-function normalizeTranslationPreferences(value) {
-  const source = value && typeof value === 'object' ? value : {}
-  const engine = source.engine === 'ollama' ? 'ollama' : 'backend'
-  const candidateOllamaModel = String(source.ollamaModel || '').trim()
-  const ollamaModel = candidateOllamaModel
-    && candidateOllamaModel.length <= 256
-    && !/[\u0000-\u001f]/u.test(candidateOllamaModel)
-    ? candidateOllamaModel
-    : 'gemma3:4b'
-  const models = {}
-  for (const [backend, model] of Object.entries(source.models || {})) {
-    const normalized = String(model || '').trim()
-    if (isSupportedBackend(backend) && normalized && normalized.length <= 256 && !/[\u0000-\u001f]/u.test(normalized)) {
-      models[backend] = normalized
-    }
-  }
-  const efforts = {}
-  const supportedEfforts = new Set(['minimal', 'low', 'medium', 'high', 'xhigh'])
-  for (const [backend, effort] of Object.entries(source.efforts || {})) {
-    if (isSupportedBackend(backend) && supportedEfforts.has(effort)) efforts[backend] = effort
-  }
-  for (const backend of BACKEND_IDS) {
-    if (isCodexBackend(backend) && !efforts[backend]) efforts[backend] = 'low'
-  }
-  return { engine, ollamaModel, models, efforts }
-}
-
-function normalizeContinueBehavior(value) {
-  return ['ollamaDraft', 'quickSend'].includes(value) ? value : 'sessionModelDraft'
-}
 
 
-function normalizeTypography(value) {
-  const weights = [400, 500, 600]
-  const uiFontFamily = String(value.uiFontFamily || typographyDefaults.uiFontFamily).trim().slice(0, 512) || typographyDefaults.uiFontFamily
-  const uiFontWeight = weights.includes(Number(value.uiFontWeight)) ? Number(value.uiFontWeight) : typographyDefaults.uiFontWeight
-  return {
-    uiFontFamily,
-    uiFontSize: Math.min(20, Math.max(11, Number(value.uiFontSize) || typographyDefaults.uiFontSize)),
-    uiFontWeight,
-    contentFontFamily: String(value.contentFontFamily || uiFontFamily).trim().slice(0, 512) || uiFontFamily,
-    contentFontSize: Math.min(24, Math.max(11, Number(value.contentFontSize) || typographyDefaults.contentFontSize)),
-    contentFontWeight: weights.includes(Number(value.contentFontWeight)) ? Number(value.contentFontWeight) : uiFontWeight,
-    codeFontFamily: String(value.codeFontFamily || typographyDefaults.codeFontFamily).trim().slice(0, 512) || typographyDefaults.codeFontFamily,
-    codeFontSize: Math.min(20, Math.max(11, Number(value.codeFontSize) || typographyDefaults.codeFontSize)),
-    codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : typographyDefaults.codeFontWeight,
-    highContrast: value.highContrast === undefined ? typographyDefaults.highContrast : Boolean(value.highContrast),
-  }
-}
+
+function normalizeTypography(value) { return normalizeTypographyProfile(value, typographyDefaults) }
 
 function migrateDefaultFontFamilies(value) {
   const typography = value && typeof value === 'object' ? { ...value } : {}
@@ -9004,13 +8960,7 @@ function migrateDefaultFontFamilies(value) {
   return typography
 }
 
-function normalizeContentWidth(value) {
-  return ['comfortable', 'wide', 'full'].includes(value) ? value : 'comfortable'
-}
 
-function normalizeLanguage(value) {
-  return ['system', 'zh-CN', 'en-US'].includes(value) ? value : 'system'
-}
 
 function normalizeAnnotationDrafts(value) {
   return normalizeCommentDrafts(value, {
@@ -9020,25 +8970,6 @@ function normalizeAnnotationDrafts(value) {
   })
 }
 
-function normalizeAdditional(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).flatMap(([id, text]) => id && typeof text === 'string' ? [[id.includes(':') ? id : `codex:${id}`, text.slice(0, 32000)]] : []))
-}
-function normalizeOpeningMessages(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).slice(0, 2048).flatMap(([key, message]) => {
-    if (!key || !message || typeof message !== 'object') return []
-    const text = truncateUtf8(String(message.text || '').trim(), 16 * 1024)
-    const responsibility = truncateCharacters(String(message.responsibility || '').trim(), 4096)
-    return text || responsibility ? [[key.includes(':') ? key : `codex:${key}`, {
-      text,
-      responsibility,
-      source: String(message.source || 'history').slice(0, 64),
-      capturedAt: String(message.capturedAt || new Date().toISOString()).slice(0, 128),
-      truncated: Boolean(message.truncated),
-    }]] : []
-  }))
-}
 function toast(message, kind = 'info') {
   const element = document.createElement('div')
   element.className = `toast ${kind}`

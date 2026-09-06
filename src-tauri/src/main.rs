@@ -993,6 +993,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/selection-translation.mjs", get(selection_translation_js))
         .route("/utility-task.mjs", get(utility_task_js))
         .route("/queue-execution.mjs", get(queue_execution_js))
+        .route("/preference-normalization.mjs", get(preference_normalization_js))
         .route("/continuation-draft.mjs", get(continuation_draft_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
@@ -2263,6 +2264,10 @@ async fn utility_task_js() -> impl IntoResponse {
 
 async fn queue_execution_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/queue-execution.mjs"))
+}
+
+async fn preference_normalization_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/preference-normalization.mjs"))
 }
 
 async fn continuation_draft_js() -> impl IntoResponse {
@@ -4523,6 +4528,7 @@ mod tests {
                 "/selection-translation.mjs",
                 "/utility-task.mjs",
                 "/queue-execution.mjs",
+                "/preference-normalization.mjs",
                 "/continuation-draft.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",

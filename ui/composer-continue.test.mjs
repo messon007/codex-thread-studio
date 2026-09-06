@@ -15,7 +15,7 @@ test('Continue behavior is persisted and defaults to a human-reviewed session-mo
   assert.match(app, /continueBehavior: state\.continueBehavior/u)
   assert.match(app, /#continue-behavior'\)\.value = state\.continueBehavior/u)
   assert.match(app, /state\.continueBehavior = normalizeContinueBehavior\(\$\('#continue-behavior'\)\.value\)/u)
-  assert.match(app, /function normalizeContinueBehavior\(value\) \{\s*return \['ollamaDraft', 'quickSend'\]\.includes\(value\) \? value : 'sessionModelDraft'/u)
+  assert.match(app, /normalizeContinueBehavior[\s\S]*from '\.\/preference-normalization\.mjs'/u)
   assert.match(app, /#continue-thread'\)\.addEventListener\('click', handleContinueAction\)/u)
   assert.match(app, /event\.key === 'Enter' && event\.shiftKey && \(event\.ctrlKey \|\| event\.metaKey\)[\s\S]{0,160}handleContinueAction\(\)/u)
 })

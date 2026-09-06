@@ -55,6 +55,25 @@ per-map worker serialization are checked in `session-map.mts`. Untrusted Map
 operations remain `unknown` until validation; automatic operations cannot mark
 items done or delete them. Existing server-side validation remains authoritative.
 
+Asynchronous controller boundaries now use three more checked modules:
+
+- `comment-submission`: waits for an explicit Composer send acknowledgement,
+  rejects duplicate in-flight submissions, and removes only the unchanged
+  drafts from that acknowledged batch. Failed sends retain drafts and retrying
+  an already-inserted batch does not duplicate its text.
+- `router-coordination`: per-session start exclusion, atomic claiming of Router
+  completions, target dispatch states and cross-backend target completion.
+  Transport preparation and existing monitor intervals remain unchanged.
+- `session-map-coordination`: shared loads, revision/lifetime-aware writes,
+  deletion, and deduplicated AI synchronization. Old reads cannot resurrect a
+  deleted Map; obsolete worker results cannot update a replacement Map. Logical
+  cancellation suppresses results; it does not claim to cancel a backend request.
+
+DOM rendering, dialogs and transport implementations remain in the JavaScript
+controllers and are injected at these boundaries. Browser smoke tests import
+the real embedded modules, while unit tests cover rejection, duplicate events,
+out-of-order responses and session isolation without invoking paid models.
+
 The remaining `app.js` is primarily UI and backend transport orchestration. The
 settings dialogs, annotation/session-map/router DOM controllers, rich document
 viewers and resource extraction remain JavaScript. Migrating these would require

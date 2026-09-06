@@ -1048,6 +1048,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/favorites.mjs", get(favorites_js))
         .route("/session-map.mjs", get(session_map_js))
         .route(
+            "/session-map-coordination.mjs",
+            get(session_map_coordination_js),
+        )
+        .route(
             "/session-map-controller.mjs",
             get(session_map_controller_js),
         )
@@ -2393,6 +2397,10 @@ async fn favorites_js() -> impl IntoResponse {
 
 async fn session_map_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-map.mjs"))
+}
+
+async fn session_map_coordination_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-map-coordination.mjs"))
 }
 
 async fn session_map_controller_js() -> impl IntoResponse {
@@ -4525,6 +4533,7 @@ mod tests {
                 "/session-resources-ui.mjs",
                 "/favorites.mjs",
                 "/session-map.mjs",
+                "/session-map-coordination.mjs",
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",

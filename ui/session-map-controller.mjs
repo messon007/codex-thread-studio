@@ -21,6 +21,7 @@ import {
   visibleMapItems,
 } from './session-map.mjs'
 import { sessionRefKey } from './thread-router.mjs'
+import { SessionMapCoordinator } from './session-map-coordination.mjs'
 
 export function createSessionMapRuntimeState() {
   return {
@@ -67,6 +68,9 @@ export function createSessionMapController({
   const showError = reportError
   const routerRuntimeKey = sessionRefKey
   let sessionMapRequestId = -8_500_000
+  const mapAsync = new SessionMapCoordinator(state, (key) => {
+    if (selectedStateKey() === key) renderSessionMap()
+  })
 
   function bind() {
     $('#session-map-action')?.addEventListener('click', handleSessionMapAction)
@@ -109,9 +113,11 @@ export function createSessionMapController({
     const backend = state.backend
     const params = message.params || {}
     const key = sessionMapKey(backend, params.threadId)
+    let isCurrent = () => true
     try {
       const map = await loadSessionMap(backend, params.threadId)
       if (!map) throw new Error('This thread does not have a Session Map')
+      isCurrent = mapAsync.guard(key)
       const operations = safeAssistantOperations(params.arguments)
       if (!operations.length) throw new Error('No safe Session Map operations were provided')
       const updated = await applySessionMapOperations(operations, {
@@ -119,6 +125,7 @@ export function createSessionMapController({
         sourceTurnId: params.turnId || null,
         key,
       })
+      if (!isCurrent() || !updated) throw new Error('This Session Map was removed or replaced')
       sendRaw({
         id: message.id,
         result: {
@@ -136,8 +143,10 @@ export function createSessionMapController({
           contentItems: [{ type: 'inputText', text: `Session Map update rejected: ${error.message}` }],
         },
       })
-      state.sessionMapSync.set(key, { state: 'error', message: error.message })
-      if (selectedStateKey() === key) renderSessionMap()
+      if (isCurrent()) {
+        state.sessionMapSync.set(key, { state: 'error', message: error.message })
+        if (selectedStateKey() === key) renderSessionMap()
+      }
     }
   }
 
@@ -163,23 +172,7 @@ export function createSessionMapController({
 
   async function loadSessionMap(backend, threadId, { force = false } = {}) {
     const key = sessionMapKey(backend, threadId)
-    if (!key) return null
-    if (!force && state.sessionMaps.has(key)) return state.sessionMaps.get(key)
-    if (state.sessionMapLoads.has(key)) return state.sessionMapLoads.get(key)
-    const load = sessionMapFetch(sessionMapEndpoint(backend, threadId))
-      .then((value) => normalizeSessionMap(value))
-      .catch((error) => {
-        if (error.status === 404) return null
-        throw error
-      })
-      .then((map) => {
-        state.sessionMaps.set(key, map)
-        if (selectedStateKey() === key) renderSessionMap()
-        return map
-      })
-      .finally(() => state.sessionMapLoads.delete(key))
-    state.sessionMapLoads.set(key, load)
-    return load
+    return mapAsync.load(key, () => sessionMapFetch(sessionMapEndpoint(backend, threadId)), force)
   }
 
   function handleSessionMapAction() {
@@ -208,6 +201,7 @@ export function createSessionMapController({
   async function createSessionMap(event) {
     event.preventDefault()
     const key = selectedStateKey()
+    const sourceModel = state.model
     if (!key || !state.selectedId) return
     const payload = {
       backend: state.backend,
@@ -221,14 +215,16 @@ export function createSessionMapController({
     errorElement.classList.add('hidden')
     try {
       const map = normalizeSessionMap(await sessionMapFetch('/studio/session-map', { method: 'POST', body: payload }))
-      state.sessionMaps.set(key, map)
+      mapAsync.publish(key, map, false)
       state.sessionMapDismissed.delete(key)
-      closeSessionMapDialog()
-      closeAnnotationRail()
-      closeFavoritesRail()
-      renderSessionMap()
+      if (selectedStateKey() === key) {
+        closeSessionMapDialog()
+        closeAnnotationRail()
+        closeFavoritesRail()
+        renderSessionMap()
+      }
       toast('Map created')
-      generateSessionMapStructure({ key, model: state.model, automatic: true }).catch((error) => {
+      generateSessionMapStructure({ key, model: sourceModel, automatic: true }).catch((error) => {
         console.warn('Unable to generate initial Session Map structure', error)
       })
     } catch (error) {
@@ -510,14 +506,10 @@ export function createSessionMapController({
     const map = state.sessionMaps.get(key)
     if (!map || !backend || !threadId || !operations.length) return map
     try {
-      const value = await sessionMapFetch(sessionMapEndpoint(backend, threadId, 'operations'), {
+      return await mapAsync.update(key, (map) => sessionMapFetch(sessionMapEndpoint(backend, threadId, 'operations'), {
         method: 'POST',
         body: { baseRevision: map.revision, actor, sourceTurnId, operations },
-      })
-      const updated = normalizeSessionMap(value)
-      state.sessionMaps.set(key, updated)
-      if (selectedStateKey() === key) renderSessionMap()
-      return updated
+      }))
     } catch (error) {
       if (error.status === 409) await loadSessionMap(backend, threadId, { force: true })
       throw error
@@ -529,9 +521,7 @@ export function createSessionMapController({
     const key = selectedStateKey()
     const map = selectedSessionMap()
     if (!key || !map) return
-    const value = await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId, 'undo'), { method: 'POST' })
-    state.sessionMaps.set(key, normalizeSessionMap(value))
-    renderSessionMap()
+    await mapAsync.update(key, () => sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId, 'undo'), { method: 'POST' }))
     toast('Undid the latest Map update')
   }
 
@@ -540,7 +530,7 @@ export function createSessionMapController({
     const key = selectedStateKey()
     const map = selectedSessionMap()
     if (!key || !map || !window.confirm(t('Delete this session Map? Conversation history will not be affected.'))) return
-    await sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' })
+    if (!await mapAsync.remove(key, () => sessionMapFetch(sessionMapEndpoint(map.backend, map.threadId), { method: 'DELETE' }))) return
     if (isCodexBackend(map.backend) && state.backend === map.backend && state.ready) {
       rpc('thread/resume', {
         threadId: map.threadId,
@@ -548,12 +538,12 @@ export function createSessionMapController({
         dynamicTools: [],
       }).catch((error) => console.warn('Unable to clear Session Map thread context', error))
     }
-    state.sessionMaps.set(key, null)
     state.sessionMapDismissed.delete(key)
     state.sessionMapSync.delete(key)
-    state.sessionMapSelectedItem = null
+    state.sessionMapBootstrapAttempts.delete(key)
+    if (selectedStateKey() === key) state.sessionMapSelectedItem = null
     disposeSessionMapWorker(key)
-    renderSessionMap()
+    if (selectedStateKey() === key) renderSessionMap()
     toast('Map deleted')
   }
 
@@ -583,10 +573,7 @@ export function createSessionMapController({
       assistant: answerForMapTurn(turn),
     })).filter((interaction) => interaction.user || interaction.assistant)
     const sourceTurn = [...(model?.turns || [])].reverse().find((turn) => turn?.id && (questionForTurn(turn).trim() || answerForMapTurn(turn)))
-    state.sessionMapSync.set(key, { state: 'syncing', message: 'AI is generating the initial Map' })
-    if (selectedStateKey() === key) renderSessionMap()
-
-    try {
+    return mapAsync.synchronize(key, async (map, isCurrent) => {
       const result = await runCodexStructuredWorker({
         key,
         developerInstructions: 'You create a compact navigation Map for another conversation. Do not use tools, inspect files, or answer the user. Return only the JSON object required by the supplied output schema. Follow the safe-operation restrictions exactly.',
@@ -595,20 +582,15 @@ export function createSessionMapController({
         timeoutMessage: 'AI Map generation timed out',
       })
       const operations = safeAssistantOperations(result)
+      if (!isCurrent()) return mapAsync.current(key)
       if (!operations.length) throw new Error('AI did not generate any usable Map items')
       const updated = await applySessionMapOperations(operations, {
         actor: 'assistant',
         sourceTurnId: sourceTurn?.id ? String(sourceTurn.id) : null,
         key,
       })
-      state.sessionMapSync.set(key, { state: 'synced', message: 'Map structure updated' })
-      if (selectedStateKey() === key) renderSessionMap()
       return updated
-    } catch (error) {
-      state.sessionMapSync.set(key, { state: 'error', message: error.message })
-      if (selectedStateKey() === key) renderSessionMap()
-      throw error
-    }
+    }, { syncing: 'AI is generating the initial Map', synced: 'Map structure updated' })
   }
 
   async function processSessionMapInlineUpdate(backend, threadId, model, completedTurnId = null) {
@@ -617,9 +599,11 @@ export function createSessionMapController({
     const processingKey = `${key}:${completedTurnId || ''}`
     if (state.sessionMapInlineProcessing.has(processingKey)) return
     state.sessionMapInlineProcessing.add(processingKey)
+    let isCurrent = () => true
     try {
       const map = await loadSessionMap(backend, threadId)
       if (!map) return
+      isCurrent = mapAsync.guard(key)
       const turn = completedTurnId
         ? (model.turns || []).find((candidate) => String(candidate.id) === String(completedTurnId))
         : [...(model.turns || [])].reverse().find((candidate) => candidate?.id)
@@ -648,12 +632,14 @@ export function createSessionMapController({
       } else {
         map.lastSyncedTurnId = String(turn.id)
       }
+      if (!isCurrent()) return
       state.sessionMapSync.set(key, {
         state: 'synced',
         message: operations.length ? t('Map updated from this response') : t('This response did not require a Map change'),
       })
       if (selectedStateKey() === key) renderSessionMap()
     } catch (error) {
+      if (!isCurrent()) return
       state.sessionMapSync.set(key, { state: 'error', message: t(error.message) })
       if (selectedStateKey() === key) renderSessionMap()
       throw error

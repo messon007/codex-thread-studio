@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './history-installation.mjs'
 import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
@@ -4069,21 +4070,23 @@ async function resumeThreadUncached(id, { environmentRoot = '', environmentRevis
     sessionDispatch.markPrepared({ backend, id })
     if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return
     if (state.backend !== backend || state.selectedId !== id) return
-    const installedTail = backend === 'opencode' && result.historyAnchorTurnId
-      ? mergeOpenCodeThreadTail(state.model, result.thread, result.historyAnchorTurnId)
-      : false
-    if (!installedTail) hydrateCodexThread(state.model, result.thread)
-    if (backend === 'opencode' && !installedTail) hydrateOpenCodeModelMetadata(result.thread, state.model, result.historyComplete)
-    if (historyEvents?.length) replayOpenCodeEventsAfterHistory(state.model, historyEvents, id, {
+    installSelectedHistory({
+      opencode: backend === 'opencode',
+      model: state.model,
+      thread: result.thread,
+      historyAnchorTurnId: result.historyAnchorTurnId,
+      historyComplete: result.historyComplete,
+      historyEvents,
       messageSnapshots: result.historyMessageSnapshots,
-      statusAfterSequence: result.historyStatusSequence,
-      authoritativeStatus: result.historyStatusSequence >= 0 ? result.thread?.status : null,
+      statusSequence: result.historyStatusSequence,
+      mergeTail: mergeOpenCodeThreadTail,
+      hydrate: hydrateCodexThread,
+      hydrateMetadata: hydrateOpenCodeModelMetadata,
+      replay: (model, events, options) => replayOpenCodeEventsAfterHistory(model, events, id, options),
+      ready: markTranscriptHistoryReady,
+      mergeMetadata: mergeThreadMetadata,
+      cache: model => cacheThreadModel(backend, id, model, { historyEpoch }),
     })
-    markTranscriptHistoryReady({
-      complete: installedTail ? state.model.historyComplete !== false : result.historyComplete !== false,
-    })
-    mergeThreadMetadata(result.thread)
-    cacheThreadModel(backend, id, state.model, { historyEpoch })
     $('#native-connection').textContent = t('Connected')
     renderWorkspace()
     renderTranscript()
@@ -4182,21 +4185,23 @@ async function refreshSelectedThreadUncached({
     if (backend === 'opencode' && historyEpoch !== openCodeHistoryEpoch) return false
     if (state.backend !== backend || state.selectedId !== threadId) return false
     if (isCodexBackend(backend)) sessionDispatch.markPrepared({ backend, id: threadId })
-    const installedTail = backend === 'opencode' && result.historyAnchorTurnId
-      ? mergeOpenCodeThreadTail(state.model, result.thread, result.historyAnchorTurnId)
-      : false
-    if (!installedTail) hydrateCodexThread(state.model, result.thread)
-    if (backend === 'opencode' && !installedTail) hydrateOpenCodeModelMetadata(result.thread, state.model, result.historyComplete)
-    if (historyEvents?.length) replayOpenCodeEventsAfterHistory(state.model, historyEvents, threadId, {
+    installSelectedHistory({
+      opencode: backend === 'opencode',
+      model: state.model,
+      thread: result.thread,
+      historyAnchorTurnId: result.historyAnchorTurnId,
+      historyComplete: result.historyComplete,
+      historyEvents,
       messageSnapshots: result.historyMessageSnapshots,
-      statusAfterSequence: result.historyStatusSequence,
-      authoritativeStatus: result.historyStatusSequence >= 0 ? result.thread?.status : null,
+      statusSequence: result.historyStatusSequence,
+      mergeTail: mergeOpenCodeThreadTail,
+      hydrate: hydrateCodexThread,
+      hydrateMetadata: hydrateOpenCodeModelMetadata,
+      replay: (model, events, options) => replayOpenCodeEventsAfterHistory(model, events, threadId, options),
+      ready: markTranscriptHistoryReady,
+      mergeMetadata: mergeThreadMetadata,
+      cache: model => cacheThreadModel(backend, threadId, model, { historyEpoch }),
     })
-    markTranscriptHistoryReady({
-      complete: installedTail ? state.model.historyComplete !== false : result.historyComplete !== false,
-    })
-    mergeThreadMetadata(result.thread)
-    cacheThreadModel(backend, threadId, state.model, { historyEpoch })
     renderWorkspace()
     renderTranscript()
     if (!quiet) toast('Session refreshed')
@@ -4294,13 +4299,7 @@ function openCodeEventThreadId(payload) {
 }
 
 function hydrateOpenCodeModelMetadata(thread, model = state.model, historyComplete = true) {
-  model.messageTurns = thread?.messageTurns || {}
-  model.messageRoles = thread?.messageRoles || {}
-  model.messageItems = thread?.messageItems || {}
-  model.messageErrors = thread?.messageErrors || {}
-  model.historyComplete = historyComplete !== false
-  model.status = thread?.status || model.status
-  model.activeTurnId = model.status === 'running' ? model.turns.at(-1)?.id || null : null
+  hydrateOpenCodeHistoryMetadata(thread, model, historyComplete)
 }
 
 function mergeThreadMetadata(incoming) {

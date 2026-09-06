@@ -333,7 +333,7 @@ test('replays buffered OpenCode deltas without losing history prefixes or duplic
   })
   assert.equal(reasoningHistory.turns[0].items.at(-1).content[0], 'thinking')
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  assert.match(source, /beginOpenCodeHistoryEventBuffer\(id\)[\s\S]*replayOpenCodeEventsAfterHistory\(state\.model, historyEvents, id, \{[\s\S]*endOpenCodeHistoryEventBuffer\(id, historyEvents\)/u)
+  assert.match(source, /beginOpenCodeHistoryEventBuffer\(id\)[\s\S]*installSelectedHistory\([\s\S]*replayOpenCodeEventsAfterHistory\(model, events, id, options\)[\s\S]*endOpenCodeHistoryEventBuffer\(id, historyEvents\)/u)
   assert.match(source, /bufferOpenCodeHistoryEvent\(eventThreadId, event\)/u)
 })
 
@@ -808,7 +808,7 @@ test('OpenCode keeps one cross-backend event stream and refreshes after an SSE c
   assert.match(source, /backend === 'opencode' && cached\.historyEpoch !== openCodeHistoryEpoch/u)
   assert.match(source, /historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null/u)
   assert.match(source, /storeCachedSession\(state\.threadModels, backend, id, model, historyEpoch, Date\.now\(\)\)/u)
-  assert.match(source, /const historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(backend, id, state\.model, \{ historyEpoch \}\)/u)
+  assert.match(source, /const historyEpoch = backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(backend, id, model, \{ historyEpoch \}\)/u)
   assert.match(source, /const historyEpoch = ref\.backend === 'opencode' \? openCodeHistoryEpoch : null[\s\S]*cacheThreadModel\(ref\.backend, ref\.id, model, \{ historyEpoch \}\)/u)
 })
 
@@ -826,7 +826,7 @@ test('OpenCode never reuses or installs a history load from an older connection 
   for (const load of [resume, refresh]) {
     assert.match(load, /coordinateHistoryLoad\(state\.threadLoads, key, backend, historyEpoch,/u)
     const epochGuard = load.indexOf('historyEpoch !== openCodeHistoryEpoch')
-    const hydrate = load.indexOf('hydrateCodexThread(')
+    const hydrate = load.indexOf('installSelectedHistory(')
     assert.ok(epochGuard >= 0 && epochGuard < hydrate)
     const catchBranch = load.slice(load.indexOf('} catch (error) {'))
     assert.ok(catchBranch.indexOf('historyEpoch !== openCodeHistoryEpoch')

@@ -146,6 +146,14 @@ load and fresh cache rather than starting another selection. Existing timeout
 values and current-selection checks are retained. History result installation,
 event replay, scroll restoration and the DOM remain in their existing modules
 or JS callers; this does not claim that all history orchestration is migrated.
+
+`history-installation` brings the total to 61 modules. Resume and refresh now
+share the typed synchronous sequence: attempt OpenCode tail merge, hydrate if
+needed, restore OpenCode metadata, replay buffered events, mark history ready,
+merge catalog metadata and cache the result. Selection and OpenCode epoch guards
+remain before installation in both callers. Existing reducers and replay
+algorithms are reused; no deep copies, requests or scroll changes are added.
+Transport, error presentation and performance reporting remain in the callers.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

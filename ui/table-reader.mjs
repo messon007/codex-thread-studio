@@ -2,6 +2,9 @@ import { Workbook } from './vendor/artifact-table.mjs'
 
 const MAX_ROWS = 10_000
 const MAX_COLUMNS = 200
+const MIN_COLUMN_WIDTH = 82
+const MAX_COLUMN_WIDTH = 720
+const COLUMN_RESIZE_STEP = 12
 
 export async function parseTabularArtifact({ bytes, path, text = '' }) {
   if (/\.csv$/iu.test(path)) return parseDelimited(text, ',')
@@ -26,31 +29,166 @@ export async function parseTabularArtifact({ bytes, path, text = '' }) {
 
 export function renderTableArtifact({ container, workbook, initialSheet = 0, onSelection, translate = (value) => value }) {
   let sheetIndex = Math.min(workbook.sheets.length - 1, Math.max(0, Number(initialSheet) || 0))
+  const columnWidthsBySheet = new Map()
   const shell = document.createElement('div')
   shell.className = 'table-reader'
   container.replaceChildren(shell)
+  let clearActiveResize = () => {}
+  let copyFeedbackTimer = null
 
   function render() {
+    clearActiveResize()
+    clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = null
     const sheet = workbook.sheets[sheetIndex] || { name: 'Sheet', rows: [] }
     const width = Math.max(1, ...sheet.rows.map((row) => row.length))
     const dimensions = translate('{rows} rows · {columns} columns', { rows: sheet.rows.length, columns: width })
-    shell.innerHTML = `<div class="table-toolbar"><select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button">${escapeHtml(translate('Chart'))}</button></div><div class="table-grid-wrap"><table class="table-grid"><thead><tr><th></th>${Array.from({ length: width }, (_, index) => `<th>${columnName(index + 1)}</th>`).join('')}</tr></thead><tbody>${sheet.rows.map((row, rowIndex) => `<tr><th>${rowIndex + 1}</th>${Array.from({ length: width }, (_, columnIndex) => `<td tabindex="0" data-row="${rowIndex + 1}" data-column="${columnIndex + 1}">${escapeHtml(row[columnIndex] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="table-chart hidden"></div>`
+    shell.innerHTML = `<div class="table-toolbar"><select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button">${escapeHtml(translate('Chart'))}</button><button data-table-copy type="button" disabled>${escapeHtml(translate('Copy'))}</button></div><div class="table-grid-wrap"><table class="table-grid"><colgroup><col data-table-row-column>${Array.from({ length: width }, (_, index) => `<col data-table-column-width="${index}">`).join('')}</colgroup><thead><tr><th></th>${Array.from({ length: width }, (_, index) => { const name = columnName(index + 1); return `<th class="table-column-header" data-table-column-header="${index}"><span>${name}</span><span class="table-column-resizer" data-table-column-resizer="${index}" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(translate('Resize column {column}', { column: name }))}" aria-valuemin="${MIN_COLUMN_WIDTH}" aria-valuemax="${MAX_COLUMN_WIDTH}" tabindex="0"></span></th>` }).join('')}</tr></thead><tbody>${sheet.rows.map((row, rowIndex) => `<tr><th>${rowIndex + 1}</th>${Array.from({ length: width }, (_, columnIndex) => `<td tabindex="0" data-row="${rowIndex + 1}" data-column="${columnIndex + 1}">${escapeHtml(row[columnIndex] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="table-chart hidden"></div>`
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => { sheetIndex = Number(event.target.value); render() })
-    shell.querySelector('.table-grid').addEventListener('click', (event) => {
+    const grid = shell.querySelector('.table-grid')
+    const copyButton = shell.querySelector('[data-table-copy]')
+    const columnHeaders = [...grid.querySelectorAll('[data-table-column-header]')]
+    const columnElements = [...grid.querySelectorAll('[data-table-column-width]')]
+    const resizeHandles = [...grid.querySelectorAll('[data-table-column-resizer]')]
+    const rowHeaderWidth = Math.max(42, Math.round(grid.querySelector('thead th').getBoundingClientRect().width))
+    let selectedCell = null
+
+    function currentColumnWidths() {
+      return columnHeaders.map((header) => clampTableColumnWidth(header.getBoundingClientRect().width))
+    }
+
+    function applyColumnWidths(values) {
+      const widths = Array.from({ length: width }, (_, index) => clampTableColumnWidth(values[index]))
+      columnWidthsBySheet.set(sheetIndex, widths)
+      grid.classList.add('columns-resized')
+      columnElements.forEach((column, index) => { column.style.width = `${widths[index]}px` })
+      resizeHandles.forEach((handle, index) => handle.setAttribute('aria-valuenow', String(widths[index])))
+      grid.style.width = `${rowHeaderWidth + widths.reduce((sum, value) => sum + value, 0)}px`
+      return widths
+    }
+
+    const savedWidths = columnWidthsBySheet.get(sheetIndex)
+    if (savedWidths?.length === width) applyColumnWidths(savedWidths)
+
+    function stopColumnResize() {
+      window.removeEventListener('mousemove', resizeColumn)
+      window.removeEventListener('mouseup', stopColumnResize)
+      window.removeEventListener('blur', stopColumnResize)
+      document.body.classList.remove('resizing-table-column')
+      resizeHandles.forEach((handle) => handle.classList.remove('active'))
+      activeResize = null
+      clearActiveResize = () => {}
+    }
+
+    let activeResize = null
+    function resizeColumn(event) {
+      if (!activeResize) return
+      event.preventDefault()
+      const widths = resizeTableColumnWidths(
+        activeResize.widths,
+        activeResize.columnIndex,
+        event.clientX - activeResize.startX,
+      )
+      applyColumnWidths(widths)
+    }
+
+    grid.addEventListener('mousedown', (event) => {
+      const handle = event.target.closest('[data-table-column-resizer]')
+      if (!handle || event.button !== 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      stopColumnResize()
+      const columnIndex = Number(handle.dataset.tableColumnResizer)
+      const widths = currentColumnWidths()
+      applyColumnWidths(widths)
+      activeResize = { columnIndex, startX: event.clientX, widths }
+      handle.classList.add('active')
+      document.body.classList.add('resizing-table-column')
+      window.addEventListener('mousemove', resizeColumn)
+      window.addEventListener('mouseup', stopColumnResize)
+      window.addEventListener('blur', stopColumnResize)
+      clearActiveResize = stopColumnResize
+    })
+
+    grid.addEventListener('keydown', (event) => {
+      const handle = event.target.closest('[data-table-column-resizer]')
+      if (!handle || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const columnIndex = Number(handle.dataset.tableColumnResizer)
+      const direction = event.key === 'ArrowLeft' ? -1 : 1
+      const step = COLUMN_RESIZE_STEP * (event.shiftKey ? 4 : 1)
+      applyColumnWidths(resizeTableColumnWidths(currentColumnWidths(), columnIndex, direction * step))
+    })
+
+    function setCopyFeedback(label) {
+      clearTimeout(copyFeedbackTimer)
+      copyButton.textContent = translate(label)
+      copyFeedbackTimer = setTimeout(() => {
+        if (copyButton.isConnected) copyButton.textContent = translate('Copy')
+        copyFeedbackTimer = null
+      }, 1_200)
+    }
+
+    async function copySelectedCell() {
+      if (!selectedCell) return
+      try {
+        await navigator.clipboard.writeText(selectedCell.textContent || '')
+        setCopyFeedback('Copied')
+      } catch (error) {
+        console.error('Unable to copy table cell', error)
+        setCopyFeedback('Copy failed')
+      }
+    }
+
+    grid.addEventListener('click', (event) => {
       const cell = event.target.closest('td[data-row]')
       if (!cell) return
       shell.querySelectorAll('td.selected').forEach((node) => node.classList.remove('selected'))
       cell.classList.add('selected')
+      selectedCell = cell
+      copyButton.disabled = false
       onSelection?.({
         quote: cell.textContent || '', sheet: sheet.name,
         range: `${columnName(Number(cell.dataset.column))}${cell.dataset.row}`,
         rect: cell.getBoundingClientRect(),
       })
     })
+    grid.addEventListener('keydown', (event) => {
+      const cell = event.target.closest('td[data-row]')
+      const copyShortcut = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c'
+      if (!cell || !copyShortcut || window.getSelection()?.toString()) return
+      event.preventDefault()
+      if (selectedCell !== cell) {
+        shell.querySelectorAll('td.selected').forEach((node) => node.classList.remove('selected'))
+        cell.classList.add('selected')
+        selectedCell = cell
+        copyButton.disabled = false
+      }
+      copySelectedCell()
+    })
+    copyButton.addEventListener('click', copySelectedCell)
     shell.querySelector('[data-table-chart]').addEventListener('click', () => toggleChart(shell, sheet, translate))
   }
   render()
-  return { destroy: () => shell.remove() }
+  return {
+    destroy: () => {
+      clearActiveResize()
+      clearTimeout(copyFeedbackTimer)
+      shell.remove()
+    },
+  }
+}
+
+export function clampTableColumnWidth(value) {
+  return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(Number(value) || MIN_COLUMN_WIDTH)))
+}
+
+export function resizeTableColumnWidths(widths, columnIndex, delta) {
+  const next = widths.map(clampTableColumnWidth)
+  if (!Number.isInteger(columnIndex) || columnIndex < 0 || columnIndex >= next.length) return next
+  next[columnIndex] = clampTableColumnWidth(next[columnIndex] + Number(delta || 0))
+  return next
 }
 
 function toggleChart(shell, sheet, translate) {

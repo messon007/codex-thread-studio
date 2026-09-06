@@ -1434,6 +1434,24 @@ window.__studioDeveloper = Object.freeze({
   click(selector) {
     document.querySelector(String(selector || ''))?.click()
   },
+  drag(selector, deltaX = 0, deltaY = 0) {
+    const target = document.querySelector(String(selector || ''))
+    if (!target) return
+    const rect = target.getBoundingClientRect()
+    const startX = rect.left + rect.width / 2
+    const startY = rect.top + rect.height / 2
+    target.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 1, clientX: startX, clientY: startY,
+    }))
+    window.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 1,
+      clientX: startX + Number(deltaX || 0), clientY: startY + Number(deltaY || 0),
+    }))
+    window.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 0,
+      clientX: startX + Number(deltaX || 0), clientY: startY + Number(deltaY || 0),
+    }))
+  },
   input(selector, value) {
     const target = document.querySelector(String(selector || ''))
     if (!target || !('value' in target)) return

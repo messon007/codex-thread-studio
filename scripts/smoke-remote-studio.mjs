@@ -56,6 +56,11 @@ try {
   check(!page.url().includes('token'), 'token was not cleared')
   await page.reload()
   check(await authStatus() === 200, 'reload authentication failed')
+  // Every generated runtime asset must be served and importable, including its dependencies.
+  const generatedModules = (await readFile(new URL('../ui-src/generated.sha256', import.meta.url), 'utf8'))
+    .split('\n').map(line => line.split('\t')[0]).filter(path => path?.startsWith('ui/') && path.endsWith('.mjs'))
+    .map(path => `/${path.slice(3)}`)
+  await page.evaluate(async paths => { for (const path of paths) await import(path) }, generatedModules)
   // Import real embedded modules in the browser, not just local test files.
   // Fake adapters exercise dispatch without starting paid/backend sessions.
   await page.evaluate(async () => {

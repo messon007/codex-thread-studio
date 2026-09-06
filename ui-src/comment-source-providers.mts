@@ -78,7 +78,7 @@ export function createDocumentCommentProvider(): CommentProvider {
   }
 }
 
-export function relocateDocumentComment(value: unknown, file: unknown, excerpt: unknown) {
+export function relocateDocumentComment(value: unknown, file: Parameters<typeof createFileRangeTarget>[0], excerpt: unknown) {
   const source = commentRecord(value)
   const target = fileTarget(source?.anchor)
   const relocated = createFileRangeTarget(file, excerpt)

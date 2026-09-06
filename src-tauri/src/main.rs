@@ -1027,6 +1027,8 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/pdf-reader.mjs", get(pdf_reader_js))
         .route("/pdf-comment-provider.mjs", get(pdf_comment_provider_js))
         .route("/table-reader.mjs", get(table_reader_js))
+        .route("/table-data.mjs", get(table_data_js))
+        .route("/git-review-data.mjs", get(git_review_data_js))
         .route(
             "/table-comment-provider.mjs",
             get(table_comment_provider_js),
@@ -2480,6 +2482,14 @@ async fn pdf_comment_provider_js() -> impl IntoResponse {
 
 async fn table_reader_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/table-reader.mjs"))
+}
+
+async fn table_data_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/table-data.mjs"))
+}
+
+async fn git_review_data_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/git-review-data.mjs"))
 }
 
 async fn table_comment_provider_js() -> impl IntoResponse {
@@ -4542,6 +4552,8 @@ mod tests {
                 "/composer-tools.mjs",
                 "/composer-images.mjs",
                 "/document-review.mjs",
+                "/table-data.mjs",
+                "/git-review-data.mjs",
                 "/document-outline.mjs",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",

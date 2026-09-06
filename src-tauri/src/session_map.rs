@@ -1047,6 +1047,26 @@ fn sql_error(error: rusqlite::Error) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sqlite_unsigned_conversions_are_checked_not_wrapped() {
+        let connection = Connection::open_in_memory().expect("database");
+        let maximum = i64::MAX as u64;
+        let round_trip: u64 = connection
+            .query_row("SELECT ?1", [maximum], |row| row.get(0))
+            .expect("positive integer");
+        assert_eq!(round_trip, maximum);
+        assert!(connection
+            .query_row("SELECT ?1", [u64::MAX], |row| row.get::<_, i64>(0))
+            .is_err());
+        assert!(connection
+            .query_row("SELECT -1", [], |row| row.get::<_, u64>(0))
+            .is_err());
+        let count: usize = connection
+            .query_row("SELECT COUNT(*) FROM (SELECT 1)", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+    }
+
     fn database(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "codex-thread-studio-map-{name}-{}-{}.sqlite3",

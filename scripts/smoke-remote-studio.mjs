@@ -56,6 +56,32 @@ try {
   check(!page.url().includes('token'), 'token was not cleared')
   await page.reload()
   check(await authStatus() === 200, 'reload authentication failed')
+  // Import real embedded modules in the browser, not just local test files.
+  // Fake adapters exercise dispatch without starting paid/backend sessions.
+  await page.evaluate(async () => {
+    const { installBackendRegistry, backendDescriptor } = await import('/backends.mjs')
+    const { SessionDispatchRegistry } = await import('/session-dispatch.mjs')
+    const { mergeCatalogMetadata } = await import('/session-catalog.mjs')
+    const check = (value, message) => { if (!value) throw Error(message) }
+    installBackendRegistry([{ id: 'ept-codex', kind: 'codex' }])
+    check(backendDescriptor('ept-codex').kind === 'codex', 'configured backend missing')
+    const registry = new SessionDispatchRegistry()
+    let preparations = 0
+    for (const backend of ['codex', 'ept-codex', 'opencode']) {
+      registry.register(backend, {
+        read: ref => ref.key,
+        prepareTurn: () => { preparations += 1 },
+        startTurn: ref => ref.key,
+      })
+      const ref = { backend, id: 'same-id' }
+      await registry.prepareTurn(ref)
+      await registry.prepareTurn(ref)
+      check(registry.startTurn(ref, 'hello') === `${backend}:same-id`, 'dispatch crossed backend')
+    }
+    check(preparations === 3, 'preparation deduplication failed')
+    check(mergeCatalogMetadata('codex', { cwd: '/current' }, { cwd: '/old' }).cwd === '/current', 'catalog metadata changed')
+    installBackendRegistry()
+  })
   const native = await context.newPage()
   await native.addInitScript(() => Object.defineProperty(window,'__CODEX_THREAD_STUDIO_GATEWAY__',{value:Object.freeze({token:'native-credential',hostPlatform:'linux'}),configurable:false}))
   await native.goto(url.origin)
@@ -65,7 +91,7 @@ try {
   await stopped
   const restarted = start(['--serve','--listen','127.0.0.1:0'])
   await ready(restarted)
-  console.log('PASS: headless startup, current studio DB, HTTP auth, reload auth, native bootstrap preservation, duplicate server/desktop exclusion, settings unchanged, lock released after SIGKILL')
+  console.log('PASS: headless startup, current studio DB, HTTP auth, reload auth, embedded TypeScript modules and backend dispatch, native bootstrap preservation, duplicate server/desktop exclusion, settings unchanged, lock released after SIGKILL')
 } finally {
   await browser?.close()
   for (const child of children) if (child.exitCode === null && child.signalCode === null) { const done=exited(child);child.kill('SIGKILL');await done }

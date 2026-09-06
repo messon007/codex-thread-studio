@@ -3,7 +3,16 @@
 Studio remains framework-free. TypeScript is a development-time correctness tool,
 not a rendering-performance optimization. Existing JavaScript modules are not yet
 type-checked; this first phase migrates queue normalization, model display,
-transcript revisions, and history-tail merging.
+transcript revisions, and history-tail merging. The second batch migrates the
+backend registry, session dispatch/preparation, and catalog merging. Shared
+backend contracts are in `ui-src/backend-types.d.mts`.
+
+Dispatch keeps adapter results opaque by default; typed consumers can parameterize
+the registry with adapter-specific result types after validating responses.
+Backend IDs remain extensible strings, while adapter kinds are a closed union.
+The preparation generation counters, in-flight deduplication, and one-time
+thread-not-found recovery retain their existing behavior. Notification handlers
+and model preference persistence in `app.js` are not yet migrated.
 
 ## Source and generated assets
 

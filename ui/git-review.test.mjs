@@ -1,7 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseUnifiedDiff, reviewFileStatus, visibleReviewFiles } from './git-review.mjs'
+import { createPendingGitReads, parseUnifiedDiff, reviewFileStatus, visibleReviewFiles } from './git-review.mjs'
+
+test('Git reads coalesce only while pending, never cache results or failures', async () => {
+  const read = createPendingGitReads()
+  let resolve
+  let calls = 0
+  const fetch = () => { calls++; return new Promise(done => { resolve = done }) }
+  const first = read('root:file:unstaged:1', fetch)
+  const second = read('root:file:unstaged:1', fetch)
+  assert.equal(first, second)
+  await Promise.resolve()
+  assert.equal(calls, 1)
+  resolve('diff')
+  assert.equal(await second, 'diff')
+  assert.equal(await read('root:file:unstaged:1', () => 'new diff'), 'new diff')
+  await assert.rejects(read('error', () => { throw new Error('offline') }), /offline/u)
+  assert.equal(await read('error', () => 'retry'), 'retry')
+  assert.deepEqual(await Promise.all([
+    read('revision:1', () => 'before'), read('revision:2', () => 'after'),
+  ]), ['before', 'after'])
+})
 
 test('unified diff parser keeps old and new line numbers aligned', () => {
   const rows = parseUnifiedDiff('diff --git a/a.md b/a.md\n@@ -2,3 +2,3 @@\n same\n-old\n+new\n tail')

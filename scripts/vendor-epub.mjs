@@ -1,4 +1,5 @@
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
 const root = new URL('../', import.meta.url)
@@ -8,8 +9,8 @@ const licenses = new URL('licenses/', vendor)
 await mkdir(vendor, { recursive: true })
 await mkdir(licenses, { recursive: true })
 await build({
-  entryPoints: [new URL('ui/epub-vendor-entry.mjs', root).pathname],
-  outfile: new URL('epub.mjs', vendor).pathname,
+  entryPoints: [fileURLToPath(new URL('ui/epub-vendor-entry.mjs', root))],
+  outfile: fileURLToPath(new URL('epub.mjs', vendor)),
   bundle: true,
   format: 'esm',
   platform: 'browser',

@@ -1,4 +1,5 @@
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { copyFile, mkdir } from 'node:fs/promises'
 
 await mkdir(new URL('../ui/vendor/', import.meta.url), { recursive: true })
@@ -8,8 +9,8 @@ for (const [entry, output] of [
   ['workspace-terminal-vendor-entry.mjs', 'workspace-terminal.mjs'],
 ]) {
   await build({
-    entryPoints: [new URL(`../ui/${entry}`, import.meta.url).pathname],
-    outfile: new URL(`../ui/vendor/${output}`, import.meta.url).pathname,
+    entryPoints: [fileURLToPath(new URL(`../ui/${entry}`, import.meta.url))],
+    outfile: fileURLToPath(new URL(`../ui/vendor/${output}`, import.meta.url)),
     bundle: true,
     format: 'esm',
     platform: 'browser',

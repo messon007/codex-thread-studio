@@ -762,9 +762,13 @@ test('Studio leaves OpenCode message identity to the server', () => {
   assert.match(turnStart, /openCodeUserMessageBaseline/u)
   assert.match(turnStart, /openCodeCommandTurn/u)
   assert.doesNotMatch(turnStart, /messageID|openCodeMessageId/u)
-  const adapterStart = source.indexOf(".register('opencode'")
-  const adapterEnd = source.indexOf('\n\nmarked.setOptions', adapterStart)
-  assert.doesNotMatch(source.slice(adapterStart, adapterEnd), /clientUserMessageId|messageID/u)
+  for (const newline of ['\n', '\r\n']) {
+    const checkoutSource = source.replace(/\r?\n/gu, newline)
+    const adapterStart = checkoutSource.indexOf(".register('opencode'")
+    const adapterEnd = checkoutSource.indexOf('marked.setOptions', adapterStart)
+    assert.ok(adapterStart >= 0 && adapterEnd > adapterStart, 'OpenCode adapter boundaries exist')
+    assert.doesNotMatch(checkoutSource.slice(adapterStart, adapterEnd), /clientUserMessageId|messageID/u)
+  }
 })
 
 test('OpenCode keeps one cross-backend event stream and refreshes after an SSE continuity gap', () => {

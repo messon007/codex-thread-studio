@@ -630,7 +630,7 @@ function renderArtifact() {
       : epubReady ? `EPUB · ${formatFileSize(file.size)}`
         : pdfReady ? `PDF · ${formatFileSize(file.size)}`
           : tableReady ? `${/\.xlsx$/iu.test(file.path) ? 'XLSX' : /\.tsv$/iu.test(file.path) ? 'TSV' : 'CSV'} · ${formatFileSize(file.size)}` : ''
-  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Select a cell to comment' : 'Select text to comment')
+  $('#artifact-hint').textContent = t(file.kind === 'image' ? 'Image previews do not support comments' : file.kind === 'epub' ? 'Select book text, add a question, and send it to AI' : file.kind === 'pdf' ? 'Select PDF text or Shift-drag a region to comment' : file.kind === 'table' ? 'Drag a column border to resize; select a cell to comment or copy' : 'Select text to comment')
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
   const structured = textReady ? structuredTextPreviewKind(file.path) : null

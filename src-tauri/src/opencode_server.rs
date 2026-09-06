@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::{to_bytes, Body};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
@@ -17,18 +17,21 @@ use crate::backend_runtime::{BackendRuntime, RuntimeChild};
 const MAX_PROXY_BODY_BYTES: usize = 32 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct OpenCodeServer {
     binary: Arc<str>,
     runtime: Arc<BackendRuntime>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
+    startup: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
     client: reqwest::Client,
 }
 
 #[derive(Clone)]
 struct ProcessConnection {
+    checked_at: Instant,
     generation: u64,
     base_url: String,
     password: String,
@@ -57,6 +60,7 @@ impl OpenCodeServer {
             binary: Arc::from(binary),
             runtime: Arc::new(runtime),
             process: Arc::new(Mutex::new(None)),
+            startup: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
@@ -121,12 +125,30 @@ impl OpenCodeServer {
     }
 
     async fn ensure_started(&self) -> Result<ProcessConnection, String> {
-        let mut process = self.process.lock().await;
-        if let Some(connection) = process.as_ref().cloned() {
+        if let Some(connection) = self.fresh_connection().await {
+            return Ok(connection);
+        }
+        // Coalesce startup/health probes without holding the process lock over I/O.
+        let _startup = self.startup.lock().await;
+        if let Some(connection) = self.fresh_connection().await {
+            return Ok(connection);
+        }
+        let existing = self.process.lock().await.clone();
+        if let Some(mut connection) = existing {
             if self.health_is_ready(&connection).await {
-                return Ok(connection);
+                connection.checked_at = Instant::now();
+                let mut process = self.process.lock().await;
+                // The exit monitor may have removed this process while the
+                // health request was in flight. Do not resurrect its cache.
+                if process
+                    .as_ref()
+                    .is_some_and(|active| active.generation == connection.generation)
+                {
+                    *process = Some(connection.clone());
+                    return Ok(connection);
+                }
             }
-            *process = None;
+            *self.process.lock().await = None;
             if let Err(error) = connection.child.lock().await.kill_tree().await {
                 eprintln!("Unable to stop the unhealthy OpenCode Server: {error}");
             }
@@ -171,16 +193,19 @@ impl OpenCodeServer {
         let child = Arc::new(Mutex::new(child));
         let base_url = format!("http://127.0.0.1:{port}");
         let connection = ProcessConnection {
+            checked_at: Instant::now(),
             generation,
             base_url: base_url.clone(),
             password,
             child: child.clone(),
         };
-        *process = Some(connection.clone());
-        drop(process);
-
         for _ in 0..START_ATTEMPTS {
             if self.health_is_ready(&connection).await {
+                let connection = ProcessConnection {
+                    checked_at: Instant::now(),
+                    ..connection
+                };
+                *self.process.lock().await = Some(connection.clone());
                 self.monitor_process(connection.clone());
                 return Ok(connection);
             }
@@ -200,6 +225,15 @@ impl OpenCodeServer {
             "`{}` did not become ready within 5 seconds",
             self.binary
         ))
+    }
+
+    async fn fresh_connection(&self) -> Option<ProcessConnection> {
+        self.process
+            .lock()
+            .await
+            .as_ref()
+            .filter(|connection| connection.checked_at.elapsed() < HEALTH_CACHE_TTL)
+            .cloned()
     }
 
     fn monitor_process(&self, connection: ProcessConnection) {
@@ -368,17 +402,67 @@ fn is_executable(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn concurrent_requests_share_a_health_probe_and_fresh_requests_skip_it() {
+        use crate::backend_runtime::WslSettings;
+        use axum::{routing::get, Router};
+        let calls = Arc::new(AtomicU64::new(0));
+        let counted = calls.clone();
+        let router = Router::new().route(
+            "/global/health",
+            get(move || {
+                let calls = counted.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let http = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let runtime = BackendRuntime::new(std::ffi::OsString::new(), WslSettings::default());
+        let child = runtime.command("/bin/sleep", &["30"], &[]).spawn().unwrap();
+        let child = Arc::new(Mutex::new(child));
+        let server = OpenCodeServer::new("unused-in-test".to_string(), runtime);
+        *server.process.lock().await = Some(ProcessConnection {
+            checked_at: Instant::now() - HEALTH_CACHE_TTL,
+            generation: 1,
+            base_url,
+            password: String::new(),
+            child: child.clone(),
+        });
+        let (first, second, third) = tokio::join!(
+            server.ensure_started(),
+            server.ensure_started(),
+            server.ensure_started()
+        );
+        assert!(first.is_ok() && second.is_ok() && third.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(server.ensure_started().await.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        child.lock().await.kill_tree().await.unwrap();
+        http.abort();
+    }
+
     #[test]
     fn streaming_proxy_client_has_no_global_request_timeout() {
-        let source = include_str!("opencode_server.rs");
-        let builder = source
-            .split("client: reqwest::Client::builder()")
-            .nth(1)
-            .and_then(|value| value.split(".build()").next())
-            .expect("OpenCode client builder");
-        assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
-        assert!(!builder.contains(".timeout("));
-        assert!(source.contains("authenticated_get(&connection, \"/global/health\")\n                .timeout(Duration::from_secs(10))"));
+        let source = include_str!("opencode_server.rs").replace("\r\n", "\n");
+        for newline in ["\n", "\r\n"] {
+            let checkout = source.replace('\n', newline);
+            // Check the timeout policy, not checkout line endings or rustfmt
+            // indentation. CI on Windows commonly uses CRLF source files.
+            let compact = checkout.split_whitespace().collect::<String>();
+            let builder = compact
+                .split("client:reqwest::Client::builder()")
+                .nth(1)
+                .and_then(|value| value.split(".build()").next())
+                .expect("OpenCode client builder");
+            assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
+            assert!(!builder.contains(".timeout("));
+            assert!(compact.contains("authenticated_get(&connection,\"/global/health\").timeout(Duration::from_secs(10))"));
+        }
     }
 
     #[test]

@@ -67,6 +67,7 @@ target/debug/codex-thread-studio --dev-open-workspace /absolute/project/root rev
 target/debug/codex-thread-studio --dev-open-resources /absolute/project/root
 target/debug/codex-thread-studio --dev-open-environment-settings /absolute/project/root
 target/debug/codex-thread-studio --dev-click '[data-table-chart]'
+target/debug/codex-thread-studio --dev-drag '[data-table-column-resizer="0"]' 120 0
 target/debug/codex-thread-studio --dev-input '[data-pdf-search]' Git
 ```
 

@@ -111,7 +111,9 @@ pub async fn bridge(mut socket: WebSocket, environment_path: Arc<PathBuf>) {
         }
     };
     let mut killer = child.clone_killer();
-    let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    // Bound buffered output to 1 MiB; a slow WebView applies backpressure to
+    // the PTY reader instead of growing an unbounded application-side queue.
+    let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(64);
     let (exit_tx, mut exit_rx) = mpsc::unbounded_channel::<serde_json::Value>();
     thread::spawn(move || read_output(&mut reader, output_tx));
     thread::spawn(move || {
@@ -198,12 +200,12 @@ pub async fn bridge(mut socket: WebSocket, environment_path: Arc<PathBuf>) {
     drop(pair.master);
 }
 
-fn read_output(reader: &mut Box<dyn Read + Send>, output: mpsc::UnboundedSender<Vec<u8>>) {
+fn read_output(reader: &mut Box<dyn Read + Send>, output: mpsc::Sender<Vec<u8>>) {
     let mut buffer = vec![0_u8; 16 * 1024];
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
-            Ok(size) if output.send(buffer[..size].to_vec()).is_err() => break,
+            Ok(size) if output.blocking_send(buffer[..size].to_vec()).is_err() => break,
             Ok(_) => {}
         }
     }
@@ -263,6 +265,27 @@ async fn send_error(socket: &mut WebSocket, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_output_preserves_all_bytes_and_stops_when_disconnected() {
+        let expected = vec![b'x'; 100_000];
+        let input = expected.clone();
+        let (tx, mut rx) = mpsc::channel(1);
+        let worker = thread::spawn(move || {
+            let mut reader: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(input));
+            read_output(&mut reader, tx);
+        });
+        let mut actual = Vec::new();
+        while let Some(bytes) = rx.blocking_recv() {
+            actual.extend(bytes);
+        }
+        worker.join().expect("reader finishes");
+        assert_eq!(actual, expected);
+
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let mut reader: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(expected));
+        read_output(&mut reader, tx);
+    }
     #[cfg(unix)]
     use std::sync::mpsc as std_mpsc;
     #[cfg(unix)]

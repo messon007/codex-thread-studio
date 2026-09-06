@@ -22,9 +22,19 @@ Further batches extract these typed boundaries from `app.js`:
 - `session-model-cache`: model identity, cache validation bookkeeping, and
   notification routing to selected or background models.
 
-The async history loaders, cache freshness policy, notification reducers,
-model-selection UI, persistence transport, and DOM/scroll orchestration remain
-JavaScript. They are deliberately not rewritten in these extraction batches.
+The Codex view-model reducer is now in `codex-native.mts`, with explicit turns,
+items, notification parameters, and approval/interaction requests. OpenCode's live
+event reducer is in `opencode-event-reducer.mts`; its conversion and history-replay
+helpers remain JavaScript and are passed through a typed helper contract.
+
+Codex selected/background history loading is in `codex-history-loader.mts`.
+The `history-load-coordinator.mts` module shares resume/refresh flights and retains
+OpenCode's connection-epoch boundaries. RPC transport and environment-profile
+application are injected; production calls retain their original sequence.
+
+The cache freshness policy, model-selection UI, persistence transport,
+OpenCode history/replay helpers, and DOM/scroll orchestration remain JavaScript.
+Type annotations describe protocol data but do not replace runtime validation.
 No new cache copies, polling, resume requests, or backend model fallback are added.
 
 ## Source and generated assets

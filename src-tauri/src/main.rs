@@ -983,6 +983,11 @@ fn gateway_router(state: GatewayState) -> Router {
             get(opencode_event_reducer_js),
         )
         .route("/thread-history-tail.mjs", get(thread_history_tail_js))
+        .route("/codex-history-loader.mjs", get(codex_history_loader_js))
+        .route(
+            "/history-load-coordinator.mjs",
+            get(history_load_coordinator_js),
+        )
         .route("/model-revision.mjs", get(model_revision_js))
         .route("/performance-monitor.mjs", get(performance_monitor_js))
         .route("/selection-translation.mjs", get(selection_translation_js))
@@ -2218,6 +2223,14 @@ async fn opencode_event_reducer_js() -> impl IntoResponse {
 
 async fn thread_history_tail_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-history-tail.mjs"))
+}
+
+async fn codex_history_loader_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/codex-history-loader.mjs"))
+}
+
+async fn history_load_coordinator_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/history-load-coordinator.mjs"))
 }
 
 async fn model_revision_js() -> impl IntoResponse {

@@ -65,6 +65,10 @@ try {
     const { normalizeStoredTurnOptions, sessionModelPreferencePayload } = await import('/session-model-preferences.mjs')
     const { codexLifecycleStreamMessage, claimLifecycleNotification } = await import('/codex-lifecycle-diagnostics.mjs')
     const { storeCachedSession, routeCodexNotification } = await import('/session-model-cache.mjs')
+    const { createCodexViewModel, applyCodexNotification } = await import('/codex-native.mjs')
+    const { applyOpenCodeEvent } = await import('/opencode-native.mjs')
+    const { createCodexHistoryLoader } = await import('/codex-history-loader.mjs')
+    const { coordinateHistoryLoad } = await import('/history-load-coordinator.mjs')
     const check = (value, message) => { if (!value) throw Error(message) }
     installBackendRegistry([{ id: 'ept-codex', kind: 'codex' }])
     check(backendDescriptor('ept-codex').kind === 'codex', 'configured backend missing')
@@ -98,6 +102,20 @@ try {
       sessionKey: (backend, id) => `${backend}:${id}`, turnKey: (backend, id) => `${backend}:${id}`,
     }) === model, 'background notification routing failed')
     installBackendRegistry()
+    const view = createCodexViewModel()
+    applyCodexNotification(view, { method: 'turn/started', params: { turn: { id: 'turn', status: 'inProgress', items: [] } } })
+    check(view.activeTurnId === 'turn', 'Codex reducer failed')
+    applyOpenCodeEvent(view, { type: 'session.idle', properties: { sessionID: 'one' } }, 'one')
+    check(view.activeTurnId === null && view.status === 'idle', 'OpenCode reducer route failed')
+    const history = createCodexHistoryLoader({
+      historyTailCapability: () => false,
+      requestCodexResume: async () => ({ thread: { id: 'one', turns: [] } }),
+    })
+    check((await history.loadCodexHistoryForSelection('codex', 'one', null)).historyMode === 'full', 'history loader failed')
+    const flights = new Map()
+    const flight = coordinateHistoryLoad(flights, 'codex:one', 'codex', null, async () => 'ready')
+    check(coordinateHistoryLoad(flights, 'codex:one', 'codex', null, async () => 'duplicate') === flight, 'history flight not shared')
+    check(await flight === 'ready' && flights.size === 0, 'history flight cleanup failed')
   })
   const native = await context.newPage()
   await native.addInitScript(() => Object.defineProperty(window,'__CODEX_THREAD_STUDIO_GATEWAY__',{value:Object.freeze({token:'native-credential',hostPlatform:'linux'}),configurable:false}))

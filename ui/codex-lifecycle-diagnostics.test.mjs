@@ -112,10 +112,11 @@ test('the cross-backend lifecycle socket survives active backend cleanup and rou
 })
 
 test('offscreen Codex completion refreshes only the changed tail with a full-history fallback', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  assert.match(app, /codexHistoryLoader\.loadCodexHistoryForBackground\(backend, id, cached\)/u)
+  const source = readFileSync(new URL('./codex-history-loader.mjs', import.meta.url), 'utf8')
   const start = source.indexOf('async function loadCodexHistoryForBackground(')
-  const end = source.indexOf('\nasync function resumeThread(', start)
-  const loader = source.slice(start, end)
+  const loader = source.slice(start)
   assert.match(loader, /thread\/turns\/list/u)
   assert.match(loader, /collectCodexTurnTail/u)
   assert.match(loader, /if \(tail\.matched\)/u)

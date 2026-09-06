@@ -214,6 +214,8 @@ import {
   routerRuntimeKey,
 } from './thread-router-controller.mjs'
 import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dispatch.mjs'
+import { createCodexHistoryLoader } from './codex-history-loader.mjs'
+import { coordinateHistoryLoad } from './history-load-coordinator.mjs'
 import { normalizeStoredTurnOptions, sessionModelPreferencePayload, copySessionTurnOptions } from './session-model-preferences.mjs'
 import { cachedSession, storeCachedSession, validateCachedModel, unvalidateCachedModel, cachedModelThreadId, routeCodexNotification } from './session-model-cache.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
@@ -227,7 +229,6 @@ import {
 } from './codex-lifecycle-diagnostics.mjs'
 import {
   DEFAULT_TURN_TAIL_PAGE_SIZE,
-  collectCodexTurnTail,
   isHistoryPaginationCompatibilityError,
 } from './thread-history-tail.mjs'
 
@@ -271,6 +272,11 @@ const sessionDispatch = new SessionDispatchRegistry()
       }, options.timeoutMs)
     },
   })
+
+const codexHistoryLoader = createCodexHistoryLoader({
+  dispatchBackendRpc, requestCodexResume, historyTailCapability,
+  rememberHistoryTailCapability, threadForRef,
+})
 
 marked.setOptions({
   async: false,
@@ -4297,147 +4303,20 @@ async function requestCodexResume(backend, id, {
     : dispatchBackendRpc(backend, 'thread/resume', params)
 }
 
-async function readFullCodexHistory(backend, id, resumed = null) {
-  const read = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: true })
-  if (!resumed) return read
-  return {
-    ...resumed,
-    ...read,
-    thread: { ...(resumed.thread || {}), ...(read.thread || {}) },
-  }
-}
-
-async function loadCodexHistoryForSelection(backend, id, cached, {
-  environmentRoot = '',
-  environmentRevision = '',
-} = {}) {
-  const canReusePrefix = cached?.model?.threadId === id
-    && Array.isArray(cached.model.turns)
-    && cached.model.turns.length > 0
-  if (!canReusePrefix || historyTailCapability(backend, id) === false) {
-    return {
-      result: await requestCodexResume(backend, id, { environmentRoot, environmentRevision }),
-      historyMode: 'full',
-      tail: null,
-    }
-  }
-
-  let resumed = null
-  try {
-    resumed = await requestCodexResume(backend, id, {
-      environmentRoot,
-      environmentRevision,
-      incremental: true,
-    })
-    if (Array.isArray(resumed?.thread?.turns) && resumed.thread.turns.length > 0) {
-      rememberHistoryTailCapability(backend, id, false)
-      return { result: resumed, historyMode: 'legacy-full', tail: null }
-    }
-
-    let initialPage = resumed?.initialTurnsPage
-    if (!Array.isArray(initialPage?.data)) {
-      initialPage = await dispatchBackendRpc(backend, 'thread/turns/list', {
-        threadId: id,
-        limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-        sortDirection: 'desc',
-        itemsView: 'full',
-      })
-    }
-    const tail = await collectCodexTurnTail({
-      cachedTurns: cached.model.turns,
-      initialPage,
-      fetchPage: (cursor) => dispatchBackendRpc(backend, 'thread/turns/list', {
-        threadId: id,
-        cursor,
-        limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-        sortDirection: 'desc',
-        itemsView: 'full',
-      }),
-    })
-    rememberHistoryTailCapability(backend, id, true)
-    if (tail.matched) {
-      return {
-        result: {
-          ...resumed,
-          thread: { ...(resumed?.thread || {}), id, turns: tail.turns },
-        },
-        historyMode: 'tail',
-        tail,
-      }
-    }
-    return {
-      result: await readFullCodexHistory(backend, id, resumed),
-      historyMode: 'full-fallback',
-      tail,
-    }
-  } catch (error) {
-    if (!isHistoryPaginationCompatibilityError(error)) throw error
-    rememberHistoryTailCapability(backend, id, false)
-    return {
-      result: resumed
-        ? await readFullCodexHistory(backend, id, resumed)
-        : await requestCodexResume(backend, id, { environmentRoot, environmentRevision }),
-      historyMode: 'compatibility-fallback',
-      tail: null,
-    }
-  }
+async function loadCodexHistoryForSelection(backend, id, cached, options = {}) {
+  return codexHistoryLoader.loadCodexHistoryForSelection(backend, id, cached, options)
 }
 
 async function loadCodexHistoryForBackground(backend, id, cached) {
-  const canReusePrefix = cached?.model?.threadId === id
-    && Array.isArray(cached.model.turns)
-    && cached.model.turns.length > 0
-  if (canReusePrefix && historyTailCapability(backend, id) !== false) {
-    try {
-      const initialPage = await dispatchBackendRpc(backend, 'thread/turns/list', {
-        threadId: id,
-        limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-        sortDirection: 'desc',
-        itemsView: 'full',
-      })
-      const tail = await collectCodexTurnTail({
-        cachedTurns: cached.model.turns,
-        initialPage,
-        fetchPage: (cursor) => dispatchBackendRpc(backend, 'thread/turns/list', {
-          threadId: id,
-          cursor,
-          limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-          sortDirection: 'desc',
-          itemsView: 'full',
-        }),
-      })
-      rememberHistoryTailCapability(backend, id, true)
-      if (tail.matched) {
-        const metadata = threadForRef({ backend, id }) || {}
-        return {
-          result: { thread: { ...metadata, id, turns: tail.turns } },
-          historyMode: 'tail',
-          tail,
-        }
-      }
-    } catch (error) {
-      if (!isHistoryPaginationCompatibilityError(error)) throw error
-      rememberHistoryTailCapability(backend, id, false)
-    }
-  }
-  const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: true })
-  return { result, historyMode: 'full', tail: null }
+  return codexHistoryLoader.loadCodexHistoryForBackground(backend, id, cached)
 }
 
 async function resumeThread(id, { environmentRoot = '', environmentRevision = '' } = {}) {
   const backend = state.backend
   const key = threadCatalogKey(backend, id)
   const historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null
-  const activeLoad = state.threadLoads.get(key)
-  if (activeLoad && (backend !== 'opencode' || activeLoad.historyEpoch === historyEpoch)) return activeLoad
-  let load
-  load = resumeThreadUncached(id, { environmentRoot, environmentRevision, historyEpoch })
-    .finally(() => {
-      if (state.threadLoads.get(key) === load) state.threadLoads.delete(key)
-    })
-  if (backend === 'opencode') load.historyEpoch = historyEpoch
-  state.threadLoads.set(key, load)
-  return load
+  return coordinateHistoryLoad(state.threadLoads, key, backend, historyEpoch,
+    () => resumeThreadUncached(id, { environmentRoot, environmentRevision, historyEpoch }))
 }
 
 async function resumeThreadUncached(id, { environmentRoot = '', environmentRevision = '', historyEpoch = null } = {}) {
@@ -4547,16 +4426,8 @@ async function refreshSelectedThread(options = {}) {
   const threadId = state.selectedId
   const key = threadCatalogKey(backend, threadId)
   const historyEpoch = backend === 'opencode' ? openCodeHistoryEpoch : null
-  const activeLoad = state.threadLoads.get(key)
-  if (activeLoad && (backend !== 'opencode' || activeLoad.historyEpoch === historyEpoch)) return activeLoad
-  let load
-  load = refreshSelectedThreadUncached({ ...options, backend, threadId, historyEpoch })
-    .finally(() => {
-      if (state.threadLoads.get(key) === load) state.threadLoads.delete(key)
-    })
-  if (backend === 'opencode') load.historyEpoch = historyEpoch
-  state.threadLoads.set(key, load)
-  return load
+  return coordinateHistoryLoad(state.threadLoads, key, backend, historyEpoch,
+    () => refreshSelectedThreadUncached({ ...options, backend, threadId, historyEpoch }))
 }
 
 async function refreshSelectedThreadUncached({

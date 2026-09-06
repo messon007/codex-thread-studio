@@ -821,8 +821,7 @@ test('OpenCode never reuses or installs a history load from an older connection 
   )
 
   for (const load of [resume, refresh]) {
-    assert.match(load, /activeLoad\.historyEpoch === historyEpoch/u)
-    assert.match(load, /load\.historyEpoch = historyEpoch/u)
+    assert.match(load, /coordinateHistoryLoad\(state\.threadLoads, key, backend, historyEpoch,/u)
     const epochGuard = load.indexOf('historyEpoch !== openCodeHistoryEpoch')
     const hydrate = load.indexOf('hydrateCodexThread(')
     assert.ok(epochGuard >= 0 && epochGuard < hydrate)

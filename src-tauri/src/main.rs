@@ -994,7 +994,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/utility-task.mjs", get(utility_task_js))
         .route("/queue-execution.mjs", get(queue_execution_js))
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
-        .route("/preference-normalization.mjs", get(preference_normalization_js))
+        .route(
+            "/preference-normalization.mjs",
+            get(preference_normalization_js),
+        )
         .route("/continuation-draft.mjs", get(continuation_draft_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))

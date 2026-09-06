@@ -45,8 +45,8 @@ and a failed request does not stop subsequent writes.
 
 Comment drafts, provider registration, prompt entries, text markers, and the six
 source providers (chat, document, browser, PDF, EPUB, table) are now checked. The
-document-review implementation remains JavaScript behind a narrow declaration
-contract; that declaration does not imply its implementation is type-checked.
+document-review implementation is now checked directly, including formatting,
+syntax tokens and annotation-to-source mapping.
 
 Router configuration, candidate selection, decision parsing, and prompt/schema
 construction are checked in `thread-router.mts`. Session Map normalization,
@@ -74,14 +74,38 @@ controllers and are injected at these boundaries. Browser smoke tests import
 the real embedded modules, while unit tests cover rejection, duplicate events,
 out-of-order responses and session isolation without invoking paid models.
 
-The remaining `app.js` is primarily UI and backend transport orchestration. The
-settings dialogs, annotation/session-map/router DOM controllers, rich document
-viewers and resource extraction remain JavaScript. Migrating these would require
-separate feature-level contracts; renaming them with weak `any` types would not
-provide the same benefit. This migration does not add a framework, bundle the UI,
-or claim that all frontend code is now checked.
+The next seven batches cover these additional boundaries (54 generated runtime
+modules in total):
+
+1. Translation/Continue output parsing and asynchronous result polling, including
+   stale-result rejection after an awaited read.
+2. Composer draft/reference helpers and Queue dispatch, acknowledgement,
+   persistence failure handling and per-session execution exclusion.
+3. Preference normalization, thread fork metadata and workset changes.
+4. Resource extraction, indexing, revision/count helpers and favorite data.
+5. Document formatting/source mapping, table parsing/column sizing/chart data,
+   and Git Review diff/filter/read deduplication helpers.
+6. Pending RPC requests, one-shot socket requests and the selected connection
+   lifecycle. Existing transport topology, reconnect delay and timeout values
+   are retained. Synchronous send failures now clear pending requests immediately.
+7. Turn navigation, document outlines, Mermaid configuration, right-rail sizing
+   and bounded performance statistics.
+
+Remaining JavaScript includes `app.js` integration/orchestration, settings and
+annotation/session-map/router DOM controllers, rich document viewer integrations,
+and cross-backend lifecycle/SSE wiring. Regular send/Steer and hidden utility-task
+creation/cleanup still call typed boundaries from JavaScript; these callers are
+not themselves type-checked. Pure DOM controllers and vendor libraries are not
+scheduled for blanket conversion. This migration does not add a framework,
+bundle the UI, or claim that all frontend code is now checked.
 Type annotations describe protocol data but do not replace runtime validation.
-No new cache copies, polling, resume requests, or backend model fallback are added.
+No new polling loops, resume requests, or backend model fallback are added.
+
+The release browser smoke imports every generated module through the embedded
+HTTP routes, catching missing registrations and transitive imports. This is not
+a substitute for live-provider testing: real Codex/EPT/OpenCode disconnects,
+send/Steer/Queue acknowledgement races and document selection geometry remain
+the highest-risk manual acceptance areas. Tests do not submit paid model turns.
 
 ## Source and generated assets
 

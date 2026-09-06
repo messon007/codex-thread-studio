@@ -1,4 +1,5 @@
-import type { BackendDescriptor, SessionCatalogEntry } from './backend-types.mjs'
+import type { BackendDescriptor } from './backend-types.mjs'
+import type { CatalogThread } from './catalog-search-types.mjs'
 
 const builtinDescriptors: BackendDescriptor[] = [
   {
@@ -65,7 +66,7 @@ export function defaultTurnOptions(backend: string) {
   return backend === 'codex' ? { effort: 'high' } : {}
 }
 
-export function emptyBackendCatalogs(): Record<string, SessionCatalogEntry[]> {
+export function emptyBackendCatalogs(): Record<string, CatalogThread[]> {
   return Object.fromEntries(BACKEND_IDS.map((backend) => [backend, []]))
 }
 

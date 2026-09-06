@@ -978,6 +978,10 @@ fn gateway_router(state: GatewayState) -> Router {
             get(codex_lifecycle_diagnostics_js),
         )
         .route("/opencode-native.mjs", get(opencode_native_js))
+        .route(
+            "/opencode-event-reducer.mjs",
+            get(opencode_event_reducer_js),
+        )
         .route("/thread-history-tail.mjs", get(thread_history_tail_js))
         .route("/model-revision.mjs", get(model_revision_js))
         .route("/performance-monitor.mjs", get(performance_monitor_js))
@@ -2206,6 +2210,10 @@ async fn codex_lifecycle_diagnostics_js() -> impl IntoResponse {
 
 async fn opencode_native_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/opencode-native.mjs"))
+}
+
+async fn opencode_event_reducer_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/opencode-event-reducer.mjs"))
 }
 
 async fn thread_history_tail_js() -> impl IntoResponse {

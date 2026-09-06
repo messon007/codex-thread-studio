@@ -66,7 +66,7 @@ test('exposes read-only report controls for the developer console', () => {
 })
 
 test('instruments session switching without retaining transcript content', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/opencode-protocol.mts', import.meta.url), 'utf8')
   for (const name of [
     'thread.select',
     'history.resume',

@@ -1,3 +1,5 @@
+import { createActiveCodexConnection } from './active-codex-connection.mjs'
+import { createOpenCodeProtocol } from './opencode-protocol.mjs'
 import { createSubmissionController } from './submission-controller.mjs'
 import { createBackgroundSessions } from './background-sessions.mjs'
 import { createSessionOperations } from './session-operations.mjs'
@@ -728,10 +730,19 @@ const documentWorkspace = createDocumentWorkspaceController({
   },
 })
 
+const openCodeProtocol = createOpenCodeProtocol(state, {
+  gatewayFetch, selectedThread, currentTurnOptions, t, studioPerformance,
+  threadCatalogKey, openCodeHistoryEventSequences,
+})
+
 const backgroundSessions = createBackgroundSessions(state, {
   $, codexBackendsNeedingRestartRecovery, scheduleStudioIdleWork, refreshBackendCatalog, refreshSelectedThread, threadStatus, handleQueuedTurnCompletion, backendDescriptor, sessionDispatch, clearStartedThreadsForBackend, isCodexBackend, renderConnectionsDialog, renderBackendDialog, reportSessionLifecycle, markCachedModelUnvalidated, markCachedModelValidated, threadCatalogKey, loadCodexHistoryForBackground, cachedThreadModel, mergeThreadIntoCatalog, cacheThreadModel, claimCodexLifecycleNotification, captureStructuredUtilityNotification, codexLifecycleThreadId, scheduleStartedThreadCatalogConfirmation, updateCodexCatalogActivity, observeCodexTurnLatency, codexNotificationModel, reportCodexLifecycleNotification, sessionResources, notifyDesktop, t, threadTitle, threadRouter, transcriptUpdateKind, replaceRenderedTurn, renderTranscript, renderComposerState, renderWorkspace, sessionMap, openCodeEventThreadId, bufferOpenCodeHistoryEvent, openCodeLoopGuard, abortRepeatedOpenCodeTerminalLoop, hiddenUtilityThread, markUtilityThreadHidden, scheduleOpenCodeListRefresh, sessionRefKey, forgetStartedThread, deletePersistedSessionState, discardComposerSessionState, invalidateThreadModel, persistPreferences, openCodeCompletionSignal, scheduleOpenCodeStatusReconciliation, updateOpenCodeCatalogActivity, queueStreamingItemPatch, beginOpenCodeHistoryEventBuffer, openCodeHistoryIncludesDeletion, hydrateOpenCodeModelMetadata, markTranscriptHistoryReady, transcriptCaptureSuppressedKeys, endOpenCodeHistoryEventBuffer,
   getBackendIds: () => BACKEND_IDS,
   getOpenCodeHistoryEpoch: () => openCodeHistoryEpoch,
+})
+
+const activeCodexConnection = createActiveCodexConnection(state, {
+  $, backendDescriptor, codexBackendsNeedingRestartRecovery, sessionDispatch, clearStartedThreadsForBackend, setBackendState, setNativeError, loadBackendModels, loadThreads, sessionManagement, threadCatalogKey, freshThreadModel, selectedThread, refreshSelectedThread, backendSelectionLoads, handleThreadCatalogFailure, reportSessionLifecycle, isArchivedPreview, toast, t, reportClientError, sessionMap, pendingRpcRequests, handleCodexLifecycleNotification, captureStructuredUtilityNotification, sessionRefKey, mergeThreadMetadata, renderWorkspace, renderThreadList, renderTranscript, renderComposerState, hiddenUtilityThread, forgetStartedThread, persistSessionPin, showError, deletePersistedSessionState, threadRouter, discardComposerSessionState, invalidateThreadModel, persistPreferences, composerTrigger, searchComposerSkills, observeCodexTurnLatency, codexNotificationModel, sendRaw, notifyDesktop, markCachedModelValidated, reportCodexLifecycleNotification, sessionResources, transcriptUpdateKind, queueStreamingItemPatch, replaceCompletedItem, replaceRenderedTurn, rpc, cacheThreadModel, threadTitle
 })
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1928,322 +1939,16 @@ function handleCodexLifecycleNotification(backend, message) {
   return backgroundSessions.handleCodexLifecycleNotification(backend, message)
 }
 
-function handleAppServerMessage(message) {
-  const backend = state.backend
-  const descriptor = backendDescriptor(backend)
-  if (message.method === 'studio/appServer/status') {
-    const status = message.params?.state
-    if (status === 'ready') {
-      const firstReady = !state.ready
-      const previousGeneration = state.appServerGenerations[backend]
-      const nextGeneration = message.params?.generation ?? previousGeneration
-      const appServerRestarted = codexBackendsNeedingRestartRecovery.delete(backend)
-        || (previousGeneration != null && nextGeneration !== previousGeneration)
-      if (appServerRestarted) {
-        sessionDispatch.clearPrepared(backend)
-        clearStartedThreadsForBackend(backend, 'app-server-restarted')
-      }
-      state.appServerGenerations[backend] = nextGeneration
-      state.appServerCapabilities = { ...(message.params?.clientCapabilities || {}) }
-      state.appServerInitialization = message.params?.initialization || null
-      state.ready = true
-      setBackendState('online', `${descriptor.name} App Server`, 'Native structured connection')
-      $('#native-connection').textContent = 'Connected'
-      setNativeError(null)
-      loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error))
-      if (firstReady) {
-        const socketGeneration = state.socketGeneration
-        const cachedModelsBeforeCatalog = new Map(state.threadModels)
-        const selectionLoad = loadThreads({ applyCachedEnvironment: !appServerRestarted }).then(async () => {
-          if (state.backend !== backend
-            || state.socketGeneration !== socketGeneration
-            || sessionManagement.archive.isOpen()
-            || !state.selectedId) return
-          const selectedId = state.selectedId
-          const selectedKey = threadCatalogKey(backend, selectedId)
-          // The operator may have selected another session while the catalog
-          // was loading. Let that session's resume finish before deciding
-          // whether reconnect recovery still needs an authoritative read.
-          const activeHistory = state.threadLoads.get(selectedKey)
-          if (activeHistory) {
-            try { await activeHistory }
-            catch (error) { console.warn('Selected history load failed before reconnect recovery', error) }
-          }
-          if (state.backend !== backend
-            || state.socketGeneration !== socketGeneration
-            || sessionManagement.archive.isOpen()
-            || state.selectedId !== selectedId) return
-          // loadThreads() may already have resumed a stale or uncached selection.
-          // Its cache replacement is proof that this generation has supplied a
-          // complete history, so do not immediately read the same history again.
-          if (state.threadModels.get(selectedKey) !== cachedModelsBeforeCatalog.get(selectedKey)) return
-          // Reopening only the browser-side WebSocket does not invalidate a
-          // history that is still fresh for the same App Server process.
-          if (!appServerRestarted && freshThreadModel(backend, selectedId, { reconnectValidation: true })) return
-          const root = selectedThread()?.cwd || ''
-          const profile = state.environmentProfile
-          const environmentRoot = appServerRestarted
-            && profile?.configured
-            && state.environmentProfileSelectionRoot === root
-            ? profile.root
-            : ''
-          await refreshSelectedThread({
-            quiet: true,
-            environmentRoot,
-            environmentRevision: profile?.revision || '',
-          })
-        })
-        backendSelectionLoads.set(backend, selectionLoad)
-        selectionLoad
-          .catch((error) => handleThreadCatalogFailure(backend, socketGeneration, error))
-          .finally(() => {
-            if (backendSelectionLoads.get(backend) === selectionLoad) backendSelectionLoads.delete(backend)
-          })
-      }
-    } else if (status === 'starting') {
-      setBackendState('checking', `Starting ${descriptor.name}`, message.params?.binary || 'App Server')
-    } else if (status === 'error' || status === 'stopped') {
-      sessionDispatch.clearPrepared(backend)
-      const reason = message.params?.message || message.params?.reason || 'App Server stopped'
-      setBackendState('error', `${descriptor.name} Unavailable`, reason)
-      setNativeError(reason)
-    }
-    return
-  }
-  if (message.method === 'studio/appServer/log') {
-    console.debug(`${backend} app-server`, message.params?.line)
-    return
-  }
-  if (message.method === 'studio/appServer/lagged') {
-    const skipped = Number(message.params?.skipped || 0)
-    const threadId = state.selectedId
-    const socketGeneration = state.socketGeneration
-    const cachedRunningThreadIds = [...state.threadModels.entries()]
-      .filter(([key, cached]) => key.startsWith(`${backend}:`)
-        && (cached.model?.activeTurnId || cached.model?.status === 'running'))
-      .map(([key]) => key.slice(backend.length + 1))
-      .join(',')
-    reportSessionLifecycle('codex-event-lag', {
-      backend,
-      selectedId: threadId || '',
-      skipped,
-      cachedRunningThreadIds,
-      socketGeneration,
-    })
-    if (isArchivedPreview()) return
-    if (!threadId) {
-      toast(t('The UI missed {count} App Server events', { count: skipped }), 'error')
-      return
-    }
-    setNativeError(`The interface missed ${skipped} App Server events and is resynchronizing the current session…`)
-    resynchronizeSelectedThreadAfterLag({ backend, threadId, socketGeneration, skipped }).catch((error) => {
-      reportClientError(error)
-      if (state.backend === backend && state.selectedId === threadId && state.socketGeneration === socketGeneration) {
-        setNativeError(t('Unable to resynchronize the current {backend} session: {message}', {
-          backend: backendDescriptor(backend).name,
-          message: error.message,
-        }))
-      }
-    })
-    return
-  }
-  if (message.method?.startsWith('studio/appServer/')) {
-    const error = message.params?.message || message.method
-    setNativeError(error)
-    return
-  }
-
-  if (message.id != null && !message.method) {
-    sessionMap.captureWorkerResponse(message)
-    pendingRpcRequests.settle(message)
-    return
-  }
-
-  if (codexLifecycleEvent(message)) {
-    handleCodexLifecycleNotification(backend, message)
-    return
-  }
-
-  if (captureStructuredUtilityNotification(backend, message)) return
-
-  if (message.method === 'thread/started' && message.params?.thread) {
-    if (message.params.thread.ephemeral || state.hiddenCodexThreads.has(sessionRefKey(state.backend, message.params.thread.id))) return
-    mergeThreadMetadata(message.params.thread)
-    renderWorkspace()
-    return
-  }
-  if (message.method === 'thread/name/updated') {
-    const thread = state.threads.find((candidate) => candidate.id === message.params?.threadId)
-    if (thread) thread.name = message.params.threadName
-    renderThreadList()
-    renderWorkspace()
-    return
-  }
-  if ((message.method === 'thread/archived' || message.method === 'thread/deleted')
-    && hiddenUtilityThread(state.backend, { id: message.params?.threadId })) return
-  if (message.method === 'thread/archived' || message.method === 'thread/deleted') {
-    const backend = state.backend
-    const threadId = message.params?.threadId
-    const sessionKey = `${backend}:${threadId}`
-    forgetStartedThread(backend, threadId, message.method === 'thread/deleted' ? 'deleted' : 'archived')
-    sessionManagement.archive.markStale()
-    if (message.method === 'thread/deleted') {
-      sessionManagement.archive.remove(backend, threadId)
-    }
-    state.threads = state.threads.filter((thread) => thread.id !== threadId)
-    state.threadsByBackend[backend] = state.threads
-    if (state.pinnedSessions.delete(sessionKey) && message.method === 'thread/archived') {
-      persistSessionPin(sessionKey, false).catch(showError)
-    }
-    if (message.method === 'thread/deleted') {
-      const deletedKey = sessionKey
-      delete state.annotationDrafts[deletedKey]
-      delete state.annotationAdditional[deletedKey]
-      delete state.openingMessages[deletedKey]
-      delete state.turnOptions[deletedKey]
-      delete state.messageQueues[deletedKey]
-      state.pausedMessageQueues.delete(deletedKey)
-      state.messageQueueErrors.delete(deletedKey)
-      deletePersistedSessionState(deletedKey)
-    }
-    threadRouter.removeSession(backend, threadId)
-    discardComposerSessionState(backend, threadId)
-    invalidateThreadModel(backend, threadId)
-    persistPreferences()
-    if (state.selectedId === threadId) {
-      state.selectedId = null
-      state.selectedByBackend[backend] = null
-      state.model = createCodexViewModel()
-      persistPreferences()
-    }
-    renderThreadList()
-    renderWorkspace()
-    return
-  }
-
-  if (message.method === 'thread/unarchived') {
-    sessionManagement.archive.markStale({ reload: true })
-    return
-  }
-
-  if (message.method === 'skills/changed') {
-    state.skillCatalog = { cwd: null, skills: [], request: null, loaded: false }
-    const input = $('#composer-input')
-    const trigger = composerTrigger(input.value, input.selectionStart)
-    if (trigger?.type === 'skill') searchComposerSkills(trigger)
-    return
-  }
-
-  observeCodexTurnLatency(message)
-
-  if (message.id != null && message.method) {
-    if (message.method === 'item/tool/call' && message.params?.tool === 'update_session_map') {
-      sessionMap.handleToolCall(message)
-      return
-    }
-    const targetModel = codexNotificationModel(message, backend)
-    if (!targetModel) {
-      if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
-        captureOffscreenInteraction(message).catch((error) => reportClientError(error))
-      }
-      return
-    }
-    if (!applyCodexNotification(targetModel, message)) {
-      sendRaw({ id: message.id, error: { code: -32601, message: `Studio does not support ${message.method}` } })
-      toast(t('Codex requested an unsupported interaction: {method}', { method: message.method }), 'error')
-      return
-    }
-    if (message.method === 'item/tool/requestUserInput' || message.method === 'mcpServer/elicitation/request') {
-      notifyDesktop(t('Codex is waiting for your input'), message.params?.questions?.[0]?.question || message.params?.message || selectedThread()?.name || '')
-    }
-    markCachedModelValidated(backend, targetModel)
-    if (targetModel !== state.model) return
-    renderTranscript()
-    return
-  }
-
-  const targetModel = codexNotificationModel(message, backend)
-  if (!targetModel) {
-    reportCodexLifecycleNotification(backend, message)
-    return
-  }
-  const beforeModelStatus = targetModel.status || ''
-  const beforeActiveTurnId = targetModel.activeTurnId || ''
-  const applied = applyCodexNotification(targetModel, message)
-  if (!applied) {
-    reportCodexLifecycleNotification(backend, message, {
-      targetModel,
-      beforeModelStatus,
-      beforeActiveTurnId,
-    })
-    return
-  }
-  markCachedModelValidated(backend, targetModel)
-  if (message.method === 'item/completed') {
-    sessionResources.invalidate(
-      backend,
-      message.params?.threadId || targetModel.threadId || state.selectedId,
-    )
-  }
-  if (targetModel !== state.model) {
-    reportCodexLifecycleNotification(backend, message, {
-      targetModel,
-      applied,
-      beforeModelStatus,
-      beforeActiveTurnId,
-    })
-    return
-  }
-  const updateKind = transcriptUpdateKind(message.method)
-  if (updateKind === 'stream') queueStreamingItemPatch(message.params)
-  else if (updateKind === 'item') replaceCompletedItem(message.params)
-  else if (updateKind === 'full') {
-    const turnId = message.params?.turnId || message.params?.turn?.id
-    if (!turnId || !replaceRenderedTurn(turnId)) renderTranscript()
-  }
-  renderComposerState()
-  reportCodexLifecycleNotification(backend, message, {
-    targetModel,
-    applied,
-    beforeModelStatus,
-    beforeActiveTurnId,
-  })
+function handleAppServerMessage(...args) {
+  return activeCodexConnection.handleAppServerMessage(...args)
 }
 
-async function resynchronizeSelectedThreadAfterLag({ backend, threadId, socketGeneration, skipped }) {
-  const activeHistory = state.threadLoads.get(threadCatalogKey(backend, threadId))
-  if (activeHistory) {
-    try { await activeHistory }
-    catch (error) { console.warn('Selected history load failed before lag recovery', error) }
-  }
-  if (state.backend !== backend
-    || state.selectedId !== threadId
-    || state.socketGeneration !== socketGeneration
-    || !state.ready) return false
-  const refreshed = await refreshSelectedThread({ quiet: true })
-  if (!refreshed
-    || state.backend !== backend
-    || state.selectedId !== threadId
-    || state.socketGeneration !== socketGeneration) return false
-  setNativeError(null)
-  toast(t('Resynchronized the session from {backend}', { backend: backendDescriptor(backend).name }))
-  console.debug('Recovered missed App Server events', { backend, threadId, skipped })
-  return true
+async function resynchronizeSelectedThreadAfterLag(...args) {
+  return activeCodexConnection.resynchronizeSelectedThreadAfterLag(...args)
 }
 
-async function captureOffscreenInteraction(message) {
-  const backend = state.backend
-  const threadId = String(message.params?.threadId || '')
-  if (!threadId) return
-  const result = await rpc('thread/read', { threadId, includeTurns: true })
-  const model = createCodexViewModel()
-  hydrateCodexThread(model, result.thread)
-  applyCodexNotification(model, message)
-  cacheThreadModel(backend, threadId, model)
-  state.attentionThreads.add(threadCatalogKey(backend, threadId))
-  persistPreferences()
-  renderThreadList()
-  notifyDesktop(t('Codex is waiting for your input'), message.params?.questions?.[0]?.question || message.params?.message || threadTitle(result.thread))
+async function captureOffscreenInteraction(...args) {
+  return activeCodexConnection.captureOffscreenInteraction(...args)
 }
 
 function notifyDesktop(title, body = '', ref = null) {
@@ -2437,170 +2142,24 @@ function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
   })
 }
 
-async function ensureOpenCodeAvailable() {
-  const response = await gatewayFetch('/studio/opencode', { cache: 'no-store' })
-  if (!response.ok) {
-    const info = await response.json().catch(() => ({}))
-    throw new Error(info.error || `OpenCode Server HTTP ${response.status}`)
-  }
+async function ensureOpenCodeAvailable(...args) {
+  return openCodeProtocol.ensureOpenCodeAvailable(...args)
 }
 
-async function openCodeFetch(path, { method = 'GET', body, timeoutMs = 30_000, allowInactive = false, includeHeaders = false } = {}) {
-  if (!allowInactive && (state.backend !== 'opencode' || !state.ready)) throw new Error('OpenCode Server is not ready')
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await gatewayFetch(`/opencode${path}`, {
-      method,
-      headers: body == null ? {} : { 'Content-Type': 'application/json' },
-      body: body == null ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-      cache: 'no-store',
-    })
-    if (response.status === 204) return includeHeaders ? { value: null, headers: response.headers } : null
-    const text = await response.text()
-    let value = null
-    try { value = text ? JSON.parse(text) : null } catch { value = text }
-    if (!response.ok) throw new Error(value?.error?.message || value?.message || `${method} ${path} failed: HTTP ${response.status}`)
-    return includeHeaders ? { value, headers: response.headers } : value
-  } catch (error) {
-    if (error.name === 'AbortError') throw new Error(t('{method} {path} request timed out', { method, path }))
-    throw error
-  } finally { clearTimeout(timer) }
+async function openCodeFetch(...args) {
+  return openCodeProtocol.openCodeFetch(...args)
 }
 
-async function fetchOpenCodeMessageHistory(threadId, directory, fetchOptions, { anchorTurnIds = [] } = {}) {
-  const path = `/session/${encodeURIComponent(threadId)}/message`
-  const key = String(threadId || '')
-  const finishHistoryFetch = studioPerformance.start('opencode.history.fetch', {
-    backend: 'opencode',
-    threadKey: threadCatalogKey('opencode', threadId),
-  })
-  let pageCount = 0
-  let historyMode = 'full'
-  let latestSnapshot = { before: openCodeHistoryEventSequences.get(key) || 0, after: openCodeHistoryEventSequences.get(key) || 0 }
-  const messageSnapshots = {}
-  const fetchPage = async ({ limit, before }) => {
-    pageCount += 1
-    const sequenceBefore = openCodeHistoryEventSequences.get(key) || 0
-    const query = new URLSearchParams({ limit: String(limit) })
-    if (before) query.set('before', before)
-    const page = await openCodeFetch(withDirectory(path, directory, query.toString()), {
-      ...fetchOptions,
-      includeHeaders: true,
-    })
-    const result = {
-      messages: page.value,
-      cursor: page.headers.get('x-next-cursor'),
-    }
-    const sequenceAfter = openCodeHistoryEventSequences.get(key) || 0
-    for (const message of Array.isArray(result.messages) ? result.messages : []) {
-      const messageId = String(message?.info?.id || '')
-      if (!messageId) continue
-      messageSnapshots[messageId] = {
-        afterSequence: sequenceBefore === sequenceAfter ? sequenceAfter : sequenceBefore,
-        ambiguousThroughSequence: sequenceAfter,
-      }
-    }
-    if (!before) latestSnapshot = {
-      before: sequenceBefore,
-      after: sequenceAfter,
-    }
-    return result
-  }
-  try {
-    const anchors = (Array.isArray(anchorTurnIds) ? anchorTurnIds : []).filter(Boolean)
-    let history = anchors.length
-      ? await collectOpenCodeMessageTail(fetchPage, anchors)
-      : await collectOpenCodeMessageHistory(fetchPage)
-    if (history.matched) historyMode = 'tail'
-    else if (anchors.length && history.complete) historyMode = 'full-tail-scan'
-    else if (anchors.length) {
-      history = await collectOpenCodeMessageHistory(fetchPage)
-      const recoveredTail = sliceOpenCodeMessageTail(history.messages, anchors)
-      if (recoveredTail.matched) {
-        history = { ...history, ...recoveredTail, complete: false }
-        historyMode = 'tail-wide-fallback'
-      } else {
-        historyMode = 'full-fallback'
-      }
-    }
-    for (let attempt = 0; latestSnapshot.before !== latestSnapshot.after && attempt < 2; attempt += 1) {
-      const latest = await fetchPage({ limit: history.matched ? 80 : 500 })
-      if (Array.isArray(latest.messages)) {
-        history.messages = mergeOpenCodeMessagePages([history.messages, latest.messages])
-        if (history.matched) {
-          const anchorIndex = history.messages.findIndex((message) => message?.info?.role === 'user'
-            && String(message.info.id || '') === String(history.anchorTurnId || ''))
-          if (anchorIndex >= 0) history.messages = history.messages.slice(anchorIndex)
-        }
-      }
-    }
-    finishHistoryFetch({
-      outcome: 'loaded',
-      historyMode,
-      pageCount,
-      messageCount: Array.isArray(history.messages) ? history.messages.length : 0,
-      complete: history.complete !== false,
-    })
-    return {
-      ...history,
-      historyMode,
-      historyMessageSnapshots: messageSnapshots,
-    }
-  } catch (error) {
-    finishHistoryFetch({ outcome: 'failed', pageCount })
-    throw error
-  }
+async function fetchOpenCodeMessageHistory(...args) {
+  return openCodeProtocol.fetchOpenCodeMessageHistory(...args)
 }
 
-async function fetchOpenCodeStatusSnapshot(threadId, directory, fetchOptions) {
-  const key = String(threadId || '')
-  let value = {}
-  let snapshot = { before: -1, after: Number.POSITIVE_INFINITY }
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const before = openCodeHistoryEventSequences.get(key) || 0
-    try {
-      value = await openCodeFetch(withDirectory('/session/status', directory), fetchOptions)
-    } catch {
-      return { value: {}, statusEventSequence: -1 }
-    }
-    snapshot = { before, after: openCodeHistoryEventSequences.get(key) || 0 }
-    if (snapshot.before === snapshot.after) break
-  }
-  return {
-    value,
-    statusEventSequence: snapshot.before === snapshot.after ? snapshot.after : snapshot.before,
-  }
+async function fetchOpenCodeStatusSnapshot(...args) {
+  return openCodeProtocol.fetchOpenCodeStatusSnapshot(...args)
 }
 
-async function fetchOpenCodeCatalog(limit = 100, { allowInactive = false, includeStatuses = true } = {}) {
-  if (allowInactive) {
-    const response = await gatewayFetch('/studio/opencode', { cache: 'no-store' })
-    if (!response.ok) {
-      const info = await response.json().catch(() => ({}))
-      throw new Error(info.error || `OpenCode Server HTTP ${response.status}`)
-    }
-  }
-  const options = { timeoutMs: 30_000, allowInactive }
-  const sessions = await collectOpenCodeRootSessions(({ limit: pageLimit, archived, roots, cursor }) => {
-    const query = new URLSearchParams({
-      limit: String(pageLimit),
-      archived: String(archived),
-      roots: String(roots),
-    })
-    if (cursor != null) query.set('cursor', String(cursor))
-    return openCodeFetch(`/experimental/session?${query}`, options)
-  }, limit)
-  if (!includeStatuses) return normalizeOpenCodeSessions(sessions, {})
-  const directories = [...new Set((sessions || []).map((session) => session.directory).filter((cwd) =>
-    cwd && !isSessionDirectoryHidden(cwd, state.hiddenSessionDirectories, state.sessionDirectoryIgnore),
-  ))]
-  const statuses = await fetchOpenCodeDirectoryStatuses(
-    directories,
-    (cwd) => openCodeFetch(withDirectory('/session/status', cwd), options),
-  )
-  return normalizeOpenCodeSessions(sessions, statuses)
+async function fetchOpenCodeCatalog(...args) {
+  return openCodeProtocol.fetchOpenCodeCatalog(...args)
 }
 
 function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorkspace = '' } = {}) {
@@ -2973,173 +2532,32 @@ function markThreadCatalogLoaded() {
   threadCatalogErrorMessage = null
 }
 
-function directoryQuery(directory = selectedThread()?.cwd) {
-  return directory ? `directory=${encodeURIComponent(directory)}` : ''
+function directoryQuery(...args) {
+  return openCodeProtocol.directoryQuery(...args)
 }
 
-function withDirectory(path, directory, extra = '') {
-  return `${path}?${[directoryQuery(directory), extra].filter(Boolean).join('&')}`
+function withDirectory(...args) {
+  return openCodeProtocol.withDirectory(...args)
 }
 
-async function openCodeRpc(method, params = {}, timeoutMs = 30_000, { allowInactive = false } = {}) {
-  const catalog = allowInactive ? state.threadsByBackend.opencode : state.threads
-  const thread = catalog.find((candidate) => candidate.id === (params.threadId || state.selectedId))
-  const directory = params.cwd || thread?.cwd || ''
-  const fetchOptions = { timeoutMs, allowInactive }
-  if (method === 'thread/list') {
-    return { data: await fetchOpenCodeCatalog(Number(params.limit || 100), { allowInactive }) }
-  }
-  if (method === 'thread/unsubscribe') return {}
-  if (method === 'thread/resume' || method === 'thread/read') {
-    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), fetchOptions)
-    const history = await fetchOpenCodeMessageHistory(params.threadId, session.directory, fetchOptions, {
-      anchorTurnIds: params.historyAnchorTurnIds,
-    })
-    const statuses = await fetchOpenCodeStatusSnapshot(params.threadId, session.directory, fetchOptions)
-    return {
-      thread: openCodeThreadFromHistory(session, history.messages, statuses.value?.[session.id] || 'idle'),
-      historyComplete: history.complete,
-      historyMessageSnapshots: history.historyMessageSnapshots,
-      historyStatusSequence: statuses.statusEventSequence,
-      historyAnchorTurnId: history.anchorTurnId,
-      historyMode: history.historyMode,
-    }
-  }
-  if (method === 'thread/start') {
-    const model = splitOpenCodeModel(params.model)
-    const session = await openCodeFetch(withDirectory('/session', params.cwd), { method: 'POST', body: { ...(params.name ? { title: params.name } : {}), ...(model ? { model: { id: model.modelID, providerID: model.providerID } } : {}) }, timeoutMs, allowInactive })
-    return { thread: normalizeOpenCodeSessions([session], {})[0] }
-  }
-  if (method === 'thread/name/set') {
-    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'PATCH', body: { title: params.name }, timeoutMs })
-  }
-  if (method === 'thread/fork') {
-    const session = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/fork`, directory), { method: 'POST', body: openCodeForkBody(params), timeoutMs })
-    return { thread: normalizeOpenCodeSessions([session], {})[0] }
-  }
-  if (method === 'thread/delete') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}`, directory), { method: 'DELETE', timeoutMs })
-  if (method === 'thread/archive') throw new Error('OpenCode does not provide a separate archive action. You can rename, fork, or delete the session.')
-  if (method === 'turn/start') {
-    const text = textFromUserContent(params.input)
-    const model = splitOpenCodeModel(params.model)
-    const skill = params.input?.find((item) => item?.type === 'skill')
-    if (skill?.name) {
-      if (params.input?.some((item) => item?.type === 'image' || item?.type === 'localImage')) {
-        throw new Error(t('OpenCode cannot combine a skill command with image attachments. Remove the skill or images and try again.'))
-      }
-      const result = await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), {
-        method: 'POST',
-        body: { command: skill.name, arguments: text, agent: 'build' },
-        timeoutMs: Math.max(timeoutMs, 300_000),
-      })
-      const turn = openCodeCommandTurn(result, params.input)
-      if (!turn) throw new Error(t('OpenCode completed the command but did not return its user message ID.'))
-      return { turn }
-    }
-    const imageParts = (params.input || []).map(openCodeImagePart).filter(Boolean)
-    const parts = [
-      ...(text ? [{ type: 'text', text }] : []),
-      ...(params.input || []).filter((item) => item?.type === 'file').map(openCodeFilePart),
-      ...imageParts,
-    ]
-    const baselineIds = await openCodeUserMessageBaseline(params.threadId, directory, fetchOptions)
-    await openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/prompt_async`, directory), {
-      method: 'POST',
-      body: {
-        parts,
-        ...(model ? { model } : {}),
-        ...(params.developerInstructions ? { system: params.developerInstructions } : {}),
-        ...(params.outputSchema ? { format: { type: 'json_schema', schema: params.outputSchema, retryCount: 2 } } : {}),
-      },
-      timeoutMs,
-      allowInactive,
-    })
-    // OpenCode owns message identity. Older servers compare their monotonic
-    // IDs to decide whether a prompt loop is complete, so a client UUID can
-    // keep the same user prompt running forever. Read back the authoritative
-    // user ID for Router/optimistic correlation instead of supplying one.
-    return openCodeStartedTurn(params.threadId, directory, params.input, baselineIds, {
-      ...fetchOptions,
-      // The server has already accepted the prompt. Keep resolving its
-      // authoritative user ID even if the operator switches backends now.
-      allowInactive: true,
-    })
-  }
-  if (method === 'turn/steer') throw new Error('Messages cannot be added while OpenCode is running. Wait for completion or stop it first.')
-  if (method === 'turn/interrupt') return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/abort`, directory), { method: 'POST', timeoutMs })
-  if (method === 'thread/shellCommand') {
-    const options = currentTurnOptions()
-    const model = splitOpenCodeModel(options.model || thread?.model)
-    if (!model) throw new Error('Choose a model with /model before running an OpenCode shell command.')
-    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/shell`, directory), { method: 'POST', body: { agent: 'build', model, command: params.command }, timeoutMs })
-  }
-  if (method === 'fuzzyFileSearch') {
-    const query = encodeURIComponent(params.query || '')
-    const files = await openCodeFetch(withDirectory('/find/file', params.roots?.[0] || directory, `query=${query}&type=file&dirs=false&limit=200`), { timeoutMs })
-    return { files: (files || []).map((path) => ({ path, root: params.roots?.[0] || directory })) }
-  }
-  if (method === 'model/list') {
-    const providers = await openCodeFetch(withDirectory('/config/providers', directory), { timeoutMs })
-    return { data: openCodeModelList(providers) }
-  }
-  if (method === 'skills/list') {
-    const commands = await openCodeFetch(withDirectory('/command', params.cwds?.[0] || directory), { timeoutMs })
-    return { data: [{ skills: (commands || []).filter((command) => command.source === 'skill').map((command) => ({ name: command.name, path: command.name, description: command.description || '', enabled: true })) }] }
-  }
-  if (method === 'mcpServerStatus/list') {
-    const servers = await openCodeFetch(withDirectory('/mcp', directory), { timeoutMs })
-    return { data: Object.entries(servers || {}).map(([name, status]) => ({ name, status })) }
-  }
-  if (method === 'thread/compact/start' || method === 'review/start') {
-    const command = method === 'review/start' ? 'review' : 'compact'
-    return openCodeFetch(withDirectory(`/session/${encodeURIComponent(params.threadId)}/command`, directory), { method: 'POST', body: { command, arguments: '', agent: 'build' }, timeoutMs })
-  }
-  throw new Error(t('The OpenCode backend does not support {method} yet', { method }))
+async function openCodeRpc(...args) {
+  return openCodeProtocol.openCodeRpc(...args)
 }
 
-function openCodeFilePart(file) {
-  const root = String(file.root || selectedThread()?.cwd || '').replace(/\/$/u, '')
-  const path = String(file.path || '').replace(/^\.\//u, '')
-  const absolute = path.startsWith('/') ? path : `${root}/${path}`
-  const label = `@${path}`
-  return {
-    type: 'file',
-    mime: 'text/plain',
-    filename: path,
-    url: `file://${encodeURI(absolute)}`,
-    source: { type: 'file', path, text: { value: label, start: 0, end: label.length } },
-  }
+function openCodeFilePart(...args) {
+  return openCodeProtocol.openCodeFilePart(...args)
 }
 
-function openCodeTurnResult(userId, input) {
-  return {
-    turn: {
-      id: userId,
-      status: 'inProgress',
-      items: [{ id: userId, type: 'userMessage', content: input }],
-    },
-  }
+function openCodeTurnResult(...args) {
+  return openCodeProtocol.openCodeTurnResult(...args)
 }
 
-async function openCodeUserMessageBaseline(threadId, directory, fetchOptions) {
-  const path = `/session/${encodeURIComponent(threadId)}/message`
-  const messages = await openCodeFetch(withDirectory(path, directory, 'limit=20'), fetchOptions)
-  return new Set((Array.isArray(messages) ? messages : [])
-    .filter((message) => message?.info?.role === 'user' && message.info.id)
-    .map((message) => String(message.info.id)))
+async function openCodeUserMessageBaseline(...args) {
+  return openCodeProtocol.openCodeUserMessageBaseline(...args)
 }
 
-async function openCodeStartedTurn(threadId, directory, input, baselineIds, fetchOptions) {
-  const path = `/session/${encodeURIComponent(threadId)}/message`
-  const expectedText = textFromUserContent(input).trim()
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const messages = await openCodeFetch(withDirectory(path, directory, 'limit=20'), fetchOptions)
-    const message = selectOpenCodeStartedUserMessage(messages, { baselineIds, expectedText })
-    const info = message?.info
-    if (info?.id) return openCodeTurnResult(info.id, input)
-    await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)))
-  }
-  throw new Error(t('OpenCode accepted the prompt but did not return its user message ID.'))
+async function openCodeStartedTurn(...args) {
+  return openCodeProtocol.openCodeStartedTurn(...args)
 }
 
 function sendRaw(message) {

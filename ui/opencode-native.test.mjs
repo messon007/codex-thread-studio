@@ -154,7 +154,7 @@ test('paginates complete OpenCode histories and refreshes the newest page', asyn
   assert.equal(thread.turns.at(-1).id, 'msg-user-259')
   assert.equal(thread.turns.at(-1).items.at(-1).text, 'Updated while paging')
 
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../ui-src/opencode-protocol.mts', import.meta.url), 'utf8')
   const rpcStart = source.indexOf('async function openCodeRpc(')
   const rpcEnd = source.indexOf('\nfunction openCodeFilePart', rpcStart)
   assert.match(source.slice(rpcStart, rpcEnd), /fetchOpenCodeMessageHistory\(params\.threadId, session\.directory, fetchOptions, \{[\s\S]*anchorTurnIds:/u)
@@ -166,7 +166,7 @@ test('keeps history bounded when an older OpenCode server does not expose a mess
 
   assert.equal(history.complete, false)
   assert.equal(history.messages.length, 500)
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../ui-src/opencode-protocol.mts', import.meta.url), 'utf8')
   const start = source.indexOf('async function fetchOpenCodeMessageHistory(')
   const end = source.indexOf('\nasync function fetchOpenCodeCatalog', start)
   const fetchHistory = source.slice(start, end)
@@ -752,7 +752,7 @@ test('uses authoritative command and post-baseline user identities', () => {
 })
 
 test('Studio leaves OpenCode message identity to the server', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../ui-src/opencode-protocol.mts', import.meta.url), 'utf8') + readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const start = source.indexOf("if (method === 'turn/start')")
   const end = source.indexOf("throw new Error(t('The OpenCode backend", start)
   const turnStart = source.slice(start, end)

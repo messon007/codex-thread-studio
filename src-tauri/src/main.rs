@@ -996,6 +996,11 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
         .route("/composer-send.mjs", get(composer_send_js))
         .route("/background-sessions.mjs", get(background_sessions_js))
+        .route("/opencode-protocol.mjs", get(opencode_protocol_js))
+        .route(
+            "/active-codex-connection.mjs",
+            get(active_codex_connection_js),
+        )
         .route("/session-operations.mjs", get(session_operations_js))
         .route("/submission-controller.mjs", get(submission_controller_js))
         .route("/preferences-snapshot.mjs", get(preferences_snapshot_js))
@@ -2306,6 +2311,14 @@ async fn composer_send_js() -> impl IntoResponse {
 
 async fn background_sessions_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/background-sessions.mjs"))
+}
+
+async fn opencode_protocol_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/opencode-protocol.mjs"))
+}
+
+async fn active_codex_connection_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/active-codex-connection.mjs"))
 }
 
 async fn session_operations_js() -> impl IntoResponse {
@@ -4621,6 +4634,8 @@ mod tests {
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
                 "/background-sessions.mjs",
+                "/opencode-protocol.mjs",
+                "/active-codex-connection.mjs",
                 "/session-operations.mjs",
                 "/submission-controller.mjs",
                 "/preferences-snapshot.mjs",

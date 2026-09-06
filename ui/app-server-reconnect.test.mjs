@@ -3,11 +3,12 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+const active = readFileSync(new URL('../ui-src/active-codex-connection.mts', import.meta.url), 'utf8')
 
 test('same-process Codex reconnects reuse only a catalog-fresh cached history', () => {
-  const start = source.indexOf('function handleAppServerMessage(')
-  const end = source.indexOf("if (message.method === 'studio/appServer/log')", start)
-  const statusHandler = source.slice(start, end)
+  const start = active.indexOf('function handleAppServerMessage(')
+  const end = active.indexOf("if (message.method === 'studio/appServer/log')", start)
+  const statusHandler = active.slice(start, end)
 
   assert.match(statusHandler, /const appServerRestarted = codexBackendsNeedingRestartRecovery\.delete\(backend\)[\s\S]*previousGeneration != null && nextGeneration !== previousGeneration/u)
   assert.match(statusHandler, /if \(!appServerRestarted && freshThreadModel\(backend, selectedId, \{ reconnectValidation: true \}\)\) return/u)
@@ -16,9 +17,9 @@ test('same-process Codex reconnects reuse only a catalog-fresh cached history', 
 })
 
 test('Codex App Server restart does not read again after loadThreads resumed the selection', () => {
-  const start = source.indexOf('function handleAppServerMessage(')
-  const end = source.indexOf("if (message.method === 'studio/appServer/log')", start)
-  const statusHandler = source.slice(start, end)
+  const start = active.indexOf('function handleAppServerMessage(')
+  const end = active.indexOf("if (message.method === 'studio/appServer/log')", start)
+  const statusHandler = active.slice(start, end)
 
   const snapshot = statusHandler.indexOf('const cachedModelsBeforeCatalog = new Map(state.threadModels)')
   const load = statusHandler.indexOf('loadThreads({')
@@ -57,9 +58,9 @@ test('backend switches discard a stale information request before connecting', (
 })
 
 test('lag recovery serializes behind the selected history load', () => {
-  const start = source.indexOf('async function resynchronizeSelectedThreadAfterLag(')
-  const end = source.indexOf('\nfunction ', start + 1)
-  const recovery = source.slice(start, end)
+  const start = active.indexOf('async function resynchronizeSelectedThreadAfterLag(')
+  const end = active.indexOf('\nasync function captureOffscreenInteraction', start + 1)
+  const recovery = active.slice(start, end)
   assert.ok(recovery.indexOf('await activeHistory') < recovery.indexOf('await refreshSelectedThread('))
   assert.match(recovery, /state\.selectedId !== threadId/u)
   assert.match(recovery, /state\.socketGeneration !== socketGeneration/u)

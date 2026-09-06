@@ -9,7 +9,7 @@ export interface OpenCodeSession {
   time?: { updated?: number; created?: number }
 }
 export interface OpenCodeMessage { info?: OpenCodeInfo; parts?: OpenCodePart[] }
-export type MessagePage = OpenCodeMessage[] | { messages?: OpenCodeMessage[]; cursor?: string }
+export type MessagePage = OpenCodeMessage[] | { messages?: OpenCodeMessage[]; cursor?: string | null }
 export type FetchMessagePage = (params: { limit: number; before?: string }) => Promise<MessagePage | null>
 export type FetchRootPage = (params: { limit: number; archived: false; roots: true; cursor?: number }) => Promise<OpenCodeSession[] | null>
 export interface OpenCodeHistoryThread extends Partial<Pick<OpenCodeEventModel, 'messageTurns' | 'messageRoles' | 'messageItems' | 'messageErrors'>> {

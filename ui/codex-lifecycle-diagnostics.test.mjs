@@ -86,7 +86,7 @@ test('validates backend-tagged lifecycle stream envelopes', () => {
 })
 
 test('the app reports lifecycle routing, lag, and cache decisions without message content', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8') + readFileSync(new URL('../ui-src/active-codex-connection.mts', import.meta.url), 'utf8')
   assert.match(source, /reportCodexLifecycleNotification\(backend, message,/u)
   assert.match(source, /reportSessionLifecycle\('codex-event-lag'/u)
   assert.match(source, /reportCodexSelectionCacheDecision\(backend, id,/u)

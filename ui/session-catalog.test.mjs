@@ -108,10 +108,8 @@ test('Studio applies DB catalogs and recovery only to Codex-compatible backends'
     app.indexOf('function fetchCodexCatalog('),
     app.indexOf('function requestCodexBackend('),
   )
-  const openCodeCatalog = app.slice(
-    app.indexOf('async function fetchOpenCodeCatalog('),
-    app.indexOf('function fetchCodexCatalog('),
-  )
+  const protocol = readFileSync(new URL('../ui-src/opencode-protocol.mts', import.meta.url), 'utf8')
+  const openCodeCatalog = protocol.slice(protocol.indexOf('async function fetchOpenCodeCatalog('), protocol.indexOf('function directoryQuery('))
   const recovery = app.slice(
     app.indexOf('function scheduleCodexCatalogRecovery('),
     app.indexOf('function installBackendCatalog('),

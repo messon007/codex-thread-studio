@@ -214,6 +214,7 @@ import {
   routerRuntimeKey,
 } from './thread-router-controller.mjs'
 import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dispatch.mjs'
+import { normalizeStoredTurnOptions, sessionModelPreferencePayload, copySessionTurnOptions } from './session-model-preferences.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
 import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
@@ -7579,7 +7580,7 @@ function messageQueueModel(ref) {
 
 function sessionTurnOptions(ref) {
   if (!ref) return {}
-  return { ...(state.turnOptions[selectedStateKey(ref.id, ref.backend)] || defaultTurnOptions(ref.backend)) }
+  return copySessionTurnOptions(state.turnOptions, selectedStateKey(ref.id, ref.backend), defaultTurnOptions(ref.backend))
 }
 
 function queuedTurnOptions(ref) {
@@ -8409,11 +8410,7 @@ function persistOpeningMessageState(key) {
 function persistSessionTurnOptions(key) {
   if (!key) return Promise.resolve()
   const options = state.turnOptions[key] || {}
-  return queueSessionStateWrite('/studio/session-state/turn-options', {
-    sessionKey: key,
-    model: String(options.model || ''),
-    effort: String(options.effort || ''),
-  })
+  return queueSessionStateWrite('/studio/session-state/turn-options', sessionModelPreferencePayload(key, options))
 }
 
 function persistMessageQueue(key) {
@@ -9190,23 +9187,6 @@ function normalizeContinueBehavior(value) {
   return ['ollamaDraft', 'quickSend'].includes(value) ? value : 'sessionModelDraft'
 }
 
-function normalizeStoredTurnOptions(value) {
-  const normalized = {}
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized
-  for (const [key, entry] of Object.entries(value).slice(0, 2048)) {
-    if (typeof key !== 'string' || !key.includes(':') || key.length > 320
-      || !entry || typeof entry !== 'object' || Array.isArray(entry)) continue
-    const model = String(entry.model || '').trim().slice(0, 256)
-    const effort = String(entry.effort || '').trim().slice(0, 64)
-    if (!model && !effort) continue
-    if (/\p{Cc}/u.test(model) || /\p{Cc}/u.test(effort)) continue
-    normalized[key] = {
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-    }
-  }
-  return normalized
-}
 
 function normalizeTypography(value) {
   const weights = [400, 500, 600]

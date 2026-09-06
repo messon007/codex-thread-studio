@@ -24,16 +24,31 @@ Further batches extract these typed boundaries from `app.js`:
 
 The Codex view-model reducer is now in `codex-native.mts`, with explicit turns,
 items, notification parameters, and approval/interaction requests. OpenCode's live
-event reducer is in `opencode-event-reducer.mts`; its conversion and history-replay
-helpers remain JavaScript and are passed through a typed helper contract.
+event reducer is in `opencode-event-reducer.mts`. The complete `opencode-native.mts`
+adapter now checks conversion helpers, paginated history/tail reads, message
+metadata, status normalization, history/live event replay, and loop detection.
+Image inputs are checked in `composer-images.mts`.
 
 Codex selected/background history loading is in `codex-history-loader.mts`.
 The `history-load-coordinator.mts` module shares resume/refresh flights and retains
 OpenCode's connection-epoch boundaries. RPC transport and environment-profile
 application are injected; production calls retain their original sequence.
 
-The cache freshness policy, model-selection UI, persistence transport,
-OpenCode history/replay helpers, and DOM/scroll orchestration remain JavaScript.
+Transcript presentation/windowing, scroll-state decisions, and mounted DOM reuse
+are checked in `transcript-presentation.mts`, `transcript-scroll.mts`, and
+`transcript-dom.mts`. Catalog sorting/filtering/cache freshness, session occurrence
+search, and environment text parsing are also migrated.
+
+`serialized-state-writer.mts` owns the FIFO persistence mechanism. Preferences and
+session state use independent instances; payloads are serialized at enqueue time,
+and a failed request does not stop subsequent writes.
+
+The remaining `app.js` is primarily UI and backend transport orchestration. The
+settings dialogs, annotation/session-map/router controllers, rich document
+viewers and resource extraction remain JavaScript. Migrating these would require
+separate feature-level contracts; renaming them with weak `any` types would not
+provide the same benefit. This migration does not add a framework, bundle the UI,
+or claim that all frontend code is now checked.
 Type annotations describe protocol data but do not replace runtime validation.
 No new cache copies, polling, resume requests, or backend model fallback are added.
 

@@ -996,6 +996,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/model-display.mjs", get(model_display_js))
         .route("/message-queue.mjs", get(message_queue_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
+        .route(
+            "/serialized-state-writer.mjs",
+            get(serialized_state_writer_js),
+        )
         .route("/session-model-cache.mjs", get(session_model_cache_js))
         .route(
             "/session-model-preferences.mjs",
@@ -2263,6 +2267,10 @@ async fn message_queue_js() -> impl IntoResponse {
 
 async fn session_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/session-catalog.mjs"))
+}
+
+async fn serialized_state_writer_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/serialized-state-writer.mjs"))
 }
 
 async fn session_model_cache_js() -> impl IntoResponse {

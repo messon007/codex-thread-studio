@@ -41,7 +41,8 @@ test('session state mutations use bounded per-session endpoints', () => {
   assert.match(app, /'\/studio\/session-state\/pin'/u)
   assert.match(app, /'\/studio\/session-state\/turn-options'/u)
   assert.match(app, /'\/studio\/session-state\/session',[^\n]*'DELETE'/u)
-  assert.match(app, /const payload = JSON\.stringify\(body\)/u)
+  assert.match(app, /sessionStateWriter\.write\(path, body, method\)/u)
+  assert.match(app, /if \(!preferencesReady\) return Promise\.resolve\(\)/u)
 })
 
 test('session model and effort choices persist the concrete backend default', () => {

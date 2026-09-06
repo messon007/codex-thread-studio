@@ -216,6 +216,7 @@ import {
 import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dispatch.mjs'
 import { createCodexHistoryLoader } from './codex-history-loader.mjs'
 import { coordinateHistoryLoad } from './history-load-coordinator.mjs'
+import { createSerializedStateWriter } from './serialized-state-writer.mjs'
 import { normalizeStoredTurnOptions, sessionModelPreferencePayload, copySessionTurnOptions } from './session-model-preferences.mjs'
 import { cachedSession, storeCachedSession, validateCachedModel, unvalidateCachedModel, cachedModelThreadId, routeCodexNotification } from './session-model-cache.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
@@ -399,8 +400,8 @@ const state = {
 }
 
 let preferencesReady = false
-let preferencesWriteChain = Promise.resolve()
-let sessionStateWriteChain = Promise.resolve()
+const preferencesWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist preferences', error))
+const sessionStateWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist session state', error))
 let preferencesPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
@@ -8183,28 +8184,12 @@ function preferencesSnapshot() {
 
 function persistPreferences() {
   if (!preferencesReady) return Promise.resolve()
-  const body = JSON.stringify(preferencesSnapshot())
-  const write = preferencesWriteChain.catch(() => {}).then(async () => {
-    const response = await gatewayFetch('/studio/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  })
-  preferencesWriteChain = write.catch((error) => console.error('Unable to persist preferences', error))
-  return write
+  return preferencesWriter.write('/studio/preferences', preferencesSnapshot())
 }
 
 function queueSessionStateWrite(path, body, method = 'PUT') {
   if (!preferencesReady) return Promise.resolve()
-  const payload = JSON.stringify(body)
-  const write = sessionStateWriteChain.catch(() => {}).then(async () => {
-    const response = await gatewayFetch(path, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  })
-  sessionStateWriteChain = write.catch((error) => console.error('Unable to persist session state', error))
-  return write
+  return sessionStateWriter.write(path, body, method)
 }
 
 function persistAnnotationState(key) {

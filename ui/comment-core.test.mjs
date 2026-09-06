@@ -7,6 +7,11 @@ import {
   normalizeCommentDrafts,
 } from './comment-core.mjs'
 
+test('comment normalization safely rejects absent drafts and preserves opaque anchors', () => {
+  assert.equal(createCommentDraft(null), null)
+  assert.deepEqual(normalizeCommentDrafts({ t: [null, false, { excerpt: 'saved', source: { provider: 'future', anchor: { nested: [1, 2] } } }] }, { idFactory: () => 'id' })['codex:t'][0].source.anchor, { nested: [1, 2] })
+})
+
 test('Comment core stores opaque sources without knowing provider semantics', () => {
   const registry = new CommentSourceRegistry().register({
     id: 'epub',

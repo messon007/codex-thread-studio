@@ -1,5 +1,5 @@
 export type UtilityResult<T> = { status: 'running' } | { status: 'failed'; error: string } | ({ status: 'completed' } & T)
-export interface UtilityThread { turns?: readonly { status?: string; error?: { message?: string }; items?: readonly { type?: string; text?: unknown }[] }[] }
+export interface UtilityThread { turns?: readonly { status?: string; error?: { message?: string } | null; items?: readonly { type?: string; text?: unknown }[] }[] }
 
 /** Polls the existing source (in-memory notifications or remote history), never both. */
 export async function waitForUtilityResult<T>(options: {

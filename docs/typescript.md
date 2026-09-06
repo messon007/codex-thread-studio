@@ -120,6 +120,15 @@ The following focused batch brings the total to 57 runtime modules:
 These are incremental boundaries, not a claim that all sending, lifecycle or
 persistence orchestration has been converted. No performance changes or fixes
 for the intermittent Continue disabled-state report are included in this batch.
+
+`hidden-utility-session` brings the total to 58 modules. Translation and Continue
+share the checked hidden-session creation, structured notification model binding,
+turn acknowledgement, existing result polling and backend-pinned asynchronous
+cleanup. Their distinct model-selection and staleness policies remain in the
+caller; Ollama continues to use its separate gateway. The original timeouts,
+polling intervals and Codex-vs-OpenCode request shapes are retained. Tests cover
+completion before acknowledgement, failed creation, selection change after
+creation and delayed/failed cleanup without invoking a real model.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

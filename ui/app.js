@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createSessionStatePersistence } from './session-state-persistence.mjs'
 import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
 import {
@@ -158,7 +159,6 @@ import {
   continuationDraftInput,
   continuationDraftTurnState,
 } from './continuation-draft.mjs'
-import { waitForUtilityResult } from './utility-task.mjs'
 import { executeQueuedMessage } from './queue-execution.mjs'
 import { PendingRpcRequests, requestSocketRpc, connectSelectedSocket } from './rpc-lifecycle.mjs'
 import { normalizeTranslationPreferences, normalizeContinueBehavior, normalizeTypography as normalizeTypographyProfile, normalizeContentWidth, normalizeLanguage, normalizeAdditional, normalizeOpeningMessages } from './preference-normalization.mjs'
@@ -1135,90 +1135,34 @@ async function translateSelectionWithCurrentBackend(value) {
   const generation = state.socketGeneration
   const cwd = selectedThread()?.cwd || ''
 
-  const utilityName = `Studio translation ${randomId()}`
-  state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
-  let threadId = ''
-  let translationTask = null
-  try {
-    const started = await rpc('thread/start', {
-      cwd,
-      ...(model ? { model } : {}),
-      ...(isCodexBackend(backend) ? {
-        ephemeral: true,
-        approvalPolicy: 'never',
-        sandbox: 'read-only',
-        developerInstructions: SELECTION_TRANSLATION_INSTRUCTIONS,
-      } : { name: utilityName }),
-    }, 30_000)
-    threadId = String(started?.thread?.id || '')
-    if (!threadId) throw new Error(t('The current backend did not create a translation task'))
-    markUtilityThreadHidden(backend, threadId)
-    ensureTranslationBackend(backend, generation)
-    if (isCodexBackend(backend)) {
-      const model = createCodexViewModel()
-      model.threadId = threadId
-      translationTask = { backend, threadId, turnId: '', model }
-      state.structuredUtilityTasks.set(sessionRefKey(backend, threadId), translationTask)
-    }
-
-    const turnStarted = await rpc('turn/start', {
-      threadId,
-      cwd,
-      input: [{ type: 'text', text: selectionTranslationInput(text) }],
-      ...(!isCodexBackend(backend) ? { developerInstructions: SELECTION_TRANSLATION_INSTRUCTIONS } : {}),
-      outputSchema: SELECTION_TRANSLATION_SCHEMA,
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-    }, 150_000)
-    if (isCodexBackend(backend) && turnStarted?.turn?.id) {
-      const turnId = String(turnStarted.turn.id)
-      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnId))
-      translationTask.turnId ||= turnId
-      if (!translationTask.model.turns.some((turn) => String(turn.id) === turnId)) {
-        applyCodexNotification(translationTask.model, {
-          method: 'turn/started',
-          params: { threadId, turn: turnStarted.turn },
-        })
-      }
-    }
-
-    const translation = await waitForUtilityResult({
-      ensureCurrent: () => ensureTranslationBackend(backend, generation),
-      read: async () => translationTurnState(isCodexBackend(backend)
-        ? translationTask?.model
-        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread),
-      intervalMs: isCodexBackend(backend) ? 100 : 350,
-      timeoutMs: 150_000, timeoutMessage: t('Translation timed out'), errorMessage: t,
-    })
-        const result = {
-          translation: translation.translation,
-          sourcePronunciation: translation.sourcePronunciation,
-          translationPronunciation: translation.translationPronunciation,
-        }
-        state.selectionTranslationCache.set(cacheKey, result)
-        while (state.selectionTranslationCache.size > 64) {
-          state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
-        }
-    return result
-  } finally {
-    if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
-    if (threadId) {
-      dispatchBackendRpc(backend, 'thread/delete', {
-        threadId,
-        ...(!isCodexBackend(backend) ? { cwd } : {}),
-      }, 15_000).catch((error) => {
-        console.warn('Unable to remove the hidden translation session', error)
-      }).finally(() => {
-        const threadKey = sessionRefKey(backend, threadId)
-        state.hiddenUtilityThreads.delete(threadKey)
-        state.hiddenCodexThreads.delete(threadKey)
-        if (translationTask?.turnId) state.hiddenCodexTurns.delete(routerRuntimeKey(backend, translationTask.turnId))
-        state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
-      })
-    } else {
-      state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
-    }
+  const translation = await runHiddenUtilitySession(state, {
+    backend, codex: isCodexBackend(backend), cwd, model, effort,
+    name: `Studio translation ${randomId()}`,
+    instructions: SELECTION_TRANSLATION_INSTRUCTIONS,
+    input: selectionTranslationInput(text),
+    outputSchema: SELECTION_TRANSLATION_SCHEMA,
+    validateBeforeStart: false,
+    ensureCurrent: () => ensureTranslationBackend(backend, generation),
+    parse: translationTurnState,
+    translateError: t,
+    missingTaskMessage: t('The current backend did not create a translation task'),
+    timeoutMessage: t('Translation timed out'),
+    rpc,
+    remove: (targetBackend, params, timeoutMs) => dispatchBackendRpc(targetBackend, 'thread/delete', params, timeoutMs),
+    cleanupError: error => console.warn('Unable to remove the hidden translation session', error),
+    sessionKey: sessionRefKey,
+    turnKey: routerRuntimeKey,
+  })
+  const result = {
+    translation: translation.translation,
+    sourcePronunciation: translation.sourcePronunciation,
+    translationPronunciation: translation.translationPronunciation,
   }
+  state.selectionTranslationCache.set(cacheKey, result)
+  while (state.selectionTranslationCache.size > 64) {
+    state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
+  }
+  return result
 }
 
 async function translateSelectionWithOllama(text, profile, cacheKey) {
@@ -6895,82 +6839,25 @@ async function draftContinueWithSessionModel(source, stateKey) {
   const selectedModel = selectedThread()?.model
   const model = String(options.model || (typeof selectedModel === 'string' ? selectedModel : '')).trim()
   const effort = String(options.effort || '').trim()
-  const utilityName = `Studio continuation ${randomId()}`
-  state.hiddenUtilityThreadNames.add(`${backend}:${utilityName}`)
-  let threadId = ''
-  let utilityTask = null
-  try {
-    ensureContinuationBackend(backend, generation, stateKey)
-    const started = await rpc('thread/start', {
-      cwd,
-      ...(model ? { model } : {}),
-      ...(isCodexBackend(backend) ? {
-        ephemeral: true,
-        approvalPolicy: 'never',
-        sandbox: 'read-only',
-        developerInstructions: CONTINUATION_DRAFT_INSTRUCTIONS,
-      } : { name: utilityName }),
-    }, 30_000)
-    threadId = String(started?.thread?.id || '')
-    if (!threadId) throw new Error(t('The current backend did not create a continuation draft task'))
-    markUtilityThreadHidden(backend, threadId)
-    ensureContinuationBackend(backend, generation, stateKey)
-    if (isCodexBackend(backend)) {
-      const utilityModel = createCodexViewModel()
-      utilityModel.threadId = threadId
-      utilityTask = { backend, threadId, turnId: '', model: utilityModel }
-      state.structuredUtilityTasks.set(sessionRefKey(backend, threadId), utilityTask)
-    }
-
-    const turnStarted = await rpc('turn/start', {
-      threadId,
-      cwd,
-      input: [{ type: 'text', text: continuationDraftInput(source) }],
-      ...(!isCodexBackend(backend) ? { developerInstructions: CONTINUATION_DRAFT_INSTRUCTIONS } : {}),
-      outputSchema: CONTINUATION_DRAFT_SCHEMA,
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-    }, 150_000)
-    if (isCodexBackend(backend) && turnStarted?.turn?.id) {
-      const turnId = String(turnStarted.turn.id)
-      state.hiddenCodexTurns.add(routerRuntimeKey(backend, turnId))
-      utilityTask.turnId ||= turnId
-      if (!utilityTask.model.turns.some((turn) => String(turn.id) === turnId)) {
-        applyCodexNotification(utilityTask.model, {
-          method: 'turn/started',
-          params: { threadId, turn: turnStarted.turn },
-        })
-      }
-    }
-
-    const draft = await waitForUtilityResult({
-      ensureCurrent: () => ensureContinuationBackend(backend, generation, stateKey),
-      read: async () => continuationDraftTurnState(isCodexBackend(backend)
-        ? utilityTask?.model
-        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread),
-      intervalMs: isCodexBackend(backend) ? 100 : 350,
-      timeoutMs: 150_000, timeoutMessage: t('Continuation draft timed out'), errorMessage: t,
-    })
-    return draft.prompt
-  } finally {
-    if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
-    if (threadId) {
-      dispatchBackendRpc(backend, 'thread/delete', {
-        threadId,
-        ...(!isCodexBackend(backend) ? { cwd } : {}),
-      }, 15_000).catch((error) => {
-        console.warn('Unable to remove the hidden continuation session', error)
-      }).finally(() => {
-        const threadKey = sessionRefKey(backend, threadId)
-        state.hiddenUtilityThreads.delete(threadKey)
-        state.hiddenCodexThreads.delete(threadKey)
-        if (utilityTask?.turnId) state.hiddenCodexTurns.delete(routerRuntimeKey(backend, utilityTask.turnId))
-        state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
-      })
-    } else {
-      state.hiddenUtilityThreadNames.delete(`${backend}:${utilityName}`)
-    }
-  }
+  const draft = await runHiddenUtilitySession(state, {
+    backend, codex: isCodexBackend(backend), cwd, model, effort,
+    name: `Studio continuation ${randomId()}`,
+    instructions: CONTINUATION_DRAFT_INSTRUCTIONS,
+    input: continuationDraftInput(source),
+    outputSchema: CONTINUATION_DRAFT_SCHEMA,
+    validateBeforeStart: true,
+    ensureCurrent: () => ensureContinuationBackend(backend, generation, stateKey),
+    parse: continuationDraftTurnState,
+    translateError: t,
+    missingTaskMessage: t('The current backend did not create a continuation draft task'),
+    timeoutMessage: t('Continuation draft timed out'),
+    rpc,
+    remove: (targetBackend, params, timeoutMs) => dispatchBackendRpc(targetBackend, 'thread/delete', params, timeoutMs),
+    cleanupError: error => console.warn('Unable to remove the hidden continuation session', error),
+    sessionKey: sessionRefKey,
+    turnKey: routerRuntimeKey,
+  })
+  return draft.prompt
 }
 
 function ensureContinuationBackend(backend, generation, stateKey) {

@@ -157,6 +157,7 @@ import {
 } from './continuation-draft.mjs'
 import { waitForUtilityResult } from './utility-task.mjs'
 import { executeQueuedMessage } from './queue-execution.mjs'
+import { PendingRpcRequests, requestSocketRpc, connectSelectedSocket } from './rpc-lifecycle.mjs'
 import { normalizeTranslationPreferences, normalizeContinueBehavior, normalizeTypography as normalizeTypographyProfile, normalizeContentWidth, normalizeLanguage, normalizeAdditional, normalizeOpeningMessages } from './preference-normalization.mjs'
 
 import {
@@ -620,6 +621,8 @@ const sessionMap = createSessionMapController({
   notify: toast,
   reportError: showError,
 })
+
+const pendingRpcRequests = new PendingRpcRequests(state.pending)
 
 const reviewNotes = createReviewNotesController({
   state,
@@ -2023,35 +2026,27 @@ function applyRuntimeCopy() {
 }
 
 function connectAppServer() {
-  clearTimeout(state.reconnectTimer)
-  cleanupSocket()
-  state.ready = false
-  state.socketGeneration += 1
-  const generation = state.socketGeneration
   const descriptor = currentBackend()
-  setBackendState('checking', `Starting ${descriptor.name}`, 'App Server · stdio')
-  setNativeError(null)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
-  state.socket = socket
-
-  socket.onmessage = (event) => {
-    if (generation !== state.socketGeneration) return
-    try { handleAppServerMessage(JSON.parse(event.data)) }
-    catch (error) { console.error('Invalid App Server message', error, event.data) }
-  }
-  socket.onerror = () => {
-    if (generation !== state.socketGeneration) return
-    setBackendState('error', `${descriptor.name} Disconnected`, 'WebSocket connection failed')
-  }
-  socket.onclose = () => {
-    if (generation !== state.socketGeneration) return
-    state.ready = false
-    rejectPending(new Error(`${descriptor.name} App Server connection closed`))
-    setBackendState('error', t('{backend} disconnected', { backend: descriptor.name }), 'Preparing to reconnect…')
-    setNativeError(t('The connection to the local {backend} App Server closed.', { backend: descriptor.name }))
-    state.reconnectTimer = setTimeout(connectAppServer, 1800)
-  }
+  connectSelectedSocket(state, {
+    cleanup: cleanupSocket,
+    starting: () => {
+      setBackendState('checking', `Starting ${descriptor.name}`, 'App Server · stdio')
+      setNativeError(null)
+    },
+    open: () => gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`),
+    message: (data) => {
+      try { handleAppServerMessage(JSON.parse(data)) }
+      catch (error) { console.error('Invalid App Server message', error, data) }
+    },
+    error: () => setBackendState('error', `${descriptor.name} Disconnected`, 'WebSocket connection failed'),
+    closed: () => {
+      rejectPending(new Error(`${descriptor.name} App Server connection closed`))
+      setBackendState('error', t('{backend} disconnected', { backend: descriptor.name }), 'Preparing to reconnect…')
+      setNativeError(t('The connection to the local {backend} App Server closed.', { backend: descriptor.name }))
+    },
+    reconnect: connectAppServer,
+  })
 }
 
 async function connectOpenCode({ backendInfoReady = false } = {}) {
@@ -2391,12 +2386,7 @@ function handleAppServerMessage(message) {
 
   if (message.id != null && !message.method) {
     sessionMap.captureWorkerResponse(message)
-    const pending = state.pending.get(String(message.id))
-    if (!pending) return
-    state.pending.delete(String(message.id))
-    clearTimeout(pending.timer)
-    if (message.error) pending.reject(new Error(message.error.message || JSON.stringify(message.error)))
-    else pending.resolve(message.result)
+    pendingRpcRequests.settle(message)
     return
   }
 
@@ -2815,14 +2805,7 @@ function rpc(method, params = {}, timeoutMs = 30_000) {
   if (state.backend === 'opencode') return openCodeRpc(method, params, timeoutMs)
   if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error(t('{backend} App Server is not ready', { backend: currentBackend().name })))
   const id = ++state.requestId
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      state.pending.delete(String(id))
-      reject(new Error(t('{method} request timed out', { method })))
-    }, timeoutMs)
-    state.pending.set(String(id), { resolve, reject, timer, method })
-    sendRaw({ id, method, params })
-  })
+  return pendingRpcRequests.request(id, method, () => sendRaw({ id, method, params }), timeoutMs, t('{method} request timed out', { method }))
 }
 
 async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000) {
@@ -2836,38 +2819,16 @@ async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_0
 }
 
 function codexBackgroundRpc(backend, method, params = {}, timeoutMs = 30_000) {
-  return new Promise((resolve, reject) => {
-    const descriptor = backendDescriptor(backend)
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
-    const id = -(Date.now() + Math.floor(Math.random() * 100_000))
-    let requested = false
-    let settled = false
-    const finish = (error, value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      socket.onclose = null
-      socket.close()
-      if (error) reject(error)
-      else resolve(value)
-    }
-    const timer = setTimeout(() => finish(new Error(t('{method} request timed out', { method }))), timeoutMs)
-    socket.onmessage = (event) => {
-      let message
-      try { message = JSON.parse(event.data) } catch { return }
-      if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
-        finish(new Error(message.params?.message || 'Codex App Server is unavailable'))
-      } else if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
-        requested = true
-        socket.send(JSON.stringify({ id, method, params }))
-      } else if (message.id === id) {
-        if (message.error) finish(new Error(message.error.message || JSON.stringify(message.error)))
-        else finish(null, message.result)
-      }
-    }
-    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
-    socket.onclose = () => finish(new Error(t('The {backend} App Server connection closed', { backend: descriptor.name })))
+  const descriptor = backendDescriptor(backend)
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
+  return requestSocketRpc({
+    socket, id: -(Date.now() + Math.floor(Math.random() * 100_000)), method, params, timeoutMs,
+    timeoutMessage: t('{method} request timed out', { method }),
+    unavailableMessage: 'Codex App Server is unavailable',
+    connectMessage: t('Unable to connect to the {backend} App Server', { backend: descriptor.name }),
+    closeMessage: t('The {backend} App Server connection closed', { backend: descriptor.name }),
+    responseError: (error) => error.message || JSON.stringify(error),
   })
 }
 
@@ -3089,41 +3050,16 @@ function fetchCodexCatalog(backend, limit = 100, { routerId = null, routerWorksp
 }
 
 function requestCodexBackend(backend, method, params = {}, timeoutMs = 15_000) {
-  return new Promise((resolve, reject) => {
-    const descriptor = backendDescriptor(backend)
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
-    const id = -(Date.now() + Math.floor(Math.random() * 100_000))
-    const timer = setTimeout(() => finish(new Error(t('{backend} request timed out', { backend: descriptor.name }))), timeoutMs)
-    let requested = false
-    let settled = false
-    const finish = (error, value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      socket.onclose = null
-      socket.close()
-      if (error) reject(error)
-      else resolve(value)
-    }
-    socket.onmessage = (event) => {
-      let message
-      try { message = JSON.parse(event.data) } catch { return }
-      if (message.method === 'studio/appServer/status' && message.params?.state === 'error') {
-        finish(new Error(message.params?.message || t('{backend} App Server is unavailable', { backend: descriptor.name })))
-        return
-      }
-      if (message.method === 'studio/appServer/status' && message.params?.state === 'ready' && !requested) {
-        requested = true
-        socket.send(JSON.stringify({ id, method, params }))
-        return
-      }
-      if (message.id !== id) return
-      if (message.error) finish(new Error(message.error.message || `${method} failed`))
-      else finish(null, message.result)
-    }
-    socket.onerror = () => finish(new Error(t('Unable to connect to the {backend} App Server', { backend: descriptor.name })))
-    socket.onclose = () => finish(new Error(t('The {backend} App Server connection closed', { backend: descriptor.name })))
+  const descriptor = backendDescriptor(backend)
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const socket = gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`)
+  return requestSocketRpc({
+    socket, id: -(Date.now() + Math.floor(Math.random() * 100_000)), method, params, timeoutMs,
+    timeoutMessage: t('{backend} request timed out', { backend: descriptor.name }),
+    unavailableMessage: t('{backend} App Server is unavailable', { backend: descriptor.name }),
+    connectMessage: t('Unable to connect to the {backend} App Server', { backend: descriptor.name }),
+    closeMessage: t('The {backend} App Server connection closed', { backend: descriptor.name }),
+    responseError: (error) => error.message || `${method} failed`,
   })
 }
 
@@ -3679,11 +3615,7 @@ function sendRaw(message) {
 }
 
 function rejectPending(error) {
-  for (const pending of state.pending.values()) {
-    clearTimeout(pending.timer)
-    pending.reject(error)
-  }
-  state.pending.clear()
+  pendingRpcRequests.rejectAll(error)
 }
 
 async function loadThreads({ applyCachedEnvironment = true } = {}) {

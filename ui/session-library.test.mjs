@@ -38,7 +38,7 @@ test('archive loading retains per-backend failures and pagination state', () => 
   assert.match(sessionManagement, /const nextCursors = \{ \.\.\.library\.nextCursors \}/u)
   assert.match(sessionManagement, /errorsByBackend\[backend\] = error\?\.message/u)
   assert.match(sessionManagement, /archive\.load\(\{ backends: failed\.length \? failed : null \}\)/u)
-  assert.match(app, /socket\.onclose = \(\) => finish\(new Error\(t\('The \{backend\} App Server connection closed'/u)
+  assert.match(app, /closeMessage: t\('The \{backend\} App Server connection closed'/u)
 })
 
 test('restored sessions are installed before the bounded live catalog reload', () => {

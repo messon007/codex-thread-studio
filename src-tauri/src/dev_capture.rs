@@ -41,6 +41,7 @@ enum DeveloperRequest {
     OpenResources { root: String },
     OpenEnvironmentSettings { root: Option<String> },
     Click { selector: String },
+    Drag { selector: String, delta: [i32; 2] },
     Input { selector: String, value: String },
 }
 
@@ -73,6 +74,7 @@ pub fn requested(arguments: &[OsString]) -> bool {
                     | "--dev-open-resources"
                     | "--dev-open-environment-settings"
                     | "--dev-click"
+                    | "--dev-drag"
                     | "--dev-input"
             )
         )
@@ -219,6 +221,31 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
                 selector: selector.to_owned(),
             }))
         }
+        "--dev-drag" if arguments.len() == 4 => {
+            let selector = arguments[1]
+                .to_str()
+                .ok_or("developer drag selector must be valid UTF-8")?;
+            let delta_x = arguments[2]
+                .to_str()
+                .and_then(|value| value.parse::<i32>().ok())
+                .ok_or("developer drag delta-x must be an integer")?;
+            let delta_y = arguments[3]
+                .to_str()
+                .and_then(|value| value.parse::<i32>().ok())
+                .ok_or("developer drag delta-y must be an integer")?;
+            if selector.is_empty()
+                || selector.len() > 512
+                || selector.contains(['\n', '\r', '\0'])
+                || delta_x.unsigned_abs() > 4_096
+                || delta_y.unsigned_abs() > 4_096
+            {
+                return Err("developer drag is invalid".to_owned());
+            }
+            Ok(Some(DeveloperRequest::Drag {
+                selector: selector.to_owned(),
+                delta: [delta_x, delta_y],
+            }))
+        }
         "--dev-input" if arguments.len() == 3 => {
             let selector = arguments[1]
                 .to_str()
@@ -263,6 +290,9 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
             Err(format!("{command} accepts at most one project root"))
         }
         "--dev-click" => Err(format!("{command} requires one CSS selector")),
+        "--dev-drag" => Err(format!(
+            "{command} requires one CSS selector, delta-x, and delta-y"
+        )),
         "--dev-input" => Err(format!("{command} requires a CSS selector and value")),
         _ => Ok(None),
     }
@@ -400,6 +430,11 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
             DeveloperRequest::Click { selector } => {
                 evaluate_studio_developer_call("click", serde_json::json!([selector])).map(|_| None)
             }
+            DeveloperRequest::Drag { selector, delta } => evaluate_studio_developer_call(
+                "drag",
+                serde_json::json!([selector, delta[0], delta[1]]),
+            )
+            .map(|_| None),
             DeveloperRequest::Input { selector, value } => {
                 evaluate_studio_developer_call("input", serde_json::json!([selector, value]))
                     .map(|_| None)
@@ -653,8 +688,13 @@ mod tests {
             parse_cli_request(&arguments(&["--dev-input", "[data-pdf-search]", "Git"])).unwrap(),
             Some(DeveloperRequest::Input { selector, value }) if selector == "[data-pdf-search]" && value == "Git"
         ));
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-drag", ".table-column-resizer", "120", "0"])).unwrap(),
+            Some(DeveloperRequest::Drag { selector, delta: [120, 0] }) if selector == ".table-column-resizer"
+        ));
         assert!(parse_cli_request(&arguments(&["--dev-input", "input"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-click", "bad\nselector"])).is_err());
+        assert!(parse_cli_request(&arguments(&["--dev-drag", "selector", "5000", "0"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-open-browser"])).is_err());
         assert!(parse_cli_request(&arguments(&["--dev-screenshot", "extra"])).is_err());
         assert!(parse_cli_request(&arguments(&["--normal-option"]))
@@ -679,6 +719,7 @@ mod tests {
         assert!(requested(&arguments(&["--dev-open-resources"])));
         assert!(requested(&arguments(&["--dev-open-environment-settings"])));
         assert!(requested(&arguments(&["--dev-click"])));
+        assert!(requested(&arguments(&["--dev-drag"])));
         assert!(requested(&arguments(&["--dev-input"])));
         assert!(!requested(&arguments(&["--normal-option"])));
         assert!(!requested(&[]));

@@ -29,6 +29,7 @@ import {
   splitOpenCodeModel,
 } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
+import { createTranscriptDom } from './transcript-dom.mjs'
 import {
   completedQueueShouldAdvance,
   normalizeQueueDepth,
@@ -410,6 +411,8 @@ let turnNavigatorButtons = new Map()
 let turnNavigatorIds = new Set()
 let turnNavigatorSignature = ''
 let transcriptCaptureFrame = null
+const transcriptDom = createTranscriptDom()
+const transcriptItemNodes = new Map()
 let transcriptCaptureFrameKey = ''
 let transcriptLiveLayoutAnchor = null
 let transcriptUserScrollIntentUntil = 0
@@ -1433,6 +1436,24 @@ window.__studioDeveloper = Object.freeze({
   },
   click(selector) {
     document.querySelector(String(selector || ''))?.click()
+  },
+  drag(selector, deltaX = 0, deltaY = 0) {
+    const target = document.querySelector(String(selector || ''))
+    if (!target) return
+    const rect = target.getBoundingClientRect()
+    const startX = rect.left + rect.width / 2
+    const startY = rect.top + rect.height / 2
+    target.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 1, clientX: startX, clientY: startY,
+    }))
+    window.dispatchEvent(new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 1,
+      clientX: startX + Number(deltaX || 0), clientY: startY + Number(deltaY || 0),
+    }))
+    window.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true, cancelable: true, view: window, button: 0, buttons: 0,
+      clientX: startX + Number(deltaX || 0), clientY: startY + Number(deltaY || 0),
+    }))
   },
   input(selector, value) {
     const target = document.querySelector(String(selector || ''))
@@ -5267,7 +5288,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   })
   resetStreamingPatches()
   const container = $('#transcript')
-  // A full same-session render replaces every visible node. Preserve the live
+  // A same-session render can replace changed Turn nodes. Preserve the live
   // viewport with a one-render anchor while paused; a follower must remain at
   // the latest output instead of restoring the node that preceded a new turn.
   const renderAnchor = preserveScroll || transcriptScrollFollower.following
@@ -5300,16 +5321,19 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   const later = hasLaterTurns
     ? `<button class="load-earlier-turns" type="button" data-jump-latest>${t('Jump to latest')}</button>`
     : ''
-  const transcriptHtml = older + visibleIds.map((id, offset) => {
+  const chunks = visibleIds.map((id, offset) => {
     const index = entry.visibleStart + offset
     const turn = entry.sourceTurns[index]
-    if (String(turn?.id || '') !== id) return ''
-    if (!turn) return ''
-    if (isRouterThread()) return threadRouter.renderTurn(turn, index)
-    return renderTurn(entry.turns.get(id)?.presentation, index, { openActivityIds: openActivities.get(id) || [] })
-  }).join('') + later + renderApprovals()
-  container.innerHTML = transcriptHtml
-  finishDom({ visibleTurns: visibleIds.length, htmlLength: transcriptHtml.length })
+    if (String(turn?.id || '') !== id || !turn) return { id, html: '' }
+    const html = isRouterThread() ? threadRouter.renderTurn(turn, index)
+      : renderTurn(entry.turns.get(id)?.presentation, index, { openActivityIds: openActivities.get(id) || [] })
+    return { id, html }
+  })
+  chunks.unshift({ id: '__older', html: older })
+  chunks.push({ id: '__footer', html: later + renderApprovals() })
+  transcriptItemNodes.clear()
+  const domResult = transcriptDom.render(container, threadKey, chunks)
+  finishDom({ visibleTurns: visibleIds.length, htmlLength: chunks.reduce((size, chunk) => size + chunk.html.length, 0), ...domResult })
   const finishPostprocess = studioPerformance.start('transcript.postprocess', {
     backend: state.backend,
     threadKey,
@@ -5647,11 +5671,19 @@ function modelItem(turnId, itemId) {
 }
 
 function renderedItem(turnId, itemId) {
-  return [...$('#transcript').querySelectorAll('[data-item-id]')]
-    .find((element) => element.dataset.turnId === String(turnId || '') && element.dataset.itemId === String(itemId || '')) || null
+  const container = $('#transcript')
+  const key = JSON.stringify([turnId, itemId])
+  const cached = transcriptItemNodes.get(key)
+  if (cached && container.contains(cached)) return cached
+  const element = container.querySelector(`[data-turn-id="${CSS.escape(String(turnId || ''))}"][data-item-id="${CSS.escape(String(itemId || ''))}"]`)
+  if (transcriptItemNodes.size >= 2048) transcriptItemNodes.clear()
+  if (element) transcriptItemNodes.set(key, element)
+  else transcriptItemNodes.delete(key)
+  return element
 }
 
 function patchStreamingItem(turnId, itemId) {
+  transcriptDom.invalidate(turnId)
   const item = modelItem(turnId, itemId)
   const element = renderedItem(turnId, itemId)
   if (!item) return false
@@ -5682,20 +5714,19 @@ function replaceCompletedItem(params = {}) {
 }
 
 function renderedActivity(turnId, activityId = '') {
-  return [...$('#transcript').querySelectorAll('.work-activity[data-turn-id]')]
-    .find((element) => element.dataset.turnId === String(turnId || '')
-      && (!activityId || element.dataset.activityId === String(activityId))) || null
+  return $('#transcript').querySelector(`.work-activity[data-turn-id="${CSS.escape(String(turnId || ''))}"]${activityId ? `[data-activity-id="${CSS.escape(String(activityId))}"]` : ''}`)
 }
 
 function replaceRenderedTurn(turnId) {
-  const section = [...$('#transcript').querySelectorAll('.turn[data-turn-id]')]
-    .find((element) => element.dataset.turnId === String(turnId || ''))
+  const section = $('#transcript').querySelector(`.turn[data-turn-id="${CSS.escape(String(turnId || ''))}"]`)
   if (!section) return false
   const openActivityIds = [...section.querySelectorAll('.work-activity[open]')]
     .map((activity) => activity.dataset.activityId)
   const entry = transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
   const presentation = entry.turns.get(String(turnId || ''))?.presentation
   if (!presentation) return false
+  transcriptDom.invalidate(turnId)
+  transcriptItemNodes.clear()
   const template = document.createElement('template')
   template.innerHTML = renderTurn(presentation, entry.orderedIds.indexOf(String(turnId || '')), { openActivityIds })
   section.replaceWith(template.content)
@@ -6434,12 +6465,16 @@ function renderApprovals() {
 }
 
 function bindApprovalButtons() {
-  $$('.approval-card').forEach((card) => {
+  $$('.approval-card:not(.interaction-card)').forEach((card) => {
+    if (card.dataset.approvalBound) return
+    card.dataset.approvalBound = 'true'
     card.querySelector('.approval-decline').addEventListener('click', () => answerApproval(card.dataset.approvalId, 'decline'))
     card.querySelector('.approval-session').addEventListener('click', () => answerApproval(card.dataset.approvalId, 'acceptForSession'))
     card.querySelector('.approval-accept').addEventListener('click', () => answerApproval(card.dataset.approvalId, 'accept'))
   })
   $$('.interaction-card').forEach((card) => {
+    if (card.dataset.interactionBound) return
+    card.dataset.interactionBound = 'true'
     card.querySelector('.interaction-submit')?.addEventListener('click', () => answerUserInteraction(card, 'accept'))
     card.querySelector('.interaction-decline')?.addEventListener('click', () => answerUserInteraction(card, 'decline'))
     card.querySelector('.interaction-cancel')?.addEventListener('click', () => answerUserInteraction(card, 'cancel'))

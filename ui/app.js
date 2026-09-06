@@ -221,6 +221,7 @@ import { createPerformanceMonitor, exposePerformanceMonitor } from './performanc
 import { transcriptModelRevision } from './model-revision.mjs'
 import {
   codexLifecycleEvent,
+  claimLifecycleNotification,
   codexLifecycleStreamMessage,
 } from './codex-lifecycle-diagnostics.mjs'
 import {
@@ -2164,29 +2165,9 @@ function observeCodexTurnLatency(message, backend = state.backend) {
   }
 }
 
-function rememberBoundedLifecycleEvent(collection, key, value, limit = 1_024) {
-  collection.delete(key)
-  collection.set(key, value)
-  while (collection.size > limit) collection.delete(collection.keys().next().value)
-}
-
 function claimCodexLifecycleNotification(backend, message) {
-  const event = codexLifecycleEvent(message)
-  if (!event) return null
-  if ((event.method === 'turn/started' || event.method === 'turn/completed') && event.turnId) {
-    const key = `${backend}:${event.method}:${event.turnId}`
-    if (handledCodexTurnLifecycleEvents.has(key)) return null
-    rememberBoundedLifecycleEvent(handledCodexTurnLifecycleEvents, key, true)
-    return event
-  }
-  if (event.method === 'thread/status/changed') {
-    const key = `${backend}:${event.threadId}:${JSON.stringify(message.params?.status ?? '')}`
-    const now = performance.now()
-    const previous = recentCodexStatusLifecycleEvents.get(key)
-    if (previous != null && now - previous < 250) return null
-    rememberBoundedLifecycleEvent(recentCodexStatusLifecycleEvents, key, now, 256)
-  }
-  return event
+  return claimLifecycleNotification(backend, message,
+    handledCodexTurnLifecycleEvents, recentCodexStatusLifecycleEvents, () => performance.now())
 }
 
 function handleCodexLifecycleNotification(backend, message) {

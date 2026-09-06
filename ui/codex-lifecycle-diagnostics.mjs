@@ -1,44 +1,85 @@
+// Generated from ui-src; run npm run build:ui. Do not edit.
 const CODEX_LIFECYCLE_METHODS = new Set([
-  'thread/status/changed',
-  'turn/started',
-  'turn/completed',
-])
-
-export function codexLifecycleEvent(message) {
-  const method = String(message?.method || '')
-  if (!CODEX_LIFECYCLE_METHODS.has(method)) return null
-  const params = message?.params || {}
-  const status = method === 'thread/status/changed'
-    ? params.status?.type || params.status
-    : params.turn?.status || params.status
-  return {
-    method,
-    threadId: String(params.threadId || params.thread?.id || params.turn?.threadId || ''),
-    turnId: String(params.turnId || params.turn?.id || ''),
-    notificationStatus: typeof status === 'string' ? status : '',
-  }
+    'thread/status/changed',
+    'turn/started',
+    'turn/completed',
+]);
+function record(value) {
+    return isRecord(value) ? value : {};
 }
-
-export function codexLifecycleStreamMessage(payload) {
-  const method = String(payload?.method || '')
-  if (method === 'studio/codexLifecycle/ready') {
+function isRecord(value) {
+    return !!value && typeof value === 'object';
+}
+export function codexLifecycleEvent(message) {
+    const envelope = record(message);
+    const method = String(envelope.method || '');
+    if (!CODEX_LIFECYCLE_METHODS.has(method))
+        return null;
+    const params = record(envelope.params);
+    const turn = record(params.turn);
+    const status = method === 'thread/status/changed'
+        ? record(params.status).type || params.status
+        : turn.status || params.status;
     return {
-      type: 'ready',
-      backends: Array.isArray(payload.params?.backends)
-        ? payload.params.backends
-          .filter((backend) => typeof backend === 'string' && backend)
-          .map(String)
-        : [],
+        method,
+        threadId: String(params.threadId || record(params.thread).id || turn.threadId || ''),
+        turnId: String(params.turnId || turn.id || ''),
+        notificationStatus: typeof status === 'string' ? status : '',
+    };
+}
+export function codexLifecycleStreamMessage(payload) {
+    const envelope = record(payload);
+    const method = String(envelope.method || '');
+    const params = record(envelope.params);
+    if (method === 'studio/codexLifecycle/ready') {
+        return {
+            type: 'ready',
+            backends: Array.isArray(params.backends)
+                ? params.backends.filter((backend) => typeof backend === 'string' && backend).map(String)
+                : [],
+        };
     }
-  }
-  if (method !== 'studio/codexLifecycle/event') return null
-  const backend = String(payload.params?.backend || '')
-  const message = payload.params?.message
-  const eventMethod = String(message?.method || '')
-  if (!backend || !message || (
-    !CODEX_LIFECYCLE_METHODS.has(eventMethod)
-    && eventMethod !== 'studio/appServer/status'
-    && eventMethod !== 'studio/appServer/lagged'
-  )) return null
-  return { type: 'event', backend, message }
+    if (method !== 'studio/codexLifecycle/event')
+        return null;
+    const backend = String(params.backend || '');
+    const message = record(params.message);
+    const eventMethod = String(message.method || '');
+    if (!backend || !params.message || (!CODEX_LIFECYCLE_METHODS.has(eventMethod)
+        && eventMethod !== 'studio/appServer/status'
+        && eventMethod !== 'studio/appServer/lagged'))
+        return null;
+    return { type: 'event', backend, message };
+}
+export function rememberBoundedLifecycleEvent(collection, key, value, limit = 1_024) {
+    collection.delete(key);
+    collection.set(key, value);
+    while (collection.size > limit) {
+        const first = collection.keys().next();
+        if (first.done)
+            break;
+        collection.delete(first.value);
+    }
+}
+/** Caller owns these maps so reconnect reset points retain their existing semantics. */
+export function claimLifecycleNotification(backend, message, turns, statuses, now) {
+    const event = codexLifecycleEvent(message);
+    if (!event)
+        return null;
+    if ((event.method === 'turn/started' || event.method === 'turn/completed') && event.turnId) {
+        const key = `${backend}:${event.method}:${event.turnId}`;
+        if (turns.has(key))
+            return null;
+        rememberBoundedLifecycleEvent(turns, key, true);
+        return event;
+    }
+    if (event.method === 'thread/status/changed') {
+        const status = record(record(message).params).status;
+        const key = `${backend}:${event.threadId}:${JSON.stringify(status ?? '')}`;
+        const timestamp = now();
+        const previous = statuses.get(key);
+        if (previous != null && timestamp - previous < 250)
+            return null;
+        rememberBoundedLifecycleEvent(statuses, key, timestamp, 256);
+    }
+    return event;
 }

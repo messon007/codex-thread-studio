@@ -5,7 +5,41 @@ import { readFileSync } from 'node:fs'
 import {
   codexLifecycleEvent,
   codexLifecycleStreamMessage,
+  claimLifecycleNotification,
 } from './codex-lifecycle-diagnostics.mjs'
+
+test('duplicate lifecycle events remain isolated by backend and status suppression expires', () => {
+  const turns = new Map()
+  const statuses = new Map()
+  let now = 1000
+  const claim = (backend, message) => claimLifecycleNotification(backend, message, turns, statuses, () => now)
+  const completed = { method: 'turn/completed', params: { threadId: 'one', turn: { id: 'same', status: 'completed' } } }
+  assert.ok(claim('codex', completed))
+  assert.equal(claim('codex', completed), null)
+  assert.ok(claim('ept-codex', completed))
+  const status = { method: 'thread/status/changed', params: { threadId: 'one', status: 'idle' } }
+  assert.ok(claim('codex', status))
+  now += 249
+  assert.equal(claim('codex', status), null)
+  now += 1
+  assert.ok(claim('codex', status))
+  turns.clear() // Existing reconnect reset remains caller-owned.
+  assert.ok(claim('codex', completed))
+})
+
+test('lifecycle decoding rejects malformed envelopes and preserves unknown status strings', () => {
+  for (const value of [null, 1, [], {}, { method: 'unrelated' }]) {
+    assert.equal(codexLifecycleEvent(value), null)
+    assert.equal(codexLifecycleStreamMessage(value), null)
+  }
+  assert.equal(codexLifecycleEvent({ method: 'thread/status/changed', params: { status: 'future-status' } }).notificationStatus, 'future-status')
+  const turns = new Map()
+  for (let i = 0; i < 1030; i += 1) {
+    claimLifecycleNotification('codex', { method: 'turn/completed', params: { turnId: String(i) } }, turns, new Map(), () => 0)
+  }
+  assert.equal(turns.size, 1024)
+  assert.equal(turns.has('codex:turn/completed:0'), false)
+})
 
 test('extracts content-free identifiers from Codex lifecycle notifications', () => {
   assert.deepEqual(codexLifecycleEvent({

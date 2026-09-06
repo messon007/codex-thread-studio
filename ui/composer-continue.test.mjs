@@ -27,7 +27,7 @@ test('session-model Continue runs in an isolated hidden task and fills Chat with
   assert.ok(start >= 0 && end > start)
   assert.match(app, /function handleContinueAction\(\)[\s\S]{0,220}state\.continueBehavior === 'quickSend'[\s\S]{0,160}draftContinueMessage\(\)/u)
   assert.match(implementation, /ephemeral: true,[\s\S]*developerInstructions: CONTINUATION_DRAFT_INSTRUCTIONS/u)
-  assert.match(implementation, /outputSchema: CONTINUATION_DRAFT_SCHEMA[\s\S]*continuationDraftTurnState\(thread\)/u)
+  assert.match(implementation, /outputSchema: CONTINUATION_DRAFT_SCHEMA[\s\S]*waitForUtilityResult[\s\S]*continuationDraftTurnState\(/u)
   assert.match(implementation, /dispatchBackendRpc\(backend, 'thread\/delete'/u)
   assert.match(app, /structuredUtilityTasks: new Map\(\)/u)
   assert.match(main, /"\/continuation-draft\.mjs", get\(continuation_draft_js\)/u)

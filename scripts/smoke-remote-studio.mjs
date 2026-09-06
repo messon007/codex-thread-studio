@@ -78,6 +78,8 @@ try {
     const { createSerializedStateWriter } = await import('/serialized-state-writer.mjs')
     const { CommentSourceRegistry, createCommentDraft } = await import('/comment-core.mjs')
     const { CommentSubmissionCoordinator } = await import('/comment-submission.mjs')
+    const { waitForUtilityResult } = await import('/utility-task.mjs')
+    check((await waitForUtilityResult({ read: async () => ({ status: 'completed', prompt: 'fixture' }), ensureCurrent() {}, intervalMs: 100, timeoutMs: 1000, timeoutMessage: 'timeout', errorMessage: text => text })).prompt === 'fixture', 'utility task module failed')
     const { createChatCommentProvider, createDocumentCommentProvider } = await import('/comment-source-providers.mjs')
     const { createBrowserCommentProvider } = await import('/browser-comment-provider.mjs')
     const { createPdfCommentProvider } = await import('/pdf-comment-provider.mjs')

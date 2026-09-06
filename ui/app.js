@@ -155,6 +155,7 @@ import {
   continuationDraftInput,
   continuationDraftTurnState,
 } from './continuation-draft.mjs'
+import { waitForUtilityResult } from './utility-task.mjs'
 
 import {
   annotationPromptDefaults,
@@ -1181,14 +1182,14 @@ async function translateSelectionWithCurrentBackend(value) {
       }
     }
 
-    const deadline = Date.now() + 150_000
-    while (Date.now() < deadline) {
-      ensureTranslationBackend(backend, generation)
-      const thread = isCodexBackend(backend)
+    const translation = await waitForUtilityResult({
+      ensureCurrent: () => ensureTranslationBackend(backend, generation),
+      read: async () => translationTurnState(isCodexBackend(backend)
         ? translationTask?.model
-        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread
-      const translation = translationTurnState(thread)
-      if (translation.status === 'completed') {
+        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread),
+      intervalMs: isCodexBackend(backend) ? 100 : 350,
+      timeoutMs: 150_000, timeoutMessage: t('Translation timed out'), errorMessage: t,
+    })
         const result = {
           translation: translation.translation,
           sourcePronunciation: translation.sourcePronunciation,
@@ -1198,12 +1199,7 @@ async function translateSelectionWithCurrentBackend(value) {
         while (state.selectionTranslationCache.size > 64) {
           state.selectionTranslationCache.delete(state.selectionTranslationCache.keys().next().value)
         }
-        return result
-      }
-      if (translation.status === 'failed') throw new Error(t(translation.error))
-      await new Promise((resolve) => setTimeout(resolve, isCodexBackend(backend) ? 100 : 350))
-    }
-    throw new Error(t('Translation timed out'))
+    return result
   } finally {
     if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
     if (threadId) {
@@ -7100,18 +7096,15 @@ async function draftContinueWithSessionModel(source, stateKey) {
       }
     }
 
-    const deadline = Date.now() + 150_000
-    while (Date.now() < deadline) {
-      ensureContinuationBackend(backend, generation, stateKey)
-      const thread = isCodexBackend(backend)
+    const draft = await waitForUtilityResult({
+      ensureCurrent: () => ensureContinuationBackend(backend, generation, stateKey),
+      read: async () => continuationDraftTurnState(isCodexBackend(backend)
         ? utilityTask?.model
-        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread
-      const draft = continuationDraftTurnState(thread)
-      if (draft.status === 'completed') return draft.prompt
-      if (draft.status === 'failed') throw new Error(t(draft.error))
-      await new Promise((resolve) => setTimeout(resolve, isCodexBackend(backend) ? 100 : 350))
-    }
-    throw new Error(t('Continuation draft timed out'))
+        : (await rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread),
+      intervalMs: isCodexBackend(backend) ? 100 : 350,
+      timeoutMs: 150_000, timeoutMessage: t('Continuation draft timed out'), errorMessage: t,
+    })
+    return draft.prompt
   } finally {
     if (threadId) state.structuredUtilityTasks.delete(sessionRefKey(backend, threadId))
     if (threadId) {

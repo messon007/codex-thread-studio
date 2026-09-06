@@ -995,6 +995,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/queue-execution.mjs", get(queue_execution_js))
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
         .route("/composer-send.mjs", get(composer_send_js))
+        .route("/lifecycle-connection.mjs", get(lifecycle_connection_js))
         .route(
             "/preference-normalization.mjs",
             get(preference_normalization_js),
@@ -2279,6 +2280,10 @@ async fn rpc_lifecycle_js() -> impl IntoResponse {
 
 async fn composer_send_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-send.mjs"))
+}
+
+async fn lifecycle_connection_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/lifecycle-connection.mjs"))
 }
 
 async fn preference_normalization_js() -> impl IntoResponse {
@@ -4553,6 +4558,7 @@ mod tests {
                 "/queue-execution.mjs",
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
+                "/lifecycle-connection.mjs",
                 "/preference-normalization.mjs",
                 "/continuation-draft.mjs",
                 "/backends.mjs",

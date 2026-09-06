@@ -1,3 +1,5 @@
+import { executeComposerSend } from './composer-send.mjs'
+import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
 import {
   applyCodexNotification,
   beginOptimisticCodexTurn,
@@ -434,11 +436,7 @@ let transcriptUserScrollIntentUntil = 0
 let transcriptPointerScrollActive = false
 let openCodeListRefreshTimer = null
 let openCodeListRefreshNeedsHistory = false
-let openCodeEventStream = null
-let openCodeEventStreamReady = false
-let openCodeSelectionStartedWithoutEventBarrier = false
-const openCodeEventStreamWaiters = new Set()
-let openCodeEventStreamOpenCount = 0
+const openCodeStreamState = { stream: null, ready: false, missedBarrier: false, waiters: new Set(), openCount: 0 }
 let openCodeLifecycleReconciliation = null
 let openCodeHistoryEpoch = 0
 const openCodeStatusReconcileTimers = new Map()
@@ -457,11 +455,7 @@ const startedThreadsAwaitingCatalog = new Map()
 const startedThreadCatalogTimers = new Map()
 const codexCatalogRecoveryStarted = new Set()
 let inactiveCatalogRefreshScheduled = false
-let codexLifecycleSocket = null
-let codexLifecycleReconnectTimer = null
-let codexLifecycleConnectionGeneration = 0
-let codexLifecycleStreamReady = false
-let codexLifecycleOpenCount = 0
+const codexLifecycleConnection = { socket: null, reconnectTimer: null, generation: 0, ready: false, openCount: 0 }
 const handledCodexTurnLifecycleEvents = new Map()
 const recentCodexStatusLifecycleEvents = new Map()
 const codexBackendsNeedingRestartRecovery = new Set()
@@ -1614,19 +1608,7 @@ function currentBackend() {
 }
 
 function waitForOpenCodeEventStream(timeoutMs = 1_500) {
-  if (openCodeEventStreamReady) return Promise.resolve(true)
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (ready) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      openCodeEventStreamWaiters.delete(finish)
-      resolve(ready)
-    }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    openCodeEventStreamWaiters.add(finish)
-  })
+  return waitForEventStream(openCodeStreamState, timeoutMs)
 }
 
 function renderOpenCodeConnectionState(kind, label, caption) {
@@ -1642,36 +1624,24 @@ function renderOpenCodeConnectionState(kind, label, caption) {
 }
 
 function startOpenCodeEventStream() {
-  if (openCodeEventStream) return openCodeEventStream
-  const events = gatewayEventSource('/opencode/global/event')
-  openCodeEventStream = events
-  events.onopen = () => {
-    const needsReconciliation = openCodeEventStreamOpenCount > 0
-      || openCodeSelectionStartedWithoutEventBarrier
-    openCodeEventStreamOpenCount += 1
-    openCodeEventStreamReady = true
-    openCodeSelectionStartedWithoutEventBarrier = false
-    for (const waiter of [...openCodeEventStreamWaiters]) waiter(true)
-    renderOpenCodeConnectionState('online', 'OpenCode Server', 'Background event connection')
-    if (needsReconciliation) {
-      openCodeHistoryEpoch += 1
-      scheduleOpenCodeListRefresh({ forceSelectedHistory: state.backend === 'opencode' })
-      scheduleOpenCodeLifecycleReconciliation()
-    }
-    reportSessionLifecycle('opencode-event-stream', {
-      state: needsReconciliation ? 'reconnected' : 'connected',
-      historyEpoch: openCodeHistoryEpoch,
-    })
-  }
-  events.onmessage = (event) => {
-    try { handleOpenCodeServerEvent(JSON.parse(event.data)) }
-    catch (error) { console.error('Invalid OpenCode SSE event', error, event.data) }
-  }
-  events.onerror = () => {
-    openCodeEventStreamReady = false
-    renderOpenCodeConnectionState('checking', 'Reconnecting to OpenCode', 'SSE event stream')
-  }
-  return events
+  return connectEventStream(openCodeStreamState, {
+    open: () => gatewayEventSource('/opencode/global/event'),
+    connected: needsReconciliation => {
+      renderOpenCodeConnectionState('online', 'OpenCode Server', 'Background event connection')
+      if (needsReconciliation) {
+        openCodeHistoryEpoch += 1
+        scheduleOpenCodeListRefresh({ forceSelectedHistory: state.backend === 'opencode' })
+        scheduleOpenCodeLifecycleReconciliation()
+      }
+      reportSessionLifecycle('opencode-event-stream', {
+        state: needsReconciliation ? 'reconnected' : 'connected',
+        historyEpoch: openCodeHistoryEpoch,
+      })
+    },
+    message: handleOpenCodeServerEvent,
+    invalid: (error, data) => console.error('Invalid OpenCode SSE event', error, data),
+    disconnected: () => renderOpenCodeConnectionState('checking', 'Reconnecting to OpenCode', 'SSE event stream'),
+  })
 }
 
 function scheduleOpenCodeLifecycleReconciliation() {
@@ -1714,76 +1684,18 @@ function scheduleOpenCodeLifecycleReconciliation() {
 }
 
 function connectCodexLifecycleStream() {
-  clearTimeout(codexLifecycleReconnectTimer)
-  codexLifecycleReconnectTimer = null
-  if (codexLifecycleSocket) {
-    codexLifecycleSocket.onclose = null
-    codexLifecycleSocket.close()
-  }
-  codexLifecycleStreamReady = false
-  codexLifecycleConnectionGeneration += 1
-  const generation = codexLifecycleConnectionGeneration
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = gatewayWebSocket(`${protocol}//${location.host}/ws/codex-lifecycle`)
-  codexLifecycleSocket = socket
-
-  return new Promise((resolve) => {
-    let settled = false
-    const settle = (ready) => {
-      if (settled) return
-      settled = true
-      clearTimeout(barrierTimer)
-      resolve(ready)
-    }
-    // This is only an initialization ordering barrier. The connection stays
-    // alive and can become authoritative after a slow local WebSocket upgrade.
-    const barrierTimer = setTimeout(() => settle(false), 750)
-
-    socket.onmessage = (event) => {
-      if (generation !== codexLifecycleConnectionGeneration) return
-      let envelope
-      try { envelope = codexLifecycleStreamMessage(JSON.parse(event.data)) }
-      catch (error) {
-        console.error('Invalid cross-backend Codex lifecycle message', error, event.data)
-        return
-      }
-      if (!envelope) return
-      if (envelope.type === 'ready') {
-        const reconnected = codexLifecycleOpenCount > 0
-        codexLifecycleOpenCount += 1
-        codexLifecycleStreamReady = true
-        settle(true)
-        reportSessionLifecycle('codex-lifecycle-stream', {
-          state: reconnected ? 'reconnected' : 'connected',
-          backendCount: envelope.backends.length,
-        })
-        if (reconnected) scheduleCodexLifecycleReconciliation()
-        return
-      }
-      if (!isCodexBackend(envelope.backend)) return
-      if (envelope.message.method === 'studio/appServer/status') {
-        handleInactiveCodexAppServerStatus(envelope.backend, envelope.message)
-      } else if (envelope.message.method === 'studio/appServer/lagged') {
-        handleCodexLifecycleLag(envelope.backend, envelope.message)
-      } else {
-        handleCodexLifecycleNotification(envelope.backend, envelope.message)
-      }
-    }
-    socket.onerror = () => {
-      if (generation !== codexLifecycleConnectionGeneration) return
-      codexLifecycleStreamReady = false
-    }
-    socket.onclose = () => {
-      if (generation !== codexLifecycleConnectionGeneration) return
-      codexLifecycleStreamReady = false
-      codexLifecycleSocket = null
-      settle(false)
-      reportSessionLifecycle('codex-lifecycle-stream', { state: 'disconnected' })
-      codexLifecycleReconnectTimer = setTimeout(() => {
-        if (generation !== codexLifecycleConnectionGeneration) return
-        connectCodexLifecycleStream()
-      }, 1_800)
-    }
+  return connectLifecycleStream(codexLifecycleConnection, {
+    open: () => {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      return gatewayWebSocket(`${protocol}//${location.host}/ws/codex-lifecycle`)
+    },
+    invalid: (error, data) => console.error('Invalid cross-backend Codex lifecycle message', error, data),
+    report: details => reportSessionLifecycle('codex-lifecycle-stream', details),
+    reconcile: scheduleCodexLifecycleReconciliation,
+    supports: isCodexBackend,
+    status: handleInactiveCodexAppServerStatus,
+    lag: handleCodexLifecycleLag,
+    notification: handleCodexLifecycleNotification,
   })
 }
 
@@ -1964,8 +1876,8 @@ async function switchBackend(backend, { selectedId } = {}) {
   cleanupConnections()
   const transitionGeneration = state.socketGeneration
   const backgroundConnected = isCodexBackend(previousBackend)
-    ? codexLifecycleStreamReady
-    : previousBackend === 'opencode' && openCodeEventStreamReady
+    ? codexLifecycleConnection.ready
+    : previousBackend === 'opencode' && openCodeStreamState.ready
   if (!backgroundConnected) {
     state.backendStates[previousBackend] = { kind: 'idle', label: backendDescriptor(previousBackend).name, caption: 'Connect on demand' }
   }
@@ -2073,7 +1985,7 @@ async function connectOpenCode({ backendInfoReady = false } = {}) {
   // schedules a second authoritative read so the gap still cannot be hidden.
   const eventStreamReady = await waitForOpenCodeEventStream()
   if (generation !== state.socketGeneration || state.backend !== 'opencode') return
-  if (!eventStreamReady) openCodeSelectionStartedWithoutEventBarrier = true
+  if (!eventStreamReady) openCodeStreamState.missedBarrier = true
   renderOpenCodeConnectionState(
     eventStreamReady ? 'online' : 'checking',
     eventStreamReady ? 'OpenCode Server' : 'Connecting to OpenCode events',
@@ -8913,4 +8825,3 @@ function toast(message, kind = 'info') {
   setTimeout(() => element.remove(), 3200)
 }
 function showError(error) { console.error(error); reportClientError(error); toast(error?.message || String(error), 'error') }
-import { executeComposerSend } from './composer-send.mjs'

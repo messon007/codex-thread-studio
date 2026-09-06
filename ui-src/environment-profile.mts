@@ -20,3 +20,26 @@ export function formatEnvironmentLines(values: Record<string, unknown> = {}) {
 export function parseHosts(value: unknown) {
   return [...new Set(String(value || '').split(/[\s,]+/gu).map((host) => host.trim().toLowerCase()).filter(Boolean))]
 }
+
+export function environmentSavePayload(input: {
+  root: string
+  configured: boolean
+  secrets: string
+  removeSecrets: string[]
+  variables: string
+  allowedHosts: string
+  cacheVariables: string
+  networkPolicy: 'restricted' | 'enabled'
+}) {
+  const secrets = parseEnvironmentLines(input.secrets, { allowEmpty: false })
+  const removeSecrets = [...input.removeSecrets]
+  for (const name of removeSecrets) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(name)) throw new Error(`Invalid secret name: ${name}`)
+  }
+  const variables = parseEnvironmentLines(input.variables, { allowEmpty: true })
+  const allowedHosts = parseHosts(input.allowedHosts)
+  const cacheVariables = parseEnvironmentLines(input.cacheVariables, { allowEmpty: false })
+  const { networkPolicy, root } = input
+  if (!input.configured && !Object.keys(variables).length && !Object.keys(secrets).length && !removeSecrets.length && !allowedHosts.length && !Object.keys(cacheVariables).length && networkPolicy === 'restricted') return null
+  return { root, variables, secrets, removeSecrets, networkPolicy, allowedHosts, cacheVariables }
+}

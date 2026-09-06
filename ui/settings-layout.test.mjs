@@ -20,7 +20,7 @@ test('settings use a shared categorized pane layout', () => {
   assert.match(chat, /Message flow[\s\S]*id="queue-depth"[\s\S]*id="continue-behavior"[\s\S]*Shared documents[\s\S]*id="shared-document-directories"/u)
   assert.match(chat, /id="shared-document-directories"[^>]*placeholder="One absolute directory per line"/u)
   assert.match(chat, /Add multiple directories on separate lines \(no commas\)\.[^<]*its subdirectories/u)
-  assert.match(app, /sharedDocumentDirectories: state\.sharedDocumentDirectories/u)
+  assert.match(readFileSync(new URL('./preferences-snapshot.mjs', import.meta.url), 'utf8'), /sharedDocumentDirectories: state\.sharedDocumentDirectories/u)
   assert.match(app, /Shared document directories must use absolute paths\./u)
   assert.match(html, /id="translation-engine"[\s\S]*id="translation-ollama-model"/u)
   assert.match(app, /function syncTranslationSettingsEngine\(\)/u)

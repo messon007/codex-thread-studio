@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { preferencesSnapshot as createPreferencesSnapshot } from './preferences-snapshot.mjs'
 import { createEnvironmentApplication } from './environment-application.mjs'
 import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './history-installation.mjs'
 import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
@@ -230,7 +231,7 @@ import { createSerializedStateWriter } from './serialized-state-writer.mjs'
 import { normalizeStoredTurnOptions, copySessionTurnOptions } from './session-model-preferences.mjs'
 import { cachedSession, storeCachedSession, validateCachedModel, unvalidateCachedModel, cachedModelThreadId, routeCodexNotification } from './session-model-cache.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
-import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
+import { formatEnvironmentLines, parseEnvironmentLines, parseHosts, environmentSavePayload } from './environment-profile.mjs'
 import { createPerformanceMonitor, exposePerformanceMonitor } from './performance-monitor.mjs'
 import { transcriptModelRevision } from './model-revision.mjs'
 import {
@@ -7818,30 +7819,7 @@ async function loadPreferences() {
 }
 
 function preferencesSnapshot() {
-  return {
-    language: state.language,
-    theme: state.theme,
-    contentWidth: state.contentWidth,
-    hiddenSessionDirectories: state.hiddenSessionDirectories,
-    sharedDocumentDirectories: state.sharedDocumentDirectories,
-    sessionDirectoryIgnore: state.sessionDirectoryIgnore,
-    wslDistribution: state.wsl.distribution || null,
-    wslUser: state.wsl.user || null,
-    wslCodexBinary: state.wsl.codexBinary || 'codex',
-    wslOpencodeBinary: state.wsl.opencodeBinary || 'opencode',
-    sidebarCollapsed: state.sidebarCollapsed,
-    rightRailWidthRatio: state.rightRailWidthRatio,
-    typography: state.typography,
-    mermaid: state.mermaid,
-    markdown: state.markdown,
-    translation: state.translation,
-    desktopNotifications: state.desktopNotifications,
-    queueDepth: state.queueDepth,
-    continueBehavior: state.continueBehavior,
-    browser: state.browser,
-    annotationPromptTemplates: state.annotationPromptTemplates,
-    router: Object.keys(state.router.controllers).length || state.router.fallbacks.length ? state.router : null,
-  }
+  return createPreferencesSnapshot(state)
 }
 
 function persistPreferences() {
@@ -8302,26 +8280,20 @@ async function saveProjectEnvironment(event) {
 async function saveEnvironmentProfile() {
   const root = environmentDialogRoot
   if (!root || !environmentDialogProfile) return
-  const secrets = parseEnvironmentLines($('#environment-secrets').value, { allowEmpty: false })
-  const removeSecrets = [...environmentSecretRemovals]
-  for (const name of removeSecrets) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(name)) throw new Error(`Invalid secret name: ${name}`)
-  }
-  const variables = parseEnvironmentLines($('#environment-variables').value, { allowEmpty: true })
-  const allowedHosts = parseHosts($('#environment-allowed-hosts').value)
-  const cacheVariables = parseEnvironmentLines($('#environment-cache-variables').value, { allowEmpty: false })
-  const networkPolicy = selectedEnvironmentPolicy()
-  if (!environmentDialogProfile.configured && !Object.keys(variables).length && !Object.keys(secrets).length && !removeSecrets.length && !allowedHosts.length && !Object.keys(cacheVariables).length && networkPolicy === 'restricted') return
+  const payload = environmentSavePayload({
+    root,
+    configured: Boolean(environmentDialogProfile.configured),
+    secrets: $('#environment-secrets').value,
+    removeSecrets: [...environmentSecretRemovals],
+    variables: $('#environment-variables').value,
+    allowedHosts: $('#environment-allowed-hosts').value,
+    cacheVariables: $('#environment-cache-variables').value,
+    networkPolicy: selectedEnvironmentPolicy(),
+  })
+  if (!payload) return
   const response = await gatewayFetch('/studio/environment', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      root,
-      variables,
-      secrets, removeSecrets,
-      networkPolicy,
-      allowedHosts,
-      cacheVariables,
-    }),
+    body: JSON.stringify(payload),
   })
   const result = await response.json().catch(() => null)
   if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)

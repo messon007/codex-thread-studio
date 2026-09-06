@@ -12,7 +12,7 @@ test('Continue behavior is persisted and defaults to a human-reviewed session-mo
   assert.match(html, /id="continue-behavior"[\s\S]{0,420}value="sessionModelDraft"[\s\S]{0,220}value="ollamaDraft"[\s\S]{0,220}value="quickSend"/u)
   assert.match(app, /continueBehavior: 'sessionModelDraft'/u)
   assert.match(app, /state\.continueBehavior = normalizeContinueBehavior\(saved\.continueBehavior\)/u)
-  assert.match(app, /continueBehavior: state\.continueBehavior/u)
+  assert.match(readFileSync(new URL('./preferences-snapshot.mjs', import.meta.url), 'utf8'), /continueBehavior: state\.continueBehavior/u)
   assert.match(app, /#continue-behavior'\)\.value = state\.continueBehavior/u)
   assert.match(app, /state\.continueBehavior = normalizeContinueBehavior\(\$\('#continue-behavior'\)\.value\)/u)
   assert.match(app, /normalizeContinueBehavior[\s\S]*from '\.\/preference-normalization\.mjs'/u)

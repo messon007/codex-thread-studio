@@ -125,7 +125,7 @@ test('translation uses independent per-backend model and fast effort preferences
   assert.match(html, /<select id="translation-ollama-model"><option value="gemma3:4b">gemma3:4b<\/option><\/select>/u)
   assert.match(app, /engine: 'backend', ollamaModel: 'gemma3:4b'/u)
   assert.match(app, /state\.translation\.engine = \$\('#translation-engine'\)\.value === 'ollama'/u)
-  assert.match(app, /translation: state\.translation/u)
+  assert.match(readFileSync(new URL('./preferences-snapshot.mjs', import.meta.url), 'utf8'), /translation: state\.translation/u)
 })
 
 test('hidden utility sessions never enter the visible catalog and are deleted after use', () => {

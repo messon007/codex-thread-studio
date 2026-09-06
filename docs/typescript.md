@@ -161,6 +161,14 @@ forced application and the single compatibility fallback from incremental to
 full resume. HTTP decoding and settings/environment forms remain in `app.js`.
 No configuration fields, secret storage, endpoint or activation timing changes
 are part of this extraction; the full settings snapshot is not yet migrated.
+
+`preferences-snapshot` brings the total to 63 modules and migrates that full
+settings snapshot as an explicit typed allowlist, retaining its WSL defaults and
+conditional Router serialization. `environment-profile` now also constructs
+and validates environment-save payloads (including secret removal names and
+the empty/unconfigured no-op). Form reading, HTTP response handling and applying
+the saved profile to the selected session remain JS; no schema migration or
+new persistence destination is introduced.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

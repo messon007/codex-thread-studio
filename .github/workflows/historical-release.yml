@@ -1,0 +1,57 @@
+name: Historical pre-TypeScript release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: historical-pre-typescript-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Preserve the historical source exactly, without backporting the TS build.
+      - uses: actions/checkout@v7
+        with:
+          ref: 5fadf1483156eaba28015a63450181f75b8a528e
+      - name: Verify historical tag
+        shell: bash
+        run: |
+          git fetch origin refs/tags/pre-typescript:refs/tags/pre-typescript
+          test "$(git rev-parse pre-typescript^{commit})" = "$(git rev-parse HEAD)"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux bundle dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: npm ci --ignore-scripts
+      - run: npm run version:check
+      - run: npm test
+      - run: cargo test --workspace --locked
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: pre-typescript
+          releaseName: "Codex Thread Studio — pre-TypeScript baseline"
+          releaseBody: |
+            Historical snapshot of commit 5fadf1483156eaba28015a63450181f75b8a528e, immediately before the TypeScript migration.
+            Linux and Windows desktop installers. This is an older baseline, not the latest recommended version; Windows backends use WSL.
+            Back up your Studio configuration/database before testing an older build. Do not run old and new builds against the same profile simultaneously.
+          releaseDraft: true
+          prerelease: true
+          uploadUpdaterJson: false

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkComposerAcceptance, checkCommentMarkerScope } from './browser-composer-acceptance.mjs'
 const { chromium } = await import(process.env.STUDIO_PLAYWRIGHT_MODULE || 'playwright')
 // Optional integration test; build the binary and provide an installed Playwright.
 const binary = process.env.STUDIO_REMOTE_BINARY || fileURLToPath(new URL('../target/debug/codex-thread-studio', import.meta.url))
@@ -178,6 +179,8 @@ try {
     await writer.write('/fake-state-only', { sessionKey: 'codex:fixture' })
     check(JSON.parse(writes[0].body).sessionKey === 'codex:fixture', 'state writer snapshot failed')
   })
+  console.log(await checkComposerAcceptance(page))
+  console.log(await checkCommentMarkerScope(page))
   const native = await context.newPage()
   await native.addInitScript(() => Object.defineProperty(window,'__CODEX_THREAD_STUDIO_GATEWAY__',{value:Object.freeze({token:'native-credential',hostPlatform:'linux'}),configurable:false}))
   await native.goto(url.origin)

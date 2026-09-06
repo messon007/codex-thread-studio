@@ -133,6 +133,17 @@ headless executable smoke test also covers HTTP authentication, browser refresh,
 desktop/server rejection, unchanged settings on rejected startup, and lock release after
 process termination. It does not launch Codex/OpenCode sessions or access the real profile.
 
+The browser harness also runs the embedded Composer renderer and submission controller
+against simulated transport for Codex, EPT Codex and OpenCode. It checks idle/draft,
+in-flight send, running Stop/Steer/Queue, queue capacity, completed turn, pending attachment,
+disconnection and rejected-send recovery. These checks use real DOM buttons, but do not
+replace live-provider validation of notification delivery or network timing.
+
+A marker-scope check verifies the existing distinction: inline dashed underlines are
+implemented for chat comments, not Markdown document-preview comments. This limitation
+predates the TypeScript migration (the original marker implementation, `d45bdca`, already
+filtered for the `chat` provider). Document comments can still be recorded and reopened.
+
 To repeat that smoke test with an installed Playwright package:
 
 ```bash

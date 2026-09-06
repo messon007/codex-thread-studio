@@ -43,6 +43,9 @@ try {
   })
   const page = await context.newPage()
   await page.goto('http://studio.test/')
+  // The desktop stylesheet fixes the application viewport; this fixture needs
+  // normal document flow so every diagram is visible in the screenshot.
+  await page.addStyleTag({content:'html,body { height:auto; overflow:visible; } body { display:block; } #diagrams { display:block; } #diagrams svg { max-width:100%; }'})
   await page.addScriptTag({url:'/ui/vendor/mermaid.min.js'})
   const diagrams = await page.evaluate(async () => {
     const {marked} = await import('/ui/vendor/marked.esm.js')

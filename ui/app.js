@@ -7484,51 +7484,54 @@ async function sendComposer(event) {
   let latencyTrace = null
   let composerCleared = false
   let catalogActivity = null
-  let turnAccepted = false
-  try {
-    if (state.model.activeTurnId) {
-      catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
-      await rpc('turn/steer', {
-        threadId,
-        expectedTurnId: state.model.activeTurnId,
-        clientUserMessageId: randomId(),
-        input: turnInput,
-      })
-      turnAccepted = true
-      toast('Message added to the current turn')
-    } else {
-      const clientUserMessageId = randomId()
-      const ref = { backend, id: threadId }
-      if (isCodexBackend(backend)) {
-        optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
-        latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
-        setComposerDraftValue(stateKey, '')
-        state.pendingSkills[stateKey] = []
-        state.pendingFiles[stateKey] = []
-        state.pendingImages[stateKey] = []
-        composerCleared = true
-        hideComposerMenu()
-        renderComposerState()
-        renderTranscript()
+  return executeComposerSend({
+    send: async () => {
+      if (state.model.activeTurnId) {
+        catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
+        await rpc('turn/steer', {
+          threadId,
+          expectedTurnId: state.model.activeTurnId,
+          clientUserMessageId: randomId(),
+          input: turnInput,
+        })
+        return { mode: 'steer' }
+      } else {
+        const clientUserMessageId = randomId()
+        const ref = { backend, id: threadId }
+        if (isCodexBackend(backend)) {
+          optimisticTurnId = beginOptimisticCodexTurn(targetModel, { clientUserMessageId, input: turnInput })
+          latencyTrace = beginTurnLatencyTrace(clientUserMessageId, threadId)
+          setComposerDraftValue(stateKey, '')
+          state.pendingSkills[stateKey] = []
+          state.pendingFiles[stateKey] = []
+          state.pendingImages[stateKey] = []
+          composerCleared = true
+          hideComposerMenu()
+          renderComposerState()
+          renderTranscript()
+        }
+        catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
+        const result = await startTurnWithPreparation({
+          registry: sessionDispatch,
+          ref,
+          prepare: () => prepareComposerTurn(ref),
+          start: () => dispatchBackendRpc(backend, 'turn/start', turnStartParams(
+            backendDescriptor(backend).kind,
+            threadForRef(ref),
+            {
+              threadId,
+              clientUserMessageId,
+              input: turnInput,
+              ...turnOptions,
+            },
+          )),
+          recoverThreadNotFound: isCodexBackend(backend),
+        })
+        return { mode: 'start', result }
       }
-      catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true })
-      const result = await startTurnWithPreparation({
-        registry: sessionDispatch,
-        ref,
-        prepare: () => prepareComposerTurn(ref),
-        start: () => dispatchBackendRpc(backend, 'turn/start', turnStartParams(
-          backendDescriptor(backend).kind,
-          threadForRef(ref),
-          {
-            threadId,
-            clientUserMessageId,
-            input: turnInput,
-            ...turnOptions,
-          },
-        )),
-        recoverThreadNotFound: isCodexBackend(backend),
-      })
-      turnAccepted = true
+    },
+    acknowledged: ({ mode, result }) => {
+      if (mode === 'steer') toast('Message added to the current turn')
       if (result?.turn) {
         if (isCodexBackend(backend) && optimisticTurnId) {
           reconcileOptimisticCodexTurn(targetModel, optimisticTurnId, result.turn)
@@ -7538,33 +7541,33 @@ async function sendComposer(event) {
         markCachedModelValidated(backend, targetModel)
         if (targetModel === state.model) renderTranscript()
       }
-    }
-    if (!composerCleared) {
-      setComposerDraftValue(stateKey, '')
-      state.pendingSkills[stateKey] = []
-      state.pendingFiles[stateKey] = []
-      state.pendingImages[stateKey] = []
-    }
-    hideComposerMenu()
-    renderComposerState()
-  } catch (error) {
-    if (!turnAccepted) rollbackCatalogThreadActivity(catalogActivity)
-    if (optimisticTurnId) {
-      rollbackOptimisticCodexTurn(targetModel, optimisticTurnId)
-      finishTurnLatencyTrace(latencyTrace, 'failed')
-      if (targetModel === state.model) renderTranscript()
-    }
-    if (composerCleared) {
-      if (!composerDrafts.value(stateKey).trim()) setComposerDraftValue(stateKey, text)
-      if (!(state.pendingSkills[stateKey] || []).length) state.pendingSkills[stateKey] = skillInputs
-      if (!(state.pendingFiles[stateKey] || []).length) state.pendingFiles[stateKey] = fileInputs
-      if (!(state.pendingImages[stateKey] || []).length) state.pendingImages[stateKey] = pendingImages
-      if (state.backend === backend && state.selectedId === threadId) renderComposerState()
-    }
-    showError(error)
-  }
-  finally { renderComposerState() }
-  return turnAccepted
+      if (!composerCleared) {
+        setComposerDraftValue(stateKey, '')
+        state.pendingSkills[stateKey] = []
+        state.pendingFiles[stateKey] = []
+        state.pendingImages[stateKey] = []
+      }
+      hideComposerMenu()
+      renderComposerState()
+    },
+    failed: (error, turnAccepted) => {
+      if (!turnAccepted) rollbackCatalogThreadActivity(catalogActivity)
+      if (optimisticTurnId) {
+        rollbackOptimisticCodexTurn(targetModel, optimisticTurnId)
+        finishTurnLatencyTrace(latencyTrace, 'failed')
+        if (targetModel === state.model) renderTranscript()
+      }
+      if (composerCleared) {
+        if (!composerDrafts.value(stateKey).trim()) setComposerDraftValue(stateKey, text)
+        if (!(state.pendingSkills[stateKey] || []).length) state.pendingSkills[stateKey] = skillInputs
+        if (!(state.pendingFiles[stateKey] || []).length) state.pendingFiles[stateKey] = fileInputs
+        if (!(state.pendingImages[stateKey] || []).length) state.pendingImages[stateKey] = pendingImages
+        if (state.backend === backend && state.selectedId === threadId) renderComposerState()
+      }
+      showError(error)
+    },
+    finished: () => renderComposerState(),
+  })
 }
 
 function isRouterThread(threadId = state.selectedId, backend = state.backend) {
@@ -8910,3 +8913,4 @@ function toast(message, kind = 'info') {
   setTimeout(() => element.remove(), 3200)
 }
 function showError(error) { console.error(error); reportClientError(error); toast(error?.message || String(error), 'error') }
+import { executeComposerSend } from './composer-send.mjs'

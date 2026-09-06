@@ -73,4 +73,10 @@ jobs:
 
       - name: Test optional Windows native backend (WSL remains the default)
         if: runner.os == 'Windows'
-        run: cargo test --workspace --locked --features windows-native
+        run: |
+          cargo test --workspace --locked --features windows-native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          1..3 | ForEach-Object {
+            cargo test --workspace --locked --features windows-native optional_native_runtime_starts_and_stops_without_wsl
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

@@ -688,29 +688,50 @@ mod tests {
     }
 
     #[cfg(all(windows, feature = "windows-native"))]
+    #[test]
+    fn native_runtime_child_fixture() {
+        if std::env::var("STUDIO_NATIVE_TEST_CHILD").as_deref() != Ok("1") {
+            return;
+        }
+        use std::io::Write;
+        println!("STUDIO_NATIVE_READY");
+        std::io::stdout().flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+
+    #[cfg(all(windows, feature = "windows-native"))]
     #[tokio::test]
     async fn optional_native_runtime_starts_and_stops_without_wsl() {
         use tokio::io::{AsyncBufReadExt, BufReader};
         let runtime = BackendRuntime::native(std::env::var_os("PATH").unwrap_or_default());
         assert_eq!(runtime.environment(), "local");
         assert_eq!(runtime.wsl_distribution(), None);
+        // Use our own executable: cold PowerShell startup can exceed the fixture
+        // deadline on a busy runner and is unrelated to the runtime under test.
+        let executable = std::env::current_exe().unwrap();
         let mut command = runtime.command(
-            "powershell.exe",
+            executable.to_str().unwrap(),
             &[
-                "-NoProfile",
-                "-Command",
-                "Write-Output 'ready'; Start-Sleep -Seconds 60",
+                "--exact",
+                "backend_runtime::tests::native_runtime_child_fixture",
+                "--nocapture",
+                "--quiet",
             ],
-            &[],
+            &[("STUDIO_NATIVE_TEST_CHILD", "1")],
         );
         command.stdout(Stdio::piped());
         let mut child = command.spawn().unwrap();
         let mut lines = BufReader::new(child.take_stdout().unwrap()).lines();
-        let line = tokio::time::timeout(std::time::Duration::from_secs(15), lines.next_line())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(line.as_deref(), Some("ready"));
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while let Some(line) = lines.next_line().await.unwrap() {
+                if line.trim() == "STUDIO_NATIVE_READY" {
+                    return;
+                }
+            }
+            panic!("native fixture exited before signaling readiness");
+        })
+        .await
+        .expect("native fixture did not signal readiness");
         tokio::time::timeout(std::time::Duration::from_secs(5), child.kill_tree())
             .await
             .unwrap()

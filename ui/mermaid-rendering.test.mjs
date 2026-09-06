@@ -11,7 +11,9 @@ const vendorScript = readFileSync(new URL('../scripts/vendor-markdown.mjs', impo
 const rust = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8')
 
 test('pins and embeds Mermaid before the application module', () => {
-  assert.equal(packageJson.dependencies.mermaid, '11.16.1')
+  const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'))
+  assert.match(packageJson.dependencies.mermaid, /^\d+\.\d+\.\d+$/u)
+  assert.equal(lock.packages['node_modules/mermaid'].version, packageJson.dependencies.mermaid)
   assert.match(vendorScript, /mermaid\/dist\/mermaid\.min\.js/u)
   assert.match(vendorScript, /mermaid-MIT\.txt/u)
   assert.ok(html.indexOf('/vendor/mermaid.min.js') < html.indexOf('/app.js'))

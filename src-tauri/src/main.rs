@@ -1061,6 +1061,7 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
+        .route("/router-coordination.mjs", get(router_coordination_js))
         .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
@@ -2412,6 +2413,10 @@ async fn mermaid_config_js() -> impl IntoResponse {
 
 async fn thread_router_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-router.mjs"))
+}
+
+async fn router_coordination_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/router-coordination.mjs"))
 }
 
 async fn session_dispatch_js() -> impl IntoResponse {
@@ -4525,6 +4530,7 @@ mod tests {
                 "/document-workspace-controller.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
+                "/router-coordination.mjs",
                 "/session-dispatch.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",

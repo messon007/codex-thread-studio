@@ -1,12 +1,12 @@
 import { backendDescriptor, isCodexBackend } from './backends.mjs'
 import { t } from './i18n.mjs'
 import { isSessionDirectoryHidden } from './thread-catalog.mjs'
+import { RouterTurnCoordinator } from './router-coordination.mjs'
 import {
   DEFAULT_FALLBACK_CONDITION,
   finalAgentText,
   managedRouterThread,
   normalizeThreadRouter,
-  parseRouterDecision,
   parseSessionRefKey,
   recoverManagedRouterCatalog,
   routerApplicationContext,
@@ -71,6 +71,7 @@ export function createThreadRouterController({
     selectThread,
   } = view
   const runtime = state.routerRuntime
+  const coordination = new RouterTurnCoordinator(runtime)
   const element = (id) => document.getElementById(id)
 
   function bind() {
@@ -102,6 +103,10 @@ export function createThreadRouterController({
   }
 
   async function startTurn(text, attachments = []) {
+    return coordination.start(sessionRefKey(state.backend, state.selectedId), () => startRouterTurn(text, attachments), t('The Router is still processing the previous request.'))
+  }
+
+  async function startRouterTurn(text, attachments = []) {
     if (!isThread() || state.model.activeTurnId) throw new Error(t('The Router is still processing the previous request.'))
     const controller = routerControllerRef(state.router)
     if (!controller || !dispatch.supports(controller.backend)) throw new Error(t('The Router backend is currently unavailable.'))
@@ -142,69 +147,46 @@ export function createThreadRouterController({
     turnId = String(turnId || '')
     if (!turnId) return
     const key = routerRuntimeKey(turnBackend, turnId)
-    const routed = runtime.targetTurns.get(key)
-    if (routed) {
-      const completed = turnModel.turns?.find((turn) => String(turn.id) === turnId) || suppliedTurn
-      const existing = runtime.dispatches.get(routed.routerTurnId) || {}
-      runtime.dispatches.set(routed.routerTurnId, {
-        ...existing,
-        status: completed?.status === 'failed' ? 'failed' : 'completed',
-        error: completed?.error?.message || '',
-      })
-      runtime.targetTurns.delete(key)
+    const turn = turnModel.turns?.find((candidate) => String(candidate.id) === turnId) || suppliedTurn
+    if (coordination.finishTarget(key, turn)) {
       if (isThread()) renderTranscript()
       return
     }
-    const pending = runtime.pending.get(key)
-    if (!pending) return
-    runtime.pending.delete(key)
-    const turn = turnModel.turns?.find((candidate) => String(candidate.id) === turnId) || suppliedTurn
-    let decisionParsed = false
-    try {
-      const decision = parseRouterDecision(finalAgentText(turn), pending.candidateKeys)
-      decisionParsed = true
-      if (decision.action === 'clarify') {
-        runtime.dispatches.set(key, { status: 'clarify', decision })
-        if (isThread()) renderTranscript()
-        return
-      }
-      const targetRef = parseSessionRefKey(decision.targetSessionKey)
-      const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
-      if (!target) throw new Error(t('The target session no longer exists.'))
-      if (!dispatch.supports(targetRef.backend)) throw new Error(t('The target session backend is currently unavailable.'))
-      runtime.dispatches.set(key, { status: 'dispatching', decision })
-      if (isThread()) renderTranscript()
-      await dispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
-      const targetModel = await ensureSessionModel(targetRef)
-      if (targetModel.activeTurnId) throw new Error(t('“{title}” is running and cannot accept a new request yet.', { title: threadTitle(target) }))
-      const result = await dispatch.startTurn(targetRef, [
-        { type: 'text', text: decision.forwardedPrompt },
-        ...(pending.attachments || []),
-      ])
-      if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
-      applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
-      cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
-      updateLoadedThreadTimestamp(targetRef.backend, targetRef.id, { status: 'active' })
-      runtime.dispatches.set(key, {
-        status: 'running', decision, targetTurnId: String(result.turn.id || ''),
-      })
-      runtime.targetTurns.set(routerRuntimeKey(targetRef.backend, result.turn.id), {
-        routerTurnId: key,
-        targetSessionKey: targetRef.key,
-      })
-      renderThreadList()
-      if (isThread() || state.model === targetModel) {
-        renderWorkspace()
-        renderTranscript()
-      }
-      monitorTurn(targetRef, result.turn.id)
-    } catch (error) {
-      runtime.dispatches.set(key, { status: 'failed', error: error.message, decisionInvalid: !decisionParsed })
-      if (isThread()) renderTranscript()
-      notify(t('Routing failed: {message}', { message: error.message }), 'error')
-    } finally {
-      if (isThread()) renderComposerState()
-    }
+    const handled = await coordination.complete(key, turn, {
+      changed: () => { if (isThread()) renderTranscript() },
+      dispatch: async (decision, pending) => {
+        const targetRef = parseSessionRefKey(decision.targetSessionKey)
+        const target = targetRef && state.threadsByBackend[targetRef.backend]?.find((thread) => thread.id === targetRef.id)
+        if (!target) throw new Error(t('The target session no longer exists.'))
+        if (!dispatch.supports(targetRef.backend)) throw new Error(t('The target session backend is currently unavailable.'))
+        await dispatch.prepareTurn(targetRef, { alreadyActive: threadStatus(target) !== 'notLoaded' })
+        const targetModel = await ensureSessionModel(targetRef)
+        if (targetModel.activeTurnId) throw new Error(t('“{title}” is running and cannot accept a new request yet.', { title: threadTitle(target) }))
+        const result = await dispatch.startTurn(targetRef, [
+          { type: 'text', text: decision.forwardedPrompt },
+          ...(pending.attachments || []),
+        ])
+        if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
+        applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
+        cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
+        updateLoadedThreadTimestamp(targetRef.backend, targetRef.id, { status: 'active' })
+        return {
+          targetTurnKey: routerRuntimeKey(targetRef.backend, result.turn.id),
+          targetTurnId: String(result.turn.id || ''), targetSessionKey: targetRef.key,
+          targetRef, targetModel,
+        }
+      },
+      started: ({ targetRef, targetModel, targetTurnId }) => {
+        renderThreadList()
+        if (isThread() || state.model === targetModel) {
+          renderWorkspace()
+          renderTranscript()
+        }
+        monitorTurn(targetRef, targetTurnId)
+      },
+      failed: (message) => notify(t('Routing failed: {message}', { message }), 'error'),
+    })
+    if (handled && isThread()) renderComposerState()
   }
 
   function monitorTurn(ref, turnId) {

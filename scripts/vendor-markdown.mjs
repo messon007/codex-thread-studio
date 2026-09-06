@@ -13,7 +13,7 @@ await Promise.all([
   copyFile(resolve(root, 'node_modules/dompurify/dist/purify.es.mjs'), resolve(vendor, 'purify.es.mjs')),
   copyFile(resolve(root, 'node_modules/github-markdown-css/github-markdown.css'), resolve(vendor, 'github-markdown.css')),
   copyFile(resolve(root, 'node_modules/mermaid/dist/mermaid.min.js'), resolve(vendor, 'mermaid.min.js')),
-  copyFile(resolve(root, 'node_modules/marked/LICENSE.md'), resolve(licenses, 'marked-MIT.md')),
+  copyFile(resolve(root, 'node_modules/marked/LICENSE'), resolve(licenses, 'marked-MIT.md')),
   copyFile(resolve(root, 'node_modules/dompurify/LICENSE'), resolve(licenses, 'dompurify-Apache-2.0.txt')),
   copyFile(resolve(root, 'node_modules/dompurify/LICENSE-MPL'), resolve(licenses, 'dompurify-MPL-2.0.txt')),
   copyFile(resolve(root, 'node_modules/github-markdown-css/license'), resolve(licenses, 'github-markdown-css-MIT.txt')),

@@ -136,6 +136,16 @@ confirmation logging and the existing 800ms debounced catalog confirmation.
 Backend restart/deletion/confirmation cancel only their matching records and
 timers. Actual catalog transport, selected-session activation and DOM updates
 remain injected from `app.js`; no polling loop or extra catalog request is added.
+
+`selection-coordinator` brings the total to 60 modules. It sequences the remaining
+work after a selection's cache has been rendered: Session Map/environment
+companions, cached completion, conditional resume and final bootstrap. Codex
+still waits for environment configuration before resume; OpenCode does not.
+Cross-backend selection still waits for the ready handler's existing initial
+load and fresh cache rather than starting another selection. Existing timeout
+values and current-selection checks are retained. History result installation,
+event replay, scroll restoration and the DOM remain in their existing modules
+or JS callers; this does not claim that all history orchestration is migrated.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

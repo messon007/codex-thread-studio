@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createSessionStatePersistence } from './session-state-persistence.mjs'
@@ -3785,17 +3786,14 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   })
   try {
   if (backend !== state.backend) {
-    await switchBackend(backend, { selectedId: id })
-    await waitFor(() => state.backend === backend && state.ready, 15_000)
-    const selectionLoad = backendSelectionLoads.get(backend)
-    if (selectionLoad) await selectionLoad
-    await waitFor(() => state.threads.some((thread) => thread.id === id), 15_000)
-    // The ready handler's loadThreads() owns the initial selection. Waiting for
-    // its cache avoids running a second selection/render/environment flow in
-    // parallel with the same single-flight history request.
-    await waitFor(() => state.backend === backend
-      && state.selectedId === id
-      && Boolean(freshThreadModel(backend, id)), 30_000)
+    await awaitBackendSelection({
+      switchBackend: () => switchBackend(backend, { selectedId: id }),
+      waitFor,
+      ready: () => state.backend === backend && state.ready,
+      initialLoad: () => backendSelectionLoads.get(backend),
+      catalogContainsSession: () => state.threads.some(thread => thread.id === id),
+      freshSelection: () => state.backend === backend && state.selectedId === id && Boolean(freshThreadModel(backend, id)),
+    })
     return
   }
   if (!force && state.selectedId === id) return
@@ -3831,27 +3829,17 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
     reportClientError(error)
     return null
   })
-  if (fresh) {
-    $('#native-connection').textContent = t('Restored from cache')
-    await mapLoad
-    await environmentLoad
-    if (state.backend !== backend || state.selectedId !== id) return
-    sessionMap.maybeBootstrap(key, state.model)
-    return
-  }
-  if (cached) $('#native-connection').textContent = t('Checking for updates…')
-  const environmentProfile = isCodexBackend(backend) ? await environmentLoad : null
-  if (state.backend !== backend || state.selectedId !== id) return
-  const environmentRoot = isCodexBackend(backend) && environmentProfile?.configured
-    ? environmentProfile.root
-    : ''
-  await resumeThread(id, {
-    environmentRoot,
-    environmentRevision: environmentProfile?.revision || '',
+  await completeSessionSelection({
+    fresh: Boolean(fresh),
+    cached: Boolean(cached),
+    codex: isCodexBackend(backend),
+    mapLoad,
+    environmentLoad,
+    isCurrent: () => state.backend === backend && state.selectedId === id,
+    status: value => { $('#native-connection').textContent = t(value === 'cached' ? 'Restored from cache' : 'Checking for updates…') },
+    resume: options => resumeThread(id, options),
+    bootstrap: () => sessionMap.maybeBootstrap(key, state.model),
   })
-  await Promise.all([mapLoad, isCodexBackend(backend) ? null : environmentLoad])
-  if (state.backend !== backend || state.selectedId !== id) return
-  sessionMap.maybeBootstrap(key, state.model)
   } finally {
     finishSelection({
       selected: state.backend === backend && state.selectedId === id,

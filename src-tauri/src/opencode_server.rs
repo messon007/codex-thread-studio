@@ -448,15 +448,21 @@ mod tests {
 
     #[test]
     fn streaming_proxy_client_has_no_global_request_timeout() {
-        let source = include_str!("opencode_server.rs");
-        let builder = source
-            .split("client: reqwest::Client::builder()")
-            .nth(1)
-            .and_then(|value| value.split(".build()").next())
-            .expect("OpenCode client builder");
-        assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
-        assert!(!builder.contains(".timeout("));
-        assert!(source.contains("authenticated_get(&connection, \"/global/health\")\n                .timeout(Duration::from_secs(10))"));
+        let source = include_str!("opencode_server.rs").replace("\r\n", "\n");
+        for newline in ["\n", "\r\n"] {
+            let checkout = source.replace('\n', newline);
+            // Check the timeout policy, not checkout line endings or rustfmt
+            // indentation. CI on Windows commonly uses CRLF source files.
+            let compact = checkout.split_whitespace().collect::<String>();
+            let builder = compact
+                .split("client:reqwest::Client::builder()")
+                .nth(1)
+                .and_then(|value| value.split(".build()").next())
+                .expect("OpenCode client builder");
+            assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
+            assert!(!builder.contains(".timeout("));
+            assert!(compact.contains("authenticated_get(&connection,\"/global/health\").timeout(Duration::from_secs(10))"));
+        }
     }
 
     #[test]

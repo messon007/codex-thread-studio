@@ -79,7 +79,7 @@ To run another Codex-compatible launcher only on one machine, create the local
 `backends.json` shown in [local backend instances](docs/backend-instances.md).
 The Connections dialog displays its exact path and validation status.
 
-On Windows, Studio itself is native but its AI backends run only inside WSL2; Windows `.cmd` and `.exe` backend installations are not used. Configure the distribution, Linux user, and optional backend paths in Settings, restart Studio, and enter project paths in Linux form such as `/home/user/project`.
+On Windows, Studio itself is native and its AI backends use **WSL2 by default**. Configure the distribution, Linux user, and optional backend paths in Settings, restart Studio, and enter project paths in Linux form such as `/home/user/project`. Machines without WSL can opt into the separately compiled `windows-native` fallback; see [Windows backend modes and limitations](docs/windows-backends.md).
 
 ```powershell
 wsl --list --verbose

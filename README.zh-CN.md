@@ -57,7 +57,7 @@ CODEX_THREAD_STUDIO_CODEX_BIN=/Codex/绝对路径 cargo run -p codex-thread-stud
 
 OpenCode 不在图形桌面 `PATH` 中时，可设置 `CODEX_THREAD_STUDIO_OPENCODE_BIN=/OpenCode/绝对路径`。
 
-Windows 版 Studio 是原生桌面客户端，但 AI 后端只在 WSL2 中运行，不会使用 Windows 下的 `.cmd` 或 `.exe` 版 Codex/OpenCode。在“设置”中配置 Distribution、Linux 用户和可选的后端命令，重启 Studio 后生效；项目目录使用 `/home/user/project` 这样的 Linux 路径。
+Windows 版 Studio 是原生桌面客户端，AI 后端**默认在 WSL2 中运行**。在“设置”中配置 Distribution、Linux 用户和可选的后端命令，重启 Studio 后生效；项目目录使用 `/home/user/project` 这样的 Linux 路径。没有 WSL 的机器可以通过独立的 `windows-native` 编译特性启用备用原生后端，默认构建不包含这部分代码；详见 [Windows 后端模式与限制](docs/windows-backends.md)。
 
 ```powershell
 wsl --list --verbose

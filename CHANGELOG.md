@@ -6,6 +6,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Added
 
+- Add an optional, independently compiled `windows-native` backend fallback; Windows still defaults to WSL. Native CLI discovery and managed process cleanup live in a separate module, with both build modes covered by Windows CI.
 - Add structured Codex user-input questions and MCP elicitation forms, reconnect reconciliation, declared client capabilities, desktop completion/input notifications, and generated-protocol compatibility fixtures.
 - Add searchable PDF reading with text and Shift-drag region comments, plus CSV/XLSX grids and local bar charts.
 - Add per-project environment profiles with redacted local Secrets, Codex and Terminal environment injection, network policy, allowed-host metadata, and cache variables.

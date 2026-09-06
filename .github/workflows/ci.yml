@@ -70,3 +70,7 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+      - name: Test optional Windows native backend (WSL remains the default)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --locked --features windows-native

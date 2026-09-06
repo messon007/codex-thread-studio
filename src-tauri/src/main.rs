@@ -41,6 +41,8 @@ mod session_map;
 mod session_state;
 mod speech;
 mod terminal_runtime;
+#[cfg(all(windows, feature = "windows-native"))]
+mod windows_native;
 mod workspace_watch;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
@@ -775,7 +777,7 @@ fn initialize_gateway(
         }
     };
     let (codex_binary, opencode_binary, runtime) =
-        backend_configuration(&startup_preferences, cli_path);
+        backend_configuration(&startup_preferences, cli_path)?;
     let configured_backends = backend_config::load(&backend_config_path);
     if let Some(error) = &configured_backends.error {
         eprintln!("Codex Thread Studio could not load local backends: {error}");
@@ -3960,7 +3962,34 @@ fn valid_shared_document_directory(value: &str) -> bool {
 fn backend_configuration(
     preferences: &StudioPreferences,
     cli_path: OsString,
-) -> (String, String, BackendRuntime) {
+) -> Result<(String, String, BackendRuntime), String> {
+    #[cfg(windows)]
+    {
+        let requested = env::var("CODEX_THREAD_STUDIO_WINDOWS_BACKEND").ok();
+        let native = backend_runtime::windows_native_requested(
+            requested.as_deref(),
+            cfg!(feature = "windows-native"),
+        )?;
+        #[cfg(feature = "windows-native")]
+        if native {
+            let path = windows_native::augmented_path(cli_path);
+            return Ok((
+                windows_native::resolve_command_binary(
+                    "codex",
+                    "CODEX_THREAD_STUDIO_CODEX_BIN",
+                    &path,
+                ),
+                windows_native::resolve_command_binary(
+                    "opencode",
+                    "CODEX_THREAD_STUDIO_OPENCODE_BIN",
+                    &path,
+                ),
+                BackendRuntime::native(path),
+            ));
+        }
+        #[cfg(not(feature = "windows-native"))]
+        let _ = native;
+    }
     let wsl = WslSettings {
         distribution: preferences
             .wsl_distribution
@@ -3999,7 +4028,7 @@ fn backend_configuration(
         find_opencode_binary(&cli_path),
     );
 
-    (binaries.0, binaries.1, BackendRuntime::new(cli_path, wsl))
+    Ok((binaries.0, binaries.1, BackendRuntime::new(cli_path, wsl)))
 }
 
 fn build_backend_registry(

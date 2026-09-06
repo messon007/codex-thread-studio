@@ -88,6 +88,8 @@ pub struct WslSettings {
 #[derive(Clone, Debug)]
 pub struct BackendRuntime {
     path: OsString,
+    #[cfg(all(windows, feature = "windows-native"))]
+    native: bool,
     #[cfg(windows)]
     wsl: WslSettings,
 }
@@ -104,17 +106,32 @@ pub struct RuntimeFile {
 }
 
 impl BackendRuntime {
+    #[cfg(all(windows, feature = "windows-native"))]
+    pub fn native(path: OsString) -> Self {
+        Self {
+            path,
+            native: true,
+            wsl: WslSettings::default(),
+        }
+    }
+
     pub fn new(path: OsString, wsl: WslSettings) -> Self {
         #[cfg(not(windows))]
         let _ = wsl;
         Self {
             path,
+            #[cfg(all(windows, feature = "windows-native"))]
+            native: false,
             #[cfg(windows)]
             wsl,
         }
     }
 
     pub fn environment(&self) -> &'static str {
+        #[cfg(all(windows, feature = "windows-native"))]
+        if self.native {
+            return "local";
+        }
         if cfg!(windows) {
             "wsl"
         } else {
@@ -123,6 +140,10 @@ impl BackendRuntime {
     }
 
     pub fn wsl_distribution(&self) -> Option<&str> {
+        #[cfg(all(windows, feature = "windows-native"))]
+        if self.native {
+            return None;
+        }
         #[cfg(windows)]
         return self.wsl.distribution.as_deref();
         #[cfg(not(windows))]
@@ -184,6 +205,20 @@ impl BackendRuntime {
     ) -> RuntimeCommand {
         #[cfg(windows)]
         {
+            #[cfg(feature = "windows-native")]
+            if self.native {
+                let command =
+                    crate::windows_native::command(binary, args, &self.path).map(|mut command| {
+                        for (key, value) in environment {
+                            command.env(key, value);
+                        }
+                        command
+                    });
+                return RuntimeCommand {
+                    command,
+                    cleanup: None,
+                };
+            }
             let pid_file = format!(
                 "/tmp/codex-thread-studio/{}.pid",
                 uuid::Uuid::new_v4().simple()
@@ -201,7 +236,7 @@ impl BackendRuntime {
             let mut command = Command::new(&launcher);
             command.args(launch_args).env("PATH", &self.path);
             RuntimeCommand {
-                command,
+                command: Ok(command),
                 cleanup: Some(WslCleanup {
                     launcher,
                     path: self.path.clone(),
@@ -220,10 +255,22 @@ impl BackendRuntime {
             }
             configure_native_command(&mut command);
             RuntimeCommand {
-                command,
+                command: Ok(command),
                 cleanup: None,
             }
         }
+    }
+}
+
+#[cfg(any(windows, test))]
+pub fn windows_native_requested(value: Option<&str>, compiled: bool) -> Result<bool, String> {
+    match value.unwrap_or("wsl").trim() {
+        "" | "wsl" => Ok(false),
+        "native" if compiled => Ok(true),
+        "native" => {
+            Err("Windows native mode requires a build with --features windows-native".into())
+        }
+        _ => Err("CODEX_THREAD_STUDIO_WINDOWS_BACKEND must be wsl or native".into()),
     }
 }
 
@@ -278,33 +325,58 @@ fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
 }
 
 pub struct RuntimeCommand {
-    command: Command,
+    command: io::Result<Command>,
     cleanup: Option<WslCleanup>,
 }
 
 impl RuntimeCommand {
     pub fn stdin(&mut self, configuration: Stdio) -> &mut Self {
-        self.command.stdin(configuration);
+        if let Ok(command) = self.command.as_mut() {
+            command.stdin(configuration);
+        }
         self
     }
 
     pub fn stdout(&mut self, configuration: Stdio) -> &mut Self {
-        self.command.stdout(configuration);
+        if let Ok(command) = self.command.as_mut() {
+            command.stdout(configuration);
+        }
         self
     }
 
     pub fn stderr(&mut self, configuration: Stdio) -> &mut Self {
-        self.command.stderr(configuration);
+        if let Ok(command) = self.command.as_mut() {
+            command.stderr(configuration);
+        }
         self
     }
 
     pub fn spawn(mut self) -> io::Result<RuntimeChild> {
-        self.command.kill_on_drop(true);
-        let child = self.command.spawn()?;
+        let command = self
+            .command
+            .as_mut()
+            .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+        command.kill_on_drop(true);
+        #[allow(unused_mut)]
+        let mut child = command.spawn()?;
+        #[cfg(all(windows, feature = "windows-native"))]
+        let job = if self.cleanup.is_none() {
+            match crate::windows_native::WindowsJob::attach(&child) {
+                Ok(job) => Some(job),
+                Err(error) => {
+                    let _ = child.start_kill();
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         #[cfg(unix)]
         let native_process_group = child.id();
         Ok(RuntimeChild {
             child,
+            #[cfg(all(windows, feature = "windows-native"))]
+            job,
             cleanup: self.cleanup,
             #[cfg(unix)]
             native_process_group,
@@ -312,8 +384,34 @@ impl RuntimeCommand {
     }
 
     pub async fn output(mut self) -> io::Result<Output> {
-        self.command.kill_on_drop(true);
-        let result = self.command.output().await;
+        #[cfg(all(windows, feature = "windows-native"))]
+        if self.cleanup.is_none() {
+            use tokio::io::AsyncReadExt;
+            self.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = self.spawn()?;
+            let mut stdout_pipe = child.take_stdout().expect("piped stdout");
+            let mut stderr_pipe = child.take_stderr().expect("piped stderr");
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let (_, _, status) = tokio::try_join!(
+                stdout_pipe.read_to_end(&mut stdout),
+                stderr_pipe.read_to_end(&mut stderr),
+                child.wait(),
+            )?;
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
+        }
+        let command = self
+            .command
+            .as_mut()
+            .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+        command.kill_on_drop(true);
+        let result = command.output().await;
         if result.is_ok() {
             if let Some(cleanup) = self.cleanup.as_mut() {
                 let _ = cleanup.terminate().await;
@@ -324,6 +422,8 @@ impl RuntimeCommand {
 }
 
 pub struct RuntimeChild {
+    #[cfg(all(windows, feature = "windows-native"))]
+    job: Option<crate::windows_native::WindowsJob>,
     child: Child,
     cleanup: Option<WslCleanup>,
     #[cfg(unix)]
@@ -353,6 +453,8 @@ impl RuntimeChild {
         if result.is_ok() {
             #[cfg(unix)]
             self.terminate_native_process_group();
+            #[cfg(all(windows, feature = "windows-native"))]
+            drop(self.job.take());
             if let Some(cleanup) = self.cleanup.as_mut() {
                 let _ = cleanup.terminate().await;
             }
@@ -365,6 +467,8 @@ impl RuntimeChild {
         if result.as_ref().is_ok_and(Option::is_some) {
             #[cfg(unix)]
             self.terminate_native_process_group();
+            #[cfg(all(windows, feature = "windows-native"))]
+            drop(self.job.take());
         }
         result
     }
@@ -377,6 +481,10 @@ impl RuntimeChild {
     }
 
     pub async fn kill_tree(&mut self) -> io::Result<()> {
+        #[cfg(all(windows, feature = "windows-native"))]
+        if let Some(job) = &self.job {
+            job.terminate()?;
+        }
         let cleanup_result = match self.cleanup.as_mut() {
             Some(cleanup) => cleanup.terminate().await,
             None => Ok(()),
@@ -568,6 +676,46 @@ fn wsl_cleanup_args(distribution: Option<&str>, user: Option<&str>, pid_file: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_native_is_explicit_and_requires_the_compile_feature() {
+        assert!(!windows_native_requested(None, false).unwrap());
+        assert!(!windows_native_requested(None, true).unwrap());
+        assert!(!windows_native_requested(Some("wsl"), true).unwrap());
+        assert!(windows_native_requested(Some("native"), true).unwrap());
+        assert!(windows_native_requested(Some("native"), false).is_err());
+        assert!(windows_native_requested(Some("other"), true).is_err());
+    }
+
+    #[cfg(all(windows, feature = "windows-native"))]
+    #[tokio::test]
+    async fn optional_native_runtime_starts_and_stops_without_wsl() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let runtime = BackendRuntime::native(std::env::var_os("PATH").unwrap_or_default());
+        assert_eq!(runtime.environment(), "local");
+        assert_eq!(runtime.wsl_distribution(), None);
+        let mut command = runtime.command(
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-Command",
+                "Write-Output 'ready'; Start-Sleep -Seconds 60",
+            ],
+            &[],
+        );
+        command.stdout(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let mut lines = BufReader::new(child.take_stdout().unwrap()).lines();
+        let line = tokio::time::timeout(std::time::Duration::from_secs(15), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(line.as_deref(), Some("ready"));
+        tokio::time::timeout(std::time::Duration::from_secs(5), child.kill_tree())
+            .await
+            .unwrap()
+            .unwrap();
+    }
 
     #[cfg(target_os = "linux")]
     const PARENT_DEATH_PID_FILE: &str = "CODEX_THREAD_STUDIO_PARENT_DEATH_PID_FILE";

@@ -58,6 +58,6 @@ test('composer exposes one consistent image attachment surface', () => {
   assert.match(htmlSource, /id="composer-image-input"[^>]+multiple/u)
   assert.match(appSource, /addEventListener\('paste', handleComposerImagePaste\)/u)
   assert.match(appSource, /addEventListener\('drop', handleComposerImageDrop\)/u)
-  assert.match(appSource, /threadRouter\.startTurn\(text, imageInputs\)/u)
+  assert.match(readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8'), /threadRouter\.startTurn\(text, imageInputs\)/u)
   assert.match(styleSource, /\.composer-icon-button \{ width: 27px; height: 27px;/u)
 })

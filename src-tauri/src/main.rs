@@ -995,6 +995,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/queue-execution.mjs", get(queue_execution_js))
         .route("/rpc-lifecycle.mjs", get(rpc_lifecycle_js))
         .route("/composer-send.mjs", get(composer_send_js))
+        .route("/submission-controller.mjs", get(submission_controller_js))
         .route("/preferences-snapshot.mjs", get(preferences_snapshot_js))
         .route(
             "/environment-application.mjs",
@@ -2299,6 +2300,10 @@ async fn rpc_lifecycle_js() -> impl IntoResponse {
 
 async fn composer_send_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/composer-send.mjs"))
+}
+
+async fn submission_controller_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/submission-controller.mjs"))
 }
 
 async fn preferences_snapshot_js() -> impl IntoResponse {
@@ -4605,6 +4610,7 @@ mod tests {
                 "/queue-execution.mjs",
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
+                "/submission-controller.mjs",
                 "/preferences-snapshot.mjs",
                 "/environment-application.mjs",
                 "/history-installation.mjs",

@@ -175,7 +175,7 @@ test('submitting a new turn cancels a pinned reading position and follows the la
   const helper = source.slice(helperStart, helperEnd)
   const composerStart = source.indexOf('async function sendComposer(')
   const composerEnd = source.indexOf('\nfunction isRouterThread(', composerStart)
-  const composer = source.slice(composerStart, composerEnd)
+  const composer = readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8').split('async function sendComposer(')[1].split('async function runNextQueuedMessage(')[0]
 
   assert.match(helper, /cancelScheduledTranscriptViewCapture\(\)/u)
   assert.match(helper, /pendingTranscriptViewRestore = null/u)
@@ -186,9 +186,9 @@ test('submitting a new turn cancels a pinned reading position and follows the la
 })
 
 test('starting the selected session queue follows latest while background queues leave the visible transcript alone', () => {
-  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8')
   const start = source.indexOf('async function runNextQueuedMessage(')
-  const end = source.indexOf('\nasync function sendComposer(', start)
+  const end = source.indexOf('\nfunction pauseMessageQueue(', start)
   const queue = source.slice(start, end)
 
   assert.match(queue, /if \(key === selectedStateKey\(\)\) \{\s*beginTranscriptFollowingLatest\(model\)\s*renderComposerState\(\)/u)

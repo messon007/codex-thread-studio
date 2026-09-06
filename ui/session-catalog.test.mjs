@@ -148,10 +148,7 @@ test('Studio binds canonical cwd to Codex turns without changing the OpenCode ad
     app.indexOf(".register('opencode'"),
     app.indexOf('const commentSources'),
   )
-  const composer = app.slice(
-    app.indexOf('async function sendComposer('),
-    app.indexOf('\nfunction isRouterThread(', app.indexOf('async function sendComposer(')),
-  )
+  const composer = readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8')
 
   assert.match(codexAdapter, /turnStartParams\('codex', threadForRef\(ref\)/u)
   assert.doesNotMatch(openCodeAdapter, /turnStartParams/u)

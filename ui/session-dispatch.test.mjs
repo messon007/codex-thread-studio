@@ -170,7 +170,7 @@ test('prepared turn preserves preparation errors and does not retry unrelated st
 
 test('the normal Composer integrates preparation without duplicating Session Map resumes', () => {
   assert.match(appSource, /async function prepareComposerTurn\(ref\)[\s\S]*sessionMap\.prepareTurn\(ref\)[\s\S]*sessionDispatch\.markPrepared\(ref\)[\s\S]*sessionDispatch\.prepareTurn\(ref\)/u)
-  assert.match(appSource, /startTurnWithPreparation\(\{[\s\S]*prepare: \(\) => prepareComposerTurn\(ref\)[\s\S]*recoverThreadNotFound: isCodexBackend\(backend\)/u)
+  assert.match(readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8'), /startTurnWithPreparation\(\{[\s\S]*prepare: \(\) => prepareComposerTurn\(ref\)[\s\S]*recoverThreadNotFound: isCodexBackend\(backend\)/u)
 })
 
 test('rejects malformed references and incomplete adapters', () => {

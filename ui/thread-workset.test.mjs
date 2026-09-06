@@ -109,13 +109,14 @@ test('turn boundaries update catalog status and activity without streaming-list 
 
 test('composer and queued sends optimistically activate one catalog row and roll back rejected starts', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
-  const queue = source.slice(
-    source.indexOf('async function runNextQueuedMessage('),
-    source.indexOf('\nasync function sendComposer(', source.indexOf('async function runNextQueuedMessage(')),
+  const submission = readFileSync(new URL('../ui-src/submission-controller.mts', import.meta.url), 'utf8')
+  const queue = submission.slice(
+    submission.indexOf('async function runNextQueuedMessage('),
+    submission.indexOf('\nfunction pauseMessageQueue('),
   )
-  const composer = source.slice(
-    source.indexOf('async function sendComposer('),
-    source.indexOf('\nfunction isRouterThread(', source.indexOf('async function sendComposer(')),
+  const composer = submission.slice(
+    submission.indexOf('async function sendComposer('),
+    submission.indexOf('\nasync function runNextQueuedMessage('),
   )
   assert.match(queue, /setCatalogThreadActivity\(ref\.backend, ref\.id, \{ status: 'active', touch: true \}\)/)
   assert.match(queue, /if \(!accepted\) rollbackCatalogThreadActivity\(catalogActivity\)/)

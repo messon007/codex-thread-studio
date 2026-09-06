@@ -997,6 +997,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/composer-send.mjs", get(composer_send_js))
         .route("/lifecycle-connection.mjs", get(lifecycle_connection_js))
         .route(
+            "/session-state-persistence.mjs",
+            get(session_state_persistence_js),
+        )
+        .route(
             "/preference-normalization.mjs",
             get(preference_normalization_js),
         )
@@ -2284,6 +2288,10 @@ async fn composer_send_js() -> impl IntoResponse {
 
 async fn lifecycle_connection_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/lifecycle-connection.mjs"))
+}
+
+async fn session_state_persistence_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/session-state-persistence.mjs"))
 }
 
 async fn preference_normalization_js() -> impl IntoResponse {
@@ -4559,6 +4567,7 @@ mod tests {
                 "/rpc-lifecycle.mjs",
                 "/composer-send.mjs",
                 "/lifecycle-connection.mjs",
+                "/session-state-persistence.mjs",
                 "/preference-normalization.mjs",
                 "/continuation-draft.mjs",
                 "/backends.mjs",

@@ -1,4 +1,5 @@
 import { executeComposerSend } from './composer-send.mjs'
+import { createSessionStatePersistence } from './session-state-persistence.mjs'
 import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
 import {
   applyCodexNotification,
@@ -223,7 +224,7 @@ import { SessionDispatchRegistry, startTurnWithPreparation } from './session-dis
 import { createCodexHistoryLoader } from './codex-history-loader.mjs'
 import { coordinateHistoryLoad } from './history-load-coordinator.mjs'
 import { createSerializedStateWriter } from './serialized-state-writer.mjs'
-import { normalizeStoredTurnOptions, sessionModelPreferencePayload, copySessionTurnOptions } from './session-model-preferences.mjs'
+import { normalizeStoredTurnOptions, copySessionTurnOptions } from './session-model-preferences.mjs'
 import { cachedSession, storeCachedSession, validateCachedModel, unvalidateCachedModel, cachedModelThreadId, routeCodexNotification } from './session-model-cache.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { formatEnvironmentLines, parseEnvironmentLines, parseHosts } from './environment-profile.mjs'
@@ -232,7 +233,6 @@ import { transcriptModelRevision } from './model-revision.mjs'
 import {
   codexLifecycleEvent,
   claimLifecycleNotification,
-  codexLifecycleStreamMessage,
 } from './codex-lifecycle-diagnostics.mjs'
 import {
   DEFAULT_TURN_TAIL_PAGE_SIZE,
@@ -408,6 +408,7 @@ const state = {
 let preferencesReady = false
 const preferencesWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist preferences', error))
 const sessionStateWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist session state', error))
+const sessionPersistence = createSessionStatePersistence(state, sessionStateWriter, () => preferencesReady)
 let preferencesPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
@@ -8022,50 +8023,28 @@ function persistPreferences() {
   return preferencesWriter.write('/studio/preferences', preferencesSnapshot())
 }
 
-function queueSessionStateWrite(path, body, method = 'PUT') {
-  if (!preferencesReady) return Promise.resolve()
-  return sessionStateWriter.write(path, body, method)
-}
-
 function persistAnnotationState(key) {
-  if (!key) return Promise.resolve()
-  return queueSessionStateWrite('/studio/session-state/annotations', {
-    sessionKey: key,
-    drafts: state.annotationDrafts[key] || [],
-    additional: state.annotationAdditional[key] || '',
-  })
+  return sessionPersistence.annotations(key)
 }
 
 function persistOpeningMessageState(key) {
-  if (!key) return Promise.resolve()
-  return queueSessionStateWrite('/studio/session-state/opening-message', {
-    sessionKey: key,
-    message: state.openingMessages[key] || null,
-  })
+  return sessionPersistence.openingMessage(key)
 }
 
 function persistSessionTurnOptions(key) {
-  if (!key) return Promise.resolve()
-  const options = state.turnOptions[key] || {}
-  return queueSessionStateWrite('/studio/session-state/turn-options', sessionModelPreferencePayload(key, options))
+  return sessionPersistence.turnOptions(key)
 }
 
 function persistMessageQueue(key) {
-  if (!key) return Promise.resolve()
-  return queueSessionStateWrite('/studio/session-state/message-queue', {
-    sessionKey: key,
-    messages: state.messageQueues[key] || [],
-  })
+  return sessionPersistence.messageQueue(key)
 }
 
 function deletePersistedSessionState(key) {
-  if (!key) return Promise.resolve()
-  return queueSessionStateWrite('/studio/session-state/session', { sessionKey: key }, 'DELETE')
+  return sessionPersistence.remove(key)
 }
 
 function persistSessionPin(key, pinned) {
-  if (!key) return Promise.resolve()
-  return queueSessionStateWrite('/studio/session-state/pin', { sessionKey: key, pinned })
+  return sessionPersistence.pin(key, pinned)
 }
 
 function setPinnedSessionLocal(key, pinned) {

@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
 const reviewNotes = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
+const persistence = readFileSync(new URL('./session-state-persistence.mjs', import.meta.url), 'utf8')
 
 test('dynamic session state loads beside preferences but is not written back to settings', () => {
   const loadStart = app.indexOf('async function loadPreferences()')
@@ -36,12 +37,13 @@ test('startup selection comes from Thread Router instead of persisted session st
 })
 
 test('session state mutations use bounded per-session endpoints', () => {
-  assert.match(app, /'\/studio\/session-state\/annotations'/u)
-  assert.match(app, /'\/studio\/session-state\/opening-message'/u)
-  assert.match(app, /'\/studio\/session-state\/pin'/u)
-  assert.match(app, /'\/studio\/session-state\/turn-options'/u)
-  assert.match(app, /'\/studio\/session-state\/session',[^\n]*'DELETE'/u)
-  assert.match(app, /sessionStateWriter\.write\(path, body, method\)/u)
+  assert.match(persistence, /'\/studio\/session-state\/annotations'/u)
+  assert.match(persistence, /'\/studio\/session-state\/opening-message'/u)
+  assert.match(persistence, /'\/studio\/session-state\/pin'/u)
+  assert.match(persistence, /'\/studio\/session-state\/turn-options'/u)
+  assert.match(persistence, /'\/studio\/session-state\/session',[^\n]*'DELETE'/u)
+  assert.match(persistence, /writer\.write\(path, body, method\)/u)
+  assert.match(app, /createSessionStatePersistence\(state, sessionStateWriter, \(\) => preferencesReady\)/u)
   assert.match(app, /if \(!preferencesReady\) return Promise\.resolve\(\)/u)
 })
 
@@ -50,7 +52,7 @@ test('session model and effort choices persist the concrete backend default', ()
   assert.match(app, /data-model-default/u)
   assert.match(app, /backendDefaultId[\s\S]{0,1200}state\.turnOptions\[key\] = options[\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
   assert.doesNotMatch(app, /if \(useDefault\) \{[\s\S]{0,160}delete state\.turnOptions\[key\]/u)
-  assert.match(app, /sessionModelPreferencePayload\(key, options\)/u)
+  assert.match(persistence, /sessionModelPreferencePayload\(key, state\.turnOptions\[key\] \|\| \{\}\)/u)
   assert.match(app, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(key\)/u)
   assert.match(app, /async function forkThread[\s\S]*state\.turnOptions\[forkKey\] = sourceOptions[\s\S]*persistSessionTurnOptions\(forkKey\)/u)
 })

@@ -19,6 +19,8 @@ test('queue advancement uses terminal backend events rather than polling', () =>
 
 test('persisted queues start paused and use a bounded session-state endpoint', () => {
   assert.match(app, /pausedMessageQueues = new Set\(Object\.keys\(state\.messageQueues\)\)/u)
-  assert.match(app, /'\/studio\/session-state\/message-queue'/u)
+  const persistence = readFileSync(new URL('./session-state-persistence.mjs', import.meta.url), 'utf8')
+  assert.match(persistence, /'\/studio\/session-state\/message-queue'/u)
+  assert.match(app, /sessionPersistence\.messageQueue\(key\)/u)
   assert.match(html, /id="queue-depth"[\s\S]*value="1"[\s\S]*value="3"/u)
 })

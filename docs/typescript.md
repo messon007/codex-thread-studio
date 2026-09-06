@@ -75,7 +75,7 @@ the real embedded modules, while unit tests cover rejection, duplicate events,
 out-of-order responses and session isolation without invoking paid models.
 
 The next seven batches cover these additional boundaries (54 generated runtime
-modules in total):
+modules at that milestone):
 
 1. Translation/Continue output parsing and asynchronous result polling, including
    stale-result rejection after an awaited read.
@@ -98,6 +98,28 @@ creation/cleanup still call typed boundaries from JavaScript; these callers are
 not themselves type-checked. Pure DOM controllers and vendor libraries are not
 scheduled for blanket conversion. This migration does not add a framework,
 bundle the UI, or claim that all frontend code is now checked.
+
+The following focused batch brings the total to 57 runtime modules:
+
+- `composer-send`: acceptance/failure/finalization ownership for ordinary Send
+  and Steer. Local acknowledgement errors are distinguished from a rejected
+  transport request; there is no new automatic retry. Input capture, backend
+  request construction, optimistic rendering and shell/Router sends remain in
+  the JS caller.
+- `lifecycle-connection`: cross-backend Codex/EPT socket generation guards,
+  initialization barrier, reconnect scheduling and notification dispatch;
+  OpenCode shared SSE ownership, readiness waiters and gap notification.
+  Existing 750ms/1500ms barriers and 1800ms WebSocket reconnect delay are retained.
+  OpenCode continues to use EventSource's native reconnect. Backend history
+  reconciliation and catalog mutation remain separate existing callers.
+- `session-state-persistence`: typed per-session annotation, opening-message,
+  model, queue, pin and deletion requests. It retains the existing writer's
+  synchronous serialization and FIFO, with no database or endpoint changes.
+  Settings form handling and full preference snapshot assembly remain JS.
+
+These are incremental boundaries, not a claim that all sending, lifecycle or
+persistence orchestration has been converted. No performance changes or fixes
+for the intermittent Continue disabled-state report are included in this batch.
 Type annotations describe protocol data but do not replace runtime validation.
 No new polling loops, resume requests, or backend model fallback are added.
 

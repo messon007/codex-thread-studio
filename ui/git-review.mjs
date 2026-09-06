@@ -48,8 +48,23 @@ export function visibleReviewFiles(files, scope = 'all', filter = '') {
   })
 }
 
+// Coalesce only concurrent reads; completed results are never cached because
+// file contents can change without changing Git's porcelain status.
+export function createPendingGitReads() {
+  const pending = new Map()
+  return (key, read) => {
+    if (pending.has(key)) return pending.get(key)
+    const promise = Promise.resolve().then(read).finally(() => {
+      if (pending.get(key) === promise) pending.delete(key)
+    })
+    pending.set(key, promise)
+    return promise
+  }
+}
+
 export function createGitReview({ gatewayFetch, getContext, openFile, translate = (value) => value, notify = () => {} }) {
   const states = new Map()
+  const pendingDiffs = createPendingGitReads()
   const element = (id) => document.getElementById(id)
   let active = false
 
@@ -130,6 +145,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
       state.root = result.root || state.root
       state.branch = result.branch || 'HEAD'
       state.files = result.files || []
+      state.diffRevision = (state.diffRevision || 0) + 1
       chooseVisibleSelection(state)
       render(state)
       await loadSelectedDiff(state)
@@ -154,17 +170,23 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
   async function loadSelectedDiff(state = stateForCurrent()) {
     const file = selectedFile(state)
     if (!state || !file) {
-      if (state) state.diff = null
+      if (state) {
+        state.diffRequest = null
+        state.diffLoading = false
+        state.diff = null
+      }
       render(state)
       return
     }
-    const requestKey = `${file.path}:${state.diffScope}:${Date.now()}`
+    const requestKey = Symbol('diff request')
+    const body = { root: state.root, path: file.path, scope: state.diffScope }
+    const readKey = JSON.stringify([body, state.diffRevision || 0])
     state.diffRequest = requestKey
     state.diffLoading = true
     state.diffError = ''
     render(state)
     try {
-      const result = await request('/studio/git/diff', { root: state.root, path: file.path, scope: state.diffScope })
+      const result = await pendingDiffs(readKey, () => request('/studio/git/diff', body))
       if (state.diffRequest !== requestKey) return
       state.diff = result
     } catch (error) {
@@ -189,6 +211,7 @@ export function createGitReview({ gatewayFetch, getContext, openFile, translate 
     try {
       const result = await request(stage ? '/studio/git/stage' : '/studio/git/unstage', { root: state.root, paths: [file.path] })
       state.files = result.files || []
+      state.diffRevision = (state.diffRevision || 0) + 1
       state.branch = result.branch || state.branch
       chooseVisibleSelection(state)
       notify(translate(stage ? 'File staged.' : 'File unstaged.'))

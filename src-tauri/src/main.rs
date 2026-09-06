@@ -920,6 +920,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
+        .route("/transcript-dom.mjs", get(transcript_dom_js))
         .route(
             "/transcript-presentation.mjs",
             get(transcript_presentation_js),
@@ -1466,7 +1467,8 @@ async fn mutate_git_paths(
             output,
         );
     }
-    match load_git_status(state, &status.root).await {
+    // The root was resolved and validated above in this same operation.
+    match load_git_status_at_root(state, status.root).await {
         Ok(status) => json_response(StatusCode::OK, &status),
         Err((status, message)) => json_error(status, &message),
     }
@@ -1515,6 +1517,13 @@ async fn load_git_status(
     }
     let root = git_review::parse_repository_root(&root_output.stdout)
         .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
+    load_git_status_at_root(state, root).await
+}
+
+async fn load_git_status_at_root(
+    state: &GatewayState,
+    root: String,
+) -> Result<GitStatusResponse, (StatusCode, String)> {
     let arguments = git_review::status_arguments(&root);
     let output = run_git(state, &arguments, true)
         .await
@@ -2104,6 +2113,10 @@ async fn transcript_presentation_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/transcript-presentation.mjs"))
 }
 
+async fn transcript_dom_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/transcript-dom.mjs"))
+}
+
 async fn thread_catalog_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/thread-catalog.mjs"))
 }
@@ -2629,206 +2642,237 @@ async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
     }
 }
 
-async fn get_session_state(State(state): State<GatewayState>) -> Response<Body> {
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::load(&state.studio_path) {
-        Ok(snapshot) => json_response(StatusCode::OK, &snapshot),
-        Err(error) => gateway_error(&format!("failed to read session state: {error}")),
+// SQLite (including its busy timeout and the shared database mutex) must not
+// block the async workers that deliver session notifications and HTTP streams.
+async fn run_studio_database(
+    operation: impl FnOnce() -> Response<Body> + Send + 'static,
+) -> Response<Body> {
+    match tokio::task::spawn_blocking(operation).await {
+        Ok(response) => response,
+        Err(error) => gateway_error(&format!("Studio database task failed: {error}")),
     }
 }
 
+async fn get_session_state(State(state): State<GatewayState>) -> Response<Body> {
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::load(&state.studio_path) {
+            Ok(snapshot) => json_response(StatusCode::OK, &snapshot),
+            Err(error) => gateway_error(&format!("failed to read session state: {error}")),
+        }
+    })
+    .await
+}
+
 async fn put_annotation_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
-    }
-    let mut preferences = StudioPreferences::default();
-    preferences
-        .annotation_drafts
-        .insert(request.session_key.clone(), request.drafts.clone());
-    if !request.additional.is_empty() {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let mut preferences = StudioPreferences::default();
         preferences
-            .annotation_additional
-            .insert(request.session_key.clone(), request.additional.clone());
-    }
-    if let Err(message) = validate_preferences(&preferences) {
-        return json_error(StatusCode::BAD_REQUEST, &message);
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::replace_annotations(
-        &state.studio_path,
-        &request.session_key,
-        &request.drafts,
-        &request.additional,
-    ) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => gateway_error(&format!("failed to save annotation state: {error}")),
-    }
+            .annotation_drafts
+            .insert(request.session_key.clone(), request.drafts.clone());
+        if !request.additional.is_empty() {
+            preferences
+                .annotation_additional
+                .insert(request.session_key.clone(), request.additional.clone());
+        }
+        if let Err(message) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::replace_annotations(
+            &state.studio_path,
+            &request.session_key,
+            &request.drafts,
+            &request.additional,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save annotation state: {error}")),
+        }
+    })
+    .await
 }
 
 async fn put_opening_message_state(
     State(state): State<GatewayState>,
     body: String,
 ) -> Response<Body> {
-    let request = match parse_session_state_body::<OpeningMessageStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
-    }
-    let mut preferences = StudioPreferences::default();
-    if let Some(message) = &request.message {
-        preferences
-            .opening_messages
-            .insert(request.session_key.clone(), message.clone());
-    }
-    if let Err(message) = validate_preferences(&preferences) {
-        return json_error(StatusCode::BAD_REQUEST, &message);
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::put_opening_message(
-        &state.studio_path,
-        &request.session_key,
-        request.message.as_ref(),
-    ) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => gateway_error(&format!("failed to save opening message: {error}")),
-    }
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<OpeningMessageStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let mut preferences = StudioPreferences::default();
+        if let Some(message) = &request.message {
+            preferences
+                .opening_messages
+                .insert(request.session_key.clone(), message.clone());
+        }
+        if let Err(message) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::put_opening_message(
+            &state.studio_path,
+            &request.session_key,
+            request.message.as_ref(),
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save opening message: {error}")),
+        }
+    })
+    .await
 }
 
 async fn delete_session_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let request = match parse_session_state_body::<DeleteSessionStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::delete_session(&state.studio_path, &request.session_key) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => gateway_error(&format!("failed to delete session state: {error}")),
-    }
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<DeleteSessionStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::delete_session(&state.studio_path, &request.session_key) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to delete session state: {error}")),
+        }
+    })
+    .await
 }
 
 async fn put_session_pin(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let request = match parse_session_state_body::<PinSessionStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::set_pinned(&state.studio_path, &request.session_key, request.pinned) {
-        Ok(pinned_sessions) => json_response(
-            StatusCode::OK,
-            &json!({ "pinnedSessions": pinned_sessions }),
-        ),
-        Err(error) if error == session_state::PIN_LIMIT_ERROR => {
-            json_error(StatusCode::BAD_REQUEST, &error)
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<PinSessionStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
         }
-        Err(error) => gateway_error(&format!("failed to save pinned session: {error}")),
-    }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::set_pinned(&state.studio_path, &request.session_key, request.pinned) {
+            Ok(pinned_sessions) => json_response(
+                StatusCode::OK,
+                &json!({ "pinnedSessions": pinned_sessions }),
+            ),
+            Err(error) if error == session_state::PIN_LIMIT_ERROR => {
+                json_error(StatusCode::BAD_REQUEST, &error)
+            }
+            Err(error) => gateway_error(&format!("failed to save pinned session: {error}")),
+        }
+    })
+    .await
 }
 
 async fn put_turn_options_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let request = match parse_session_state_body::<TurnOptionsStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-        || (!request.model.is_empty() && !valid_runtime_value(&request.model, 256))
-        || (!request.effort.is_empty() && !valid_runtime_value(&request.effort, 64))
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session turn options are invalid");
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::put_turn_options(
-        &state.studio_path,
-        &request.session_key,
-        &request.model,
-        &request.effort,
-    ) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
-    }
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<TurnOptionsStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+            || (!request.model.is_empty() && !valid_runtime_value(&request.model, 256))
+            || (!request.effort.is_empty() && !valid_runtime_value(&request.effort, 64))
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session turn options are invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::put_turn_options(
+            &state.studio_path,
+            &request.session_key,
+            &request.model,
+            &request.effort,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
+        }
+    })
+    .await
 }
 
 async fn put_message_queue_state(
     State(state): State<GatewayState>,
     body: String,
 ) -> Response<Body> {
-    let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
-        Ok(request) => request,
-        Err(response) => return response,
-    };
-    let invalid_message = request.messages.len() > 3
-        || request.messages.iter().any(|message| {
-            message.id.is_empty()
-                || !valid_runtime_value(&message.id, 128)
-                || message.text.len() > 256 * 1024
-                || message.input.len() > 32
-                || message
-                    .input
-                    .iter()
-                    .any(|item| item.get("type").and_then(|value| value.as_str()) == Some("text"))
-        });
-    if request.session_key.is_empty()
-        || request.session_key.len() > 320
-        || !valid_router_session_key(&request.session_key)
-        || invalid_message
-    {
-        return json_error(StatusCode::BAD_REQUEST, "session message queue is invalid");
-    }
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("Studio database lock is unavailable"),
-    };
-    match session_state::replace_message_queue(
-        &state.studio_path,
-        &request.session_key,
-        &request.messages,
-    ) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(error) => gateway_error(&format!("failed to save message queue: {error}")),
-    }
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        let invalid_message = request.messages.len() > 3
+            || request.messages.iter().any(|message| {
+                message.id.is_empty()
+                    || !valid_runtime_value(&message.id, 128)
+                    || message.text.len() > 256 * 1024
+                    || message.input.len() > 32
+                    || message.input.iter().any(|item| {
+                        item.get("type").and_then(|value| value.as_str()) == Some("text")
+                    })
+            });
+        if request.session_key.is_empty()
+            || request.session_key.len() > 320
+            || !valid_router_session_key(&request.session_key)
+            || invalid_message
+        {
+            return json_error(StatusCode::BAD_REQUEST, "session message queue is invalid");
+        }
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("Studio database lock is unavailable"),
+        };
+        match session_state::replace_message_queue(
+            &state.studio_path,
+            &request.session_key,
+            &request.messages,
+        ) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => gateway_error(&format!("failed to save message queue: {error}")),
+        }
+    })
+    .await
 }
 
 fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, Response<Body>> {
@@ -2915,44 +2959,53 @@ async fn list_favorites(
     State(state): State<GatewayState>,
     Query(query): Query<FavoriteQuery>,
 ) -> Response<Body> {
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::list(&state.studio_path, &query.q, query.limit.unwrap_or(100)) {
-        Ok(items) => json_response(StatusCode::OK, &items),
-        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::list(&state.studio_path, &query.q, query.limit.unwrap_or(100)) {
+            Ok(items) => json_response(StatusCode::OK, &items),
+            Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn get_favorite(
     State(state): State<GatewayState>,
     AxumPath(id): AxumPath<String>,
 ) -> Response<Body> {
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::find(&state.studio_path, &id) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::find(&state.studio_path, &id) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => gateway_error(&format!("failed to read favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn create_favorite(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let favorite = match parse_favorite_body(&body) {
-        Ok(favorite) => favorite,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::insert(&state.studio_path, favorite) {
-        Ok(favorite) => json_response(StatusCode::CREATED, &favorite),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_studio_database(move || {
+        let favorite = match parse_favorite_body(&body) {
+            Ok(favorite) => favorite,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::insert(&state.studio_path, favorite) {
+            Ok(favorite) => json_response(StatusCode::CREATED, &favorite),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn update_favorite(
@@ -2960,53 +3013,62 @@ async fn update_favorite(
     AxumPath(id): AxumPath<String>,
     body: String,
 ) -> Response<Body> {
-    let favorite = match parse_favorite_body(&body) {
-        Ok(favorite) => favorite,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::update(&state.studio_path, &id, favorite) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_studio_database(move || {
+        let favorite = match parse_favorite_body(&body) {
+            Ok(favorite) => favorite,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::update(&state.studio_path, &id, favorite) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn delete_favorite(
     State(state): State<GatewayState>,
     AxumPath(id): AxumPath<String>,
 ) -> Response<Body> {
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::remove(&state.studio_path, &id) {
-        Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
-        Err(error) => gateway_error(&format!("failed to save favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::remove(&state.studio_path, &id) {
+            Ok(Some(favorite)) => json_response(StatusCode::OK, &favorite),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "favorite not found"),
+            Err(error) => gateway_error(&format!("failed to save favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn export_favorites(State(state): State<GatewayState>) -> Response<Body> {
-    let _guard = match state.studio_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("favorites lock is unavailable"),
-    };
-    match favorites::export_markdown(&state.studio_path) {
-        Ok(markdown) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
-            .header(
-                header::CONTENT_DISPOSITION,
-                "attachment; filename=\"codex-thread-studio-favorites.md\"",
-            )
-            .body(Body::from(markdown))
-            .expect("valid favorites export response"),
-        Err(error) => gateway_error(&format!("failed to export favorites: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.studio_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("favorites lock is unavailable"),
+        };
+        match favorites::export_markdown(&state.studio_path) {
+            Ok(markdown) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"codex-thread-studio-favorites.md\"",
+                )
+                .body(Body::from(markdown))
+                .expect("valid favorites export response"),
+            Err(error) => gateway_error(&format!("failed to export favorites: {error}")),
+        }
+    })
+    .await
 }
 
 async fn get_session_map(
@@ -3723,6 +3785,26 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn database_work_does_not_block_the_async_worker() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let task = tokio::spawn(run_studio_database(move || {
+            let _ = started_tx.send(());
+            let released = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+            assert!(released.is_ok(), "database work blocked the async worker");
+            StatusCode::NO_CONTENT.into_response()
+        }));
+        started_rx.await.expect("database worker starts");
+        release_tx
+            .send(())
+            .expect("async worker remains responsive");
+        assert_eq!(
+            task.await.expect("database request completes").status(),
+            StatusCode::NO_CONTENT
+        );
+    }
+
     fn test_codex_backends() -> Arc<BTreeMap<String, CodexBackendInstance>> {
         Arc::new(BTreeMap::from([(
             "codex".to_string(),
@@ -4172,6 +4254,7 @@ mod tests {
                 "/session-dispatch.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",
+                "/transcript-dom.mjs",
                 "/transcript-presentation.mjs",
                 "/vendor/mermaid.min.js",
                 "/vendor/epub.mjs",

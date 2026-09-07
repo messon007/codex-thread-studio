@@ -141,7 +141,7 @@ test('validates structured routing decisions against backend-qualified keys', ()
   const legacyClarify = JSON.stringify({
     action: 'clarify', targetSessionKey: 'ignored', forwardedPrompt: 'ignored', reason: 'Ambiguous', message: 'Which project?',
   })
-  assert.throws(() => parseRouterDecision(legacyClarify, ['codex:learn']), /unsupported action/)
+  assert.throws(() => parseRouterDecision(legacyClarify, ['codex:learn'], { allowLegacyClarify: false }), /unsupported action/)
   assert.deepEqual(parseRouterDecision(legacyClarify, ['codex:learn'], { allowLegacyClarify: true }), {
     action: 'clarify', targetSessionKey: '', forwardedPrompt: '', reason: 'Ambiguous', message: 'Which project?',
   })
@@ -153,8 +153,8 @@ test('reads legacy persisted decisions only when the session id is unambiguous',
   assert.equal(routerDecisionForTurn(turn, ['codex:a'])?.targetSessionKey, 'codex:a')
   assert.equal(routerDecisionForTurn(turn, ['codex:a', 'opencode:a']), null)
   assert.equal(routerDecisionSchema().properties.targetSessionKey.type, 'string')
-  assert.deepEqual(routerDecisionSchema(['codex:learn', 'opencode:learn']).properties.targetSessionKey.enum, ['codex:learn', 'opencode:learn'])
-  assert.deepEqual(routerDecisionSchema(['codex:learn']).properties.action.enum, ['dispatch'])
+  assert.deepEqual(routerDecisionSchema(['codex:learn', 'opencode:learn']).properties.targetSessionKey.enum, ['codex:learn', 'opencode:learn', ''])
+  assert.deepEqual(routerDecisionSchema(['codex:learn']).properties.action.enum, ['dispatch', 'clarify'])
 })
 
 test('requires the controller to copy a catalog session key verbatim', () => {
@@ -162,7 +162,7 @@ test('requires the controller to copy a catalog session key verbatim', () => {
     key: 'codex:signal-design', backend: 'codex', id: 'native-id', title: 'Signal design', cwd: '/work', responsibility: 'Formal signal design', fallback: 'none', openingMessage: '',
   }])
   assert.match(instructions, /copied byte-for-byte/)
-  assert.match(instructions, /Never ask the user to clarify/)
+  assert.match(instructions, /Never hide uncertainty by forcing a match/)
   assert.match(instructions, /"sessionKey": "codex:signal-design"/)
   assert.deepEqual(routerApplicationContext([{
     key: 'codex:signal-design', backend: 'codex', id: 'native-id', title: 'Signal design', cwd: '/work', responsibility: 'Formal signal design', fallback: 'none', openingMessage: '',

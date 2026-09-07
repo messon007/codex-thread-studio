@@ -25,6 +25,9 @@ export function createActiveCodexConnection(state, services) {
                 setBackendState('online', `${descriptor.name} App Server`, 'Native structured connection');
                 $('#native-connection').textContent = 'Connected';
                 setNativeError(null);
+                // Cache restoration may skip all later workspace renders. Readiness is
+                // itself a Composer transition, independent of catalog/history loading.
+                renderComposerState();
                 loadBackendModels().catch((error) => console.debug('Unable to load Codex models', error));
                 if (firstReady) {
                     const socketGeneration = state.socketGeneration;
@@ -86,13 +89,17 @@ export function createActiveCodexConnection(state, services) {
                 }
             }
             else if (status === 'starting') {
+                state.ready = false;
                 setBackendState('checking', `Starting ${descriptor.name}`, message.params?.binary || 'App Server');
+                renderComposerState();
             }
             else if (status === 'error' || status === 'stopped') {
+                state.ready = false;
                 sessionDispatch.clearPrepared(backend);
                 const reason = message.params?.message || message.params?.reason || 'App Server stopped';
                 setBackendState('error', `${descriptor.name} Unavailable`, reason);
                 setNativeError(reason);
+                renderComposerState();
             }
             return;
         }

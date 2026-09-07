@@ -98,7 +98,11 @@ export function connectSelectedSocket(state: SelectedConnectionState, effects: {
   const socket = effects.open()
   state.socket = socket
   socket.onmessage = event => { if (generation === state.socketGeneration) effects.message(event.data) }
-  socket.onerror = () => { if (generation === state.socketGeneration) effects.error() }
+  socket.onerror = () => {
+    if (generation !== state.socketGeneration) return
+    state.ready = false
+    effects.error()
+  }
   socket.onclose = () => {
     if (generation !== state.socketGeneration) return
     state.ready = false

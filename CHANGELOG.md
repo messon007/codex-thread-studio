@@ -4,8 +4,13 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-07
+
 ### Added
 
+- Add inline Router responses with source-aware workspace actions, persistent delivery history, and a compact automatic/session routing selector.
+- Add opt-in, running-task supervision for Codex-family sessions, with a task-scoped wand, cancellation, bounded continuation, and independent Router targets.
+- Add AI-maintained Session Maps with incremental updates, simplified controls, and one current node.
 - Add an optional, independently compiled `windows-native` backend fallback; Windows still defaults to WSL. Native CLI discovery and managed process cleanup live in a separate module, with both build modes covered by Windows CI.
 - Add structured Codex user-input questions and MCP elicitation forms, reconnect reconciliation, declared client capabilities, desktop completion/input notifications, and generated-protocol compatibility fixtures.
 - Add searchable PDF reading with text and Shift-drag region comments, plus CSV/XLSX grids and local bar charts.
@@ -26,6 +31,9 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Fixed
 
+- Refresh Composer controls when backend readiness changes, including cached session restores; guard sending and continuation against stale button state.
+- Align Router extension actions after native response actions, restore direct image attachment, and keep supervision controls inside the compact action menu.
+- Sanitize repository example settings and design assets; relocate retained acceptance captures under docs/design and remove obsolete screenshots and the temporary EPT patch.
 - Align Files, Terminal, Git Review, Document, Map, Comments, Favorites, and embedded Browser on one persisted rail width; centralize WebView rail dragging with a whole-window selection shield; add dedicated Workspace typography settings; and return to the originating workspace tool after closing an opened document.
 - Remove phantom CSV rows caused by trailing newlines, keep compact charts usable in the right rail, and make their action button reflect the active Grid/Chart view.
 - Keep the project-environment settings section reachable in shorter windows and capture the Studio WebView reliably during Linux screenshot acceptance.
@@ -53,6 +61,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Initial Tauri desktop shell and structured Codex App Server v2 integration.
 
-[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/messon007/codex-thread-studio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/messon007/codex-thread-studio/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/messon007/codex-thread-studio/releases/tag/v0.1.0

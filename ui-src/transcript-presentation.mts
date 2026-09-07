@@ -229,6 +229,26 @@ export function presentTurn(turn: PresentationTurn): TurnPresentation {
   }
 }
 
+/** Router output is published only after completion; intermediate messages stay activity. */
+export function presentRoutedTurn(turn: PresentationTurn): TurnPresentation {
+  const items = (turn.items || []).filter(item => item.type !== 'userMessage')
+  const final = turn.status === 'completed'
+    ? [...items].reverse().find(item => item.type === 'agentMessage' && String(item.text || '').trim()) : undefined
+  const entries: ActivityEntry[] = items.filter(item => item !== final).map(item =>
+    item.type === 'agentMessage' || item.type === 'plan'
+      ? { kind: 'progress', itemId: item.id, item, status: item.status || turn.status || 'unknown' } : activityEntry(item),
+  )
+  const blocks: PresentationBlock[] = []
+  if (entries.length || turn.status === 'inProgress') {
+    const activity = buildActivityBlock(turn, entries)
+    activity.active = turn.status === 'inProgress'
+    blocks.push(activity)
+  }
+  if (final) blocks.push({ type: 'assistant', itemId: final.id, item: final, variant: 'message' })
+  if (turn.status === 'failed' || turn.error?.message) blocks.push({ type: 'error', message: turn.error?.message || 'Turn failed' })
+  return { id: String(turn.id || ''), status: turn.status || 'unknown', blocks, source: turn }
+}
+
 export function presentationActivityBlocks(presentation: TurnPresentation | null) {
   return (presentation?.blocks || []).filter((block) => block.type === 'activity')
 }

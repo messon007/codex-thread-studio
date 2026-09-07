@@ -56,6 +56,7 @@ function handleContinueAction() {
 }
 
 function quickSendContinueMessage() {
+  if (!state.ready || !state.selectedId || state.model.activeTurnId || state.model.status === 'running' || composerHasPendingContent()) return
   const button = $('#continue-thread')
   if (button.disabled || button.classList.contains('hidden')) return
   setCurrentComposerValue(randomContinuePrompt())
@@ -74,6 +75,7 @@ function composerHasPendingContent(key = selectedStateKey()) {
 }
 
 async function draftContinueMessage() {
+  if (!state.ready || !state.selectedId || state.model.activeTurnId || state.model.status === 'running' || composerHasPendingContent()) return
   const button = $('#continue-thread')
   if (button.disabled || button.classList.contains('hidden')) return
   const key = selectedStateKey()
@@ -294,4 +296,3 @@ async function interruptTurn() {
 }
 return { handleContinueAction, quickSendContinueMessage, composerHasPendingContent, draftContinueMessage, draftContinueWithOllama, draftContinueWithSessionModel, ensureContinuationBackend, queueComposerMessage, openQueuedMessageEditor, closeQueuedMessageEditor, saveEditedQueuedMessage, deleteQueuedMessage, resumeSelectedMessageQueue, interruptTurn }
 }
-

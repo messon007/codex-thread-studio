@@ -112,6 +112,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   const thread = selectedThread()
   if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const root = String(file.root || thread?.cwd || '')
+  const sourceSessionKey = String(file.sourceSessionKey || '')
   if (!root) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const path = fuzzyFileLabel(file)
   const requestedEpubCfi = String(file.epubCfi || '')
@@ -148,7 +149,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   disposeRichArtifactReader()
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
-  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, loading: true }
+  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
   const endpoint = kind === 'image'
     ? '/studio/review-image'
     : kind === 'epub' ? '/studio/review-epub'
@@ -229,7 +230,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
   } else {
     const result = await response.json()
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, loading: false }
+    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
     state.artifactView = kind === 'table'
       ? 'table'
       : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
@@ -240,10 +241,11 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
 async function refreshArtifact() {
   if (!state.artifact) return
   if (state.artifact.dirty && !confirm(t('Reloading will discard unsaved changes. Continue?'))) return
-  await openArtifact({ root: state.artifact.root, path: state.artifact.path }, { returnTool: state.artifact.returnTool })
+  await openArtifact({ root: state.artifact.root, path: state.artifact.path, sourceSessionKey: state.artifact.sourceSessionKey }, { returnTool: state.artifact.returnTool })
 }
 
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
+  const sourceSessionKey = state.artifact?.sourceSessionKey || ''
   if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return
   const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
   const artifactThreadKey = state.artifact?.threadKey
@@ -261,7 +263,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
       openResources()
       return
     }
-    Promise.resolve(openWorkspaceTool(returnTool)).catch(showError)
+    Promise.resolve(openWorkspaceTool(returnTool, sourceSessionKey)).catch(showError)
     return
   }
   if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()

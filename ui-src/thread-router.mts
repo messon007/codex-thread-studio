@@ -131,10 +131,10 @@ export function routerDecisionSchema(candidateKeys: readonly (string | { key: st
     additionalProperties: false,
     required: ['action', 'targetSessionKey', 'forwardedPrompt', 'reason', 'message'],
     properties: {
-      action: { type: 'string', enum: ['dispatch'] },
+      action: { type: 'string', enum: ['dispatch', 'clarify'] },
       targetSessionKey: {
         type: 'string',
-        ...(allowedKeys.length ? { enum: allowedKeys } : {}),
+        ...(allowedKeys.length ? { enum: [...allowedKeys, ''] } : {}),
         description: 'Copy exactly one available sessionKey from the supplied catalog.',
       },
       forwardedPrompt: { type: 'string' },
@@ -188,13 +188,13 @@ export function routerDeveloperInstructions(candidates: readonly RouterCandidate
   }))
   return `You are the routing controller for Codex Thread Studio. You do not solve the user's task and you do not call tools.
 
-You MUST always choose exactly one existing target session from the complete catalog below. Never ask the user to clarify and never return a clarification action. Make the best routing decision from all available session metadata, even when the match is imperfect.
+Choose one existing target only when the request and context identify a suitable session. If multiple sessions are equally plausible, or none is suitable, return action "clarify", empty targetSessionKey and forwardedPrompt, and a brief question. Never hide uncertainty by forcing a match.
 
 Routing rules, in priority order:
 1. An explicit session title or responsibility named by the user wins.
 2. Prefer the most specific responsibility match regardless of backend.
 3. First consider regular targets only. If no regular target is suitable, consider at most three fallback targets and choose one only when its fallbackCondition matches the situation.
-4. If no fallback condition applies, choose the closest regular target. If only fallback targets exist, choose the closest fallback target.
+4. If neither a specific regular target nor an applicable fallback is clear, ask the user to choose. For follow-up requests, consider the previous routing context, but do not treat a new topic as a follow-up automatically.
 5. targetSessionKey must be copied byte-for-byte from one sessionKey in the catalog below. Never shorten, translate, summarize, or invent it. Never choose a Router controller or dispatch to more than one target.
 6. forwardedPrompt must preserve the user's actual request and useful context. Do not add an answer.
 7. reason and message must be concise and written in the user's language.
@@ -203,16 +203,16 @@ Available target sessions:
 ${JSON.stringify(catalog, null, 2)}`
 }
 
-export function routerApplicationContext(candidates: readonly RouterCandidate[]) {
+export function routerApplicationContext(candidates: readonly RouterCandidate[], responseContext = '') {
   return {
     [ROUTER_CONTEXT_KEY]: {
       kind: 'application',
-      value: routerDeveloperInstructions(candidates),
+      value: routerDeveloperInstructions(candidates) + responseContext,
     },
   }
 }
 
-export function parseRouterDecision(value: unknown, candidateKeys: readonly string[] = [], { allowLegacyClarify = false } = {}): RouterDecision {
+export function parseRouterDecision(value: unknown, candidateKeys: readonly string[] = [], { allowLegacyClarify = true } = {}): RouterDecision {
   const raw: unknown = parseJson(value)
   const parsed = record(raw)
   if (!raw || typeof raw !== 'object') throw new Error('Router did not return an object')
@@ -277,4 +277,3 @@ function cleanBackend(value: unknown) {
 function cleanText(value: unknown, max: number) {
   return typeof value === 'string' ? [...value.trim()].slice(0, max).join('') : ''
 }
-

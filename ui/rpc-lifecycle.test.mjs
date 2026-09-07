@@ -57,3 +57,17 @@ test('old selected sockets cannot dispatch messages or schedule reconnects after
   sockets[1].emit({ current: true })
   assert.deepEqual(messages, ['{"current":true}'])
 })
+
+test('only the current socket error revokes Composer readiness', () => {
+  const state = { socket: null, socketGeneration: 0, ready: true, reconnectTimer: null }
+  const sockets = [], errors = []
+  const effects = { cleanup() {}, starting() {}, open() { const socket = new Socket(); sockets.push(socket); return socket }, message() {}, error() { errors.push(state.ready) }, closed() {}, reconnect() {} }
+  connectSelectedSocket(state, effects)
+  connectSelectedSocket(state, effects)
+  state.ready = true
+  sockets[0].onerror()
+  assert.equal(state.ready, true)
+  sockets[1].onerror()
+  assert.equal(state.ready, false)
+  assert.deepEqual(errors, [false])
+})

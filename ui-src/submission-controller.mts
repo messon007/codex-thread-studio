@@ -12,6 +12,7 @@ import { beginOptimisticCodexTurn, reconcileOptimisticCodexTurn, rollbackOptimis
 
 export interface TurnResult { turn?: IncomingCodexTurn }
 export interface SubmissionState extends QueueExecutionState {
+  ready: boolean
   backend: string
   selectedId: string | null
   model: CodexViewModel
@@ -20,6 +21,7 @@ export interface SubmissionState extends QueueExecutionState {
   pendingImages: Record<string, ComposerImage[]>
 }
 export interface SubmissionServices {
+  isSupervised?: (ref: SessionRef) => boolean
   $: (selector: string) => { value: string; disabled: boolean }
   selectedStateKey: (id?: string | null, backend?: string) => string
   shellCommandFromComposer: (text: string) => string | null
@@ -67,7 +69,7 @@ async function sendComposer(event: { preventDefault(): void }) {
   const initialStateKey = selectedStateKey()
   const shellCommand = shellCommandFromComposer(input.value)
   if (shellCommand !== null) {
-    if (!shellCommand || !state.selectedId) return
+    if (!shellCommand || !state.selectedId || !state.ready) return
     if (state.model.activeTurnId) {
       showError(new Error('Wait for the current turn to finish or stop it before running a local shell command.'))
       return
@@ -97,7 +99,8 @@ async function sendComposer(event: { preventDefault(): void }) {
     }
     return
   }
-  if (!state.selectedId) return
+  if (!state.selectedId || !state.ready) return
+  if (state.model.status === 'running' && !state.model.activeTurnId) return
   const stateKey = selectedStateKey()
   const pendingImages = [...(state.pendingImages[stateKey] || [])]
   const imageInputs = composerImageInputs(pendingImages)
@@ -219,11 +222,12 @@ async function sendComposer(event: { preventDefault(): void }) {
 
 async function runNextQueuedMessage(ref: SessionRef | null) {
   if (!ref || !isSupportedBackend(ref.backend)) return
+  if (services.isSupervised?.(ref)) return
   const key = selectedStateKey(ref.id, ref.backend)
   const queue = state.messageQueues[key] || []
   if (!queue.length || state.pausedMessageQueues.has(key) || state.runningMessageQueues.has(key)) return
   const model = messageQueueModel(ref)
-  if (model?.activeTurnId) return
+  if (model?.activeTurnId || model?.status === 'running') return
   let catalogActivity: unknown = null
   try {
     const acknowledgement: { result: TurnResult | null } = { result: null }

@@ -37,6 +37,7 @@ mod gateway_security;
 mod git_review;
 mod ollama;
 mod opencode_server;
+mod router_history;
 mod session_map;
 mod session_state;
 mod speech;
@@ -862,6 +863,10 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/studio/session-state", get(get_session_state))
         .route(
+            "/studio/router-history",
+            get(get_router_history).put(put_router_history),
+        )
+        .route(
             "/studio/session-state/annotations",
             axum::routing::put(put_annotation_state),
         )
@@ -1025,6 +1030,7 @@ fn gateway_router(state: GatewayState) -> Router {
             "/hidden-utility-session.mjs",
             get(hidden_utility_session_js),
         )
+        .route("/turn-supervision.mjs", get(turn_supervision_js))
         .route("/lifecycle-connection.mjs", get(lifecycle_connection_js))
         .route(
             "/session-state-persistence.mjs",
@@ -1111,6 +1117,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/router-coordination.mjs", get(router_coordination_js))
+        .route("/router-targets.mjs", get(router_targets_js))
         .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
         .route("/transcript-scroll.mjs", get(transcript_scroll_js))
@@ -2368,6 +2375,10 @@ async fn hidden_utility_session_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/hidden-utility-session.mjs"))
 }
 
+async fn turn_supervision_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/turn-supervision.mjs"))
+}
+
 async fn lifecycle_connection_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/lifecycle-connection.mjs"))
 }
@@ -3009,6 +3020,41 @@ async fn get_session_state(State(state): State<GatewayState>) -> Response<Body> 
             Err(error) => gateway_error(&format!("failed to read session state: {error}")),
         }
     })
+    .await
+}
+
+async fn router_targets_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/router-targets.mjs"))
+}
+
+async fn get_router_history(
+    State(state): State<GatewayState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response<Body> {
+    let controller = query.get("controller").cloned().unwrap_or_default();
+    if !valid_router_session_key(&controller) || controller.len() > 320 {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid Router controller");
+    }
+    run_studio_database(
+        move || match router_history::load(&state.studio_path, &controller) {
+            Ok(records) => json_response(StatusCode::OK, &records),
+            Err(error) => gateway_error(&error),
+        },
+    )
+    .await
+}
+
+async fn put_router_history(State(state): State<GatewayState>, body: String) -> Response<Body> {
+    let record = match parse_session_state_body::<router_history::Record>(&body) {
+        Ok(record) => record,
+        Err(response) => return response,
+    };
+    run_studio_database(
+        move || match router_history::save(&state.studio_path, &record) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        },
+    )
     .await
 }
 
@@ -4705,6 +4751,7 @@ mod tests {
                 "/selection-coordinator.mjs",
                 "/started-session-catalog.mjs",
                 "/hidden-utility-session.mjs",
+                "/turn-supervision.mjs",
                 "/lifecycle-connection.mjs",
                 "/session-state-persistence.mjs",
                 "/preference-normalization.mjs",

@@ -11,6 +11,7 @@ import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './histor
 import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
+import { createTurnSupervision, SUPERVISION_SCHEMA, SUPERVISION_INSTRUCTIONS, supervisionResult } from './turn-supervision.mjs'
 import { createSessionStatePersistence } from './session-state-persistence.mjs'
 import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
 import {
@@ -97,6 +98,7 @@ import {
   activityOutputPreview,
   presentationActivityBlocks,
   presentationActivityEntries,
+  presentRoutedTurn,
   reasoningStage,
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
@@ -140,7 +142,7 @@ import {
   restoreCatalogThreadActivity,
   updateCatalogThreadActivity,
 } from './thread-workset.mjs'
-import { catalogsWithSingleRouter, finalAgentText, isRouterSession, managedRouterThread, normalizeThreadRouter, recoverManagedRouterCatalog, sessionRefKey } from './thread-router.mjs'
+import { catalogsWithSingleRouter, finalAgentText, isRouterSession, managedRouterThread, normalizeThreadRouter, parseSessionRefKey, recoverManagedRouterCatalog, sessionRefKey } from './thread-router.mjs'
 import {
   createThreadRouterController,
   createThreadRouterRuntimeState,
@@ -499,6 +501,7 @@ const sessionManagement = createSessionManagementUI({
 
 const threadRouter = createThreadRouterController({
   state,
+  gatewayFetch,
   dispatch: sessionDispatch,
   backend: {
     dispatchRpc: dispatchBackendRpc,
@@ -524,8 +527,24 @@ const threadRouter = createThreadRouterController({
     renderWorkspace,
     renderTranscript,
     renderComposerState,
+    refreshSupervision: renderComposerTools,
+    renderSupervisionAction: renderSupervisionMenu,
+    openTargetPicker: options => {
+      if (state.composerMenu.type === 'router' && state.composerMenu.trigger?.confirmedPicker) { hideComposerMenu(); return }
+      const cursor = $('#composer-input').selectionStart
+      state.composerMenu = { ...state.composerMenu, type: 'router', options: [{ kind: 'session', automatic: true, key: '', title: t('Automatic routing') }, ...options.map(option => ({ ...option, kind: 'session' }))], selected: 0,
+        trigger: { start: cursor, end: cursor, query: '', confirmedPicker: true }, fileMessage: '', generation: state.composerMenu.generation + 1 }
+      state.composerMenu.selected = Math.max(0, state.composerMenu.options.findIndex(option => option.key === state.routerRuntime.selectedTarget))
+      $('#router-choose-target').setAttribute('aria-expanded', 'true')
+      renderComposerMenu()
+      $('#composer-input').focus()
+    },
     renderItem,
+    renderTargetTurn: renderRouterTargetTurn,
     selectThread,
+    setComposerValue: setCurrentComposerValue,
+    hideComposerMenu,
+    openWorkspaceTool: (source, tool) => workspaceTools.openForSession(source.thread, source.backend, tool),
   },
   persistPreferences,
   notify: toast,
@@ -574,6 +593,7 @@ const sessionOperations = createSessionOperations(state, {
   connectionReady: () => { $('#native-connection').textContent = t('Connected') },
 })
 const submissionController = createSubmissionController(state, {
+  isSupervised: ref => turnSupervision.activeFor(ref),
   $, selectedStateKey, shellCommandFromComposer, matchingSlashCommands, executeSlashCommand,
   isRouterThread, threadRouter, rpc, dispatchBackendRpc, sessionDispatch, prepareComposerTurn,
   isCodexBackend, isSupportedBackend, backendDescriptor, currentBackend, threadForRef,
@@ -618,6 +638,7 @@ const reviewNotes = createReviewNotesController({
     selectThread,
     translateSelection: translateSelectionWithCurrentBackend,
     translationProfile: currentSelectionTranslationProfile,
+    sourceContext: (node) => threadRouter.sourceContext(node),
   },
 })
 
@@ -640,7 +661,13 @@ const documentWorkspace = createDocumentWorkspaceController({
     disposeMarkdownImageAssets,
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
-    openWorkspaceTool: (tool) => workspaceTools.open(tool),
+    openWorkspaceTool: (tool, sourceSessionKey) => {
+      const ref = parseSessionRefKey(sourceSessionKey)
+      if (!ref) return workspaceTools.open(tool)
+      const thread = state.threadsByBackend[ref.backend]?.find(candidate => candidate.id === ref.id)
+      if (!thread) throw new Error(t('The target session no longer exists.'))
+      return workspaceTools.openForSession(thread, ref.backend, tool)
+    },
     openResources: () => sessionResources.open(),
     renderSessionMap: () => sessionMap.render(),
     openBrowserUrl,
@@ -672,6 +699,99 @@ const settingsApplication = createSettingsApplication(state, {
   $, gatewayFetch, normalizeRightRailWidthRatio, normalizeTypography, typographyDefaults, migrateDefaultFontFamilies, isSupportedBackend, emptyBackendSelections, normalizeAnnotationDrafts, resolveLanguage, normalizeLocalizedTemplates, defaultAnnotationPrompt, persistOpeningMessageState, applySidebarState, getLocale, setLanguage, syncEmbeddedBrowserTranslations, t, applyAppearance, persistPreferences, sessionResources, renderLocalizedUI, toast, annotationPromptDefaults, populateSettingsForm,
   markPreferencesReady: () => { preferencesReady = true },
 })
+
+function enableTurnSupervision(ref, turnId, acceptedPrompt = '') {
+  if (!isCodexBackend(ref.backend)) { toast(t('Supervision requires a Codex session')); return }
+  if (!navigator.locks) { showError(new Error(t('This browser does not support safe supervision ownership'))); return }
+  navigator.locks.request(`studio-supervision:${ref.backend}:${ref.id}`, { ifAvailable: true }, async lock => {
+    if (!lock) throw new Error(t('This session is already supervised in another window'))
+    const latest = messageQueueModel(ref)?.turns.at(-1)
+    if (latest?.id !== turnId || latest.status !== 'inProgress') throw new Error(t('No running turn to supervise'))
+    turnSupervision.start(ref, turnId, acceptedPrompt)
+    do {
+      await turnSupervision.tick()
+      if (turnSupervision.activeFor(ref)) await new Promise(resolve => setTimeout(resolve, 1000))
+    } while (turnSupervision.activeFor(ref))
+  }).catch(showError)
+}
+
+const turnSupervision = createTurnSupervision({
+  snapshot: ref => {
+    const model = messageQueueModel(ref)
+    return model ? { turns: model.turns, activeTurnId: model.activeTurnId || '',
+      blocked: ['disconnected', 'error'].includes(model.status) || Boolean(model.approvals.length || model.interactions.length)
+        || state.runningMessageQueues.has(sessionRefKey(ref.backend, ref.id)) } : null
+  },
+  evaluate: async (job, input, ensureCurrent) => {
+    const { ref } = job
+    const options = sessionTurnOptions(ref)
+    return runHiddenUtilitySession(state, {
+      backend: ref.backend, codex: true, cwd: threadForRef(ref)?.cwd || '',
+      model: options.model || threadForRef(ref)?.model || '', effort: options.effort || '',
+      name: `Studio supervisor ${randomId()}`, instructions: SUPERVISION_INSTRUCTIONS,
+      input, outputSchema: SUPERVISION_SCHEMA, validateBeforeStart: true, readCompletedThread: true, ensureCurrent,
+      parse: supervisionResult, translateError: t,
+      missingTaskMessage: 'Unable to create supervisor evaluation', timeoutMessage: 'Supervisor evaluation timed out',
+      rpc: (method, params, timeout) => dispatchBackendRpc(ref.backend, method, params, timeout),
+      remove: (backend, params, timeout) => dispatchBackendRpc(backend, 'thread/delete', params, timeout),
+      cleanupError: error => console.warn('Supervisor cleanup failed', error), sessionKey: sessionRefKey, turnKey: routerRuntimeKey,
+    })
+  },
+  prepare: async ref => {
+    await sessionDispatch.prepareTurn(ref)
+    // A cached idle model alone is not authority to send after a connection gap.
+    const result = await dispatchBackendRpc(ref.backend, 'thread/read', { threadId: ref.id, includeTurns: true })
+    const latest = result?.thread?.turns?.at(-1)
+    if (!latest || latest.id !== turnSupervision.get(ref)?.current || latest.status !== 'completed'
+      || latest.error || result?.thread?.status?.type === 'active') {
+      throw new Error('The native conversation changed; supervision stopped without sending')
+    }
+  },
+  send: async (ref, prompt) => {
+    const result = await dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams('codex', threadForRef(ref), {
+      threadId: ref.id, clientUserMessageId: randomId(), input: [{ type: 'text', text: prompt }], ...queuedTurnOptions(ref),
+    }), 30_000, true)
+    const model = messageQueueModel(ref)
+    if (result?.turn && model) submissionController.applyTurnAcknowledgement(model, result.turn, ref.id)
+    if (result?.turn?.id) {
+      await threadRouter.followSupervisedTurn(ref, turnSupervision.get(ref)?.current, String(result.turn.id), model).catch(showError)
+    }
+    return String(result?.turn?.id || '')
+  },
+  changed: job => {
+    renderComposerTools()
+    if (['stopped', 'complete'].includes(job.status)) {
+      if (job.status === 'stopped') pauseMessageQueue(job.ref, job.reason)
+      toast(`${t(job.status === 'complete' ? 'Supervision complete' : 'Supervision stopped')}: ${job.reason}`)
+      renderComposerState()
+      if (job.status === 'complete') runNextQueuedMessage(job.ref).catch(showError)
+    }
+  },
+})
+window.addEventListener('pagehide', () => turnSupervision.stopAll())
+
+const supervisionWand = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="m3 15 7.5-7.5 2 2L5 17zM12 2l.7 2.3L15 5l-2.3.7L12 8l-.7-2.3L9 5l2.3-.7zM5 2v3M3.5 3.5h3"/></svg>'
+function renderSupervisionMenu(turnId, ref = { backend: state.backend, id: state.selectedId }) {
+  if (!isCodexBackend(ref.backend) || !ref.id || isArchivedPreview()) return ''
+  const job = turnSupervision.get(ref)
+  const enabled = turnSupervision.activeFor(ref) && (job.root === turnId || job.current === turnId)
+  const turn = messageQueueModel(ref)?.turns.at(-1)
+  if (!enabled && (turn?.id !== turnId || turn.status !== 'inProgress')) return ''
+  const label = t(enabled ? 'Stop supervision' : 'Supervise this turn')
+  return `<button class="message-copy-button supervision-action${enabled ? ' active' : ''}" type="button" data-supervision-action="${enabled ? 'stop' : 'start'}" data-backend="${escapeHtml(ref.backend)}" data-thread="${escapeHtml(ref.id)}" data-turn="${escapeHtml(turnId)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-pressed="${Boolean(enabled)}">${supervisionWand}</button>`
+}
+function renderComposerTools() {
+  const host = $('#composer-tools-content')
+  if (!host) return
+  const job = turnSupervision.get({ backend: state.backend, id: state.selectedId })
+  const turnId = turnSupervision.activeFor({ backend: state.backend, id: state.selectedId }) ? job.current : state.model.turns.at(-1)?.id
+  const action = !isRouterThread() && turnId ? renderSupervisionMenu(turnId) : ''
+  host.innerHTML = action ? action.replace('</button>', `<span>${escapeHtml(t(job && turnSupervision.activeFor(job.ref) ? 'Stop supervision' : 'Supervise this turn'))}</span></button>`) : `<small>${escapeHtml(t(isRouterThread() ? 'Use the wand on a running target response' : 'No running turn to supervise'))}</small>`
+  for (const button of document.querySelectorAll('.router-target-response [data-supervision-action]')) {
+    const ref = { backend: button.dataset.backend, id: button.dataset.thread }
+    button.outerHTML = renderSupervisionMenu(button.dataset.turn, ref)
+  }
+}
 
 const composerActions = createComposerActions(state, {
   $, selectedStateKey, composerDrafts, setCurrentComposerValue, hideComposerMenu, latestAgentResponseText, showError, t, currentBackend, renderComposerState, toast, setComposerDraftValue, gatewayFetch, truncateCharacters, selectedThread, currentTurnOptions, isCodexBackend, randomId, rpc, dispatchBackendRpc, sessionRefKey, routerRuntimeKey, persistMessageQueue, runNextQueuedMessage, sessionRefFromKey, pauseMessageQueue,
@@ -929,6 +1049,8 @@ function bindUI() {
   $('#composer-input').addEventListener('input', handleComposerInput)
   $('#composer-input').addEventListener('keydown', handleComposerKeydown)
   $('#composer-add-image').addEventListener('click', () => $('#composer-image-input').click())
+  $('#composer-tools').addEventListener('toggle', renderComposerTools)
+  $('#composer-tools-content').addEventListener('click', handleTranscriptClick)
   $('#composer-image-input').addEventListener('change', (event) => {
     addComposerImages(event.target.files).catch(showError)
     event.target.value = ''
@@ -999,8 +1121,9 @@ function bindUI() {
   $('#copy-opening-message').addEventListener('click', () => copyOpeningMessage().catch(showError))
 
   document.addEventListener('mousedown', (event) => {
+    if (state.composerMenu.trigger?.confirmedPicker && !event.target.closest('#router-choose-target, #composer-menu')) hideComposerMenu()
     if (!event.target.closest('#selection-popover, .content-menu-anchor')) reviewNotes.hideSelection()
-    if (!event.target.closest('.menu-anchor')) closeActionMenus()
+    if (!event.target.closest('.menu-anchor, .composer-tools, .composer-attachment-control, #composer-supervision-status')) closeActionMenus()
     if (!event.target.closest('#session-map-item-menu, .session-map-row-menu')) sessionMap.closeItemMenu()
     if (!event.target.closest('#thread-content-search')) sessionManagement.search.hideResults()
   })
@@ -1543,6 +1666,7 @@ function toggleActionMenu(menuId, buttonId) {
 function closeActionMenus() {
   $$('.action-menu').forEach((menu) => menu.classList.add('hidden'))
   $$('.menu-anchor [aria-expanded]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
+  $('#composer-tools').open = false
 }
 
 async function loadBackendInfo(backend = state.backend) {
@@ -1731,17 +1855,22 @@ function connectAppServer() {
     starting: () => {
       setBackendState('checking', `Starting ${descriptor.name}`, 'App Server · stdio')
       setNativeError(null)
+      renderComposerState()
     },
     open: () => gatewayWebSocket(`${protocol}//${location.host}${descriptor.socketPath}`),
     message: (data) => {
       try { handleAppServerMessage(JSON.parse(data)) }
       catch (error) { console.error('Invalid App Server message', error, data) }
     },
-    error: () => setBackendState('error', `${descriptor.name} Disconnected`, 'WebSocket connection failed'),
+    error: () => {
+      setBackendState('error', `${descriptor.name} Disconnected`, 'WebSocket connection failed')
+      renderComposerState()
+    },
     closed: () => {
       rejectPending(new Error(`${descriptor.name} App Server connection closed`))
       setBackendState('error', t('{backend} disconnected', { backend: descriptor.name }), 'Preparing to reconnect…')
       setNativeError(t('The connection to the local {backend} App Server closed.', { backend: descriptor.name }))
+      renderComposerState()
     },
     reconnect: connectAppServer,
   })
@@ -1755,6 +1884,7 @@ async function connectOpenCode({ backendInfoReady = false } = {}) {
   const generation = state.socketGeneration
   setBackendState('checking', 'Starting OpenCode', 'Server · HTTP/SSE')
   setNativeError(null)
+  renderComposerState()
   if (!backendInfoReady) await loadBackendInfo()
   if (generation !== state.socketGeneration) return
   if (state.backendInfo?.reachable === false || state.backendInfo?.error) {
@@ -1764,6 +1894,7 @@ async function connectOpenCode({ backendInfoReady = false } = {}) {
     return
   }
   state.ready = true
+  renderComposerState()
   loadBackendModels().catch((error) => console.debug('Unable to load OpenCode models', error))
   startOpenCodeEventStream()
   // Prefer establishing the event barrier before taking the history snapshot.
@@ -2046,15 +2177,17 @@ async function refreshOpenCodeThreadList({ forceSelectedHistory = false } = {}) 
   }
 }
 
-function rpc(method, params = {}, timeoutMs = 30_000) {
+function rpc(method, params = {}, timeoutMs = 30_000, supervised = false) {
+  if (!supervised && params.threadId) turnSupervision.humanAction({ backend: state.backend, id: params.threadId }, method, params)
   if (state.backend === 'opencode') return openCodeRpc(method, params, timeoutMs)
   if (!state.ready || state.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error(t('{backend} App Server is not ready', { backend: currentBackend().name })))
   const id = ++state.requestId
   return pendingRpcRequests.request(id, method, () => sendRaw({ id, method, params }), timeoutMs, t('{method} request timed out', { method }))
 }
 
-async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000) {
-  if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs)
+async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000, supervised = false) {
+  if (!supervised && params.threadId) turnSupervision.humanAction({ backend, id: params.threadId }, method, params)
+  if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs, true)
   if (isCodexBackend(backend)) return codexBackgroundRpc(backend, method, params, timeoutMs)
   if (backend === 'opencode') {
     await ensureOpenCodeAvailable()
@@ -4410,10 +4543,17 @@ function renderTurn(presentation, index, { openActivityIds = [] } = {}) {
 
 function renderPresentationBlock(block, turnId, options = {}) {
   if (block.type === 'user') return renderItem(block.item, turnId)
-  if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable })
+  if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable, sourceRef: options.sourceRef })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
   if (block.type === 'error') return `<div class="turn-error" role="alert"><span class="message-track-mark turn-error-mark" aria-hidden="true">${conversationTrackIcon('failed')}</span><div class="turn-error-content"><strong>${t('Execution failed')}</strong><span>${escapeHtml(block.message)}</span></div></div>`
   return ''
+}
+
+function renderRouterTargetTurn(turn, sourceRef) {
+  const open = new Set([...document.querySelectorAll(`[data-router-source="${CSS.escape(sourceRef.key)}"] .work-activity[open]`)].map(node => node.dataset.activityId))
+  return presentRoutedTurn(turn).blocks.map(block => renderPresentationBlock(block, turn.id, {
+    sourceRef, forkable: false, openActivity: open.has(block.id),
+  })).join('')
 }
 
 function conversationTrackIcon(kind) {
@@ -4463,7 +4603,11 @@ function bindActivityDetails() {
   })
 }
 
-function activityPresentationForTurn(turnId) {
+function activityPresentationForTurn(turnId, source = null) {
+  if (source) {
+    const turn = source.model?.turns?.find(turn => String(turn.id) === String(turnId))
+    return turn ? presentRoutedTurn(turn) : null
+  }
   return transcriptPresentationCache.updateTurn(presentationThreadKey(), state.model, turnId)
     .turns.get(String(turnId || ''))?.presentation || null
 }
@@ -4480,7 +4624,10 @@ function activityBlockForTurn(turnId, activityId) {
 function hydrateActivityDetails(details, { force = false } = {}) {
   const body = details.querySelector('.activity-detail-body')
   if (!body || (!force && body.dataset.activityEmpty !== 'true')) return
-  const block = activityBlockForTurn(details.dataset.turnId, details.dataset.activityId)
+  const source = threadRouter.sourceContext(details)
+  const block = source
+    ? presentationActivityBlocks(activityPresentationForTurn(details.dataset.turnId, source)).find(block => block.id === details.dataset.activityId)
+    : activityBlockForTurn(details.dataset.turnId, details.dataset.activityId)
   if (!block) return
   body.innerHTML = (block.displayEntries || block.entries).map(renderActivityEntry).join('')
     + `<button class="activity-log-button" type="button" data-activity-log="${escapeHtml(details.dataset.turnId)}">${t('View full activity log')}</button>`
@@ -4535,7 +4682,7 @@ function renderOutputPreview(preview) {
   return `<pre>${escapeHtml(lines.join('\n'))}</pre>`
 }
 
-function renderItem(item, turnId, { forkable = false } = {}) {
+function renderItem(item, turnId, { forkable = false, sourceRef = null } = {}) {
   const type = item?.type || 'unknown'
   const attrs = `data-turn-id="${escapeHtml(turnId || '')}" data-item-id="${escapeHtml(item?.id || '')}"`
   if (type === 'userMessage') {
@@ -4544,7 +4691,7 @@ function renderItem(item, turnId, { forkable = false } = {}) {
     return `<div class="message user" ${attrs}><span class="message-track-mark user-track-mark" aria-hidden="true">${conversationTrackIcon('question')}</span><div class="message-content">${images}${text ? `<div>${escapeHtml(text)}</div>` : (!images ? escapeHtml(t('(non-text input)')) : '')}</div></div>`
   }
   if (type === 'agentMessage' || type === 'plan') {
-    const favorite = reviewNotes.favoriteForSource(state.backend, state.selectedId, turnId, item.id)
+    const favorite = reviewNotes.favoriteForSource(sourceRef?.backend || state.backend, sourceRef?.id || state.selectedId, turnId, item.id)
     const favoriteLabel = favorite ? 'Favorited; click to view' : 'Favorite this response'
     const forkAction = forkable
       ? `<button class="message-fork-button" type="button" data-fork-turn="${escapeHtml(turnId || '')}" title="${t('Fork from here')}" aria-label="${t('Fork from here')}"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="4.25" cy="4" r="1.65"></circle><circle cx="4.25" cy="14" r="1.65"></circle><circle cx="13.75" cy="9" r="1.65"></circle><path d="M4.25 5.65v6.7M5.9 4h2.15a4.05 4.05 0 0 1 4.05 4.05V9"></path></svg><b>${t('Fork from here')}</b></button>`
@@ -4552,7 +4699,7 @@ function renderItem(item, turnId, { forkable = false } = {}) {
     return `<div class="message agent${favorite ? ' favorited' : ''}" ${attrs}>
       <span class="message-track-mark agent-track-mark" aria-hidden="true">${conversationTrackIcon('response')}</span>
       <div class="message-content"><div class="markdown-body">${renderMarkdown(type === 'agentMessage' ? sessionMapVisibleText(item.text) : item.text || '')}</div>
-      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('Copy content')}" aria-label="${t('Copy content')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('Copy')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? 'Favorited' : 'Favorites'}</b></button>${forkAction}</div></div>
+      <div class="message-actions"><button class="message-copy-button" type="button" data-copy-message="${escapeHtml(item.id || '')}" title="${t('Copy content')}" aria-label="${t('Copy content')}"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.75" y="2.75" width="8.5" height="10" rx="1.5"></rect><rect x="6.75" y="5.25" width="8.5" height="10" rx="1.5"></rect></svg><b>${t('Copy')}</b></button><button class="message-favorite-button${favorite ? ' active' : ''}" type="button" data-favorite-message="${escapeHtml(item.id || '')}" title="${favoriteLabel}" aria-label="${favoriteLabel}" aria-pressed="${Boolean(favorite)}"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="m9 2.8 2.02 4.09 4.51.66-3.27 3.18.77 4.5L9 13.11l-4.03 2.12.77-4.5-3.27-3.18 4.51-.66Z"></path></svg><b>${favorite ? 'Favorited' : 'Favorites'}</b></button>${forkAction}${sourceRef ? threadRouter.renderSourceActions(sourceRef) : ''}</div></div>
     </div>`
   }
   if (type === 'reasoning') {
@@ -4949,6 +5096,23 @@ async function handleMarkdownActionClick(event) {
 }
 
 async function handleTranscriptClick(event) {
+  const supervisionButton = event.target.closest?.('[data-supervision-action]')
+  if (supervisionButton) {
+    event.preventDefault()
+    const ref = { backend: supervisionButton.dataset.backend, id: supervisionButton.dataset.thread }
+    try {
+      if (supervisionButton.dataset.supervisionAction === 'stop') turnSupervision.stop(ref)
+      else {
+        enableTurnSupervision(ref, supervisionButton.dataset.turn)
+      }
+    } catch (error) { showError(error) }
+    return
+  }
+  if (event.target.closest?.('[data-router-reply], [data-router-tool]')) {
+    event.preventDefault()
+    await threadRouter.handleAction(event.target)
+    return
+  }
   const resourceLink = event.target.closest('.markdown-body a[data-resource-target]')
   if (resourceLink) {
     const target = resourceLink.dataset.resourceTarget || ''
@@ -4960,8 +5124,10 @@ async function handleTranscriptClick(event) {
     }
     const file = resolveMarkdownFileLink(target)
     if (!file) return
+    const source = threadRouter.sourceContext(resourceLink)
+    if (source && !source.thread?.cwd) throw new Error(t('The target session no longer exists.'))
     const openLinkedArtifact = () => openArtifact(
-      { root: selectedThread()?.cwd, path: file.path },
+      { root: source?.thread?.cwd || selectedThread()?.cwd, path: file.path, sourceSessionKey: source?.key || '' },
       { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' },
     )
     if (event.currentTarget === $('#transcript')) {
@@ -4992,7 +5158,7 @@ async function handleTranscriptClick(event) {
   }
   const activityLog = event.target.closest('[data-activity-log]')
   if (activityLog) {
-    openActivityLog(activityLog.dataset.activityLog)
+    openActivityLog(activityLog.dataset.activityLog, threadRouter.sourceContext(activityLog))
     return
   }
   const routerTarget = event.target.closest('[data-router-target]')
@@ -5011,19 +5177,20 @@ async function handleTranscriptClick(event) {
     const element = favoriteButton.closest('[data-turn-id][data-item-id]')
     if (!element) return
     const existing = reviewNotes.favoriteForSource(
-      state.backend,
-      state.selectedId,
+      threadRouter.sourceContext(element)?.backend || state.backend,
+      threadRouter.sourceContext(element)?.id || state.selectedId,
       element.dataset.turnId,
       element.dataset.itemId,
     )
     if (existing) await reviewNotes.openFavoriteDetail(existing.id)
-    else reviewNotes.openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId)
+    else reviewNotes.openFavoriteForMessage(element.dataset.turnId, element.dataset.itemId, threadRouter.sourceContext(element))
     return
   }
   const copyMessageButton = event.target.closest('[data-copy-message]')
   if (copyMessageButton) {
     const element = copyMessageButton.closest('[data-turn-id][data-item-id]')
-    const item = element && modelItem(element.dataset.turnId, element.dataset.itemId)
+    const source = threadRouter.sourceContext(element)
+    const item = source ? source.model?.turns?.find(turn => String(turn.id) === element.dataset.turnId)?.items?.find(item => String(item.id) === element.dataset.itemId) : element && modelItem(element.dataset.turnId, element.dataset.itemId)
     if (!item) return
     const content = item.type === 'agentMessage' ? sessionMapVisibleText(item.text || '') : item.text || ''
     try {
@@ -5038,8 +5205,8 @@ async function handleTranscriptClick(event) {
   }
 }
 
-function openActivityLog(turnId) {
-  const entries = presentationActivityEntries(activityPresentationForTurn(turnId))
+function openActivityLog(turnId, source = null) {
+  const entries = presentationActivityEntries(activityPresentationForTurn(turnId, source))
   if (!entries.length) return
   activityLogContext = { turnId: String(turnId || ''), entries }
   $('#activity-log-title').textContent = t('Full activity log')
@@ -5274,6 +5441,17 @@ function handleComposerInput() {
     return
   }
   const trigger = composerTrigger(input.value, input.selectionStart)
+  const routerOptions = threadRouter.targetSuggestions(input.value, input.selectionStart)
+  if (routerOptions) {
+    clearTimeout(composerSearchTimer)
+    const target = threadRouter.currentCandidates().find(candidate => candidate.key === state.routerRuntime.selectedTarget)
+    const generation = state.composerMenu.generation + 1
+    state.composerMenu = { type: 'router', trigger: routerOptions.trigger, options: routerOptions.options.map(option => ({ ...option, kind: 'session' })), selected: 0, generation,
+      fileMessage: target?.cwd ? t('Searching files through Codex App Server…') : t('Choose a target session to search its files') }
+    renderComposerMenu()
+    if (target?.cwd) composerSearchTimer = setTimeout(() => performRouterFileSearch(routerOptions.trigger, generation, target), 120)
+    return
+  }
   if (!trigger) {
     hideComposerMenu()
     return
@@ -5343,7 +5521,9 @@ function handleComposerMenuClick(event) {
 }
 
 function hideComposerMenu() {
+  $('#router-choose-target')?.setAttribute('aria-expanded', 'false')
   clearTimeout(composerSearchTimer)
+  state.composerMenu.generation += 1
   state.composerMenu.type = null
   state.composerMenu.options = []
   state.composerMenu.trigger = null
@@ -5353,22 +5533,30 @@ function hideComposerMenu() {
 
 function renderComposerMenu(message = '') {
   const menu = $('#composer-menu')
+  const picker = Boolean(state.composerMenu.trigger?.confirmedPicker)
+  menu.classList.toggle('router-choice-popup', picker)
+  if (picker) {
+    const anchor = $('#router-choose-target').getBoundingClientRect()
+    const parent = $('#composer-form').getBoundingClientRect()
+    menu.style.left = `${Math.max(8, Math.min(anchor.left - parent.left, parent.width - 368))}px`
+    menu.style.bottom = `${parent.bottom - anchor.top + 6}px`
+  } else { menu.style.left = ''; menu.style.bottom = '' }
   const options = state.composerMenu.options
   menu.classList.remove('hidden')
-  if (!options.length) {
+  if (!options.length && state.composerMenu.type !== 'router') {
     const empty = state.composerMenu.type === 'file'
       ? 'No matching files'
       : state.composerMenu.type === 'skill'
         ? 'No matching skills'
-        : 'No matching commands'
+        : state.composerMenu.type === 'router' ? 'No matching sessions' : 'No matching commands'
     menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(t(message || empty))}</div>`
     return
   }
   menu.innerHTML = options.map((option, index) => {
     const selected = index === state.composerMenu.selected
-    const type = state.composerMenu.type
-    const title = type === 'slash' ? `/${option.name}` : type === 'skill' ? `$${option.name}` : fuzzyFileLabel(option)
-    const detail = type === 'slash'
+    const type = state.composerMenu.type === 'router' ? option.kind === 'file' ? 'file' : 'router' : state.composerMenu.type
+    const title = type === 'router' ? option.title : type === 'slash' ? `/${option.name}` : type === 'skill' ? `$${option.name}` : fuzzyFileLabel(option)
+    const detail = option.automatic ? '' : type === 'router' ? `${backendDescriptor(option.backend).name} · ${option.cwd} · ${option.responsibility || option.openingMessage || ''}` : type === 'slash'
       ? option.description
       : type === 'skill'
         ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
@@ -5377,10 +5565,33 @@ function renderComposerMenu(message = '') {
     const openAction = type === 'file'
       ? `<button class="composer-file-open" type="button" data-open-file-index="${index}" title="${t(previewable ? 'Open for review' : 'Only text files and common images can be previewed')}"${previewable ? '' : ' disabled aria-disabled="true"'}>${t('Open')}</button>`
       : ''
-    return `<div id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small>${openAction}</div>`
+    const group = !picker && state.composerMenu.type === 'router' && (index === 0 || option.kind !== options[index - 1].kind)
+      ? `<div class="composer-menu-empty" role="presentation">${t(option.kind === 'file' ? 'Files' : 'Session')}</div>` : ''
+    return `${group}<div id="composer-option-${index}" class="composer-option${selected ? ' selected' : ''}" role="option" aria-selected="${selected}" data-composer-index="${index}"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail || '')}</small>${openAction}</div>`
   }).join('')
+  if (state.composerMenu.type === 'router') {
+    if (!options.some(option => option.kind === 'session')) menu.insertAdjacentHTML('afterbegin', `<div class="composer-menu-empty">${t('Session')} · ${t('No matching sessions')}</div>`)
+    if (state.composerMenu.fileMessage) menu.insertAdjacentHTML('beforeend', `<div class="composer-menu-empty">${t('Files')} · ${escapeHtml(state.composerMenu.fileMessage)}</div>`)
+  }
   $('#composer-input').setAttribute('aria-activedescendant', `composer-option-${state.composerMenu.selected}`)
   menu.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
+}
+
+async function performRouterFileSearch(trigger, generation, target) {
+  const current = () => state.composerMenu.type === 'router' && state.composerMenu.generation === generation && state.routerRuntime.selectedTarget === target.key
+  try {
+    const result = await rpc('fuzzyFileSearch', { query: trigger.query, roots: [target.cwd], cancellationToken: randomId() }, 15_000)
+    if (!current()) return
+    const files = (Array.isArray(result?.files) ? result.files : []).slice(0, 30)
+      .map(file => ({ ...file, root: target.cwd, kind: 'file', sourceSessionKey: target.key }))
+    state.composerMenu.options = [...state.composerMenu.options.filter(option => option.kind === 'session'), ...files]
+    state.composerMenu.fileMessage = files.length ? '' : t('No matching files')
+    renderComposerMenu()
+  } catch (error) {
+    if (!current()) return
+    state.composerMenu.fileMessage = t('File search failed: {message}', { message: error.message })
+    renderComposerMenu()
+  }
 }
 
 function searchComposerFiles(trigger) {
@@ -5451,7 +5662,22 @@ function selectComposerOption(index) {
   const trigger = state.composerMenu.trigger
   if (!option || !trigger) return
   const input = $('#composer-input')
-  if (state.composerMenu.type === 'file') {
+  if (state.composerMenu.type === 'router' && option.kind !== 'file') {
+    threadRouter.chooseTarget(option.key)
+    if (trigger.confirmedPicker) {
+      hideComposerMenu()
+      input.focus()
+      return
+    }
+    const prefix = input.value.slice(0, trigger.start)
+    const reference = `${prefix && !/\s$/u.test(prefix) ? ' ' : ''}@${option.title} `
+    setCurrentComposerValue(prefix + reference + input.value.slice(trigger.end))
+    input.setSelectionRange(prefix.length + reference.length, prefix.length + reference.length)
+    hideComposerMenu()
+    input.focus()
+    return
+  }
+  if (state.composerMenu.type === 'file' || (state.composerMenu.type === 'router' && option.kind === 'file')) {
     const replacement = replaceComposerTrigger(input.value, trigger, selectedFileReference(option))
     setCurrentComposerValue(replacement.value)
     input.setSelectionRange(replacement.cursor, replacement.cursor)
@@ -5461,6 +5687,7 @@ function selectComposerOption(index) {
       if (!files.some((file) => file.path === option.path)) files.push({ type: 'file', path: option.path, root: option.root })
     }
     hideComposerMenu()
+    renderComposerState()
     input.focus()
     return
   }
@@ -5714,7 +5941,8 @@ async function executeSlashCommand(action) {
 }
 
 function renderComposerState() {
-  const active = Boolean(state.model.activeTurnId)
+  const active = Boolean(state.model.activeTurnId) || state.model.status === 'running'
+  const awaitingTurnIdentity = active && !state.model.activeTurnId
   const options = currentTurnOptions()
   const descriptor = currentBackend()
   const display = resolveModelDisplay({
@@ -5739,6 +5967,7 @@ function renderComposerState() {
   $('#composer-form').classList.toggle('shell-mode', shellMode)
   renderComposerImages()
   $('#interrupt-turn').classList.toggle('hidden', !active)
+  $('#interrupt-turn').disabled = !state.ready || awaitingTurnIdentity
   $('#queue-message').classList.toggle('hidden', !queueAvailable)
   $('#queue-message').textContent = queue.length >= state.queueDepth ? `${t('Queue')} (${queue.length}/${state.queueDepth})` : t('Queue')
   $('#continue-thread').classList.toggle('hidden', !continueAvailable)
@@ -5748,12 +5977,12 @@ function renderComposerState() {
     : state.continueBehavior === 'ollamaDraft'
       ? t('Draft the next message with local Ollama · Ctrl/Cmd+Shift+Enter')
       : t('Draft the next message with the current session model · Ctrl/Cmd+Shift+Enter')
-  $('#continue-thread').disabled = !state.ready || !state.selectedId || hasComposerContent || Boolean(queue.length) || draftingContinuation
+  $('#continue-thread').disabled = !state.ready || !state.selectedId || active || hasComposerContent || Boolean(queue.length) || draftingContinuation
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
   $('#send-message').classList.toggle('hidden', active && state.backend === 'opencode')
-  $('#send-message').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode') || (shellMode && (active || !shellCommand))
+  $('#send-message').disabled = !state.ready || !state.selectedId || awaitingTurnIdentity || (active && (state.backend === 'opencode' || isRouterThread())) || (shellMode && (active || !shellCommand))
   $('#composer-add-image').disabled = !state.ready || !state.selectedId || (active && state.backend === 'opencode')
   renderMessageQueue()
   if (queue.length && !active && !state.pausedMessageQueues.has(selectedStateKey()) && !state.runningMessageQueues.has(selectedStateKey())) {
@@ -5761,6 +5990,8 @@ function renderComposerState() {
     queueMicrotask(() => runNextQueuedMessage(ref).catch((error) => console.error('Queued turn failed', error)))
   }
   reviewNotes.renderComposerContext()
+  threadRouter.renderComposerTarget()
+  renderComposerTools()
 }
 
 function handleContinueAction(...args) {

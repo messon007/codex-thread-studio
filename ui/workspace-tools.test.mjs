@@ -219,10 +219,10 @@ test('documents opened from Files and Review keep a return destination', () => {
   const review = readFileSync(new URL('./git-review.mjs', import.meta.url), 'utf8')
   const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const documentWorkspace = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  assert.match(workspace, /openFile\?\.\(\{ root: state\.root, path \}, \{ returnTool: 'files' \}\)/u)
+  assert.match(workspace, /openFile\?\.\(\{ root: state\.root, path, sourceSessionKey \}, \{ returnTool: 'files' \}\)/u)
   assert.match(review, /returnTool: 'review'/u)
-  assert.match(app, /openWorkspaceTool: \(tool\) => workspaceTools\.open\(tool\)/u)
-  assert.match(documentWorkspace, /openWorkspaceTool\(returnTool\)/u)
+  assert.match(app, /openWorkspaceTool: \(tool, sourceSessionKey\)/u)
+  assert.match(documentWorkspace, /openWorkspaceTool\(returnTool, sourceSessionKey\)/u)
 })
 
 test('workspace rails share the persisted document width and shield pointer resizing', () => {

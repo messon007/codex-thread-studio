@@ -81,7 +81,12 @@ export function normalizeSessionMap(input: unknown): SessionMap | null {
         updatedAt: Number(item.updatedAt || 0),
       }
     })
-  const visibleIds = new Set(items.filter((item) => !item.archived).map((item) => item.id))
+  const requestedCurrent = items.find(item => item.id === String(value.currentItemId) && !item.archived && item.state !== 'done')
+  const currentItemId = requestedCurrent?.id || items.find(item => !item.archived && item.state === 'active')?.id || null
+  for (const item of items) {
+    if (!item.archived && item.id === currentItemId) item.state = 'active'
+    else if (['active', 'visited', 'paused'].includes(item.state)) item.state = 'notStarted'
+  }
   return {
     id: String(value.id),
     backend: String(value.backend),
@@ -90,7 +95,7 @@ export function normalizeSessionMap(input: unknown): SessionMap | null {
     definitionOfDone: String(value.definitionOfDone || ''),
     structure: isMapStructure(value.structure) ? value.structure : 'hierarchy',
     revision: Number(value.revision || 0),
-    currentItemId: visibleIds.has(String(value.currentItemId)) ? String(value.currentItemId) : null,
+    currentItemId,
     lastSyncedTurnId: value.lastSyncedTurnId == null ? null : String(value.lastSyncedTurnId),
     items,
     relations: Array.isArray(value.relations) ? value.relations : [],
@@ -230,7 +235,7 @@ export function bootstrapMapInput(map: SessionMap | null | undefined, interactio
     if (user || assistant) recent.unshift({ user, assistant })
   }
   recent.forEach((interaction, index) => { interaction.turn = index + 1 })
-  return `Create or extend a compact initial navigation structure for this optional Session Map.
+  return `${map?.items?.length ? 'Update the existing Session Map incrementally from the conversation. Keep existing IDs and completed states; avoid duplicating or recreating its outline. Return an empty operations array when nothing needs changing.' : 'Create a compact initial navigation structure for this optional Session Map.'}
 
 Current map (authoritative JSON):
 ${boundedMapContext(map)}
@@ -238,7 +243,7 @@ ${boundedMapContext(map)}
 Recent conversation interactions (oldest to newest):
 ${JSON.stringify(recent)}
 
-Return only safe incremental operations. Create a useful outline of normally 4–12 items based on the goal and conversation. Preserve existing items. Add parents before their children, use unique stable item IDs, and use setCurrent last to identify the subject currently being discussed. Prefer specific chapters, components, packages, questions, or steps over vague categories. Never mark anything done, change the goal, archive, move, reorder, or delete content.`
+Return only safe incremental operations. ${map?.items?.length ? 'Add only missing topics supported by the conversation; do not impose a new outline or target item count.' : 'Create a useful outline of normally 4–12 items based on the goal and conversation.'} Preserve existing items. Add parents before their children and use unique stable item IDs. New items default to notStarted (incomplete). Use setCurrent last only when the conversation clearly identifies the subject currently being discussed; at most one item may be current. Prefer specific chapters, components, packages, questions, or steps over vague categories. Never mark anything done, change the goal, archive, move, reorder, or delete content.`
 }
 
 export function assistantOperationSchema() {
@@ -247,7 +252,7 @@ export function assistantOperationSchema() {
   const nullableTitle = { anyOf: [{ type: 'string', minLength: 1, maxLength: 200 }, { type: 'null' }] }
   const nullableKind = { anyOf: [{ type: 'string', minLength: 1, maxLength: 40 }, { type: 'null' }] }
   const nullableSummary = { anyOf: [{ type: 'string', maxLength: 1000 }, { type: 'null' }] }
-  const states = ['notStarted', 'active', 'visited']
+  const states = ['notStarted', 'active']
   const operation = {
     type: 'object',
     properties: {
@@ -364,7 +369,7 @@ ${SESSION_MAP_UPDATE_START}
 {"baseRevision":${map.revision},"operations":[]}
 ${SESSION_MAP_UPDATE_END}
 
-Replace operations with safe incremental operations when the Map should change; otherwise keep the empty array. The block is private client metadata: never explain or refer to it in the user-facing answer. Allowed operations are addItem, updateItem, setCurrent, and setState with only notStarted, active, or visited. Add parents before children. Never change the goal, mark completion, archive, move, reorder, delete, or modify relations.`
+Replace operations with safe incremental operations when the Map should change; otherwise keep the empty array. The block is private client metadata: never explain or refer to it in the user-facing answer. Allowed operations are addItem, updateItem, setCurrent, and setState with only notStarted or active. New nodes default to notStarted (incomplete); at most one node may be current. Use setCurrent to switch the current subject. Add parents before children. Never change the goal, mark completion, archive, move, reorder, delete, or modify relations.`
   return {
     developerInstructions: rules,
     dynamicTools: [{
@@ -375,4 +380,3 @@ Replace operations with safe incremental operations when the Map should change; 
     }],
   }
 }
-

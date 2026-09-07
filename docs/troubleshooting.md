@@ -48,7 +48,7 @@ wsl -d Ubuntu -- bash -lc 'command -v codex; codex --version'
 wsl -d Ubuntu -- bash -lc 'command -v opencode; opencode --version'
 ```
 
-If a version manager keeps the commands outside the normal login `PATH`, enter their Linux absolute paths in Studio Settings. Studio also checks common NVM and FNM installation directories. Save, close Studio completely, and reopen it. Project directories must be Linux paths such as `/home/rui/project`, not `C:\project` or `\\wsl.localhost\...`.
+If a version manager keeps the commands outside the normal login `PATH`, enter their Linux absolute paths in Studio Settings. Studio also checks common NVM and FNM installation directories. Save, close Studio completely, and reopen it. Project directories must be Linux paths such as `/home/user/project`, not `C:\project` or `\\wsl.localhost\...`.
 
 OpenCode uses Windows-to-WSL localhost forwarding. Update WSL with `wsl --update`; if localhost forwarding is disabled by local policy, enable mirrored networking or restore WSL localhost forwarding before retrying.
 

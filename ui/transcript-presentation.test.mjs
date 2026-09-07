@@ -6,11 +6,36 @@ import {
   activityOutputPreview,
   commandKind,
   presentTurn,
+  presentRoutedTurn,
   presentationActivityBlocks,
   presentationActivityEntries,
   reasoningStage,
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
+
+test('Router hides all intermediate responses until completion and publishes only the last result', () => {
+  const turn = { id: 'r', status: 'inProgress', items: [
+    { id: 'u', type: 'userMessage', content: [] },
+    { id: 'a', type: 'agentMessage', text: 'Investigating' },
+    { id: 'c', type: 'commandExecution', command: 'ls', status: 'completed' },
+    { id: 'b', type: 'agentMessage', text: 'Final result' },
+  ] }
+  let presentation = presentRoutedTurn(turn)
+  assert.deepEqual(presentation.blocks.map(block => block.type), ['activity'])
+  assert.deepEqual(presentation.blocks[0].entries.map(entry => entry.itemId), ['a', 'c', 'b'])
+  assert.equal(presentation.blocks[0].active, true)
+  turn.status = 'completed'
+  presentation = presentRoutedTurn(turn)
+  assert.deepEqual(presentation.blocks.map(block => block.type), ['activity', 'assistant'])
+  assert.equal(presentation.blocks[1].item.id, 'b')
+  assert.deepEqual(presentation.blocks[0].entries.map(entry => entry.itemId), ['a', 'c'])
+  assert.equal(presentation.blocks[0].active, false)
+})
+
+test('Router errors do not publish an intermediate message as a successful final answer', () => {
+  const result = presentRoutedTurn({ id: 'r', status: 'failed', error: { message: 'offline' }, items: [{ id: 'a', type: 'agentMessage', text: 'Starting' }] })
+  assert.deepEqual(result.blocks.map(block => block.type), ['activity', 'error'])
+})
 
 test('groups work items into one activity and keeps the final answer prominent', () => {
   const turn = {

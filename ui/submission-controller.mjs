@@ -15,7 +15,7 @@ export function createSubmissionController(state, services) {
         const initialStateKey = selectedStateKey();
         const shellCommand = shellCommandFromComposer(input.value);
         if (shellCommand !== null) {
-            if (!shellCommand || !state.selectedId)
+            if (!shellCommand || !state.selectedId || !state.ready)
                 return;
             if (state.model.activeTurnId) {
                 showError(new Error('Wait for the current turn to finish or stop it before running a local shell command.'));
@@ -52,7 +52,9 @@ export function createSubmissionController(state, services) {
             }
             return;
         }
-        if (!state.selectedId)
+        if (!state.selectedId || !state.ready)
+            return;
+        if (state.model.status === 'running' && !state.model.activeTurnId)
             return;
         const stateKey = selectedStateKey();
         const pendingImages = [...(state.pendingImages[stateKey] || [])];
@@ -189,12 +191,14 @@ export function createSubmissionController(state, services) {
     async function runNextQueuedMessage(ref) {
         if (!ref || !isSupportedBackend(ref.backend))
             return;
+        if (services.isSupervised?.(ref))
+            return;
         const key = selectedStateKey(ref.id, ref.backend);
         const queue = state.messageQueues[key] || [];
         if (!queue.length || state.pausedMessageQueues.has(key) || state.runningMessageQueues.has(key))
             return;
         const model = messageQueueModel(ref);
-        if (model?.activeTurnId)
+        if (model?.activeTurnId || model?.status === 'running')
             return;
         let catalogActivity = null;
         try {

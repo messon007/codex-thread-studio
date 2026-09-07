@@ -174,6 +174,10 @@
             ></textarea>
             <div class="composer-footer">
               <div class="composer-context">
+                <details id="composer-tools" class="composer-tools">
+                  <summary class="composer-icon-button" title="More actions" aria-label="More actions"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></summary>
+                  <div id="composer-tools-content" class="composer-tools-popup"></div>
+                </details>
                 <input id="composer-image-input" class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
                 <button id="composer-add-image" class="composer-icon-button" type="button" title="Attach images" aria-label="Attach images">
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 10.8 11.9 5.4a3 3 0 0 1 4.2 4.2l-6.8 6.8a4.5 4.5 0 0 1-6.4-6.4l7-7a2.8 2.8 0 0 1 4 4l-6.8 6.8a1.25 1.25 0 0 1-1.8-1.8l5.8-5.8"/></svg>
@@ -182,6 +186,7 @@
                   <span id="composer-model-backend" class="composer-model-backend">CX</span>
                   <strong id="composer-model-name">Codex default</strong>
                 </div>
+                <div id="router-composer-target" class="router-composer-target hidden"><button id="router-choose-target" type="button" aria-haspopup="listbox" aria-expanded="false">Automatic routing ▾</button><small id="router-target-status" role="status"></small></div>
               </div>
               <div class="composer-actions">
                 <button id="interrupt-turn" class="subtle-button hidden" type="button">Stop</button>
@@ -209,10 +214,7 @@
             <div class="menu-anchor">
               <button id="session-map-more" class="icon-button" type="button" aria-label="Map actions" aria-expanded="false"><svg class="overflow-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="19" cy="12" r="1.35"/></svg></button>
               <div id="session-map-menu" class="action-menu hidden" role="menu">
-                <button id="session-map-add-root" type="button" role="menuitem">Add</button>
                 <button id="session-map-ai-generate" type="button" role="menuitem">Generate with AI</button>
-                <button id="session-map-edit-goal" type="button" role="menuitem">Edit goal</button>
-                <button id="session-map-undo" type="button" role="menuitem">Undo update</button>
                 <span class="menu-separator"></span>
                 <button id="session-map-delete" class="danger-text" type="button" role="menuitem">Delete Map</button>
               </div>
@@ -229,13 +231,7 @@
         <nav id="session-map-tree" class="session-map-tree" aria-label="Map contents"></nav>
         <div id="session-map-item-menu" class="session-map-item-menu action-menu hidden" role="menu">
           <button data-map-item-action="current" type="button" role="menuitem">Set current</button>
-          <button data-map-item-action="visited" type="button" role="menuitem">Visited</button>
           <button data-map-item-action="done" type="button" role="menuitem">Done</button>
-          <button data-map-item-action="paused" type="button" role="menuitem">Pause</button>
-          <span class="menu-separator"></span>
-          <button data-map-item-action="add-child" type="button" role="menuitem">Add child</button>
-          <button data-map-item-action="edit" type="button" role="menuitem">Edit</button>
-          <button data-map-item-action="archive" class="danger-text" type="button" role="menuitem">Remove</button>
         </div>
         <footer class="session-map-footer">
           <span id="session-map-progress">0 items</span>
@@ -431,40 +427,13 @@
       <form id="session-map-form">
         <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>Create Map</h2><p>A Map is optional. After you create one, AI can maintain it as the conversation progresses.</p></div><button id="close-session-map-dialog" class="icon-button" type="button">×</button></header>
         <div class="dialog-body">
-          <label class="field full"><span>Current goal</span><textarea id="session-map-create-goal" required rows="3" maxlength="4096" placeholder="In one sentence, what should this session ultimately help you accomplish?"></textarea></label>
+          <label class="field full"><span>Goal hint (optional)</span><textarea id="session-map-create-goal" rows="3" maxlength="4096" placeholder="Leave blank for AI to infer the goal from this conversation."></textarea></label>
           <label class="field"><span>Structure</span><select id="session-map-structure"><option value="hierarchy">Hierarchy</option><option value="path">Path</option><option value="flow">Flow</option><option value="blank">Blank</option></select></label>
           <label class="field full"><span>Completion definition (optional)</span><textarea id="session-map-create-done" rows="2" maxlength="8192" placeholder="What must be true for this goal to be complete?"></textarea></label>
-          <p class="session-map-cost-note">Automatic synchronization reuses the current turn and adds no model request. Initial generation, manual AI completion, and goal suggestions share one temporary worker for this Map.</p>
+          <p class="session-map-cost-note">AI infers a missing goal and generates the outline from this conversation. Generation and manual AI updates use model requests; automatic synchronization reuses the current turn.</p>
           <div id="session-map-create-error" class="form-error hidden"></div>
         </div>
         <footer class="dialog-footer"><button id="cancel-session-map" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Create</button></footer>
-      </form>
-    </dialog>
-
-    <dialog id="session-map-goal-dialog" class="dialog session-map-dialog">
-      <form id="session-map-goal-form">
-        <header class="dialog-header"><div><span class="eyebrow">SESSION MAP</span><h2>Edit goal</h2><p>The new goal takes effect from the next interaction.</p></div><button id="close-session-map-goal" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body">
-          <label class="field full"><span>Current goal</span><textarea id="session-map-goal-input" required rows="3" maxlength="4096"></textarea></label>
-          <label class="field full"><span>Completion definition (optional)</span><textarea id="session-map-done-input" rows="2" maxlength="8192"></textarea></label>
-          <div id="session-map-goal-error" class="form-error hidden"></div>
-        </div>
-        <footer class="dialog-footer"><button id="session-map-suggest-goal" class="subtle-button push-left" type="button">AI suggestion</button><button id="cancel-session-map-goal" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
-      </form>
-    </dialog>
-
-    <dialog id="session-map-item-dialog" class="dialog session-map-item-dialog">
-      <form id="session-map-item-form">
-        <header class="dialog-header"><div><span class="eyebrow">MAP ITEM</span><h2 id="session-map-item-dialog-title">Add item</h2><p>Every template uses the same generic item structure.</p></div><button id="close-session-map-item" class="icon-button" type="button">×</button></header>
-        <div class="dialog-body">
-          <input id="session-map-item-id" type="hidden" />
-          <label class="field full"><span>Name</span><input id="session-map-item-title" required maxlength="512" /></label>
-          <label class="field"><span>Kind</span><input id="session-map-item-kind" maxlength="64" value="item" placeholder="item" /></label>
-          <label class="field"><span>Parent</span><select id="session-map-item-parent"><option value="">Top level</option></select></label>
-          <label class="field full"><span>Summary (optional)</span><textarea id="session-map-item-summary" rows="3" maxlength="4096"></textarea></label>
-          <div id="session-map-item-error" class="form-error hidden"></div>
-        </div>
-        <footer class="dialog-footer"><button id="cancel-session-map-item" class="subtle-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></footer>
       </form>
     </dialog>
 

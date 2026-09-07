@@ -4,7 +4,7 @@ import { createSubmissionController } from './submission-controller.mjs'
 import { createCodexViewModel } from './codex-native.mjs'
 
 function fixture() {
-  const state = { backend: 'codex', selectedId: 'a', model: createCodexViewModel(), pendingSkills: {}, pendingFiles: {}, pendingImages: {}, messageQueues: {}, runningMessageQueues: new Set(), pausedMessageQueues: new Set(), messageQueueErrors: new Map() }
+  const state = { backend: 'codex', ready: true, selectedId: 'a', model: createCodexViewModel(), pendingSkills: {}, pendingFiles: {}, pendingImages: {}, messageQueues: {}, runningMessageQueues: new Set(), pausedMessageQueues: new Set(), messageQueueErrors: new Map() }
   const calls = [], input = { value: 'hello', disabled: false }, button = { disabled: false }
   const services = {
     $: selector => selector === '#composer-input' ? input : button,
@@ -26,6 +26,26 @@ function fixture() {
   return { state, services, calls, input, controller: createSubmissionController(state, services) }
 }
 const event = { preventDefault() {} }
+test('stale enabled buttons cannot dispatch while disconnected or waiting for a native turn ID', async () => {
+  for (const disconnected of [true, false]) {
+    const f = fixture()
+    f.state.ready = !disconnected
+    if (!disconnected) f.state.model.status = 'running'
+    await f.controller.sendComposer(event)
+    assert.equal(f.calls.length, 0)
+    assert.equal(f.input.value, 'hello')
+  }
+})
+
+test('supervision holds independent Queue items even while the native turn is idle', async () => {
+  const f = fixture()
+  f.state.messageQueues['codex:thread'] = [{ id: 'queued', text: 'Independent task', input: [] }]
+  f.services.isSupervised = () => true
+  f.controller = createSubmissionController(f.state, f.services)
+  await f.controller.runNextQueuedMessage({ backend: 'codex', id: 'thread' })
+  assert.equal(f.calls.length, 0)
+  assert.equal(f.state.messageQueues['codex:thread'].length, 1)
+})
 
 test('normal send prepares once, binds cwd/model and reconciles optimistic input', async () => {
   const f = fixture()

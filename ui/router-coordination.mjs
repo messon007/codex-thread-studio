@@ -37,7 +37,9 @@ export class RouterTurnCoordinator {
         this.state.pending.delete(key);
         let decisionParsed = false;
         try {
-            const decision = parseRouterDecision(finalAgentText(turn), pending.candidateKeys);
+            const decision = pending.explicitTarget
+                ? parseRouterDecision(JSON.stringify({ action: 'dispatch', targetSessionKey: pending.explicitTarget, forwardedPrompt: pending.originalPrompt || '', reason: '', message: '' }), pending.candidateKeys)
+                : parseRouterDecision(finalAgentText(turn), pending.candidateKeys);
             decisionParsed = true;
             if (decision.action === 'clarify') {
                 this.state.dispatches.set(key, { status: 'clarify', decision });
@@ -49,11 +51,12 @@ export class RouterTurnCoordinator {
             const result = await effects.dispatch(decision, pending);
             this.state.dispatches.set(key, { status: 'running', decision, targetTurnId: result.targetTurnId });
             this.state.targetTurns.set(result.targetTurnKey, { routerTurnId: key, targetSessionKey: result.targetSessionKey });
-            effects.started(result);
+            await effects.started(result);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            this.state.dispatches.set(key, { status: 'failed', error: message, decisionInvalid: !decisionParsed });
+            const previous = this.state.dispatches.get(key);
+            this.state.dispatches.set(key, { ...previous, status: previous?.targetTurnId ? 'running' : 'failed', error: message, decisionInvalid: !decisionParsed });
             effects.changed();
             effects.failed(message);
         }

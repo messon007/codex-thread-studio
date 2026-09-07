@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   assistantOperationSchema,
@@ -30,6 +31,26 @@ const map = normalizeSessionMap({
   ],
 })
 
+test('Map node menu only exposes current and completed states, without manual editors', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  assert.deepEqual([...html.matchAll(/data-map-item-action="([^"]+)"/gu)].map(match => match[1]), ['current', 'done'])
+  assert.doesNotMatch(html, /id="session-map-(?:add-root|edit-goal|item-dialog|goal-dialog)"/u)
+  assert.doesNotMatch(html, /id="session-map-create-goal" required/u)
+})
+
+test('Map normalization keeps one current item and defaults other nodes to incomplete', () => {
+  const input = { id: 'm', backend: 'codex', threadId: 't', currentItemId: 'b', items: [
+    { id: 'a', title: 'A', state: 'active' }, { id: 'b', title: 'B', state: 'active' },
+    { id: 'c', title: 'C' }, { id: 'd', title: 'D', state: 'done' },
+  ] }
+  const normalized = normalizeSessionMap(input)
+  assert.deepEqual(normalized.items.map(item => item.state), ['notStarted', 'active', 'notStarted', 'done'])
+  assert.equal(normalized.currentItemId, 'b')
+  input.items[0].state = 'notStarted'
+  input.items[1].state = 'done'
+  assert.equal(normalizeSessionMap(input).currentItemId, null)
+})
+
 test('Map workers recover after rejection and disposed queued jobs cannot run', async () => {
   const pool = new SessionMapWorkerPool()
   const failed = pool.enqueue('map', () => { throw new Error('fixture failure') })
@@ -51,7 +72,7 @@ test('Map wire payloads remain unknown until normalized', () => {
 test('normalizes and flattens a hierarchy without archived items', () => {
   assert.deepEqual(flattenSessionMap(map).map(({ item, depth }) => [item.id, depth]), [['root', 0], ['child', 1]])
   assert.deepEqual(mapItemTrail(map).map((item) => item.id), ['root', 'child'])
-  assert.deepEqual(mapProgress(map), { total: 2, done: 0, explored: 1 })
+  assert.deepEqual(mapProgress(map), { total: 2, done: 0, explored: 0 })
 })
 
 test('builds encoded REST endpoints and bounded model context', () => {
@@ -123,6 +144,11 @@ test('bootstraps only an empty unsynchronized Map and includes recent conversati
   assert.match(input, /Understand pending updates/)
   assert.match(input, /Which packages need updates\?/)
   assert.match(input, /4–12 items/)
+  const update = bootstrapMapInput(map, [{ user: 'Continue studying', assistant: 'Next topic' }])
+  assert.match(update, /Update the existing Session Map incrementally/)
+  assert.match(update, /Keep existing IDs and completed states/)
+  assert.doesNotMatch(update, /4–12 items/)
+  assert.match(update, /empty operations array/)
   const oversized = bootstrapMapInput(empty, Array.from({ length: 12 }, () => ({ user: 'u'.repeat(8_000), assistant: 'a'.repeat(12_000) })))
   assert.ok(oversized.length < 55_000)
 })

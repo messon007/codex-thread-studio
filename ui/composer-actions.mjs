@@ -13,6 +13,8 @@ export function createComposerActions(state, services) {
         draftContinueMessage();
     }
     function quickSendContinueMessage() {
+        if (!state.ready || !state.selectedId || state.model.activeTurnId || state.model.status === 'running' || composerHasPendingContent())
+            return;
         const button = $('#continue-thread');
         if (button.disabled || button.classList.contains('hidden'))
             return;
@@ -28,6 +30,8 @@ export function createComposerActions(state, services) {
             || state.pendingFiles[key]?.length);
     }
     async function draftContinueMessage() {
+        if (!state.ready || !state.selectedId || state.model.activeTurnId || state.model.status === 'running' || composerHasPendingContent())
+            return;
         const button = $('#continue-thread');
         if (button.disabled || button.classList.contains('hidden'))
             return;

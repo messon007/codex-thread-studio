@@ -34,17 +34,17 @@
     <text x="50" y="294" class="ui label muted">CODEX-THREAD-STUDIO</text><text x="285" y="294" class="ui small muted">3</text>
     <rect x="41" y="307" width="264" height="66" rx="11" fill="#e5f4f1" stroke="#b9dfd7"/>
     <circle cx="58" cy="340" r="4" fill="#15967d"/>
-    <text x="75" y="332" class="ui body" font-weight="700">Session search design</text><text x="75" y="352" class="ui tiny muted">/home/rui/.../codex-thread-studio</text><text x="282" y="343" text-anchor="end" class="ui tiny brand" font-weight="700">CX</text>
-    <circle cx="58" cy="400" r="4" fill="#aebbc0"/><text x="75" y="397" class="ui body" font-weight="650">Router dispatch fixes</text><text x="75" y="417" class="ui tiny muted">/home/rui/.../codex-thread-studio</text><text x="282" y="404" text-anchor="end" class="ui tiny muted" font-weight="700">CX</text>
+    <text x="75" y="332" class="ui body" font-weight="700">Session search design</text><text x="75" y="352" class="ui tiny muted">/home/user/.../codex-thread-studio</text><text x="282" y="343" text-anchor="end" class="ui tiny brand" font-weight="700">CX</text>
+    <circle cx="58" cy="400" r="4" fill="#aebbc0"/><text x="75" y="397" class="ui body" font-weight="650">Router dispatch fixes</text><text x="75" y="417" class="ui tiny muted">/home/user/.../codex-thread-studio</text><text x="282" y="404" text-anchor="end" class="ui tiny muted" font-weight="700">CX</text>
     <text x="50" y="456" class="ui label muted">DOCUMENTS</text><text x="285" y="456" class="ui small muted">2</text>
-    <circle cx="58" cy="490" r="4" fill="#aebbc0"/><text x="75" y="487" class="ui body" font-weight="650">Markdown viewer</text><text x="75" y="507" class="ui tiny muted">/home/rui/documents</text>
+    <circle cx="58" cy="490" r="4" fill="#aebbc0"/><text x="75" y="487" class="ui body" font-weight="650">Markdown viewer</text><text x="75" y="507" class="ui tiny muted">/home/user/documents</text>
     <path d="M30 800h286" class="stroke"/>
     <rect x="48" y="815" width="250" height="40" rx="9" fill="#f4f7f8"/><rect x="57" y="822" width="27" height="27" rx="8" fill="#e3f3ef"/><text x="70" y="841" text-anchor="middle" class="ui small brand">⌂</text><text x="94" y="833" class="ui small" font-weight="700">Local workspace</text><text x="94" y="847" class="ui tiny muted">Local workspace</text>
 
     <!-- Header -->
     <rect x="317" y="42" width="1253" height="74" rx="18" fill="#fff"/><rect x="317" y="80" width="1253" height="36" fill="#fff"/>
     <rect x="337" y="60" width="38" height="38" rx="10" fill="#128673"/><text x="356" y="83" text-anchor="middle" font-family="Arial" font-size="10" font-weight="800" fill="#fff">CX</text>
-    <text x="389" y="77" class="ui title">Session search design</text><circle cx="585" cy="73" r="3" fill="#1b9a7e"/><text x="594" y="77" class="ui tiny muted">Connected</text><text x="389" y="96" class="ui tiny muted">/home/rui/downloads/openresource/codex-thread-studio</text>
+    <text x="389" y="77" class="ui title">Session search design</text><circle cx="585" cy="73" r="3" fill="#1b9a7e"/><text x="594" y="77" class="ui tiny muted">Connected</text><text x="389" y="96" class="ui tiny muted">/home/user/downloads/openresource/codex-thread-studio</text>
     <!-- toolbar icons -->
     <g transform="translate(1288 62)"><rect width="34" height="34" rx="9" fill="#e3f3ef" stroke="#9fd2c7"/><circle cx="15" cy="15" r="6" class="icon" stroke="#147d6d"/><path d="M20 20l5 5" class="icon" stroke="#147d6d"/></g>
     <g transform="translate(1330 62)"><rect width="34" height="34" rx="9" fill="#fff" class="stroke"/><path d="M8 9h18v12H14l-6 5z" class="icon"/></g>

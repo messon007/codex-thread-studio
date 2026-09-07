@@ -87,6 +87,7 @@ export function createReviewNotesController({
     selectThread,
     translateSelection,
     translationProfile,
+    sourceContext = () => null,
   } = view
   const $ = (selector) => document.querySelector(selector)
   const $$ = (selector) => [...document.querySelectorAll(selector)]
@@ -213,14 +214,17 @@ function captureTranscriptSelection() {
   const turn = element?.closest('[data-turn-id]')
   const body = item?.querySelector('.markdown-body')
   const offsets = chatSelectionOffsets(range, body, rawText, excerpt.length)
+  const origin = sourceContext(item)
   state.pendingSelection = {
     quote: excerpt,
     itemId: item?.dataset.itemId || null,
     turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
+    origin,
     source: chatCommentSource({
       itemId: item?.dataset.itemId || null,
       turnId: item?.dataset.turnId || turn?.dataset.turnId || null,
       ...offsets,
+      sessionKey: origin?.key,
     }),
   }
   positionSelectionPopover(range, { allowFavorite: true })
@@ -542,8 +546,9 @@ function openFavoriteFromSelection() {
     captureTranscriptSelection()
     if (!state.pendingSelection?.quote) return toast('Select text in the AI output first', 'error')
   }
-  const thread = selectedThread()
-  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
+  const origin = state.pendingSelection.origin
+  const thread = origin?.thread || selectedThread()
+  const turn = (origin?.model || state.model).turns.find((candidate) => String(candidate.id) === String(state.pendingSelection.turnId))
   if (!thread || !state.pendingSelection.turnId || !state.pendingSelection.itemId) {
     return toast('The selected text could not be anchored. Select within a single response.', 'error')
   }
@@ -551,8 +556,8 @@ function openFavoriteFromSelection() {
   state.pendingFavorite = {
     id: randomId(),
     scope: 'selection',
-    backend: state.backend,
-    threadId: state.selectedId,
+    backend: origin?.backend || state.backend,
+    threadId: origin?.id || state.selectedId,
     threadTitle: threadTitle(thread),
     projectPath: thread.cwd || '',
     turnId: String(state.pendingSelection.turnId),
@@ -1107,10 +1112,10 @@ function handleFavoriteListClick(event) {
   if (card) openFavoriteDetail(card.dataset.favoriteId).catch(showError)
 }
 
-function openFavoriteForMessage(turnId, itemId) {
-  const turn = state.model.turns.find((candidate) => String(candidate.id) === String(turnId))
+function openFavoriteForMessage(turnId, itemId, origin = null) {
+  const turn = (origin?.model || state.model).turns.find((candidate) => String(candidate.id) === String(turnId))
   const item = turn?.items?.find((candidate) => String(candidate.id) === String(itemId))
-  const thread = selectedThread()
+  const thread = origin?.thread || selectedThread()
   const visibleText = item?.type === 'agentMessage' ? sessionMapVisibleText(item.text) : item?.text || ''
   if (!turn || !item || !thread || !visibleText.trim()) {
     toast('This response is not complete and cannot be favorited yet', 'error')
@@ -1120,8 +1125,8 @@ function openFavoriteForMessage(turnId, itemId) {
   state.pendingFavorite = {
     id: randomId(),
     scope: 'message',
-    backend: state.backend,
-    threadId: state.selectedId,
+    backend: origin?.backend || state.backend,
+    threadId: origin?.id || state.selectedId,
     threadTitle: threadTitle(thread),
     projectPath: thread.cwd || '',
     turnId: String(turn.id || ''),

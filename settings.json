@@ -5,12 +5,8 @@
   "contentWidth": "comfortable",
   "queueDepth": 1,
   "continueBehavior": "sessionModelDraft",
-  "sharedDocumentDirectories": [
-    "/tmp"
-  ],
-  "sessionDirectoryIgnore": [
-    "/home/rui/desktop/lisource/aswcodex/test/lld2code/*/"
-  ],
+  "sharedDocumentDirectories": [],
+  "sessionDirectoryIgnore": [],
   "wslCodexBinary": "codex",
   "wslOpencodeBinary": "opencode",
   "typography": {
@@ -66,10 +62,7 @@
   },
   "router": {
     "controllerBackend": "codex",
-    "controllers": {
-      "codex": "019ffa41-44df-7d92-8431-4504b74769b3",
-      "opencode": "ses_0022b1bfeffe7pzQ5Y5FSB1EoA"
-    }
+    "controllers": {}
   },
   "sidebarCollapsed": false,
   "rightRailWidthRatio": 0.27574882864792505

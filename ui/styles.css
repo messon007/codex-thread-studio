@@ -282,6 +282,11 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .track-icon-fill { fill: currentColor; stroke: none; }
 .message.agent.favorite-source-highlight { margin-inline: -14px; padding-inline: 17px; border-radius: 12px; background: var(--favorite-soft); box-shadow: 0 0 0 1px color-mix(in srgb, var(--favorite) 42%, transparent); }
 .message-actions { min-height: 32px; margin-top: 4px; display: flex; align-items: center; justify-content: flex-start; gap: 3px; }
+.message-actions { flex-wrap: wrap; }
+.supervision-action.active { color: var(--brand); opacity: 1; }
+#composer-tools-content > .supervision-action { display: flex; align-items: center; gap: 8px; width: 100%; opacity: 1; text-align: left; }
+.supervision-action svg { width: 18px; height: 18px; flex: 0 0 18px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.router-running-actions { margin-left: 28px; }
 .message-favorite-button, .message-copy-button, .message-fork-button { width: 32px; min-height: 32px; padding: 6px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; opacity: .62; transition: opacity .15s, color .15s, background .15s, border-color .15s; }
 .message-actions svg { width: 18px; height: 18px; display: block; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .message-favorite-button svg { color: var(--favorite); }
@@ -383,7 +388,7 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .router-card { margin: 4px 0 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-soft); box-shadow: var(--shadow-sm); }
 .router-card > header { display: flex; align-items: center; gap: 11px; }
 .router-card > header > div { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
-.router-card > header strong { font-size: var(--ui-font-secondary); }
+.router-card > header strong { font-size: var(--ui-font-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .router-card > header small { overflow: hidden; color: var(--muted); font-size: var(--ui-font-label); text-overflow: ellipsis; white-space: nowrap; }
 .router-card-mark { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; border-radius: 9px; background: var(--blue-soft); color: var(--blue); font-size: calc(var(--ui-font-size) + 3px); font-weight: var(--ui-font-emphasis); }
 .router-card-status { padding: 4px 8px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: var(--ui-font-label); font-weight: var(--ui-font-emphasis); }
@@ -428,6 +433,19 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .composer-queue-actions button:disabled { opacity: .45; cursor: wait; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px 0; }
 .composer-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.composer-tools, .composer-attachment-control { position: relative; }
+.composer-tools > summary { list-style: none; cursor: pointer; }
+.composer-tools > summary::-webkit-details-marker { display: none; }
+.composer-tools-popup { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30; width: min(340px, 80vw); max-height: 50vh; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px #0002; font: inherit; }
+.composer-tools-popup[hidden] { display: none; }
+#composer-tools-content { width: max-content; max-width: min(240px, 80vw); padding: 5px; }
+.composer-tools-popup > button { display: block; width: 100%; text-align: left; padding: 8px; }
+.composer-tools-popup button { border: 0; border-radius: 5px; background: transparent; color: var(--text); font: inherit; cursor: pointer; padding: 6px 8px; }
+.composer-tools-popup button:hover { background: var(--panel-strong); }
+.composer-tools-popup button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.supervision-hint { display: block; color: var(--muted); font-size: var(--ui-font-sm); margin: 6px 0 12px; line-height: 1.5; }
+.composer-tools-popup .turn-supervision-menu { width: 100%; margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); }
+.supervision-next { display: flex; align-items: center; gap: 8px; }
 .composer-actions { flex-shrink: 0; display: flex; gap: 7px; }
 .composer-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .composer-icon-button { width: 27px; height: 27px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); cursor: pointer; }
@@ -1212,6 +1230,8 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .composer-review-context #composer-review-send-clear { background: var(--brand); color: white; }
 .composer-review-context #composer-review-send-clear:hover { background: color-mix(in srgb, var(--brand) 88%, black); color: white; }
 .composer-menu { position: absolute; z-index: 30; right: 8px; bottom: calc(100% + 8px); left: 8px; max-height: min(360px, 48vh); overflow: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 11px; background: var(--panel); box-shadow: var(--shadow-md); }
+.composer-menu.router-choice-popup { right: auto; width: min(360px, calc(100% - 16px)); }
+.router-choice-popup .composer-option small:empty { display: none; }
 .composer-option { width: 100%; padding: 9px 10px; display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; }
 .composer-option:hover, .composer-option.selected { background: var(--brand-soft); }
 .composer-option strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--ui-font-emphasis) var(--ui-font-label)/1.3 var(--ui-font-family); }
@@ -1303,3 +1323,39 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .activity-spinner { animation-duration: 1.8s; }
 }
+.router-composer-target {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0;
+  font: inherit;
+}
+#router-composer-target { margin: 0; padding: 0; flex-wrap: nowrap; min-width: 0; }
+#router-choose-target { max-width: 230px; height: 27px; padding: 0 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); font: var(--ui-font-weight) var(--ui-font-label)/1 var(--ui-font-family); }
+#router-choose-target:hover, #router-choose-target[aria-expanded="true"] { border-color: var(--border-strong); color: var(--text); }
+.composer-context { flex-wrap: wrap; }
+.router-composer-target button {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.router-composer-target small {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+  font-size: calc(var(--ui-font-size) - 1px);
+}
+.router-source-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.router-source-actions .icon-button { display: inline-grid; place-items: center; }
+.router-source-actions .icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.router-source-actions .icon-button:hover { background: var(--panel-strong); color: var(--text); }
+.router-source-actions .icon-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.router-target-response { min-width: 0; }
+.turn-supervision-menu { margin: 0 0 6px auto; width: fit-content; max-width: 100%; font-size: var(--ui-font-sm); color: var(--muted); }
+.session-map-row-menu .overflow-icon { width: 16px; height: 16px; flex-shrink: 0; fill: currentColor; stroke: none; vertical-align: middle; }
+.turn-supervision-menu > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; }
+.turn-supervision-menu small { font-size: inherit; }

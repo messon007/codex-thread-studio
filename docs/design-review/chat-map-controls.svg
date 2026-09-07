@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1510" viewBox="0 0 1280 1510">
+<defs>
+ <style>text{font-family:'Noto Sans CJK SC','Microsoft YaHei',sans-serif;fill:#243536;font-size:16px} .muted{fill:#6b7b7c;font-size:14px}.title{font-size:25px;font-weight:600}.label{font-weight:600}.small{font-size:13px}.stroke{fill:none;stroke:#526e6b;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}</style>
+ <g id="down" class="stroke"><path d="m0 0 5 5 5-5"/></g>
+ <g id="close" class="stroke"><path d="m0 0 10 10M10 0 0 10"/></g>
+ <g id="refresh" class="stroke"><path d="M17 6A8 8 0 1 0 19 13M17 1v5h-5"/></g>
+</defs>
+<rect width="1280" height="1510" fill="#f4f7f6"/>
+<text x="48" y="52" class="title">Chat 与 Session Map · 交互方案</text>
+<text x="48" y="81" class="muted">设计稿，尚未实现。保留现有图标、字体配置与轻量控件；不增加常驻说明段落。</text>
+
+<rect x="32" y="108" width="1216" height="422" rx="16" fill="white" stroke="#dce5e2"/>
+<text x="56" y="148" class="title">01  监工：收进 Chat 的「＋」菜单</text>
+<text x="56" y="178" class="muted">发送前可预置下一条；发送后可选择已发任务补开。每条任务独立，绝不变成会话全局开关。</text>
+<rect x="56" y="202" width="758" height="220" rx="12" fill="#fbfcfb" stroke="#c9d8d2"/>
+<text x="76" y="231" class="muted">普通会话：不显示目标会话或任务标题</text>
+<text x="76" y="282" class="muted">补充本轮要求…</text>
+<text x="76" y="396" class="muted">＋　　＠　　GPT · Session model</text>
+<rect x="595" y="369" width="78" height="34" rx="8" fill="#eef2ef"/><text x="618" y="392" class="small">Queue</text>
+<rect x="687" y="369" width="99" height="34" rx="8" fill="#287967"/><text x="712" y="392" style="fill:white;font-size:14px">Steer ↑</text>
+<rect x="844" y="202" width="374" height="205" rx="12" fill="white" stroke="#c9d8d2"/>
+<text x="864" y="234" class="label">＋ 更多操作</text>
+<text x="864" y="271">下一条消息启用监工　○</text><text x="864" y="307">为已发送任务开启监工　›</text>
+<path d="M860 324h342" stroke="#e0e8e4"/>
+<text x="864" y="354" style="fill:#287967">管理监工任务（2）　›</text>
+<text x="864" y="383" class="muted">Router 列出目标会话与发送时间</text>
+<text x="76" y="457" class="small">状态示例：</text>
+<rect x="163" y="437" width="136" height="30" rx="15" fill="#eef6f1"/><text x="177" y="458" class="small">● 监工中 · 等待回复</text>
+<rect x="311" y="437" width="120" height="30" rx="15" fill="#eef3fa"/><text x="325" y="458" class="small">◌ 检查完成情况</text>
+<rect x="443" y="437" width="127" height="30" rx="15" fill="#fff4e6"/><text x="457" y="458" class="small">需要你确认 · 已停</text>
+<rect x="582" y="437" width="120" height="30" rx="15" fill="#eef6f1"/><text x="596" y="458" class="small">✓ 本轮监工完成</text>
+<text x="76" y="499" class="muted">下一条预置只消费一次；发送失败保留。Router 每个派发任务独立启停；任务正文不常驻显示。</text>
+
+<rect x="32" y="550" width="1216" height="411" rx="16" fill="white" stroke="#dce5e2"/>
+<text x="56" y="590" class="title">02  Router：用一个目标选择器，替代两行说明</text>
+<text x="56" y="620" class="muted">@ 菜单分“会话 / 文件”两组；现有回形针统一为附件入口，＋ 菜单不再重复放文件入口。</text>
+<rect x="56" y="648" width="758" height="187" rx="12" fill="#fbfcfb" stroke="#c9d8d2"/>
+<text x="76" y="684" class="muted">输入问题，或 @ 指定会话…</text>
+<text x="76" y="805" class="muted">＋　＠</text>
+<rect x="150" y="779" width="141" height="36" rx="8" fill="#edf4f0"/>
+<text x="164" y="803" style="fill:#287967;font-size:14px">↗ 自动分配</text><use href="#down" x="269" y="792"/>
+<text x="312" y="803" class="muted">GPT · Session model</text>
+<rect x="687" y="778" width="99" height="36" rx="8" fill="#287967"/><text x="712" y="802" style="fill:white;font-size:14px">发送 ↑</text>
+<rect x="844" y="648" width="374" height="244" rx="12" fill="white" stroke="#baccbf"/>
+<text x="864" y="678" class="label">选择目标</text><text x="1190" y="678" class="muted">⌕</text>
+<path d="M860 693h342" stroke="#e0e8e4"/>
+<text x="866" y="720" class="small">✓ 自动分配</text><text x="866" y="750" class="muted">根据当前问题推荐</text>
+<rect x="856" y="762" width="350" height="47" rx="7" fill="#eef6f1"/>
+<text x="868" y="789" class="label">rico</text><text x="926" y="789" class="muted">布局与渲染　推荐</text>
+<text x="868" y="834" class="muted">文件 · rico 项目</text>
+<text x="868" y="870">▤ src/layout.ts</text><text x="1030" y="870" class="muted">引用文件</text>
+<text x="76" y="871" class="small">指定目标：</text><rect x="166" y="850" width="149" height="33" rx="8" fill="#edf4f0"/><text x="180" y="873" class="small">↗ 发给 rico</text><use href="#down" x="290" y="863"/>
+<text x="76" y="928" class="muted">附件显示为可移除的文件标签；更换目标后重新检查访问权限。不确定文件所属项目时先选项目，不静默猜测。</text>
+
+<rect x="32" y="981" width="1216" height="487" rx="16" fill="white" stroke="#dce5e2"/>
+<text x="56" y="1021" class="title">03  Session Map：生成 / 更新 / 删除，按地图状态呈现</text>
+<rect x="56" y="1048" width="460" height="377" rx="12" fill="#fbfcfb" stroke="#c9d8d2"/>
+<text x="76" y="1081" class="label">学习地图</text><use href="#refresh" x="339" y="1065"/><text x="366" y="1081" class="small">更新</text><g transform="translate(437 1067)" class="stroke"><path d="M0 3h16M5 3V0h6v3M3 3l1 15h8l1-15"/></g><use href="#close" x="481" y="1069"/>
+<path d="M56 1100h460" stroke="#e0e8e4"/>
+<text x="76" y="1132" class="label">理解分布式系统</text><text x="76" y="1159" class="muted">2 / 6 完成 · 当前：一致性模型</text>
+<text x="85" y="1199" style="fill:#287967">✓</text><text x="115" y="1199">01　通信与故障模型</text>
+<text x="85" y="1241" style="fill:#287967">✓</text><text x="115" y="1241">02　时间与事件排序</text>
+<rect x="70" y="1257" width="432" height="42" rx="8" fill="#eaf4ed"/>
+<text x="85" y="1284" style="fill:#287967">●</text><text x="115" y="1284">03　一致性模型</text><text x="465" y="1281">···</text>
+<text x="85" y="1326" class="muted">○</text><text x="115" y="1326">04　共识与复制</text>
+<text x="85" y="1368" class="muted">○</text><text x="115" y="1368">05　事务与隔离</text>
+<text x="76" y="1404" class="muted">最近更新：刚刚</text>
+<text x="554" y="1081" class="label">一次更新的输入</text>
+<rect x="554" y="1101" width="654" height="101" rx="9" fill="#f0f4f2"/>
+<text x="574" y="1131" class="small">当前地图：稳定节点 ID、层级、顺序、每个节点状态</text>
+<text x="574" y="1158" class="small">当前学习节点 + 用户手动状态 + 地图版本号</text>
+<text x="574" y="1185" class="small">上次同步后的对话 + 最新完整回复</text>
+<text x="554" y="1240" class="label">AI 返回增量更新，不重建整张地图</text>
+<text x="554" y="1273" class="muted">保留已完成节点；不把“提到了某主题”当成学完。</text>
+<text x="554" y="1301" class="muted">只有一个“当前”节点；用户操作与 AI 更新冲突时重新核对。</text>
+<text x="554" y="1329" class="muted">节点菜单仍只保留：设为当前 / 完成。</text>
+<text x="554" y="1373" class="muted">无地图：空态显示「根据会话生成」；已有地图：更新 + 删除。</text>
+<text x="554" y="1401" class="muted">删除需确认；失败保留原地图。移除 Undo，内部版本记录可保留。</text>
+</svg>

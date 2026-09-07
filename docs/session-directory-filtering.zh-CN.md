@@ -14,10 +14,10 @@ Studio 可以隐藏指定项目目录中的会话，但不会删除、归档或�
 {
   "sessionDirectoryIgnore": [
     "# 隐藏整棵目录树",
-    "/home/rui/desktop/lisource/aswcodex/",
+    "/home/user/projects/private-workspace/",
     "**/node_modules/",
     "scratch-*",
-    "!/home/rui/desktop/lisource/aswcodex/keep-this/"
+    "!/home/user/projects/private-workspace/keep-this/"
   ]
 }
 ```

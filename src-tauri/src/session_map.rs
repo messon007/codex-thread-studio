@@ -232,6 +232,7 @@ pub fn create(path: &Path, request: CreateMapRequest) -> Result<SessionMap, Stri
         updated_at: now,
     };
     normalize_positions(&mut map.items);
+    normalize_current(&mut map);
     validate_map(&map)?;
 
     let mut connection = connection(path)?;
@@ -296,6 +297,7 @@ pub fn apply_operations(
         map.last_synced_turn_id = Some(turn_id.clone());
     }
     normalize_positions(&mut map.items);
+    normalize_current(&mut map);
     validate_map(&map)?;
     replace_snapshot(&transaction, &map)?;
     insert_change(&transaction, &before, &map, &request)?;
@@ -326,6 +328,7 @@ pub fn undo(path: &Path, backend: &str, thread_id: &str) -> Result<Option<Sessio
         .map_err(|error| format!("stored map history is invalid: {error}"))?;
     restored.revision = current.revision + 1;
     restored.updated_at = now_ms();
+    normalize_current(&mut restored);
     validate_map(&restored)?;
     replace_snapshot(&transaction, &restored)?;
     transaction
@@ -446,16 +449,44 @@ fn apply_operation(
             )?;
         }
         MapOperation::SetState { item_id, state } => {
+            if actor == "assistant" && require_item(map, item_id)?.state == "done" {
+                return Err(
+                    "the assistant cannot reopen a completed map item automatically".into(),
+                );
+            }
+            if state == "active" {
+                return apply_operation(
+                    map,
+                    &MapOperation::SetCurrent {
+                        item_id: Some(item_id.clone()),
+                    },
+                    actor,
+                );
+            }
             let item = require_item_mut(map, item_id)?;
             item.state = state.clone();
             item.updated_at = now;
+            if map.current_item_id.as_ref() == Some(item_id) {
+                map.current_item_id = None;
+            }
         }
         MapOperation::SetCurrent { item_id } => {
+            if actor == "assistant"
+                && item_id.as_ref().is_some_and(|id| {
+                    map.items
+                        .iter()
+                        .any(|item| item.id == *id && item.state == "done")
+                })
+            {
+                return Err(
+                    "the assistant cannot reopen a completed map item automatically".into(),
+                );
+            }
             if let Some(previous) = map.current_item_id.as_ref() {
                 if item_id.as_ref() != Some(previous) {
                     if let Some(item) = map.items.iter_mut().find(|item| item.id == *previous) {
                         if item.state == "active" {
-                            item.state = "visited".to_string();
+                            item.state = "notStarted".to_string();
                             item.updated_at = now;
                         }
                     }
@@ -463,9 +494,7 @@ fn apply_operation(
             }
             if let Some(item_id) = item_id {
                 let item = require_item_mut(map, item_id)?;
-                if !matches!(item.state.as_str(), "done" | "paused") {
-                    item.state = "active".to_string();
-                }
+                item.state = "active".to_string();
                 item.updated_at = now;
             }
             map.current_item_id = item_id.clone();
@@ -608,6 +637,28 @@ fn place_after(
         }
     }
     Ok(())
+}
+
+fn normalize_current(map: &mut SessionMap) {
+    let current = map.current_item_id.clone().filter(|id| {
+        map.items
+            .iter()
+            .any(|item| item.id == *id && !item.archived && item.state != "done")
+    });
+    let current = current.or_else(|| {
+        map.items
+            .iter()
+            .find(|item| !item.archived && item.state == "active")
+            .map(|item| item.id.clone())
+    });
+    for item in &mut map.items {
+        if !item.archived && current.as_ref() == Some(&item.id) {
+            item.state = "active".into();
+        } else if matches!(item.state.as_str(), "active" | "visited" | "paused") {
+            item.state = "notStarted".into();
+        }
+    }
+    map.current_item_id = current;
 }
 
 fn normalize_positions(items: &mut [MapItem]) {
@@ -987,6 +1038,7 @@ fn find_with_connection(
         .map_err(sql_error)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(sql_error)?;
+    normalize_current(&mut map);
     Ok(Some(map))
 }
 
@@ -1092,6 +1144,103 @@ mod tests {
                 position: 0,
             }],
         }
+    }
+
+    #[test]
+    fn current_node_is_exclusive_and_completion_clears_it() {
+        let path = database("current-state");
+        let mut request = create_request("state");
+        let mut second = request.items[0].clone();
+        second.id = Some("second".into());
+        request.items.push(second);
+        let mut map = create(&path, request).unwrap();
+        assert!(map.items.iter().all(|item| item.state == "notStarted"));
+        let apply = |map: &SessionMap, operations| {
+            apply_operations(
+                &path,
+                "codex",
+                "state",
+                ApplyOperationsRequest {
+                    base_revision: map.revision,
+                    actor: "user".into(),
+                    source_turn_id: None,
+                    operations,
+                },
+            )
+            .unwrap()
+            .unwrap()
+        };
+        map = apply(
+            &map,
+            vec![MapOperation::SetCurrent {
+                item_id: Some("packages".into()),
+            }],
+        );
+        map = apply(
+            &map,
+            vec![MapOperation::SetState {
+                item_id: "second".into(),
+                state: "active".into(),
+            }],
+        );
+        assert_eq!(map.current_item_id.as_deref(), Some("second"));
+        assert_eq!(
+            map.items
+                .iter()
+                .filter(|item| item.state == "active")
+                .count(),
+            1
+        );
+        assert_eq!(
+            map.items
+                .iter()
+                .find(|item| item.id == "packages")
+                .unwrap()
+                .state,
+            "notStarted"
+        );
+        map = apply(
+            &map,
+            vec![MapOperation::SetState {
+                item_id: "second".into(),
+                state: "done".into(),
+            }],
+        );
+        assert!(map.current_item_id.is_none());
+        assert!(apply_operations(
+            &path,
+            "codex",
+            "state",
+            ApplyOperationsRequest {
+                base_revision: map.revision,
+                actor: "assistant".into(),
+                source_turn_id: None,
+                operations: vec![MapOperation::SetCurrent {
+                    item_id: Some("second".into())
+                }],
+            }
+        )
+        .is_err());
+        assert!(find(&path, "codex", "state")
+            .unwrap()
+            .unwrap()
+            .current_item_id
+            .is_none());
+        map = apply(
+            &map,
+            vec![MapOperation::SetCurrent {
+                item_id: Some("second".into()),
+            }],
+        );
+        assert_eq!(
+            map.items
+                .iter()
+                .find(|item| item.id == "second")
+                .unwrap()
+                .state,
+            "active"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

@@ -14,10 +14,10 @@ Add Gitignore-style rules under `sessionDirectoryIgnore` at the top level:
 {
   "sessionDirectoryIgnore": [
     "# Hide this complete directory tree",
-    "/home/rui/desktop/lisource/aswcodex/",
+    "/home/user/projects/private-workspace/",
     "**/node_modules/",
     "scratch-*",
-    "!/home/rui/desktop/lisource/aswcodex/keep-this/"
+    "!/home/user/projects/private-workspace/keep-this/"
   ]
 }
 ```

@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkComposerAcceptance, checkCommentMarkerScope } from './browser-composer-acceptance.mjs'
+import { checkRouterAcceptance } from './browser-router-acceptance.mjs'
+import { checkRouterMentions } from './browser-router-mentions.mjs'
+import { checkSessionMapAcceptance } from './browser-session-map-acceptance.mjs'
+import { checkSupervisionAcceptance } from './browser-supervision-acceptance.mjs'
 const { chromium } = await import(process.env.STUDIO_PLAYWRIGHT_MODULE || 'playwright')
 // Optional integration test; build the binary and provide an installed Playwright.
 const binary = process.env.STUDIO_REMOTE_BINARY || fileURLToPath(new URL('../target/debug/codex-thread-studio', import.meta.url))
@@ -65,6 +69,9 @@ try {
     .split('\n').map(line => line.split('\t')[0]).filter(path => path?.startsWith('ui/') && path.endsWith('.mjs'))
     .map(path => `/${path.slice(3)}`)
   await page.evaluate(async paths => { for (const path of paths) await import(path) }, generatedModules)
+  for (const backend of ['codex', 'ept-codex', 'opencode']) console.log(`Router acceptance (${backend}):`, await checkRouterAcceptance(page, backend))
+  console.log(await checkRouterMentions(page))
+  console.log(await checkSessionMapAcceptance(page))
   // Import real embedded modules in the browser, not just local test files.
   // Fake adapters exercise dispatch without starting paid/backend sessions.
   await page.evaluate(async () => {
@@ -183,6 +190,7 @@ try {
     check(JSON.parse(writes[0].body).sessionKey === 'codex:fixture', 'state writer snapshot failed')
   })
   console.log(await checkComposerAcceptance(page))
+  console.log(await checkSupervisionAcceptance(page))
   console.log(await checkCommentMarkerScope(page))
   const filesRoot = join(profile, 'files-fixture')
   await mkdir(filesRoot)

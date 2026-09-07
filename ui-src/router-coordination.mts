@@ -2,7 +2,7 @@ import { finalAgentText, parseRouterDecision } from './thread-router.mjs'
 import type { RouterDecision, RouterTurn } from './router-types.mjs'
 import type { SessionTurnInput } from './backend-types.mjs'
 
-export interface PendingRouterTurn { candidateKeys: string[]; requestedAt: number; attachments: SessionTurnInput[] }
+export interface PendingRouterTurn { candidateKeys: string[]; requestedAt: number; attachments: SessionTurnInput[]; explicitTarget?: string; originalPrompt?: string }
 export interface RouterDispatchState {
   status: 'routing' | 'dispatching' | 'running' | 'completed' | 'failed' | 'clarify'
   decision?: RouterDecision
@@ -44,7 +44,7 @@ export class RouterTurnCoordinator {
   async complete<T extends TargetDispatchResult>(key: string, turn: RouterTurn | undefined, effects: {
     changed: () => void
     dispatch: (decision: RouterDecision, pending: PendingRouterTurn) => Promise<T>
-    started: (result: T) => void
+    started: (result: T) => void | Promise<void>
     failed: (message: string) => void
   }): Promise<boolean> {
     const pending = this.state.pending.get(key)
@@ -53,7 +53,9 @@ export class RouterTurnCoordinator {
     this.state.pending.delete(key)
     let decisionParsed = false
     try {
-      const decision = parseRouterDecision(finalAgentText(turn), pending.candidateKeys)
+      const decision = pending.explicitTarget
+        ? parseRouterDecision(JSON.stringify({ action: 'dispatch', targetSessionKey: pending.explicitTarget, forwardedPrompt: pending.originalPrompt || '', reason: '', message: '' }), pending.candidateKeys)
+        : parseRouterDecision(finalAgentText(turn), pending.candidateKeys)
       decisionParsed = true
       if (decision.action === 'clarify') {
         this.state.dispatches.set(key, { status: 'clarify', decision })
@@ -65,10 +67,11 @@ export class RouterTurnCoordinator {
       const result = await effects.dispatch(decision, pending)
       this.state.dispatches.set(key, { status: 'running', decision, targetTurnId: result.targetTurnId })
       this.state.targetTurns.set(result.targetTurnKey, { routerTurnId: key, targetSessionKey: result.targetSessionKey })
-      effects.started(result)
+      await effects.started(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.state.dispatches.set(key, { status: 'failed', error: message, decisionInvalid: !decisionParsed })
+      const previous = this.state.dispatches.get(key)
+      this.state.dispatches.set(key, { ...previous, status: previous?.targetTurnId ? 'running' : 'failed', error: message, decisionInvalid: !decisionParsed })
       effects.changed()
       effects.failed(message)
     }

@@ -216,6 +216,25 @@ export function presentTurn(turn) {
         source: turn,
     };
 }
+/** Router output is published only after completion; intermediate messages stay activity. */
+export function presentRoutedTurn(turn) {
+    const items = (turn.items || []).filter(item => item.type !== 'userMessage');
+    const final = turn.status === 'completed'
+        ? [...items].reverse().find(item => item.type === 'agentMessage' && String(item.text || '').trim()) : undefined;
+    const entries = items.filter(item => item !== final).map(item => item.type === 'agentMessage' || item.type === 'plan'
+        ? { kind: 'progress', itemId: item.id, item, status: item.status || turn.status || 'unknown' } : activityEntry(item));
+    const blocks = [];
+    if (entries.length || turn.status === 'inProgress') {
+        const activity = buildActivityBlock(turn, entries);
+        activity.active = turn.status === 'inProgress';
+        blocks.push(activity);
+    }
+    if (final)
+        blocks.push({ type: 'assistant', itemId: final.id, item: final, variant: 'message' });
+    if (turn.status === 'failed' || turn.error?.message)
+        blocks.push({ type: 'error', message: turn.error?.message || 'Turn failed' });
+    return { id: String(turn.id || ''), status: turn.status || 'unknown', blocks, source: turn };
+}
 export function presentationActivityBlocks(presentation) {
     return (presentation?.blocks || []).filter((block) => block.type === 'activity');
 }

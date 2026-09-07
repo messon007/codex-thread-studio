@@ -3,7 +3,7 @@ import { commentRecord } from './comment-core.mjs';
 import { createFileRangeTarget, fileAnnotationAnchor, fileDisplayName, lineRangeForTarget, normalizeAnnotationTarget, } from './document-review.mjs';
 export const CHAT_COMMENT_PROVIDER = 'chat';
 export const DOCUMENT_COMMENT_PROVIDER = 'document';
-export function chatCommentSource({ turnId = null, itemId = null, startOffset = null, endOffset = null } = {}) {
+export function chatCommentSource({ turnId = null, itemId = null, startOffset = null, endOffset = null, sessionKey = null } = {}) {
     return {
         provider: CHAT_COMMENT_PROVIDER,
         version: 1,
@@ -12,6 +12,7 @@ export function chatCommentSource({ turnId = null, itemId = null, startOffset = 
             itemId: boundedIdentifier(itemId),
             startOffset: boundedOffset(startOffset),
             endOffset: boundedOffset(endOffset),
+            ...(sessionKey ? { sessionKey: String(sessionKey).slice(0, 320) } : {}),
         },
     };
 }
@@ -82,6 +83,7 @@ function normalizeChatAnchor(value = {}) {
         itemId: boundedIdentifier(anchor.itemId),
         startOffset: boundedOffset(anchor.startOffset),
         endOffset: boundedOffset(anchor.endOffset),
+        ...(anchor.sessionKey ? { sessionKey: String(anchor.sessionKey).slice(0, 320) } : {}),
     };
 }
 function normalizeDocumentAnchor(value = {}) {

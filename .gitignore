@@ -13,3 +13,15 @@
 .DS_Store
 .idea/
 .vscode/
+
+# Machine-local credentials, databases and ad-hoc captures (not public examples)
+/.env
+/.env.*
+!/.env.example
+/auth.json
+/backends.json
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+/screenshots/

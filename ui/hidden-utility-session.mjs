@@ -49,9 +49,15 @@ export async function runHiddenUtilitySession(state, options) {
         }
         return await waitForUtilityResult({
             ensureCurrent: options.ensureCurrent,
-            read: async () => options.parse(codex
-                ? task?.model
-                : (await options.rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread),
+            read: async () => {
+                // Offscreen lifecycle streams may omit item deltas. Read once at terminal
+                // completion when callers need a complete structured result.
+                const completed = task?.model.turns.at(-1)?.status === 'completed';
+                const thread = codex && !(options.readCompletedThread && completed)
+                    ? task?.model
+                    : (await options.rpc('thread/read', { threadId, includeTurns: true, cwd }, 30_000))?.thread;
+                return options.parse(thread);
+            },
             intervalMs: codex ? 100 : 350,
             timeoutMs: 150_000, timeoutMessage: options.timeoutMessage, errorMessage: options.translateError,
         });

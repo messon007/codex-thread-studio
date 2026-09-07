@@ -91,7 +91,7 @@ test('Router controller refreshes candidates before starting a structured routin
   const start = calls[1]
   assert.equal(start.ref.id, 'router')
   assert.deepEqual(start.input, [{ type: 'text', text: 'Please prepare a design' }])
-  assert.deepEqual(start.options.outputSchema.properties.targetSessionKey.enum, ['codex:worker'])
+  assert.deepEqual(start.options.outputSchema.properties.targetSessionKey.enum, ['codex:worker', ''])
   assert.equal(start.options.turnOptions.effort, 'high')
   assert.ok(start.options.additionalContext['codex-thread-studio/thread-router'])
   assert.equal(state.routerRuntime.pending.has('codex:route-turn'), true)

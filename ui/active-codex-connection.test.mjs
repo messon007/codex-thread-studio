@@ -4,6 +4,7 @@ import { createActiveCodexConnection } from './active-codex-connection.mjs'
 import { createCodexViewModel } from './codex-native.mjs'
 
 function fixture() {
+  const composerStates = []
   const calls = [], state = {
     backend: 'codex', ready: false, selectedId: null, socketGeneration: 1,
     model: createCodexViewModel(), threadModels: new Map(), threadLoads: new Map(), appServerGenerations: {},
@@ -17,10 +18,30 @@ function fixture() {
     handleThreadCatalogFailure: () => {}, threadCatalogKey: (b, id) => `${b}:${id}`,
     refreshSelectedThread: async () => { calls.push(['refresh']); return true },
     toast: () => {}, t: s => s,
+    renderComposerState: () => composerStates.push(state.ready),
   }
-  return { state, services, calls, loads, controller: () => createActiveCodexConnection(state, services) }
+  return { state, services, calls, loads, composerStates, controller: () => createActiveCodexConnection(state, services) }
 }
 const ready = { method: 'studio/appServer/status', params: { state: 'ready', generation: 1 } }
+test('ready refreshes cached Composer controls before catalog/history settles', async () => {
+  const f = fixture()
+  f.state.selectedId = 'cached'
+  let finish
+  f.services.loadThreads = () => new Promise(resolve => { finish = resolve })
+  f.services.freshThreadModel = () => true
+  f.controller().handleAppServerMessage(ready)
+  assert.deepEqual(f.composerStates, [true])
+  f.state.selectedId = null
+  finish(); await Promise.all(f.loads.values())
+})
+for (const status of ['starting', 'stopped', 'error']) {
+  test(`${status} immediately revokes ready and updates Composer`, () => {
+    const f = fixture(); f.state.ready = true
+    f.controller().handleAppServerMessage({ method: 'studio/appServer/status', params: { state: status } })
+    assert.equal(f.state.ready, false)
+    assert.deepEqual(f.composerStates, [false])
+  })
+}
 test('each new frontend initialization loads its catalog; duplicate ready does not', async () => {
   for (let refresh = 0; refresh < 3; refresh++) {
     const f = fixture(), c = f.controller()

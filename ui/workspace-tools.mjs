@@ -35,6 +35,8 @@ export function createWorkspaceTools({
   let activeTool = null
   let visibleKey = ''
   let developerThread = null
+  let developerBackend = null
+  let sourceOwner = ''
   let fileWatch = null
   let fileWatchRetry = null
 
@@ -87,10 +89,12 @@ export function createWorkspaceTools({
 
   const element = (id) => document.getElementById(id)
   const currentThread = () => developerThread || getThread?.() || null
-  const currentKey = () => workspaceStateKey(currentThread(), getBackend?.() || 'codex')
+  const currentBackend = () => developerBackend || getBackend?.() || 'codex'
+  const ownerKey = () => workspaceStateKey(getThread?.(), getBackend?.() || 'codex')
+  const currentKey = () => workspaceStateKey(currentThread(), currentBackend())
   const currentSessionKey = () => {
     const thread = currentThread()
-    return thread?.id ? `${getBackend?.() || 'codex'}:${thread.id}` : ''
+    return thread?.id ? `${currentBackend()}:${thread.id}` : ''
   }
   const gitReview = createGitReview({
     gatewayFetch,
@@ -98,7 +102,7 @@ export function createWorkspaceTools({
       const state = stateForCurrent()
       return state ? { key: state.key, root: state.root } : null
     },
-    openFile,
+    openFile: (file, context) => openFile?.({ ...file, sourceSessionKey: sourceOwner ? currentSessionKey() : '' }, context),
     translate,
     notify,
   })
@@ -145,6 +149,7 @@ export function createWorkspaceTools({
   }
 
   function sync(thread = currentThread()) {
+    if (sourceOwner && sourceOwner !== ownerKey()) { close(); return }
     const available = Boolean(thread?.cwd)
     for (const id of ['open-workspace-files', 'open-workspace-terminal', 'open-workspace-review']) {
       const button = element(id)
@@ -159,7 +164,7 @@ export function createWorkspaceTools({
       return
     }
     const state = stateForCurrent()
-    element('workspace-tools-path').textContent = state.root
+    element('workspace-tools-path').textContent = sourceOwner ? `${currentThread()?.name || currentThread()?.id} · ${state.root}` : state.root
     element('workspace-root-name').textContent = workspaceRootName(state.root)
     element('workspace-terminal-cwd').textContent = state.root
     element('workspace-file-filter').value = state.filter
@@ -195,6 +200,8 @@ export function createWorkspaceTools({
     element('workspace-tools-rail')?.classList.add('hidden')
     syncButtons()
     developerThread = null
+    developerBackend = null
+    sourceOwner = ''
   }
 
   function isOpen() {
@@ -320,8 +327,9 @@ export function createWorkspaceTools({
       return
     }
     renderFileTree(state)
+    const sourceSessionKey = sourceOwner ? currentSessionKey() : ''
     close()
-    await openFile?.({ root: state.root, path }, { returnTool: 'files' })
+    await openFile?.({ root: state.root, path, sourceSessionKey }, { returnTool: 'files' })
   }
 
   function refreshFiles() {
@@ -501,6 +509,16 @@ export function createWorkspaceTools({
     await open(tool)
   }
 
+  async function openForSession(thread, backend, tool = 'files') {
+    close()
+    developerThread = thread
+    developerBackend = backend
+    sourceOwner = ownerKey()
+    await open(tool)
+    element('workspace-tools-path').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
+    element('workspace-terminal-cwd').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
+  }
+
   async function reveal(path) {
     const relativePath = safeWorkspaceRelativePath(path)
     if (relativePath == null) return false
@@ -523,7 +541,7 @@ export function createWorkspaceTools({
     return true
   }
 
-  return { bind, sync, open, openForDebug, reveal, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
+  return { bind, sync, open, openForDebug, openForSession, reveal, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
 }
 
 function fileIcon(name) {

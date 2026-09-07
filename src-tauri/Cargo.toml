@@ -15,7 +15,7 @@ wayland-webview-prototype = []
 windows-native = ["windows-sys/Win32_Security", "windows-sys/Win32_System_JobObjects", "windows-sys/Win32_System_Threading"]
 
 [build-dependencies]
-sha2 = "=0.10.9"
+sha2 = "=0.11.0"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
@@ -38,13 +38,13 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
-tao = "0.35.3"
+tao = "0.37.0"
 webkit2gtk = "2.0.1"
 wry = "0.51.2"
 
 [target.'cfg(windows)'.dependencies]
-tao = "0.35.3"
-webview2-com = "0.37"
+tao = "0.37.0"
+webview2-com = "0.39"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 wry = "0.51.2"
 

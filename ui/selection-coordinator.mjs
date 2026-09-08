@@ -1,7 +1,18 @@
 // Generated from ui-src; run npm run build:ui. Do not edit.
+/** Lightweight per-session UI descriptors; never retains document bytes or DOM. */
+export class SessionWorkspaceMemory {
+    entries = new Map();
+    generation = 0;
+    remember(key, value) { if (key)
+        this.entries.set(key, value); }
+    get(key) { return this.entries.get(key); }
+    invalidate() { this.generation++; }
+    begin() { const generation = ++this.generation; return () => generation === this.generation; }
+}
 /** Initial cross-backend selection belongs to the ready handler, not a second resume. */
 export async function awaitBackendSelection(effects) {
-    await effects.switchBackend();
+    if (await effects.switchBackend() === false)
+        return;
     await effects.waitFor(effects.ready, 15_000);
     const load = effects.initialLoad();
     if (load)

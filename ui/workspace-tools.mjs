@@ -181,14 +181,19 @@ export function createWorkspaceTools({
     closePeerRails?.()
     activeTool = tool
     visibleKey = currentSessionKey()
+    const openingKey = visibleKey
     element('workspace-tools-rail').classList.remove('hidden')
     setTool(tool)
     sync()
     if (tool === 'files') await ensureDirectory(stateForCurrent(), '')
     if (tool === 'review') await gitReview.open()
+    if (visibleKey !== openingKey || activeTool !== tool) return
     render()
     if (tool === 'terminal' && stateForCurrent()?.terminalStarted) {
-      setTimeout(() => fitTerminal(stateForCurrent(), { focus: true }), 30)
+      const terminalState = stateForCurrent()
+      setTimeout(() => {
+        if (visibleKey === openingKey && activeTool === tool) fitTerminal(terminalState, { focus: true })
+      }, 30)
     }
   }
 
@@ -515,6 +520,7 @@ export function createWorkspaceTools({
     developerBackend = backend
     sourceOwner = ownerKey()
     await open(tool)
+    if (developerThread !== thread || developerBackend !== backend || !isOpen()) return
     element('workspace-tools-path').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
     element('workspace-terminal-cwd').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
   }
@@ -541,7 +547,12 @@ export function createWorkspaceTools({
     return true
   }
 
-  return { bind, sync, open, openForDebug, openForSession, reveal, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
+  function snapshot() {
+    if (!isOpen()) return null
+    return { tool: activeTool, source: sourceOwner ? { backend: currentBackend(), id: currentThread()?.id } : null,
+      scroll: ['workspace-file-tree', 'workspace-review-files', 'workspace-review-diff'].map(id => ({ id, top: element(id)?.scrollTop || 0, left: element(id)?.scrollLeft || 0 })) }
+  }
+  return { bind, sync, open, openForDebug, openForSession, reveal, close, isOpen, snapshot, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
 }
 
 function fileIcon(name) {

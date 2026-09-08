@@ -4,6 +4,16 @@ export interface SelectionEnvironment {
   revision?: string
 }
 
+/** Lightweight per-session UI descriptors; never retains document bytes or DOM. */
+export class SessionWorkspaceMemory<T> {
+  private entries = new Map<string, T>()
+  private generation = 0
+  remember(key: string, value: T) { if (key) this.entries.set(key, value) }
+  get(key: string) { return this.entries.get(key) }
+  invalidate() { this.generation++ }
+  begin() { const generation = ++this.generation; return () => generation === this.generation }
+}
+
 /** Initial cross-backend selection belongs to the ready handler, not a second resume. */
 export async function awaitBackendSelection(effects: {
   switchBackend: () => Promise<unknown>
@@ -13,7 +23,7 @@ export async function awaitBackendSelection(effects: {
   catalogContainsSession: () => boolean
   freshSelection: () => boolean
 }): Promise<void> {
-  await effects.switchBackend()
+  if (await effects.switchBackend() === false) return
   await effects.waitFor(effects.ready, 15_000)
   const load = effects.initialLoad()
   if (load) await load

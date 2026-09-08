@@ -230,22 +230,72 @@ export async function checkComposerAcceptance(page) {
 }
 
 export async function checkCommentMarkerScope(page) {
-  return page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     const { createReviewNotesController, createReviewNotesState } = await import('/review-notes-controller.mjs')
     const root = document.createElement('section')
+    root.id = 'document-marker-acceptance'
+    root.style.cssText = 'width:650px;padding:24px;background:var(--panel);color:var(--text)'
     root.innerHTML = '<div id="transcript"><div id="fixture-item"><div class="markdown-body">sample text</div></div></div><div id="artifact-content" class="markdown-body">sample text</div>'
     document.body.append(root)
-    const state = { ...createReviewNotesState(), selectedId: 'fixture' }
+    const state = { ...createReviewNotesState(), selectedId: 'fixture', artifactView:'preview', artifact:{path:'/fixture.md',root:'/',kind:'text',hash:'v1',content:'sample text'} }
     const view = { selectedStateKey: () => 'fixture', renderedItem: () => root.querySelector('#fixture-item') }
-    const controller = createReviewNotesController({ state, view, commentSources: {}, gatewayFetch() {}, randomId: () => 'x', persistAnnotationState() {} })
+    root.insertAdjacentHTML('beforeend','<div id="selection-popover" class="hidden"><button id="selection-favorite">Favorite</button></div><dialog id="annotation-dialog"><h2 id="annotation-dialog-title"></h2><div id="annotation-source-hint"></div><blockquote id="annotation-quote"></blockquote><textarea id="annotation-comment"></textarea><div id="annotation-error"></div><button id="save-annotation">Save</button></dialog>')
+    const controller = createReviewNotesController({ state, view, commentSources: {describe:()=>'/fixture.md'}, gatewayFetch() {}, randomId: () => 'x', persistAnnotationState() {} })
+    controller.bind()
     state.annotationDrafts.fixture = [{ id: 'doc', excerpt: 'sample', source: { provider: 'document', anchor: { filePath: '/fixture.md' } } }]
     controller.renderCommentMarkers()
     if (root.querySelector('.chat-comment-anchor')) throw Error('Document comment unexpectedly used a chat marker')
     state.annotationDrafts.fixture.push({ id: 'chat', excerpt: 'sample', source: { provider: 'chat', anchor: { turnId: 't', itemId: 'i' } } })
     controller.renderCommentMarkers()
     if (!root.querySelector('#transcript .chat-comment-anchor')) throw Error('Chat marker missing')
-    if (root.querySelector('#artifact-content .chat-comment-anchor')) throw Error('Unexpected document marker')
-    root.remove()
-    return 'PASS: chat markers render; document preview has no marker implementation (existing limitation)'
+    controller.renderDocumentCommentMarkers()
+    const content = root.querySelector('#artifact-content')
+    if (content.querySelector('.chat-comment-anchor')?.textContent !== 'sample') throw Error('Document marker missing')
+    if (state.artifact.content !== 'sample text') throw Error('Marking changed the file')
+    content.innerHTML = 'sample <strong>text</strong>'
+    state.annotationDrafts.fixture[0].excerpt = 'sample text'
+    controller.renderDocumentCommentMarkers()
+    if (content.querySelectorAll('.chat-comment-anchor').length !== 2) throw Error('Cross-inline selection was not marked')
+    if (!content.querySelector('strong')) throw Error('Inline formatting lost')
+    const before = content.getBoundingClientRect().height
+    state.annotationDrafts.fixture = []
+    controller.renderDocumentCommentMarkers()
+    if (content.querySelector('.chat-comment-anchor, [data-comment-ids], [role="button"]')) throw Error('Clear left active markers')
+    if (content.textContent !== 'sample text' || content.getBoundingClientRect().height !== before) throw Error('Clear changed text or layout')
+    state.annotationDrafts.fixture = [{id:'doc',excerpt:'sample',source:{provider:'document',anchor:{filePath:'/fixture.md'}}}]
+    content.innerHTML = 'sample text'
+    controller.renderDocumentCommentMarkers()
+    if (!content.querySelector('.chat-comment-anchor')) throw Error('Reopen lost document markers')
+    state.artifact.path = '/other.md'
+    controller.renderDocumentCommentMarkers()
+    if (content.querySelector('.chat-comment-anchor')) throw Error('Marker leaked to another file')
+    state.artifact.path = '/fixture.md'
+    state.artifactView = 'edit'
+    controller.renderDocumentCommentMarkers()
+    if (content.querySelector('.chat-comment-anchor')) throw Error('Preview marker touched editor')
+    state.artifactView = 'preview'
+    controller.renderDocumentCommentMarkers()
+    content.querySelector('.chat-comment-anchor').click()
+    if (!root.querySelector('#annotation-dialog').open || state.editingAnnotationId !== 'doc') throw Error('Click did not open the matching comment')
+    await new Promise(resolve=>setTimeout(resolve,40))
+    root.querySelector('#annotation-dialog').close()
+    content.innerHTML = 'repeat repeat'
+    const range = document.createRange()
+    range.setStart(content.firstChild,7); range.setEnd(content.firstChild,13)
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(range)
+    content.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}))
+    if (state.pendingSelection.source.anchor.previewStartOffset !== 7 || state.pendingSelection.source.anchor.previewEndOffset !== 13) throw Error('Selection did not capture rendered offsets')
+    state.annotationDrafts.fixture = [{id:'repeat',excerpt:'repeat',source:state.pendingSelection.source}]
+    window.getSelection().removeAllRanges()
+    root.querySelector('#selection-popover').classList.add('hidden')
+    controller.renderDocumentCommentMarkers()
+    if (content.querySelector('.chat-comment-anchor')?.previousSibling?.textContent !== 'repeat ') throw Error('Repeated selection marked the wrong occurrence')
+    return 'PASS: chat and Markdown markers isolated; inline markup, clear without layout change, reopen, other-file and editor isolation'
   })
+  if (process.env.STUDIO_SCREENSHOT_DIR) {
+    await mkdir(process.env.STUDIO_SCREENSHOT_DIR,{recursive:true})
+    await page.locator('#document-marker-acceptance').screenshot({path:join(process.env.STUDIO_SCREENSHOT_DIR,'markdown-comment-markers.png')})
+  }
+  await page.locator('#document-marker-acceptance').evaluate(node=>node.remove())
+  return result
 }

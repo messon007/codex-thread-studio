@@ -1,5 +1,19 @@
 import type { CommentDraft } from './comment-types.mjs'
 
+export function locateDocumentCommentIntervals(text: string, drafts: readonly CommentDraft[], file: { path?: string; root?: string; hash?: string; dirty?: boolean }) {
+  const matching = drafts.filter(draft => draft.source?.provider === 'document'
+    && draft.source.anchor.filePath === file.path
+    && (!draft.source.anchor.root || draft.source.anchor.root === file.root))
+  return locateCommentIntervals(text, matching.map(draft => {
+    const anchor = draft.source.anchor
+    const unchanged = Boolean(!file.dirty && file.hash && anchor.previewHash === file.hash)
+    return { ...draft, source: { ...draft.source, anchor: {
+      startOffset: unchanged ? anchor.previewStartOffset : null,
+      endOffset: unchanged ? anchor.previewEndOffset : null,
+    } } }
+  }))
+}
+
 export function locateCommentIntervals(text: unknown, drafts: readonly CommentDraft[]) {
   const content = String(text || '')
   const intervals = []
@@ -29,4 +43,3 @@ function boundedOffset(value: unknown) {
   const offset = Number(value)
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : null
 }
-

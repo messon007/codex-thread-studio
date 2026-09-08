@@ -8,7 +8,7 @@ import { createSessionOperations } from './session-operations.mjs'
 import { preferencesSnapshot as createPreferencesSnapshot } from './preferences-snapshot.mjs'
 import { createEnvironmentApplication } from './environment-application.mjs'
 import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './history-installation.mjs'
-import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
+import { awaitBackendSelection, completeSessionSelection, SessionWorkspaceMemory } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createTurnSupervision, SUPERVISION_SCHEMA, SUPERVISION_INSTRUCTIONS, supervisionResult } from './turn-supervision.mjs'
@@ -661,6 +661,7 @@ const documentWorkspace = createDocumentWorkspaceController({
     disposeMarkdownImageAssets,
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
+    renderDocumentCommentMarkers: () => reviewNotes.renderDocumentCommentMarkers(),
     openWorkspaceTool: (tool, sourceSessionKey) => {
       const ref = parseSessionRefKey(sourceSessionKey)
       if (!ref) return workspaceTools.open(tool)
@@ -1782,6 +1783,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   if (!isSupportedBackend(backend) || backend === state.backend) return
   const previousBackend = state.backend
   captureTranscriptViewState()
+  if (!leaveSessionWorkspace()) return false
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
   const transitionGeneration = state.socketGeneration
@@ -3027,7 +3029,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   hideComposerMenu()
   resetStreamingPatches()
   captureTranscriptViewState()
-  if (state.artifact?.threadKey !== sessionMapKey(state.backend, id)) closeArtifactRail({ restoreMap: false })
+  if (state.selectedId !== id && !leaveSessionWorkspace()) return
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
   setNativeError(null)
@@ -3765,7 +3767,71 @@ function renderWorkspace() {
   reviewNotes.renderAnnotations()
   captureOpeningMessage()
   reviewNotes.renderSessionFavoriteCount()
-  sessionMap.render()
+  if (!restoreSessionWorkspace()) sessionMap.render()
+}
+
+const sessionWorkspaceMemory = new SessionWorkspaceMemory()
+let restoredWorkspaceKey = ''
+function leaveSessionWorkspace() {
+  const key = selectedStateKey()
+  const visible = id => !$(`#${id}`).classList.contains('hidden')
+  const file = state.artifact
+  const workspace = workspaceTools.snapshot()
+  const tool = file && visible('artifact-rail') ? 'document' : workspace ? 'workspace'
+    : visible('annotation-rail') ? 'comments' : visible('favorites-rail') ? 'favorites'
+      : sessionResources.isOpen() ? 'resources' : state.embeddedBrowserVisible ? 'browser'
+        : visible('session-map-rail') ? 'map' : null
+  const snapshot = { tool, workspace, favoriteScope: state.favoriteScope }
+  if (tool === 'document') snapshot.document = {
+    file: { root: file.root, path: file.path, sourceSessionKey: file.sourceSessionKey, epubCfi: file.readingState?.cfi || '' },
+    returnTool: file.returnTool,
+    viewState: { view: state.artifactView, page: file.page, scrollTop: $('#artifact-content').scrollTop, scrollLeft: $('#artifact-content').scrollLeft,
+      outlineOpen: state.artifactOutlineOpen, outlineFilter: state.artifactOutlineFilter, outlineCollapsed: [...state.artifactOutlineCollapsed],
+      search: state.artifactSearch, searchOpen: state.artifactSearchOpen },
+  }
+  if (tool === 'document' && file.loading) {
+    const previous = sessionWorkspaceMemory.get(key)?.document
+    if (previous?.file.path === file.path && previous.file.root === file.root) snapshot.document = previous
+  }
+  if (file && documentWorkspace.close({ restoreMap: false, restoreWorkspace: false }) === false) return false
+  sessionWorkspaceMemory.remember(key, snapshot)
+  sessionWorkspaceMemory.invalidate()
+  restoredWorkspaceKey = ''
+  sessionResources.close()
+  activateRightWorkspace(null)
+  return true
+}
+
+function restoreSessionWorkspace() {
+  const key = selectedStateKey()
+  if (!key || restoredWorkspaceKey === key) return false
+  restoredWorkspaceKey = key
+  const snapshot = sessionWorkspaceMemory.get(key)
+  if (!snapshot) return false
+  const valid = sessionWorkspaceMemory.begin()
+  const current = () => valid() && key === selectedStateKey()
+  const restore = async () => {
+    if (snapshot.tool === 'document') {
+      await documentWorkspace.open(snapshot.document.file, { returnTool: snapshot.document.returnTool, viewState: snapshot.document.viewState })
+    } else if (snapshot.tool === 'workspace') {
+      const { source, tool, scroll } = snapshot.workspace
+      if (source) {
+        const thread = threadForRef(source)
+        if (!thread) return
+        await workspaceTools.openForSession(thread, source.backend, tool)
+      } else await workspaceTools.open(tool)
+      if (current() && workspaceTools.snapshot()?.tool === tool) for (const position of scroll) {
+        const node = $(`#${position.id}`)
+        if (node) { node.scrollTop = position.top; node.scrollLeft = position.left }
+      }
+    } else if (snapshot.tool === 'comments') reviewNotes.openAnnotations()
+    else if (snapshot.tool === 'favorites') await reviewNotes.openFavorites(snapshot.favoriteScope)
+    else if (snapshot.tool === 'resources') sessionResources.open()
+    else if (snapshot.tool === 'browser') await openGlobalBrowser()
+    else if (snapshot.tool === 'map') sessionMap.render()
+  }
+  restore().catch(error => { if (current()) showError(error) })
+  return true
 }
 
 function resetStreamingPatches() {

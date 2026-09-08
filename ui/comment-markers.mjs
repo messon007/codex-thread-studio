@@ -1,4 +1,17 @@
 // Generated from ui-src; run npm run build:ui. Do not edit.
+export function locateDocumentCommentIntervals(text, drafts, file) {
+    const matching = drafts.filter(draft => draft.source?.provider === 'document'
+        && draft.source.anchor.filePath === file.path
+        && (!draft.source.anchor.root || draft.source.anchor.root === file.root));
+    return locateCommentIntervals(text, matching.map(draft => {
+        const anchor = draft.source.anchor;
+        const unchanged = Boolean(!file.dirty && file.hash && anchor.previewHash === file.hash);
+        return { ...draft, source: { ...draft.source, anchor: {
+                    startOffset: unchanged ? anchor.previewStartOffset : null,
+                    endOffset: unchanged ? anchor.previewEndOffset : null,
+                } } };
+    }));
+}
 export function locateCommentIntervals(text, drafts) {
     const content = String(text || '');
     const intervals = [];

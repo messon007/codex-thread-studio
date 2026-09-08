@@ -1,6 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
+import { awaitBackendSelection, completeSessionSelection, SessionWorkspaceMemory } from './selection-coordinator.mjs'
+
+test('workspace memory isolates backend/session keys and invalidates late restores', () => {
+  const memory = new SessionWorkspaceMemory()
+  memory.remember('codex:a',{tool:'document',path:'/a.md'})
+  memory.remember('opencode:a',{tool:'terminal'})
+  assert.equal(memory.get('codex:a').path,'/a.md')
+  assert.equal(memory.get('opencode:a').tool,'terminal')
+  assert.equal(memory.get('codex:b'),undefined)
+  const old = memory.begin()
+  memory.invalidate()
+  assert.equal(old(),false)
+  const latest = memory.begin()
+  assert.equal(latest(),true)
+})
+
+test('cancelled backend switch does not wait for another backend or change selection', async () => {
+  await awaitBackendSelection({switchBackend:async()=>false,waitFor:async()=>{throw Error('Must not wait after cancellation')},ready:()=>false,initialLoad:()=>undefined,catalogContainsSession:()=>false,freshSelection:()=>false})
+})
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 function fixture(overrides = {}) {

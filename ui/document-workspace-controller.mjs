@@ -55,6 +55,7 @@ export function createDocumentWorkspaceController({
     closeActionMenus,
     applyRightRailWidth,
     renderMarkdownDocument,
+    renderDocumentCommentMarkers = () => {},
     hydrateMarkdownImages,
     disconnectMarkdownImageObserver,
     disposeMarkdownImageAssets,
@@ -108,7 +109,7 @@ export function createDocumentWorkspaceController({
     document.addEventListener('keydown', handleArtifactNavigationKeydown)
   }
 
-async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' } = {}) {
+async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null } = {}) {
   const thread = selectedThread()
   if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const root = String(file.root || thread?.cwd || '')
@@ -235,7 +236,21 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '' }
       ? 'table'
       : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
   }
+  if (viewState) {
+    if (state.artifact.kind === 'text' && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
+    if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
+    state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
+    state.artifactOutlineFilter = viewState.outlineFilter || ''
+    state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
+    state.artifactSearch = viewState.search || ''
+    state.artifactSearchOpen = Boolean(viewState.searchOpen)
+  }
   renderArtifact()
+  if (viewState) requestAnimationFrame(() => {
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+    $('#artifact-content').scrollTop = viewState.scrollTop || 0
+    $('#artifact-content').scrollLeft = viewState.scrollLeft || 0
+  })
 }
 
 async function refreshArtifact() {
@@ -246,7 +261,7 @@ async function refreshArtifact() {
 
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
   const sourceSessionKey = state.artifact?.sourceSessionKey || ''
-  if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return
+  if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return false
   const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
   const artifactThreadKey = state.artifact?.threadKey
   $('#artifact-rail').classList.add('hidden')
@@ -267,6 +282,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
     return
   }
   if (restoreMap && $('#annotation-rail').classList.contains('hidden') && $('#favorites-rail').classList.contains('hidden')) renderSessionMap()
+  return true
 }
 
 function setArtifactView(view) {
@@ -743,6 +759,7 @@ function renderArtifact() {
   }
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
+  renderDocumentCommentMarkers()
 }
 
 function disposeArtifactEditor() {
@@ -1058,7 +1075,7 @@ function clearArtifactSearchHighlights() {
   content.querySelectorAll('mark.artifact-search-highlight').forEach((mark) => {
     const parent = mark.parentElement
     if (!parent) return
-    parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+    mark.replaceWith(...mark.childNodes)
     parent.normalize()
   })
   state.artifactSearchMatches = []

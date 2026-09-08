@@ -378,6 +378,10 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !important; user-select: none !important; }
 .table-grid td { cursor: cell; }
 .table-grid td.selected { outline: 2px solid var(--brand); outline-offset: -2px; background: var(--brand-soft); }
+.table-cell-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); box-sizing: border-box; }
+.table-cell-dialog .dialog-header p { overflow-wrap: anywhere; }
+.table-cell-content { max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); color: var(--text); font: var(--content-font-weight) var(--content-font-size)/1.6 var(--content-font-family); }
+.table-cell-dialog footer { display: flex; justify-content: flex-end; margin-top: 12px; }
 .table-toolbar [data-table-chart] { margin-left: auto; }
 .table-chart { min-height: 0; overflow: auto; padding: 24px; }
 .table-chart svg { width: 100%; min-width: 360px; height: auto; color: var(--muted); }

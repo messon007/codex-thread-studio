@@ -4549,6 +4549,12 @@ function patchStreamingItem(turnId, itemId) {
     return true
   }
   if (item.type === 'commandExecution') {
+    if (item.source === 'userShell') {
+      const output = element?.querySelector('pre')
+      if (!output) return false
+      output.textContent = item.aggregatedOutput || ''
+      return true
+    }
     const block = activityBlocksForTurn(turnId)
       .find((candidate) => candidate.sourceItemIds.includes(String(itemId || '')))
     const activity = renderedActivity(turnId, block?.id)
@@ -4608,6 +4614,7 @@ function renderTurn(presentation, index, { openActivityIds = [] } = {}) {
 }
 
 function renderPresentationBlock(block, turnId, options = {}) {
+  if (block.type === 'command') return renderItem(block.item, turnId)
   if (block.type === 'user') return renderItem(block.item, turnId)
   if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable, sourceRef: options.sourceRef })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
@@ -4774,7 +4781,7 @@ function renderItem(item, turnId, { forkable = false, sourceRef = null } = {}) {
   }
   if (type === 'commandExecution') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
-    return `<article class="item-card" ${attrs}><header><span>${t('Command')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('Command')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(item.aggregatedOutput || '')}</pre></article>`
   }
   if (type === 'fileChange') {
     const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')

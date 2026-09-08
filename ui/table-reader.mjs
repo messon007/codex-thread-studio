@@ -33,8 +33,10 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   container.replaceChildren(shell)
   let clearActiveResize = () => {}
   let copyFeedbackTimer = null
+  let closeCellDialog = () => {}
 
   function render() {
+    closeCellDialog()
     clearActiveResize()
     clearTimeout(copyFeedbackTimer)
     copyFeedbackTimer = null
@@ -44,12 +46,52 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
     shell.innerHTML = `<div class="table-toolbar"><select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button">${escapeHtml(translate('Chart'))}</button><button data-table-copy type="button" disabled>${escapeHtml(translate('Copy'))}</button></div><div class="table-grid-wrap"><table class="table-grid"><colgroup><col data-table-row-column>${Array.from({ length: width }, (_, index) => `<col data-table-column-width="${index}">`).join('')}</colgroup><thead><tr><th></th>${Array.from({ length: width }, (_, index) => { const name = columnName(index + 1); return `<th class="table-column-header" data-table-column-header="${index}"><span>${name}</span><span class="table-column-resizer" data-table-column-resizer="${index}" role="separator" aria-orientation="vertical" aria-label="${escapeHtml(translate('Resize column {column}', { column: name }))}" aria-valuemin="${MIN_COLUMN_WIDTH}" aria-valuemax="${MAX_COLUMN_WIDTH}" tabindex="0"></span></th>` }).join('')}</tr></thead><tbody>${sheet.rows.map((row, rowIndex) => `<tr><th>${rowIndex + 1}</th>${Array.from({ length: width }, (_, columnIndex) => `<td tabindex="0" data-row="${rowIndex + 1}" data-column="${columnIndex + 1}">${escapeHtml(row[columnIndex] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="table-chart hidden"></div>`
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => { sheetIndex = Number(event.target.value); render() })
     const grid = shell.querySelector('.table-grid')
+    grid.title = translate('Double-click a cell or press Enter to view its full content.')
     const copyButton = shell.querySelector('[data-table-copy]')
     const columnHeaders = [...grid.querySelectorAll('[data-table-column-header]')]
     const columnElements = [...grid.querySelectorAll('[data-table-column-width]')]
     const resizeHandles = [...grid.querySelectorAll('[data-table-column-resizer]')]
     const rowHeaderWidth = Math.max(42, Math.round(grid.querySelector('thead th').getBoundingClientRect().width))
     let selectedCell = null
+
+    function viewCell(cell) {
+      closeCellDialog()
+      const dialog = document.createElement('dialog')
+      dialog.className = 'dialog table-cell-dialog'
+      dialog.setAttribute('aria-label', translate('Cell content'))
+      dialog.innerHTML = `<header class="dialog-header"><div><h2>${escapeHtml(translate('Cell content'))}</h2><p data-cell-address></p></div><button class="icon-button" data-cell-close type="button" aria-label="${escapeHtml(translate('Close'))}">×</button></header><div class="table-cell-content" tabindex="0" data-no-i18n></div><footer><button class="subtle-button" data-cell-copy type="button">${escapeHtml(translate('Copy'))}</button></footer>`
+      dialog.querySelector('[data-cell-address]').textContent = `${sheet.name} · ${columnName(Number(cell.dataset.column))}${cell.dataset.row}`
+      const content = cell.textContent || ''
+      dialog.querySelector('.table-cell-content').textContent = content
+      const copy = dialog.querySelector('[data-cell-copy]')
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(content)
+          copy.textContent = translate('Copied')
+        } catch {
+          copy.textContent = translate('Copy failed')
+        }
+      })
+      closeCellDialog = () => { dialog.close(); dialog.remove(); closeCellDialog = () => {} }
+      dialog.querySelector('[data-cell-close]').addEventListener('click', closeCellDialog)
+      dialog.addEventListener('cancel', event => { event.preventDefault(); closeCellDialog() })
+      shell.append(dialog)
+      dialog.showModal()
+    }
+
+    grid.addEventListener('dblclick', event => {
+      const cell = event.target.closest('td[data-row]')
+      if (!cell) return
+      event.preventDefault()
+      viewCell(cell)
+    })
+    grid.addEventListener('keydown', event => {
+      const cell = event.target.closest('td[data-row]')
+      if (!cell || event.key !== 'Enter' || event.isComposing) return
+      event.preventDefault()
+      event.stopPropagation()
+      viewCell(cell)
+    })
 
     function currentColumnWidths() {
       return columnHeaders.map((header) => clampTableColumnWidth(header.getBoundingClientRect().width))
@@ -171,6 +213,7 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   render()
   return {
     destroy: () => {
+      closeCellDialog()
       clearActiveResize()
       clearTimeout(copyFeedbackTimer)
       shell.remove()

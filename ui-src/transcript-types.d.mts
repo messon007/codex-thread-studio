@@ -27,7 +27,7 @@ export interface ActivityBlock {
   latestStage: string
   sourceItemIds: (string | undefined)[]
 }
-export type MessageBlock = { type: 'user' | 'assistant'; itemId?: string | undefined; item: PresentationItem; variant?: 'plan' | 'message' }
+export type MessageBlock = { type: 'user' | 'assistant' | 'command'; itemId?: string | undefined; item: PresentationItem; variant?: 'plan' | 'message' }
 export type PresentationBlock = MessageBlock | ActivityBlock | { type: 'error'; message: string }
 export interface TurnPresentation { id: string; status: string; blocks: PresentationBlock[]; source: PresentationTurn }
 export interface PresentationCacheEntry {

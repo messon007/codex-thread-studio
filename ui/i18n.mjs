@@ -564,6 +564,8 @@ const chinese = {
   'Select text to comment': '选择文字即可批注',
   'Resize column {column}': '调整 {column} 列宽度',
   'Copy failed': '复制失败',
+  'Cell content': '单元格内容',
+  'Double-click a cell or press Enter to view its full content.': '双击单元格或按 Enter 查看完整内容。',
   'Drag a column border to resize; select a cell to comment or copy': '拖动列边界可调整列宽；选择单元格可批注或复制',
   '0 comments': '0 条批注',
   'Waiting to be added': '等待加入消息',

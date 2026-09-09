@@ -30,16 +30,7 @@ export async function checkTableAcceptance(page) {
     }
   })
   if (Object.values(result).some(value => !value)) throw Error(`Cell viewer failure: ${JSON.stringify(result)}`)
-  await page.evaluate(() => {
-    window.tableAcceptance.originalCopy = navigator.clipboard.writeText
-    navigator.clipboard.writeText = async value => { window.tableAcceptance.copied = value }
-  })
-  try {
-    await dialog.locator('[data-cell-copy]').click()
-    if (!await page.evaluate(() => window.tableAcceptance.copied === window.tableAcceptance.text)) throw Error('Cell copy was truncated')
-  } finally {
-    await page.evaluate(() => { navigator.clipboard.writeText = window.tableAcceptance.originalCopy })
-  }
+  if (await dialog.locator('[data-cell-copy], footer').count()) throw Error('Redundant cell copy footer')
   if (process.env.STUDIO_SCREENSHOT_DIR) {
     await mkdir(process.env.STUDIO_SCREENSHOT_DIR, { recursive: true })
     await dialog.screenshot({ path: join(process.env.STUDIO_SCREENSHOT_DIR, 'table-cell-content.png') })

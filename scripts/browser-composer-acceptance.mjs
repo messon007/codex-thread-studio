@@ -58,6 +58,7 @@ export async function checkComposerAcceptance(page) {
       let fail = false
       const dependencies = {
         state, $, currentTurnOptions: () => ({}), currentBackend: () => ({ name: backend, tag: backend }),
+        composerModelContext: () => ({ options: {}, ref: { backend }, thread: {}, descriptor: { name: backend, tag: backend } }),
         resolveModelDisplay, selectedThread: () => ({}), shellCommandFromComposer: () => null,
         selectedStateKey: () => key, isRouterThread: () => Boolean(state.routerMode), isCodexBackend: b => b !== 'opencode',
         composerHasPendingContent: () => Boolean($('#composer-input').value.trim() || state.pendingImages[key]?.length || state.pendingFiles[key]?.length || state.pendingSkills[key]?.length),

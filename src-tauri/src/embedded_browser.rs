@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use webkit2gtk::{
     DownloadExt, PermissionRequestExt, URIRequestExt, URIResponseExt, WebContextExt,
-    WebProcessTerminationReason, WebViewExt as WebKitWebViewExt,
+    WebProcessTerminationReason, WebViewExt as WebKitWebViewExt, WebsiteDataManagerExt,
 };
 #[cfg(debug_assertions)]
 use webkit2gtk::{SnapshotOptions, SnapshotRegion};
@@ -126,6 +126,7 @@ struct BrowserTab {
     webview: WebView,
     zoom: f64,
     fit_width: bool,
+    last_fit_metrics: Option<(i64, i64, i64)>,
     crashed: bool,
     internal_navigation: Rc<Cell<bool>>,
 }
@@ -477,11 +478,16 @@ pub fn build(
     let webkit_version = wry::webview_version().unwrap_or_else(|_| "Unknown".to_owned());
 
     let studio_webview = WebViewBuilder::with_web_context(&mut studio_context)
+        // Studio state lives in our settings/SQLite stores, not WebKit storage.
+        // Wry's persistent GTK contexts share the default HSTS database even
+        // with distinct base-data directories. Only web pages need persistence.
+        .with_incognito(true)
         .with_url(studio_url.as_str())
         .with_initialization_script(initialization_script)
         .with_clipboard(true)
         .with_navigation_handler(|url| intercept_action(&url))
         .build_gtk(&studio_host)?;
+    log_network_storage("studio", &studio_webview);
 
     toolbar_host.connect_size_allocate(|host, allocation| {
         for child in host.children() {
@@ -629,11 +635,13 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
         .as_mut()
         .expect("toolbar context was initialized");
     let toolbar_webview = WebViewBuilder::with_web_context(toolbar_context)
+        .with_incognito(true)
         .with_html(TOOLBAR_HTML)
         .with_clipboard(true)
         .with_navigation_handler(|url| intercept_action(&url))
         .build_gtk(&toolbar_host)
         .map_err(|error| error.to_string())?;
+    log_network_storage("toolbar", &toolbar_webview);
     toolbar_webview
         .webview()
         .connect_web_process_terminated(|_, reason| {
@@ -669,6 +677,7 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
         }
     };
     workspace.browser_stack.set_visible_child(&initial_tab.host);
+    log_network_storage("browser", &initial_tab.webview);
     if !workspace.download_handler_installed {
         install_download_handler(&initial_tab.webview);
         workspace.download_handler_installed = true;
@@ -775,9 +784,36 @@ fn build_browser_tab(
         webview,
         zoom: 1.0,
         fit_width: true,
+        last_fit_metrics: None,
         crashed: false,
         internal_navigation,
     })
+}
+
+fn log_network_storage(role: &str, webview: &WebView) {
+    let Some(manager) = webview
+        .webview()
+        .context()
+        .and_then(|context| context.website_data_manager())
+    else {
+        return;
+    };
+    eprintln!(
+        "Embedded Browser storage: role={role}, ephemeral={}, data={}, cache={}, hsts={}",
+        manager.is_ephemeral(),
+        manager
+            .base_data_directory()
+            .as_deref()
+            .unwrap_or("<default>"),
+        manager
+            .base_cache_directory()
+            .as_deref()
+            .unwrap_or("<default>"),
+        manager
+            .hsts_cache_directory()
+            .as_deref()
+            .unwrap_or("<memory/default>")
+    );
 }
 
 fn install_download_handler(webview: &WebView) {
@@ -2292,12 +2328,20 @@ fn apply_fit_metrics(id: u64, raw: &str) {
         };
         tab.zoom = round_zoom(target);
         let _ = tab.webview.zoom(tab.zoom);
-        eprintln!(
-            "Embedded Browser tab {id}: viewport {:.0}px, content {:.0}px, zoom {:.0}%",
-            metrics.inner_width,
-            metrics.scroll_width,
-            tab.zoom * 100.0
+        let signature = (
+            metrics.inner_width.round() as i64,
+            metrics.scroll_width.round() as i64,
+            (tab.zoom * 100.0).round() as i64,
         );
+        if tab.last_fit_metrics != Some(signature) {
+            tab.last_fit_metrics = Some(signature);
+            eprintln!(
+                "Embedded Browser tab {id}: viewport {:.0}px, content {:.0}px, zoom {:.0}%",
+                metrics.inner_width,
+                metrics.scroll_width,
+                tab.zoom * 100.0
+            );
+        }
     });
     sync_toolbar();
 }

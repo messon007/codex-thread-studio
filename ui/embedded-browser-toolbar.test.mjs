@@ -5,6 +5,18 @@ import test from 'node:test'
 const source = readFileSync(new URL('./embedded-browser.html', import.meta.url), 'utf8')
 const panelSource = readFileSync(new URL('./embedded-browser-panel.html', import.meta.url), 'utf8')
 const windowsSource = readFileSync(new URL('../src-tauri/src/embedded_browser_windows.rs', import.meta.url), 'utf8')
+const linuxSource = readFileSync(new URL('../src-tauri/src/embedded_browser.rs', import.meta.url), 'utf8')
+
+test('Linux keeps page storage persistent while local UI contexts avoid sharing its HSTS database', () => {
+  const studio = linuxSource.slice(linuxSource.indexOf('let studio_webview ='), linuxSource.indexOf('toolbar_host.connect_size_allocate'))
+  const toolbar = linuxSource.slice(linuxSource.indexOf('let toolbar_webview ='), linuxSource.indexOf('let browser_context = workspace'))
+  const page = linuxSource.slice(linuxSource.indexOf('fn build_browser_tab('), linuxSource.indexOf('fn log_network_storage('))
+  assert.match(studio, /\.with_incognito\(true\)/u)
+  assert.match(toolbar, /\.with_incognito\(true\)/u)
+  assert.match(page, /WebViewBuilder::with_web_context\(context\)/u)
+  assert.doesNotMatch(page, /\.with_incognito\(true\)/u)
+  assert.match(linuxSource, /tab\.last_fit_metrics != Some\(signature\)/u)
+})
 
 test('embedded browser tab strip follows normal browser control order', () => {
   const tabs = source.indexOf('id="tabs"')
@@ -32,6 +44,15 @@ test('browser menu is the rightmost address-toolbar action', () => {
   assert.ok(browserMenu > comment)
   assert.equal(browserMenu, tools.lastIndexOf('data-action='))
   assert.match(tools, /aria-label="More browser actions"/u)
+})
+
+test('browser overflow uses the shared three-dot SVG instead of font glyphs', () => {
+  const button = source.match(/<button class="icon browser-menu"[^>]*>([\s\S]*?)<\/button>/u)?.[1] || ''
+  assert.equal((button.match(/<circle /gu) || []).length, 3)
+  assert.match(button, /viewBox="0 0 24 24"/u)
+  assert.doesNotMatch(button, /•••|⋯/u)
+  assert.match(source, /\.browser-menu svg \{[^}]*width: 18px;[^}]*fill: currentColor; stroke: none;/u)
+  assert.doesNotMatch(source, /\.browser-menu \{[^}]*border: 1px/u)
 })
 
 test('Windows native browser menu follows the Linux GTK menu protocol', () => {

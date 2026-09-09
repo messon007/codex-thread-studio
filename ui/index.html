@@ -149,6 +149,7 @@
             <button id="selection-favorite" type="button">Favorites</button>
           </div>
 
+          <div id="router-attention" class="router-attention hidden" aria-label="Unread Router responses"></div>
           <form id="composer-form" class="composer">
             <div id="composer-menu" class="composer-menu hidden" role="listbox" aria-label="Codex input suggestions"></div>
             <div id="composer-review-context" class="composer-review-context hidden">
@@ -343,6 +344,7 @@
           <div class="workspace-file-toolbar">
             <label><span aria-hidden="true">⌕</span><input id="workspace-file-filter" type="search" placeholder="Filter files" autocomplete="off" /></label>
             <button id="workspace-files-refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh file tree">↻</button>
+            <button id="workspace-open-location" class="icon-button" type="button" title="Open Item Location" aria-label="Open Item Location"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5M14 3h7v7M21 3 10 14"/></svg></button>
           </div>
           <div class="workspace-root-row"><span class="workspace-root-dot"></span><strong id="workspace-root-name" data-no-i18n></strong><small>SESSION ROOT</small></div>
           <div id="workspace-file-tree" class="workspace-file-tree" role="tree" aria-label="Current session directory"></div>

@@ -59,19 +59,10 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
       const dialog = document.createElement('dialog')
       dialog.className = 'dialog table-cell-dialog'
       dialog.setAttribute('aria-label', translate('Cell content'))
-      dialog.innerHTML = `<header class="dialog-header"><div><h2>${escapeHtml(translate('Cell content'))}</h2><p data-cell-address></p></div><button class="icon-button" data-cell-close type="button" aria-label="${escapeHtml(translate('Close'))}">×</button></header><div class="table-cell-content" tabindex="0" data-no-i18n></div><footer><button class="subtle-button" data-cell-copy type="button">${escapeHtml(translate('Copy'))}</button></footer>`
+      dialog.innerHTML = `<header class="dialog-header"><div><h2>${escapeHtml(translate('Cell content'))}</h2><p data-cell-address data-no-i18n></p></div><button class="icon-button" data-cell-close type="button" aria-label="${escapeHtml(translate('Close'))}">×</button></header><div class="table-cell-content" tabindex="0" data-no-i18n></div>`
       dialog.querySelector('[data-cell-address]').textContent = `${sheet.name} · ${columnName(Number(cell.dataset.column))}${cell.dataset.row}`
       const content = cell.textContent || ''
       dialog.querySelector('.table-cell-content').textContent = content
-      const copy = dialog.querySelector('[data-cell-copy]')
-      copy.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(content)
-          copy.textContent = translate('Copied')
-        } catch {
-          copy.textContent = translate('Copy failed')
-        }
-      })
       closeCellDialog = () => { dialog.close(); dialog.remove(); closeCellDialog = () => {} }
       dialog.querySelector('[data-cell-close]').addEventListener('click', closeCellDialog)
       dialog.addEventListener('cancel', event => { event.preventDefault(); closeCellDialog() })

@@ -9,6 +9,8 @@ export interface RouterDispatchState {
   targetTurnId?: string
   error?: string
   decisionInvalid?: boolean
+  requestedAt?: number
+  unread?: boolean
 }
 export interface RoutedTarget { routerTurnId: string; targetSessionKey: string }
 export interface RouterCoordinationState {
@@ -34,7 +36,8 @@ export class RouterTurnCoordinator {
     if (!routed) return false
     this.state.dispatches.set(routed.routerTurnId, {
       ...this.state.dispatches.get(routed.routerTurnId),
-      status: turn?.status === 'failed' ? 'failed' : 'completed',
+      status: turn?.status === 'completed' ? 'completed' : 'failed',
+      unread: true,
       error: turn?.error?.message || '',
     })
     this.state.targetTurns.delete(key)
@@ -62,16 +65,16 @@ export class RouterTurnCoordinator {
         effects.changed()
         return true
       }
-      this.state.dispatches.set(key, { status: 'dispatching', decision })
+      this.state.dispatches.set(key, { status: 'dispatching', decision, requestedAt: pending.requestedAt, unread: false })
       effects.changed()
       const result = await effects.dispatch(decision, pending)
-      this.state.dispatches.set(key, { status: 'running', decision, targetTurnId: result.targetTurnId })
+      this.state.dispatches.set(key, { status: 'running', decision, targetTurnId: result.targetTurnId, requestedAt: pending.requestedAt, unread: false })
       this.state.targetTurns.set(result.targetTurnKey, { routerTurnId: key, targetSessionKey: result.targetSessionKey })
       await effects.started(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const previous = this.state.dispatches.get(key)
-      this.state.dispatches.set(key, { ...previous, status: previous?.targetTurnId ? 'running' : 'failed', error: message, decisionInvalid: !decisionParsed })
+      this.state.dispatches.set(key, { ...previous, status: previous?.targetTurnId ? 'running' : 'failed', error: message, decisionInvalid: !decisionParsed, unread: !previous?.targetTurnId })
       effects.changed()
       effects.failed(message)
     }

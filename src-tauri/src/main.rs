@@ -35,6 +35,7 @@ mod epub_reader;
 mod favorites;
 mod gateway_security;
 mod git_review;
+mod item_location;
 mod ollama;
 mod opencode_server;
 mod router_history;
@@ -924,6 +925,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
+            "/studio/workspace/open-location",
+            axum::routing::post(open_item_location),
+        )
+        .route(
             "/studio/review-image",
             axum::routing::post(read_review_image),
         )
@@ -1117,6 +1122,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/mermaid-config.mjs", get(mermaid_config_js))
         .route("/thread-router.mjs", get(thread_router_js))
         .route("/router-coordination.mjs", get(router_coordination_js))
+        .route("/router-attention.mjs", get(router_attention_js))
         .route("/router-targets.mjs", get(router_targets_js))
         .route("/session-dispatch.mjs", get(session_dispatch_js))
         .route("/turn-navigator.mjs", get(turn_navigator_js))
@@ -1513,6 +1519,32 @@ async fn put_epub_reading_state(
     match epub_reader::save_state(&state.epub_reading_path, &path, reading) {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
+    }
+}
+
+async fn open_item_location(
+    State(state): State<GatewayState>,
+    Json(request): Json<WorkspaceListRequest>,
+) -> Response<Body> {
+    if !state.embedded_browser {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "System file manager is unavailable in remote browser mode.",
+        );
+    }
+    #[cfg(windows)]
+    if state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "Opening WSL item locations is not supported yet.",
+        );
+    }
+    match tokio::task::spawn_blocking(move || item_location::open(&request.root, &request.path))
+        .await
+    {
+        Ok(Ok(())) => json_response(StatusCode::OK, &serde_json::json!({"ok": true})),
+        Ok(Err(error)) => json_error(StatusCode::BAD_REQUEST, &error),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
 }
 
@@ -2561,6 +2593,10 @@ async fn thread_router_js() -> impl IntoResponse {
 
 async fn router_coordination_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/router-coordination.mjs"))
+}
+
+async fn router_attention_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/router-attention.mjs"))
 }
 
 async fn session_dispatch_js() -> impl IntoResponse {
@@ -4786,6 +4822,7 @@ mod tests {
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",
+                "/router-attention.mjs",
                 "/session-dispatch.mjs",
                 "/turn-navigator.mjs",
                 "/transcript-scroll.mjs",

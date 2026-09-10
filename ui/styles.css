@@ -399,7 +399,7 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .router-route-line button { min-width: 0; max-width: 65%; padding: 2px 0; border: 0; background: transparent; color: var(--brand); font: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .router-route-line button:hover { text-decoration: underline; }
 .router-route-line button, .activity-title { font-size: var(--ui-font-label); font-weight: var(--ui-font-emphasis); }
-.router-attention { flex: 0 0 auto; max-height: 180px; overflow: auto; margin: 0 18px; padding: 5px 8px; border-top: 1px solid var(--border); color: var(--muted); font: var(--ui-font-weight) var(--ui-font-label)/1.5 var(--ui-font-family); }
+.router-attention { flex: 0 0 auto; width: calc(100% - var(--workspace-gutter) - var(--workspace-gutter)); max-width: var(--content-max-width); max-height: 180px; overflow: auto; margin: 0 auto 8px; box-sizing: border-box; padding: 5px 8px; border-top: 1px solid var(--border); color: var(--muted); font: var(--ui-font-weight) var(--ui-font-label)/1.5 var(--ui-font-family); }
 .router-attention button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 3px 4px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .router-attention button:hover { background: var(--panel-soft); color: var(--brand); }
 .router-attention strong, .router-attention-question { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

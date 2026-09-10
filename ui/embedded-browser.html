@@ -45,8 +45,8 @@
       .icon { width: 31px; height: 31px; padding: 0; border: 0; border-radius: 8px; display: grid; place-items: center; background: transparent; color: var(--muted); font-size: 17px; line-height: 1; }
       .icon svg { width: 17px; height: 17px; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
       .icon:hover { background: var(--soft); color: var(--text); }
-      .browser-menu { min-width: 35px; width: 35px; border: 1px solid #ccd4e0; background: #fff; font-size: var(--ui-font-compact); font-weight: var(--ui-font-emphasis); letter-spacing: -1px; }
-      .browser-menu:hover { border-color: #aeb8c6; }
+      .browser-menu { width: 32px; height: 32px; }
+      .browser-menu svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
       .address { width: 100%; height: 34px; border: 1px solid #d4dae4; border-radius: 9px; outline: 0; background: #f7f8fa; color: var(--text); padding: 0 11px; }
       .address:focus { border-color: #7aa99f; box-shadow: 0 0 0 3px rgb(23 107 93 / 11%); background: white; }
       .zoom { min-width: 45px; width: auto; padding: 0 5px; font-size: var(--ui-font-label); }
@@ -91,7 +91,7 @@
         <button class="icon zoom-control" data-action="zoom-in" title="Zoom in" aria-label="Zoom in" data-i18n-title="Zoom in" data-i18n-aria-label="Zoom in">+</button>
         <button id="fit" class="icon fit" data-action="fit-width" title="Fit page width" aria-label="Fit page width" data-i18n-title="Fit page width" data-i18n-aria-label="Fit page width">↔</button>
         <button id="comment" class="comment" type="button" data-i18n="Comment">Comment</button>
-        <button class="icon browser-menu" data-action="browser-menu" title="More browser actions" aria-label="More browser actions" data-i18n-title="More browser actions" data-i18n-aria-label="More browser actions">•••</button>
+        <button class="icon browser-menu" data-action="browser-menu" title="More browser actions" aria-label="More browser actions" data-i18n-title="More browser actions" data-i18n-aria-label="More browser actions"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="19" cy="12" r="1.35"/></svg></button>
       </div>
     </div>
     <aside id="browser-panel" class="browser-panel" aria-live="polite"></aside>

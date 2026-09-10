@@ -194,6 +194,11 @@ export function presentTurn(turn: PresentationTurn): TurnPresentation {
   }
 
   items.forEach((item, index) => {
+    if (item?.type === 'commandExecution' && item.source === 'userShell') {
+      flushActivity()
+      blocks.push({ type: 'command', itemId: item.id, item })
+      return
+    }
     if (item?.type === 'userMessage') {
       flushActivity()
       blocks.push({ type: 'user', itemId: item.id, item })
@@ -259,7 +264,7 @@ export function presentationActivityEntries(presentation: TurnPresentation | nul
 
 export function shouldShowTurnPlaceholder(presentation: TurnPresentation | null) {
   if (presentation?.status !== 'inProgress') return false
-  return !(presentation.blocks || []).some((block) => block.type === 'assistant' || block.type === 'activity')
+  return !(presentation.blocks || []).some((block) => block.type === 'assistant' || block.type === 'activity' || block.type === 'command')
 }
 
 export function activityOutputPreview(value: unknown, lineLimit = OUTPUT_PREVIEW_LINES) {

@@ -112,7 +112,7 @@ export function resolveMarkdownImagePath(file, source) {
     const path = segments.join('/');
     return { path: documentRoot && documentRoot !== root ? `${documentRoot}/${path}` : path };
 }
-export function resolveMarkdownFileLink(value) {
+export function resolveMarkdownFileLink(value, documentPath = '') {
     let raw = String(value || '').trim();
     if (!raw || raw.startsWith('#') || /^https?:\/\//iu.test(raw))
         return null;
@@ -131,10 +131,16 @@ export function resolveMarkdownFileLink(value) {
     if (!raw || raw.includes('\0'))
         return null;
     const location = raw.match(/^(.*?)(?::(\d+))(?::(\d+))?$/u);
-    const path = location?.[1] || raw;
+    let path = location?.[1] || raw;
     const unsupportedScheme = /^[a-z][a-z\d+.-]*:/iu.test(path) && !/^[a-z]:[\\/]/iu.test(path);
     if (!path || unsupportedScheme)
         return null;
+    if (documentPath && !/^(?:\/|[a-z]:[\\/]|\\\\)/iu.test(path)) {
+        const normalized = documentPath.replaceAll('\\', '/');
+        const slash = normalized.lastIndexOf('/');
+        if (slash >= 0)
+            path = `${normalized.slice(0, slash + 1)}${path}`;
+    }
     return {
         path,
         line: Number(location?.[2] || fragmentLocation?.[1] || 0) || undefined,

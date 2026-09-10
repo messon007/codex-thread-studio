@@ -1,6 +1,21 @@
 export interface ComposerTrigger { type: 'slash' | 'skill' | 'file'; query: string; start: number; end: number }
 export interface FileLabel { path?: string; file_name?: string }
 export interface SkillReference { name?: string; enabled?: boolean; description?: string; shortDescription?: string; interface?: { displayName?: string } }
+export function pluginReferences(result: { marketplaces?: { name?: string; plugins?: { id: string; name: string; installed: boolean; enabled: boolean; interface?: { displayName?: string; shortDescription?: string; description?: string } | null }[] }[] }) {
+  const seen = new Set<string>()
+  return (result.marketplaces || []).flatMap(market => (market.plugins || []).flatMap(plugin => {
+    if (!plugin.installed || !plugin.enabled || !plugin.id || seen.has(plugin.id)) return []
+    seen.add(plugin.id)
+    return [{ kind: 'plugin', name: plugin.name, path: `plugin://${plugin.id}`, enabled: true,
+      description: [plugin.interface?.shortDescription || plugin.interface?.description, market.name].filter(Boolean).join(' · '),
+      interface: { displayName: plugin.interface?.displayName || plugin.name } }]
+  }))
+}
+
+export function composerReferenceInput(reference: { kind?: string; name?: string; path?: string }) {
+  if (!reference.name || !reference.path) return null
+  return { type: reference.kind === 'plugin' ? 'mention' : 'skill', name: reference.name, path: reference.path }
+}
 export const SLASH_COMMANDS = Object.freeze([
   { name: 'model', description: 'Select the model and reasoning effort', action: 'model' },
   { name: 'permissions', description: 'Set approval and sandbox policies for subsequent turns', action: 'permissions' },
@@ -202,4 +217,3 @@ export function transcriptUpdateKind(method: string | null | undefined) {
   if (method === 'thread/tokenUsage/updated' || method === 'turn/diff/updated' || method === 'thread/status/changed') return 'metadata'
   return 'full'
 }
-

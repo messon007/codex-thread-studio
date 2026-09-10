@@ -179,7 +179,7 @@ test('session and every right-area header share one exact divider height', () =>
     assert.match(styles, new RegExp(`${selector} \\{[^}]*height: var\\(--app-header-height\\);[^}]*min-height: var\\(--app-header-height\\);[^}]*border-bottom: 1px solid var\\(--border\\)`, 'u'))
   }
   assert.doesNotMatch(html, /class="native-chrome"/u)
-  assert.match(styles, /\.native-workspace \{[^}]*overflow: hidden;[^}]*background: var\(--panel\);/u)
+  assert.match(styles, /\.native-workspace \{[^}]*overflow: clip;[^}]*background: var\(--panel\);/u)
   assert.doesNotMatch(styles.match(/\.native-workspace \{[^}]*\}/u)?.[0] || '', /margin:|border:|border-radius:|box-shadow:/u)
 })
 

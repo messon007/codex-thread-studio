@@ -85,6 +85,15 @@ test('turn navigator reuses DOM only when ids, previews, and locale are unchange
   assert.match(render, /signature === turnNavigatorSignature/u)
 })
 
+test('turn navigator click clears reminder for corresponding turn', () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
+  const start = source.indexOf('function handleTurnNavigatorClick(')
+  const end = source.indexOf('\nfunction queueStreamingItemPatch', start)
+  const handler = source.slice(start, end)
+
+  assert.match(handler, /threadRouter\.markReminderReadForTurn\?\.?\(button\.dataset\.turnNavId\)/u)
+})
+
 test('builds the full turn navigator after the transcript first paint', () => {
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8')
   const transcriptStart = source.indexOf('function renderTranscript(')

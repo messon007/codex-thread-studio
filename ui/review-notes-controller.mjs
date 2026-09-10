@@ -4,14 +4,14 @@ import {
   createCommentDraft,
   formatCommentPromptEntry,
 } from './comment-core.mjs'
-import { locateCommentIntervals } from './comment-markers.mjs'
+import { locateCommentIntervals, locateDocumentCommentIntervals } from './comment-markers.mjs'
 import { CommentSubmissionCoordinator, insertCommentPrompt } from './comment-submission.mjs'
 import {
   chatCommentSource,
   documentCommentSource,
   relocateDocumentComment,
 } from './comment-source-providers.mjs'
-import { createFileRangeTarget, structuredPreviewSourceRange } from './document-review.mjs'
+import { createFileRangeTarget, structuredPreviewSourceRange, isMarkdownFile } from './document-review.mjs'
 import {
   autoFavoriteTitle,
   favoriteCopyText,
@@ -105,6 +105,7 @@ export function createReviewNotesController({
   let nativeTranslationSpeechAvailable = false
   let nativeTranslationSpeechRequest = null
   const deactivatedChatCommentMarkers = new Set()
+  const documentCommentMarkers = new Set()
   const commentSubmissions = new CommentSubmissionCoordinator()
 
   function bind() {
@@ -115,6 +116,8 @@ export function createReviewNotesController({
     $('#transcript')?.addEventListener('click', handleCommentMarkerClick)
     $('#transcript')?.addEventListener('keydown', handleCommentMarkerKeydown)
     $('#artifact-content')?.addEventListener('mouseup', captureArtifactSelection)
+    $('#artifact-content')?.addEventListener('click', handleCommentMarkerClick, true)
+    $('#artifact-content')?.addEventListener('keydown', handleCommentMarkerKeydown, true)
     $('#open-thread-comments')?.addEventListener('click', openAnnotationRail)
     $('#open-thread-favorites')?.addEventListener('click', () => openFavoritesRail('session'))
     $('#selection-popover')?.addEventListener('mousedown', (event) => event.preventDefault())
@@ -283,6 +286,13 @@ function captureArtifactSelection() {
     itemId: null,
     turnId: null,
     source: documentCommentSource(createFileRangeTarget(targetFile, text, hintOffset)),
+  }
+  if (state.artifactView === 'preview' && isMarkdownFile(state.artifact.path)) {
+    const offsets = chatSelectionOffsets(range, content, selectedText, state.pendingSelection.quote.length)
+    Object.assign(state.pendingSelection.source.anchor, {
+      previewStartOffset: offsets.startOffset, previewEndOffset: offsets.endOffset,
+      previewHash: state.artifact.dirty ? '' : state.artifact.hash || '',
+    })
   }
   positionSelectionPopover(range, { allowFavorite: false })
 }
@@ -669,7 +679,31 @@ function renderAnnotationRail() {
     if (!event.target.closest('button')) openAnnotationEditor(card.dataset.draftId)
   }))
   renderChatCommentMarkers()
+  renderDocumentCommentMarkers()
   renderComposerReviewContext()
+}
+
+function renderDocumentCommentMarkers() {
+  const root = $('#artifact-content')
+  const file = state.artifact
+  if (!root) return
+  for (const marker of documentCommentMarkers) if (!root.contains(marker)) documentCommentMarkers.delete(marker)
+  const supported = file && !file.loading && !file.error && file.kind === 'text'
+    && state.artifactView === 'preview' && isMarkdownFile(file.path)
+  const intervals = supported ? locateDocumentCommentIntervals(root.textContent || '', currentAnnotations(), file) : []
+  if (!intervals.length) {
+    for (const marker of documentCommentMarkers) deactivateChatCommentMarker(marker)
+    return
+  }
+  const parents = new Set()
+  for (const marker of documentCommentMarkers) {
+    parents.add(marker.parentNode)
+    marker.replaceWith(...marker.childNodes)
+  }
+  documentCommentMarkers.clear()
+  for (const parent of parents) parent?.normalize()
+  applyCommentIntervals(root, intervals)
+  root.querySelectorAll('.chat-comment-anchor').forEach(marker => documentCommentMarkers.add(marker))
 }
 
 function renderChatCommentMarkers() {
@@ -1334,6 +1368,7 @@ function formatFavoriteDate(value) {
     positionSelection: positionSelectionPopover,
     renderAnnotations: renderAnnotationRail,
     renderCommentMarkers: renderChatCommentMarkers,
+    renderDocumentCommentMarkers,
     renderComposerContext: renderComposerReviewContext,
     renderFavorites: renderFavoritesRail,
     renderSessionFavoriteCount,

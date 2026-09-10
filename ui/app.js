@@ -8,7 +8,7 @@ import { createSessionOperations } from './session-operations.mjs'
 import { preferencesSnapshot as createPreferencesSnapshot } from './preferences-snapshot.mjs'
 import { createEnvironmentApplication } from './environment-application.mjs'
 import { installSelectedHistory, hydrateOpenCodeHistoryMetadata } from './history-installation.mjs'
-import { awaitBackendSelection, completeSessionSelection } from './selection-coordinator.mjs'
+import { awaitBackendSelection, completeSessionSelection, SessionWorkspaceMemory } from './selection-coordinator.mjs'
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createTurnSupervision, SUPERVISION_SCHEMA, SUPERVISION_INSTRUCTIONS, supervisionResult } from './turn-supervision.mjs'
@@ -47,7 +47,7 @@ import {
   isCodexBackend,
   isSupportedBackend,
 } from './backends.mjs'
-import { composerTrigger, createComposerDraftStore, fuzzyFileLabel, matchingSkills, matchingSlashCommands, replaceComposerTrigger, reviewableFileKind, selectedFileReference, selectedSkillReference, shellCommandFromComposer, transcriptUpdateKind } from './composer-tools.mjs'
+import { composerReferenceInput, pluginReferences, composerTrigger, createComposerDraftStore, fuzzyFileLabel, matchingSkills, matchingSlashCommands, replaceComposerTrigger, reviewableFileKind, selectedFileReference, selectedSkillReference, shellCommandFromComposer, transcriptUpdateKind } from './composer-tools.mjs'
 import { MAX_COMPOSER_IMAGES, MAX_COMPOSER_IMAGE_TOTAL_BYTES, formatImageSize, prepareComposerImage, userImagesFromContent } from './composer-images.mjs'
 import {
   resolveMarkdownFileLink,
@@ -508,6 +508,11 @@ const threadRouter = createThreadRouterController({
     refreshCatalogs: refreshRouterCatalogs,
     loadBackendInfo,
     configuredTurnOptions,
+    targetTurnOptions: ref => {
+      const options = sessionTurnOptions(ref)
+      const model = options.model || threadForRef(ref)?.model
+      return { ...options, ...(model ? { model } : {}) }
+    },
   },
   catalog: {
     sidebarCatalogs: sidebarThreadCatalogs,
@@ -528,6 +533,18 @@ const threadRouter = createThreadRouterController({
     renderTranscript,
     renderComposerState,
     refreshSupervision: renderComposerTools,
+    refreshTurnNavigator: scheduleTurnNavigatorRender,
+    preserveAttentionLayout: preserveTranscriptLayout,
+    captureReadingPosition: captureRouterReadingPosition,
+    restoreReadingPosition: position => {
+      showRouterResponse(position.turnId, false)
+      const transcript = $('#transcript')
+      const anchor = transcript.querySelector(`.turn[data-turn-id="${CSS.escape(position.turnId)}"]`)
+      transcript.scrollTop = anchor ? transcript.scrollTop + anchor.getBoundingClientRect().top - transcript.getBoundingClientRect().top - position.offset : position.scrollTop
+      captureTranscriptViewState()
+    },
+    showRouterResponse,
+    revealTargetTurn: navigateTranscriptTurn,
     renderSupervisionAction: renderSupervisionMenu,
     openTargetPicker: options => {
       if (state.composerMenu.type === 'router' && state.composerMenu.trigger?.confirmedPicker) { hideComposerMenu(); return }
@@ -661,6 +678,7 @@ const documentWorkspace = createDocumentWorkspaceController({
     disposeMarkdownImageAssets,
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
+    renderDocumentCommentMarkers: () => reviewNotes.renderDocumentCommentMarkers(),
     openWorkspaceTool: (tool, sourceSessionKey) => {
       const ref = parseSessionRefKey(sourceSessionKey)
       if (!ref) return workspaceTools.open(tool)
@@ -1782,6 +1800,7 @@ async function switchBackend(backend, { selectedId } = {}) {
   if (!isSupportedBackend(backend) || backend === state.backend) return
   const previousBackend = state.backend
   captureTranscriptViewState()
+  if (!leaveSessionWorkspace()) return false
   state.selectedByBackend[state.backend] = state.selectedId
   cleanupConnections()
   const transitionGeneration = state.socketGeneration
@@ -3027,7 +3046,7 @@ async function selectThread(id, { force = false, backend = state.backend } = {})
   hideComposerMenu()
   resetStreamingPatches()
   captureTranscriptViewState()
-  if (state.artifact?.threadKey !== sessionMapKey(state.backend, id)) closeArtifactRail({ restoreMap: false })
+  if (state.selectedId !== id && !leaveSessionWorkspace()) return
   state.selectedId = id
   state.selectedByBackend[state.backend] = id
   setNativeError(null)
@@ -3765,7 +3784,71 @@ function renderWorkspace() {
   reviewNotes.renderAnnotations()
   captureOpeningMessage()
   reviewNotes.renderSessionFavoriteCount()
-  sessionMap.render()
+  if (!restoreSessionWorkspace()) sessionMap.render()
+}
+
+const sessionWorkspaceMemory = new SessionWorkspaceMemory()
+let restoredWorkspaceKey = ''
+function leaveSessionWorkspace() {
+  const key = selectedStateKey()
+  const visible = id => !$(`#${id}`).classList.contains('hidden')
+  const file = state.artifact
+  const workspace = workspaceTools.snapshot()
+  const tool = file && visible('artifact-rail') ? 'document' : workspace ? 'workspace'
+    : visible('annotation-rail') ? 'comments' : visible('favorites-rail') ? 'favorites'
+      : sessionResources.isOpen() ? 'resources' : state.embeddedBrowserVisible ? 'browser'
+        : visible('session-map-rail') ? 'map' : null
+  const snapshot = { tool, workspace, favoriteScope: state.favoriteScope }
+  if (tool === 'document') snapshot.document = {
+    file: { root: file.root, path: file.path, sourceSessionKey: file.sourceSessionKey, epubCfi: file.readingState?.cfi || '' },
+    returnTool: file.returnTool,
+    viewState: { view: state.artifactView, page: file.page, scrollTop: $('#artifact-content').scrollTop, scrollLeft: $('#artifact-content').scrollLeft,
+      outlineOpen: state.artifactOutlineOpen, outlineFilter: state.artifactOutlineFilter, outlineCollapsed: [...state.artifactOutlineCollapsed],
+      search: state.artifactSearch, searchOpen: state.artifactSearchOpen },
+  }
+  if (tool === 'document' && file.loading) {
+    const previous = sessionWorkspaceMemory.get(key)?.document
+    if (previous?.file.path === file.path && previous.file.root === file.root) snapshot.document = previous
+  }
+  if (file && documentWorkspace.close({ restoreMap: false, restoreWorkspace: false }) === false) return false
+  sessionWorkspaceMemory.remember(key, snapshot)
+  sessionWorkspaceMemory.invalidate()
+  restoredWorkspaceKey = ''
+  sessionResources.close()
+  activateRightWorkspace(null)
+  return true
+}
+
+function restoreSessionWorkspace() {
+  const key = selectedStateKey()
+  if (!key || restoredWorkspaceKey === key) return false
+  restoredWorkspaceKey = key
+  const snapshot = sessionWorkspaceMemory.get(key)
+  if (!snapshot) return false
+  const valid = sessionWorkspaceMemory.begin()
+  const current = () => valid() && key === selectedStateKey()
+  const restore = async () => {
+    if (snapshot.tool === 'document') {
+      await documentWorkspace.open(snapshot.document.file, { returnTool: snapshot.document.returnTool, viewState: snapshot.document.viewState })
+    } else if (snapshot.tool === 'workspace') {
+      const { source, tool, scroll } = snapshot.workspace
+      if (source) {
+        const thread = threadForRef(source)
+        if (!thread) return
+        await workspaceTools.openForSession(thread, source.backend, tool)
+      } else await workspaceTools.open(tool)
+      if (current() && workspaceTools.snapshot()?.tool === tool) for (const position of scroll) {
+        const node = $(`#${position.id}`)
+        if (node) { node.scrollTop = position.top; node.scrollLeft = position.left }
+      }
+    } else if (snapshot.tool === 'comments') reviewNotes.openAnnotations()
+    else if (snapshot.tool === 'favorites') await reviewNotes.openFavorites(snapshot.favoriteScope)
+    else if (snapshot.tool === 'resources') sessionResources.open()
+    else if (snapshot.tool === 'browser') await openGlobalBrowser()
+    else if (snapshot.tool === 'map') sessionMap.render()
+  }
+  restore().catch(error => { if (current()) showError(error) })
+  return true
 }
 
 function resetStreamingPatches() {
@@ -4065,6 +4148,7 @@ function restoreTranscriptView(container = $('#transcript'), entry = null) {
 
 function renderTranscript({ preserveScroll = false, previousHeight = 0, previousTop = 0 } = {}) {
   if (!state.selectedId) return
+  threadRouter.syncDirectTurns()
   const threadKey = presentationThreadKey()
   const presentationCacheHit = Boolean(transcriptPresentationCache.peekCurrent(threadKey, state.model))
   const finishRender = studioPerformance.start('transcript.render', {
@@ -4128,6 +4212,7 @@ function renderTranscript({ preserveScroll = false, previousHeight = 0, previous
   observeTranscriptContent()
   bindApprovalButtons()
   bindActivityDetails()
+  threadRouter.renderAttention()
   reviewNotes.renderCommentMarkers()
   scheduleTurnNavigatorRender()
   if (preserveScroll) {
@@ -4314,6 +4399,7 @@ function scheduleTurnNavigatorRender() {
 }
 
 function renderTurnNavigator() {
+  const unreadTurns = threadRouter.unreadTurnIds()
   const threadKey = presentationThreadKey()
   const finishRender = studioPerformance.start('turnNavigator.render', {
     backend: state.backend,
@@ -4330,10 +4416,11 @@ function renderTurnNavigator() {
       id: String(turn.id || ''),
       label: preview ? `${fallback}: ${preview}` : fallback,
       title: preview || fallback,
+      unread: unreadTurns.has(String(turn.id || '')),
     }
   })
   const signature = `${presentationThreadKey()}\u0000${state.language}\u0000${items
-    .map((item) => `${item.id}\u0001${item.label}\u0001${item.title}`).join('\u0000')}`
+    .map((item) => `${item.id}\u0001${item.label}\u0001${item.title}\u0001${item.unread}`).join('\u0000')}`
   if (turns.length < 2) {
     navigator.classList.add('hidden')
     list.innerHTML = ''
@@ -4355,7 +4442,7 @@ function renderTurnNavigator() {
   }
 
   list.innerHTML = items.map((item) => {
-    return `<button class="turn-nav-item" type="button" data-turn-nav-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.label)}"><span class="turn-nav-title">${escapeHtml(item.title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
+    return `<button class="turn-nav-item${item.unread ? ' router-unread' : ''}" type="button" data-turn-nav-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.label)}${item.unread ? ` · ${t('Unread response')}` : ''}"><span class="turn-nav-title">${escapeHtml(item.title)}</span><span class="turn-nav-indicator" aria-hidden="true"><i></i></span></button>`
   }).join('')
   activeTurnNavigatorButton = null
   turnNavigatorButtons = new Map([...list.querySelectorAll('[data-turn-nav-id]')]
@@ -4409,18 +4496,23 @@ function setActiveTurnNavigator(turnId) {
 function handleTurnNavigatorClick(event) {
   const button = event.target.closest('[data-turn-nav-id]')
   if (!button) return
+  navigateTranscriptTurn(button.dataset.turnNavId)
+  void threadRouter.markReminderReadForTurn?.(button.dataset.turnNavId)
+}
+
+function navigateTranscriptTurn(turnId) {
   const key = presentationThreadKey()
   const transcript = $('#transcript')
   if (pendingTranscriptViewRestore?.key === key) pendingTranscriptViewRestore = null
   transcriptPresentationCache.setScrollState(key, null)
   transcriptScrollFollower.pause()
-  transcriptPresentationCache.showTurn(key, state.model, button.dataset.turnNavId)
+  transcriptPresentationCache.showTurn(key, state.model, turnId)
   let target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
-    .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
+    .find((turn) => turn.dataset.turnId === turnId)
   if (!target) {
     renderTranscript()
     target = [...transcript.querySelectorAll('.turn[data-turn-id]')]
-      .find((turn) => turn.dataset.turnId === button.dataset.turnNavId)
+      .find((turn) => turn.dataset.turnId === turnId)
   }
   if (!target) {
     transcriptScrollFollower.reset()
@@ -4428,10 +4520,29 @@ function handleTurnNavigatorClick(event) {
     return
   }
   const top = transcript.scrollTop + target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
-  setActiveTurnNavigator(button.dataset.turnNavId)
+  setActiveTurnNavigator(turnId)
   transcript.scrollTop = Math.max(0, top)
   transcriptCaptureSuppressedKeys.delete(key)
   captureTranscriptViewState()
+}
+
+function captureRouterReadingPosition() {
+  const transcript = $('#transcript'), top = transcript.getBoundingClientRect().top
+  const anchor = [...transcript.querySelectorAll('.turn[data-turn-id]')].find(node => node.getBoundingClientRect().bottom > top)
+  return { turnId: anchor?.dataset.turnId || '', offset: anchor ? anchor.getBoundingClientRect().top - top : 0, scrollTop: transcript.scrollTop }
+}
+
+function showRouterResponse(turnId, response = true) {
+  navigateTranscriptTurn(turnId)
+  if (response) {
+    const section = $('#transcript').querySelector(`.turn[data-turn-id="${CSS.escape(turnId)}"]`)
+    const target = section?.querySelector('.router-target-response .message.agent .markdown-body') || section?.querySelector('.router-card')
+    if (target) {
+      const transcript = $('#transcript')
+      transcript.scrollTop += target.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16
+      captureTranscriptViewState()
+    }
+  }
 }
 
 function queueStreamingItemPatch(params = {}) {
@@ -4483,6 +4594,12 @@ function patchStreamingItem(turnId, itemId) {
     return true
   }
   if (item.type === 'commandExecution') {
+    if (item.source === 'userShell') {
+      const output = element?.querySelector('pre')
+      if (!output) return false
+      output.textContent = item.aggregatedOutput || ''
+      return true
+    }
     const block = activityBlocksForTurn(turnId)
       .find((candidate) => candidate.sourceItemIds.includes(String(itemId || '')))
     const activity = renderedActivity(turnId, block?.id)
@@ -4542,6 +4659,7 @@ function renderTurn(presentation, index, { openActivityIds = [] } = {}) {
 }
 
 function renderPresentationBlock(block, turnId, options = {}) {
+  if (block.type === 'command') return renderItem(block.item, turnId)
   if (block.type === 'user') return renderItem(block.item, turnId)
   if (block.type === 'assistant') return renderItem(block.item, turnId, { forkable: options.forkable, sourceRef: options.sourceRef })
   if (block.type === 'activity') return renderActivity(block, turnId, options)
@@ -4550,10 +4668,24 @@ function renderPresentationBlock(block, turnId, options = {}) {
 }
 
 function renderRouterTargetTurn(turn, sourceRef) {
-  const open = new Set([...document.querySelectorAll(`[data-router-source="${CSS.escape(sourceRef.key)}"] .work-activity[open]`)].map(node => node.dataset.activityId))
-  return presentRoutedTurn(turn).blocks.map(block => renderPresentationBlock(block, turn.id, {
+  const open = new Set([...document.querySelectorAll(`[data-router-source="${CSS.escape(sourceRef.key)}"] .work-activity[open][data-turn-id="${CSS.escape(String(turn.id))}"]`)].map(node => node.dataset.activityId))
+  // Reuse the bounded LRU budget instead of retaining another unbounded HTML cache.
+  // Mutable native items, favorites, locale and disclosure state all affect HTML.
+  const favoriteFlags = (turn.items || []).filter(item => item.type === 'agentMessage' || item.type === 'plan')
+    .map(item => Boolean(reviewNotes.favoriteForSource(sourceRef.backend, sourceRef.id, turn.id, item.id)))
+  const cacheKey = turn.status === 'completed'
+    ? `router-result\u0000${JSON.stringify([sourceRef, getLocale(), turn, [...open].sort(), favoriteFlags])}` : ''
+  if (cacheKey) {
+    const cached = readMarkdownRenderCache(cacheKey)
+    if (cached != null) return cached
+  }
+  const rendered = presentRoutedTurn(turn).blocks.map(block => renderPresentationBlock(block, turn.id, {
     sourceRef, forkable: false, openActivity: open.has(block.id),
   })).join('')
+  if (cacheKey && (cacheKey.length + rendered.length) * 2 <= MAX_MARKDOWN_RENDER_CACHE_BYTES) {
+    writeMarkdownRenderCache(cacheKey, rendered, rendered.length * 2)
+  }
+  return rendered
 }
 
 function conversationTrackIcon(kind) {
@@ -4708,7 +4840,7 @@ function renderItem(item, turnId, { forkable = false, sourceRef = null } = {}) {
   }
   if (type === 'commandExecution') {
     const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || ''
-    return `<article class="item-card" ${attrs}><header><span>${t('Command')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header>${item.aggregatedOutput ? `<pre>${escapeHtml(item.aggregatedOutput)}</pre>` : ''}</article>`
+    return `<article class="item-card" ${attrs}><header><span>${t('Command')} · ${escapeHtml(command)}</span><span class="item-status ${escapeHtml(item.status || '')}">${escapeHtml(statusLabel(item.status))}</span></header><pre>${escapeHtml(item.aggregatedOutput || '')}</pre></article>`
   }
   if (type === 'fileChange') {
     const changes = (item.changes || []).map((change) => `${change.kind || 'update'} ${change.path || ''}\n${change.diff || ''}`).join('\n\n')
@@ -5122,13 +5254,14 @@ async function handleTranscriptClick(event) {
       await openBrowserUrl(target)
       return
     }
-    const file = resolveMarkdownFileLink(target)
+    const document = resourceLink.closest('#artifact-content') ? state.artifact : null
+    const file = resolveMarkdownFileLink(target, document?.path || '')
     if (!file) return
     const source = threadRouter.sourceContext(resourceLink)
     if (source && !source.thread?.cwd) throw new Error(t('The target session no longer exists.'))
     const openLinkedArtifact = () => openArtifact(
-      { root: source?.thread?.cwd || selectedThread()?.cwd, path: file.path, sourceSessionKey: source?.key || '' },
-      { returnTool: state.activeRightWorkspace === 'resources' ? 'resources' : '' },
+      { root: document?.root || source?.thread?.cwd || selectedThread()?.cwd, path: file.path, sourceSessionKey: document?.sourceSessionKey || source?.key || '' },
+      { returnTool: document?.returnTool || (state.activeRightWorkspace === 'resources' ? 'resources' : '') },
     )
     if (event.currentTarget === $('#transcript')) {
       let opening
@@ -5547,7 +5680,7 @@ function renderComposerMenu(message = '') {
     const empty = state.composerMenu.type === 'file'
       ? 'No matching files'
       : state.composerMenu.type === 'skill'
-        ? 'No matching skills'
+        ? 'No matching skills or plugins'
         : state.composerMenu.type === 'router' ? 'No matching sessions' : 'No matching commands'
     menu.innerHTML = `<div class="composer-menu-empty">${escapeHtml(t(message || empty))}</div>`
     return
@@ -5559,7 +5692,7 @@ function renderComposerMenu(message = '') {
     const detail = option.automatic ? '' : type === 'router' ? `${backendDescriptor(option.backend).name} · ${option.cwd} · ${option.responsibility || option.openingMessage || ''}` : type === 'slash'
       ? option.description
       : type === 'skill'
-        ? option.description || option.shortDescription || option.interface?.shortDescription || option.scope
+        ? `${option.kind === 'plugin' ? 'Plugin' : 'Skill'} · ${option.description || option.shortDescription || option.interface?.shortDescription || option.scope || ''}`
         : option.root
     const previewable = type === 'file' && Boolean(reviewableFileKind(option))
     const openAction = type === 'file'
@@ -5629,7 +5762,7 @@ function searchComposerSkills(trigger) {
   const generation = state.composerMenu.generation + 1
   state.composerMenu = { type: 'skill', trigger, options: [], selected: 0, generation }
   renderComposerMenu('Discovering skills through Codex App Server…')
-  loadSkillCatalog(cwd).then((skills) => {
+  loadSkillCatalog(cwd, false, true).then((skills) => {
     if (generation !== state.composerMenu.generation || state.composerMenu.type !== 'skill') return
     state.composerMenu.options = matchingSkills(trigger.query, skills)
     state.composerMenu.selected = 0
@@ -5640,16 +5773,27 @@ function searchComposerSkills(trigger) {
   })
 }
 
-async function loadSkillCatalog(cwd, forceReload = false) {
+async function loadSkillCatalog(cwd, forceReload = false, includePlugins = false) {
   const catalog = state.skillCatalog
-  if (!forceReload && catalog.cwd === cwd && catalog.loaded) return catalog.skills
-  if (!forceReload && catalog.cwd === cwd && catalog.request) return catalog.request
-  const request = rpc('skills/list', { cwds: cwd ? [cwd] : [], forceReload })
+  const backend = state.backend
+  const matches = catalog.cwd === cwd && catalog.backend === backend && catalog.includePlugins === includePlugins
+  if (!forceReload && matches && catalog.loaded) return catalog.skills
+  if (!forceReload && matches && catalog.request) return catalog.request
+  const skillRequest = rpc('skills/list', { cwds: cwd ? [cwd] : [], forceReload })
     .then((result) => (result?.data || []).flatMap((entry) => entry.skills || []).filter((skill) => skill.enabled))
-  state.skillCatalog = { cwd, skills: [], request, loaded: false }
+  const pluginRequest = includePlugins && isCodexBackend(backend)
+    ? rpc('plugin/list', { cwds: cwd ? [cwd] : [], forceRefetch: forceReload }).then(pluginReferences).catch(error => {
+      // Older app-servers may not implement plugins; other failures stay visible.
+      if (error.code !== -32601 && !/method not found|unknown method|unsupported method/iu.test(error.message || '')) {
+        toast(t('Failed to load plugins: {message}', { message: error.message }))
+      }
+      return []
+    }) : Promise.resolve([])
+  const request = Promise.all([skillRequest, pluginRequest]).then(([skills, plugins]) => [...plugins, ...skills])
+  state.skillCatalog = { cwd, backend, includePlugins, skills: [], request, loaded: false }
   try {
     const skills = await request
-    if (state.skillCatalog.request === request) state.skillCatalog = { cwd, skills, request: null, loaded: true }
+    if (state.skillCatalog.request === request) state.skillCatalog = { cwd, backend, includePlugins, skills, request: null, loaded: true }
     return skills
   } catch (error) {
     if (state.skillCatalog.request === request) state.skillCatalog = { cwd: null, skills: [], request: null, loaded: false }
@@ -5724,6 +5868,15 @@ function currentTurnOptions() {
   return state.turnOptions[key]
 }
 
+function composerModelContext() {
+  const target = isRouterThread() && state.routerRuntime.selectedTarget
+    ? sessionRefFromKey(state.routerRuntime.selectedTarget) : null
+  const ref = target || { backend: state.backend, id: state.selectedId }
+  const key = selectedStateKey(ref.id, ref.backend)
+  state.turnOptions[key] ||= defaultTurnOptions(ref.backend)
+  return { ref, key, options: state.turnOptions[key], thread: threadForRef(ref), descriptor: backendDescriptor(ref.backend) }
+}
+
 function configuredTurnOptions(options = currentTurnOptions()) {
   const result = { ...options }
   const profile = state.environmentProfile
@@ -5742,9 +5895,10 @@ function configuredTurnOptions(options = currentTurnOptions()) {
 }
 
 async function openModelCommand() {
+  const context = composerModelContext()
   showCommandDialog('Model', '<div class="command-empty">Loading models from App Server…</div>')
-  const models = await loadBackendModels({ refresh: true })
-  const currentEffort = currentTurnOptions().effort
+  const models = await loadBackendModels({ refresh: true, backend: context.ref.backend })
+  const currentEffort = context.options.effort
   const backendDefault = models.find((model) => model.isDefault)
   const backendDefaultId = String(backendDefault?.model || backendDefault?.id || '')
   const defaultCard = `<div class="command-card"><strong>${t('Use the backend default model')}</strong><small>${backendDefaultId ? t('Save the current backend default, {model}, for this session', { model: backendDefaultId }) : t('The backend did not identify a default model')}</small><span></span><button class="subtle-button" type="button" data-model-default${backendDefaultId ? '' : ' disabled'}>${t('Use')}</button></div>`
@@ -5759,8 +5913,8 @@ async function openModelCommand() {
   $('#command-content').onclick = (event) => {
     const button = event.target.closest('[data-model], [data-model-default]')
     if (!button) return
-    const key = selectedStateKey()
-    let options = currentTurnOptions()
+    const key = context.key
+    let options = state.turnOptions[key]
     const useDefault = button.hasAttribute('data-model-default')
     const effort = useDefault ? '' : button.closest('.command-card')?.querySelector('select')?.value
     if (useDefault) {
@@ -5783,15 +5937,14 @@ async function openModelCommand() {
   }
 }
 
-async function loadBackendModels({ refresh = false } = {}) {
-  const backend = state.backend
-  if (!refresh && state.backendModels[backend].length) return state.backendModels[backend]
+async function loadBackendModels({ refresh = false, backend = state.backend } = {}) {
+  if (!refresh && state.backendModels[backend]?.length) return state.backendModels[backend]
   if (!refresh && state.backendModelLoads.has(backend)) return state.backendModelLoads.get(backend)
-  const load = rpc('model/list', { limit: 100, includeHidden: false })
+  const load = dispatchBackendRpc(backend, 'model/list', { limit: 100, includeHidden: false })
     .then((result) => {
       const models = Array.isArray(result?.data) ? result.data : []
       state.backendModels[backend] = models
-      if (state.backend === backend) renderComposerState()
+      if (composerModelContext().ref.backend === backend) renderComposerState()
       return models
     })
     .finally(() => state.backendModelLoads.delete(backend))
@@ -5894,11 +6047,12 @@ async function openSkillsCommand() {
 }
 
 function addPendingSkill(skill) {
-  if (!state.selectedId || !skill?.name || !skill?.path) return
+  const reference = composerReferenceInput(skill || {})
+  if (!state.selectedId || !reference) return
   const key = selectedStateKey()
   const skillsForThread = state.pendingSkills[key] ||= []
   if (!skillsForThread.some((candidate) => candidate.path === skill.path)) {
-    skillsForThread.push({ type: 'skill', name: skill.name, path: skill.path })
+    skillsForThread.push(reference)
   }
 }
 
@@ -5943,13 +6097,14 @@ async function executeSlashCommand(action) {
 function renderComposerState() {
   const active = Boolean(state.model.activeTurnId) || state.model.status === 'running'
   const awaitingTurnIdentity = active && !state.model.activeTurnId
-  const options = currentTurnOptions()
-  const descriptor = currentBackend()
+  const context = composerModelContext()
+  const options = context.options
+  const descriptor = context.descriptor
   const display = resolveModelDisplay({
     overrideModel: options.model,
     overrideEffort: options.effort,
-    sessionModel: selectedThread()?.model,
-    models: state.backendModels[state.backend],
+    sessionModel: context.thread?.model,
+    models: state.backendModels[context.ref.backend] || [],
     fallback: `${descriptor.name} default`,
   })
   $('#composer-model-backend').textContent = descriptor.tag

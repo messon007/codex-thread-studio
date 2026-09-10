@@ -8,6 +8,11 @@ import { checkRouterAcceptance } from './browser-router-acceptance.mjs'
 import { checkRouterMentions } from './browser-router-mentions.mjs'
 import { checkSessionMapAcceptance } from './browser-session-map-acceptance.mjs'
 import { checkSupervisionAcceptance } from './browser-supervision-acceptance.mjs'
+import { checkTableAcceptance } from './browser-table-acceptance.mjs'
+import { checkShellAcceptance } from './browser-shell-acceptance.mjs'
+import { checkDocumentLinks } from './browser-document-links.mjs'
+import { checkRouterAttention } from './browser-router-attention.mjs'
+import { checkRouterNavigation } from './browser-router-navigation.mjs'
 const { chromium } = await import(process.env.STUDIO_PLAYWRIGHT_MODULE || 'playwright')
 // Optional integration test; build the binary and provide an installed Playwright.
 const binary = process.env.STUDIO_REMOTE_BINARY || fileURLToPath(new URL('../target/debug/codex-thread-studio', import.meta.url))
@@ -192,6 +197,11 @@ try {
   console.log(await checkComposerAcceptance(page))
   console.log(await checkSupervisionAcceptance(page))
   console.log(await checkCommentMarkerScope(page))
+  console.log(await checkTableAcceptance(page))
+  console.log(await checkShellAcceptance(page))
+  console.log(await checkDocumentLinks(page))
+  console.log(await checkRouterAttention(page))
+  console.log(await checkRouterNavigation(page))
   const filesRoot = join(profile, 'files-fixture')
   await mkdir(filesRoot)
   page.on('console', message => { if (message.type() === 'warning' || message.type() === 'error') console.log('Files browser:', message.text()) })

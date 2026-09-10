@@ -29,9 +29,9 @@ export async function checkRouterAcceptance(page, targetBackend = 'codex') {
       state,
       dispatch: {
         supports: () => true, prepareTurn: async () => {},
-        startTurn: async (ref, input) => { sent.push({ ref, input }); return { turn: { id: ref.id === 'router' ? 'route' : 'worker-turn', status: 'inProgress', items: [] } } },
+        startTurn: async (ref, input, options) => { sent.push({ ref, input, options }); return { turn: { id: ref.id === 'router' ? 'route' : 'worker-turn', status: 'inProgress', items: [] } } },
       },
-      backend: { refreshCatalogs: async () => {}, configuredTurnOptions: () => ({}) },
+      backend: { refreshCatalogs: async () => { throw Error('Explicit target must not refresh all catalogs') }, configuredTurnOptions: () => ({ model: 'router-model' }), targetTurnOptions: ref => ({ model: `${ref.backend}-worker-model`, effort: 'high' }) },
       catalog: { sidebarCatalogs: () => state.threadsByBackend, threadTitle: thread => thread.name, threadStatus: () => 'idle', updateLoadedThreadTimestamp: noop },
       model: { ensureSessionModel: async () => workerModel, applyNotification: noop, cacheThreadModel: noop },
       view: {
@@ -56,13 +56,17 @@ export async function checkRouterAcceptance(page, targetBackend = 'codex') {
       check(picked?.length && host.querySelector('#composer-input').value === 'Keep this question', 'Opening target picker changed the draft or inserted @')
       controller.chooseTarget(targetKey)
       await controller.startTurn('Exact user request')
-      const route = { id: 'route', status: 'completed', items: [{ type: 'agentMessage', text: 'malformed decision' }] }
-      await controller.completeTurn({ backend: 'codex', turnId: 'route', model: { turns: [route] } })
-      check(sent.length === 2 && sent[1].ref.id === 'worker', 'explicit target was not dispatched')
-      check(sent[1].ref.backend === targetBackend, 'target backend changed during routing')
-      check(sent[1].input[0].text === 'Exact user request', 'explicit prompt was rewritten')
+      const route = state.model.turns[0]
+      const routeKey = `codex:${route.id}`
+      check(sent.length === 1 && sent[0].ref.id === 'worker', 'explicit target must bypass Router model')
+      check(sent[0].ref.backend === targetBackend, 'target backend changed during routing')
+      check(sent[0].input[0].text === 'Exact user request', 'explicit prompt was rewritten')
+      check(sent[0].options.turnOptions.model === `${targetBackend}-worker-model` && sent[0].options.turnOptions.effort === 'high', 'target model and reasoning configuration were not forwarded')
       await controller.completeTurn({ backend: targetBackend, turnId: 'worker-turn', model: workerModel })
-      check(saved.get('codex:route').dispatch.status === 'completed', 'completion was not persisted')
+      check(saved.get(routeKey).dispatch.status === 'completed', 'completion was not persisted')
+      check(saved.get(routeKey).dispatch.unread === true, 'background completion did not persist unread state')
+      controller.renderAttention()
+      check(controller.unreadTurnIds().has(route.id), 'background completion missing navigation marker')
       host.innerHTML = controller.renderTurn(route, 0)
       const sourceActions = [...host.querySelectorAll('.message-actions .router-source-action')]
       check(host.querySelector('[data-native-action]').nextElementSibling === sourceActions[0], 'Router actions must follow native actions')
@@ -73,26 +77,31 @@ export async function checkRouterAcceptance(page, targetBackend = 'codex') {
       await controller.handleAction(files)
       check(opened[0].source.thread.cwd === '/worker', 'Files opened the wrong directory')
       check(state.selectedId === 'router' && state.routerRuntime.selectedTarget === targetKey, 'tool navigation changed chat target')
-      await controller.completeTurn({ backend: 'codex', turnId: 'route', model: { turns: [route] } })
-      check(sent.length === 2, 'duplicate notification sent request twice')
+      await controller.completeTurn({ backend: 'codex', turnId: route.id, model: { turns: [route] } })
+      check(sent.length === 1, 'duplicate notification sent request twice')
       const continued = { id:'supervisor-next', status:'inProgress', items:[{ id:'continued-reply', type:'agentMessage', text:'Continued response' }] }
       workerModel.turns.push(continued)
       await controller.followSupervisedTurn({ backend:targetBackend, id:'worker' }, 'worker-turn', continued.id, workerModel)
-      check(saved.get('codex:route').dispatch.targetTurnId === continued.id, 'Router did not follow the supervised task continuation')
+      check(saved.get(routeKey).dispatch.targetTurnId === continued.id, 'Router did not follow the supervised task continuation')
       await controller.completeTurn({ backend:targetBackend, turnId:'worker-turn', model:workerModel })
-      check(state.routerRuntime.dispatches.get('codex:route').status === 'running', 'Old completion closed the supervised continuation')
+      check(state.routerRuntime.dispatches.get(routeKey).status === 'running', 'Old completion closed the supervised continuation')
       continued.status = 'completed'
       await controller.completeTurn({ backend:targetBackend, turnId:continued.id, model:workerModel })
-      check(saved.get('codex:route').dispatch.status === 'completed', 'Supervised continuation completion did not reach Router')
+      check(saved.get(routeKey).dispatch.status === 'completed', 'Supervised continuation completion did not reach Router')
       saved.set('codex:uncertain', { turnKey: 'codex:uncertain', controller: 'codex:router', dispatch: { status: 'dispatching' } })
       state.routerRuntime.dispatches.clear()
       state.routerRuntime.historyLoads.clear()
+      state.routerRuntime.directTurns.clear()
+      state.model.turns = []
       controller.renderTurn(route, 0)
       await state.routerRuntime.historyLoads.get('codex:router')
+      controller.syncDirectTurns()
+      check(state.model.turns[0]?.id === route.id, 'refresh lost direct request history')
       host.innerHTML = controller.renderTurn(route, 0)
       check(host.textContent.includes('Continued response'), 'refresh lost the supervised continuation response')
       check(state.routerRuntime.dispatches.get('codex:uncertain').status === 'failed', 'uncertain delivery was not marked for review')
-      check(sent.length === 2, 'history restoration replayed a request')
+      check(sent.length === 1, 'history restoration replayed a request')
+      check(saved.get(routeKey).dispatch.unread === true, 'history restoration incorrectly marked response read')
       return { inlineReply: true, sourceContext: true, exactTarget: true, durableCompletion: true, duplicateProtection: true }
     } finally {
       host.remove()

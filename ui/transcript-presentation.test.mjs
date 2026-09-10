@@ -13,6 +13,20 @@ import {
   shouldShowTurnPlaceholder,
 } from './transcript-presentation.mjs'
 
+test('manual shell output stays directly visible without changing agent activity grouping', () => {
+  const output = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')
+  for (const status of ['inProgress', 'completed', 'failed']) {
+    const presentation = presentTurn({ id: 'shell', status, items: [
+      { id: 'agent', type: 'commandExecution', source: 'agent', command: 'ls' },
+      { id: 'manual', type: 'commandExecution', source: 'userShell', command: 'git branch -vv', aggregatedOutput: output },
+    ] })
+    assert.deepEqual(presentation.blocks.slice(0, 2).map(block => block.type), ['activity', 'command'])
+    assert.equal(presentation.blocks[1].item.aggregatedOutput, output)
+    assert.equal(shouldShowTurnPlaceholder(presentation), false)
+  }
+  assert.equal(presentTurn({ items: [{ type: 'commandExecution', command: 'ls' }] }).blocks[0].type, 'activity')
+})
+
 test('Router hides all intermediate responses until completion and publishes only the last result', () => {
   const turn = { id: 'r', status: 'inProgress', items: [
     { id: 'u', type: 'userMessage', content: [] },

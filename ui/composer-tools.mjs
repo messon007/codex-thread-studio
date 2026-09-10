@@ -1,4 +1,20 @@
 // Generated from ui-src; run npm run build:ui. Do not edit.
+export function pluginReferences(result) {
+    const seen = new Set();
+    return (result.marketplaces || []).flatMap(market => (market.plugins || []).flatMap(plugin => {
+        if (!plugin.installed || !plugin.enabled || !plugin.id || seen.has(plugin.id))
+            return [];
+        seen.add(plugin.id);
+        return [{ kind: 'plugin', name: plugin.name, path: `plugin://${plugin.id}`, enabled: true,
+                description: [plugin.interface?.shortDescription || plugin.interface?.description, market.name].filter(Boolean).join(' · '),
+                interface: { displayName: plugin.interface?.displayName || plugin.name } }];
+    }));
+}
+export function composerReferenceInput(reference) {
+    if (!reference.name || !reference.path)
+        return null;
+    return { type: reference.kind === 'plugin' ? 'mention' : 'skill', name: reference.name, path: reference.path };
+}
 export const SLASH_COMMANDS = Object.freeze([
     { name: 'model', description: 'Select the model and reasoning effort', action: 'model' },
     { name: 'permissions', description: 'Set approval and sandbox policies for subsequent turns', action: 'permissions' },

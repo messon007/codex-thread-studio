@@ -2,6 +2,8 @@ import { backendDescriptor, isCodexBackend } from './backends.mjs'
 import { t } from './i18n.mjs'
 import { isSessionDirectoryHidden } from './thread-catalog.mjs'
 import { RouterTurnCoordinator } from './router-coordination.mjs'
+import { markTranscriptModelChanged } from './model-revision.mjs'
+import { routerAttentionEntries, responseIsVisible } from './router-attention.mjs'
 import { rankRouterTargets, routerMention } from './router-targets.mjs'
 import {
   DEFAULT_FALLBACK_CONDITION,
@@ -29,6 +31,8 @@ export function createThreadRouterRuntimeState() {
     editor: null,
     selectedTarget: '',
     controllers: new Map(),
+    directTurns: new Map(),
+    historyWrites: new Map(),
     historyLoads: new Map(),
     targetModels: new Map(),
     targetLoads: new Map(),
@@ -55,6 +59,7 @@ export function createThreadRouterController({
     refreshCatalogs,
     loadBackendInfo,
     configuredTurnOptions,
+    targetTurnOptions,
   } = backend
   const {
     sidebarCatalogs,
@@ -83,8 +88,126 @@ export function createThreadRouterController({
   const runtime = state.routerRuntime
   const coordination = new RouterTurnCoordinator(runtime)
   const element = (id) => document.getElementById(id)
+  const returnPositions = new Map()
+  let attentionFrame = null
+  let attentionSignature = ''
+
+  function unreadResponses() {
+    const latestTurnId = String(state.model?.turns?.at(-1)?.id || '')
+    return isThread() && latestTurnId
+      ? routerAttentionEntries(runtime.dispatches, runtime.controllers, sessionRefKey(state.backend, state.selectedId), routerRuntimeKey(state.backend, latestTurnId))
+      : []
+  }
+
+  function unreadTurnIds() {
+    return new Set(unreadResponses().filter(({ key }) => !visibleResponse(key)).map(({ key }) => key.slice(key.indexOf(':') + 1)))
+  }
+
+  function responseNode(key) {
+    const id = key.slice(key.indexOf(':') + 1)
+    const section = element('transcript')?.querySelector(`.router-turn[data-turn-id="${CSS.escape(id)}"]`)
+    return section?.querySelector('.router-target-response .message.agent .markdown-body')?.lastElementChild
+      || section?.querySelector('.router-target-response .message.agent .markdown-body')
+      || (runtime.dispatches.get(key)?.status === 'failed' ? section?.querySelector('.router-card') : null)
+  }
+
+  function visibleResponse(key) {
+    const node = responseNode(key), transcript = element('transcript')
+    return !document.hidden && document.hasFocus() && node && transcript && responseIsVisible(node.getBoundingClientRect(), transcript.getBoundingClientRect())
+  }
+
+  function scheduleAttentionRead() {
+    if (attentionFrame != null) return
+    attentionFrame = requestAnimationFrame(() => {
+      attentionFrame = null
+      const visibleKeys = unreadResponses().filter(({ key }) => visibleResponse(key)).map(({ key }) => key)
+      if (visibleKeys.length) {
+        void markReminderRead(visibleKeys)
+        return
+      }
+      const previousSignature = attentionSignature
+      renderAttention(true)
+      if (previousSignature !== attentionSignature) view.refreshTurnNavigator?.()
+    })
+  }
+
+  async function markReminderRead(keyOrKeys) {
+    const keys = Array.isArray(keyOrKeys) ? keyOrKeys.map((key) => String(key || '')) : [String(keyOrKeys || '')]
+    const controller = sessionRefKey(state.backend, state.selectedId)
+    const changed = []
+    for (const key of keys) {
+      const entry = runtime.dispatches.get(key)
+      if (!entry || !entry.unread || runtime.controllers.get(key) !== controller) continue
+      entry.unread = false
+      changed.push(key)
+    }
+    if (!changed.length) return
+    try {
+      await Promise.all(changed.map((key) => saveDispatch(key)))
+    } catch (error) {
+      for (const key of changed) {
+        const entry = runtime.dispatches.get(key)
+        if (entry) entry.unread = true
+      }
+      notify(error.message, 'error')
+    }
+    if (typeof globalThis.document !== 'undefined' && typeof globalThis.document.getElementById === 'function') renderAttention(true)
+    view.refreshTurnNavigator?.()
+  }
+
+  function markReminderReadForTurn(turnId) {
+    if (!turnId) return Promise.resolve()
+    return markReminderRead(routerRuntimeKey(state.backend, turnId))
+  }
+
+  function renderAttention(skipRead = false) {
+    const host = element('router-attention')
+    if (!host) return
+    const entries = unreadResponses().filter(({ key }) => !visibleResponse(key))
+    const controller = sessionRefKey(state.backend, state.selectedId)
+    const back = isThread() && returnPositions.has(controller)
+    const signature = JSON.stringify([controller, entries.map(({ key, entry }) => [key, entry.status, entry.decision]), back])
+    if (signature !== attentionSignature) {
+      attentionSignature = signature
+      const update = () => {
+      host.classList.toggle('hidden', !isThread() || (!entries.length && !back))
+      const rows = entries.map(({ key, entry }) => {
+        const ref = parseSessionRefKey(entry.decision.targetSessionKey)
+        const target = ref && state.threadsByBackend[ref.backend]?.find(thread => thread.id === ref.id)
+        const title = target ? threadTitle(target) : entry.decision.targetSessionKey
+        const question = String(entry.decision.forwardedPrompt || '').split('\n')[0].slice(0, 100)
+        return `<button type="button" data-router-unread="${escapeHtml(key)}" title="${escapeHtml(question)}"><span>${entry.status === 'failed' ? '!' : '✓'}</span><strong>${escapeHtml(title)}</strong><span class="router-attention-question">${escapeHtml(question)}</span><span>${t('View response')}</span></button>`
+      }).join('')
+      host.innerHTML = (entries.length > 1 ? `<details><summary>${t('{count} responses need attention', { count: entries.length })}</summary><div>${rows}</div></details>` : rows)
+        + (back ? `<button class="router-attention-back" type="button" data-router-return>${t('Return to reading position')}</button>` : '')
+      }
+      if (view.preserveAttentionLayout) view.preserveAttentionLayout(update)
+      else update()
+    }
+    if (!skipRead) scheduleAttentionRead()
+  }
 
   function bind() {
+    element('transcript')?.addEventListener('scroll', scheduleAttentionRead, { passive: true })
+    document.addEventListener('visibilitychange', scheduleAttentionRead)
+    window.addEventListener('focus', scheduleAttentionRead)
+    element('router-attention')?.addEventListener('click', event => {
+      const controller = sessionRefKey(state.backend, state.selectedId)
+      if (event.target.closest('[data-router-return]')) {
+        const position = returnPositions.get(controller)
+        returnPositions.delete(controller)
+        if (position) view.restoreReadingPosition?.(position)
+        renderAttention()
+        return
+      }
+      const button = event.target.closest('[data-router-unread]')
+      if (!button) return
+      if (!returnPositions.has(controller)) returnPositions.set(controller, view.captureReadingPosition?.())
+      const key = button.dataset.routerUnread
+      view.showRouterResponse?.(key.slice(key.indexOf(':') + 1))
+      void markReminderRead(key)
+      renderAttention()
+    })
     element('router-settings-action')?.addEventListener('click', openDialog)
     element('router-form')?.addEventListener('submit', saveSettings)
     element('close-router-dialog')?.addEventListener('click', closeDialog)
@@ -109,6 +232,7 @@ export function createThreadRouterController({
   }
 
   function renderComposerTarget() {
+    renderAttention()
     const bar = element('router-composer-target')
     if (!bar) return
     bar.classList.toggle('hidden', !isThread())
@@ -124,8 +248,14 @@ export function createThreadRouterController({
     if (!gatewayFetch) return
     const controller = runtime.controllers.get(key)
     if (!controller) return
-    const response = await gatewayFetch('/studio/router-history', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ controller, turnKey: key, dispatch: runtime.dispatches.get(key) }) })
-    if (!response.ok) throw new Error(t('Unable to save Router delivery state'))
+    const body = JSON.stringify({ controller, turnKey: key, dispatch: { ...runtime.dispatches.get(key), directTurn: runtime.directTurns.get(key) } })
+    const previous = runtime.historyWrites.get(key) || Promise.resolve()
+    const writing = previous.catch(() => {}).then(async () => {
+      const response = await gatewayFetch('/studio/router-history', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
+      if (!response.ok) throw new Error(t('Unable to save Router delivery state'))
+    })
+    runtime.historyWrites.set(key, writing)
+    try { await writing } finally { if (runtime.historyWrites.get(key) === writing) runtime.historyWrites.delete(key) }
   }
 
   function restoreHistory() {
@@ -138,6 +268,7 @@ export function createThreadRouterController({
       for (const record of records) {
         if (runtime.dispatches.has(record.turnKey)) continue
         const saved = record.dispatch
+        if (saved.directTurn) runtime.directTurns.set(record.turnKey, saved.directTurn)
         runtime.controllers.set(record.turnKey, controller)
         runtime.dispatches.set(record.turnKey, saved)
         const ref = parseSessionRefKey(saved.decision?.targetSessionKey)
@@ -228,6 +359,23 @@ export function createThreadRouterController({
     const controllerModel = state.model
     const turnOptions = configuredTurnOptions()
     const selectedTarget = runtime.selectedTarget
+    if (selectedTarget) {
+      const target = currentCandidates().find(candidate => candidate.key === selectedTarget)
+      if (!target) throw new Error(t('The target session no longer exists.'))
+      const turnId = `direct-${crypto.randomUUID()}`
+      const key = routerRuntimeKey(controller.backend, turnId)
+      const directTurn = { id: turnId, status: 'completed', items: [{ id: `${turnId}-user`, type: 'userMessage', content: [{ type: 'text', text }] }], previousTurnId: controllerModel.turns.at(-1)?.id || '', createdAt: Date.now() }
+      runtime.controllers.set(key, controller.key)
+      runtime.directTurns.set(key, directTurn)
+      runtime.dispatches.set(key, { status: 'dispatching' })
+      // Persist before dispatch: reload must display the request but never resend it.
+      await saveDispatch(key)
+      runtime.pending.set(key, { candidateKeys: [selectedTarget], explicitTarget: selectedTarget, originalPrompt: text, requestedAt: Date.now(), attachments })
+      syncDirectTurns()
+      renderTranscript()
+      await completeTurn({ backend: controller.backend, turnId, model: controllerModel, turn: directTurn })
+      return
+    }
     await refreshCatalogs()
     const allCandidates = currentCandidates()
     const candidates = selectedTarget ? allCandidates.filter(candidate => candidate.key === selectedTarget) : allCandidates
@@ -296,7 +444,7 @@ export function createThreadRouterController({
         const result = await dispatch.startTurn(targetRef, [
           { type: 'text', text: decision.forwardedPrompt },
           ...(pending.attachments || []),
-        ])
+        ], { turnOptions: targetTurnOptions(targetRef) })
         if (!result?.turn) throw new Error(t('The target session could not start a new turn.'))
         applyNotification(targetModel, { method: 'turn/started', params: { threadId: targetRef.id, turn: result.turn } })
         cacheThreadModel(targetRef.backend, targetRef.id, targetModel)
@@ -326,7 +474,7 @@ export function createThreadRouterController({
     const targetKey = sessionRefKey(ref.backend, ref.id)
     for (const [key, entry] of runtime.dispatches) {
       if (entry.decision?.targetSessionKey !== targetKey || entry.targetTurnId !== previousTurnId) continue
-      runtime.dispatches.set(key, { ...entry, status: 'running', targetTurnId: turnId, error: '' })
+      runtime.dispatches.set(key, { ...entry, status: 'running', targetTurnId: turnId, error: '', unread: false })
       runtime.targetTurns.delete(routerRuntimeKey(ref.backend, previousTurnId))
       runtime.targetTurns.set(routerRuntimeKey(ref.backend, turnId), { routerTurnId: key, targetSessionKey: targetKey })
       if (targetModel) runtime.targetModels.set(targetKey, targetModel)
@@ -367,7 +515,8 @@ export function createThreadRouterController({
           runtime.monitors.delete(key)
           const routed = runtime.targetTurns.get(key)
           const dispatchKey = routed?.routerTurnId || key
-          runtime.dispatches.set(dispatchKey, { ...(runtime.dispatches.get(dispatchKey) || {}), status: 'failed', error: error.message })
+          runtime.dispatches.set(dispatchKey, { ...(runtime.dispatches.get(dispatchKey) || {}), status: 'failed', error: error.message, unread: true })
+          await saveDispatch(dispatchKey)
           if (isThread()) renderTranscript()
           return
         }
@@ -398,6 +547,9 @@ export function createThreadRouterController({
       const footerLabel = status === 'completed' ? t('The target response is complete') : t('Request sent to the target session')
       const linkLabel = status === 'completed' ? t('Open response') : t('Open session')
       card = `<article class="router-card ${escapeHtml(status)}"><header><span class="router-card-mark">→</span><div><strong title="${escapeHtml(targetLabel)}">${escapeHtml(targetLabel)}</strong><small>${escapeHtml(decision.reason || '')}</small></div><span class="router-card-status">${t(labels[status] || labels.routed)}</span></header>${dispatchState?.error ? `<p class="router-card-error">${escapeHtml(dispatchState.error)}</p>` : ''}<footer><span>${footerLabel}</span><button type="button" data-router-target="${escapeHtml(targetRef?.id || '')}" data-router-backend="${escapeHtml(targetRef?.backend || '')}" data-router-turn="${escapeHtml(dispatchState?.targetTurnId || '')}">${linkLabel}</button></footer></article>`
+      if (!dispatchState?.error && status !== 'failed') {
+        card = `<div class="router-route-line"><span class="router-route-mark" aria-hidden="true"><svg class="track-icon" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span><button type="button" data-router-target="${escapeHtml(targetRef?.id || '')}" data-router-backend="${escapeHtml(targetRef?.backend || '')}" data-router-turn="${escapeHtml(dispatchState?.targetTurnId || '')}" title="${escapeHtml(targetLabel)} · ${t(linkLabel)}">${escapeHtml(targetLabel)}</button><span class="router-card-status">${t(labels[status] || labels.routed)}</span></div>`
+      }
       const targetModel = targetRef && (state.threadModels?.get(targetRef.key)?.model || runtime.targetModels.get(targetRef.key))
       if (dispatchState?.targetTurnId && !targetModel) loadVisibleTarget(targetRef)
       const targetTurn = targetModel?.turns?.find(item => String(item.id) === dispatchState?.targetTurnId)
@@ -413,6 +565,21 @@ export function createThreadRouterController({
       card = `<article class="router-card failed"><header><span class="router-card-mark">!</span><div><strong>${t('Invalid Router decision')}</strong><small>${t('The Router did not return a valid target from the candidate list.')}</small></div></header>${renderDecisionDebug(turn)}</article>`
     }
     return `<section class="turn router-turn" data-turn-id="${escapeHtml(turn.id || '')}"><div class="turn-separator">Turn ${index + 1}</div>${userItems}${card}</section>`
+  }
+
+  function syncDirectTurns() {
+    if (!isThread()) return
+    restoreHistory()
+    const controller = sessionRefKey(state.backend, state.selectedId)
+    const turns = state.model.turns
+    const pending = [...runtime.directTurns.entries()].filter(([key]) => runtime.controllers.get(key) === controller)
+      .map(([, turn]) => turn).sort((a, b) => a.createdAt - b.createdAt)
+    for (const turn of pending) {
+      if (turns.some(candidate => candidate.id === turn.id)) continue
+      const previous = turns.findIndex(candidate => candidate.id === turn.previousTurnId)
+      turns.splice(previous < 0 ? turns.length : previous + 1, 0, turn)
+      markTranscriptModelChanged(state.model)
+    }
   }
 
 
@@ -431,12 +598,18 @@ export function createThreadRouterController({
     }).join('')
   }
 
+  let targetNavigationSequence = 0
   async function openTarget(target) {
-    await selectThread(target.dataset.routerTarget, { backend: target.dataset.routerBackend })
-    const turnId = target.dataset.routerTurn
-    if (turnId) {
-      requestAnimationFrame(() => document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`)?.scrollIntoView({ block: 'start' }))
-    }
+    const sequence = ++targetNavigationSequence
+    const { routerTarget: id, routerBackend: backend, routerTurn: turnId } = target.dataset
+    if (!id || !backend) return
+    await selectThread(id, { backend })
+    if (!turnId) return
+    requestAnimationFrame(() => {
+      // Selection can be cancelled (unsaved editor), or superseded while loading.
+      if (sequence !== targetNavigationSequence || state.backend !== backend || state.selectedId !== id) return
+      view.revealTargetTurn?.(turnId)
+    })
   }
 
   function removeSession(sessionBackend, threadId) {
@@ -621,6 +794,9 @@ export function createThreadRouterController({
     openTarget,
     removeSession,
     renderTurn,
+    renderAttention,
+    unreadTurnIds,
+    syncDirectTurns,
     renderSourceActions,
     startTurn,
     targetSuggestions,
@@ -629,6 +805,8 @@ export function createThreadRouterController({
     sourceContext,
     handleAction,
     followSupervisedTurn,
+    markReminderRead,
+    markReminderReadForTurn,
   }
 }
 

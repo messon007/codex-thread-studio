@@ -27,6 +27,7 @@
         "model/list",
         "review/start",
         "skills/list",
+        "plugin/list",
         "thread/archive",
         "thread/compact/start",
         "thread/delete",

@@ -21,7 +21,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 - Provides a compact in-session Turn navigator: the current interaction is highlighted, hover reveals user-prompt previews, and selecting a marker scrolls directly to that Turn.
 - Lets the user select structured output, attach comments anchored to the originating Turn and Item, assemble repeated annotations, and insert the result into the composer without sending it.
 - Saves any complete AI message directly from its structured Item, optionally includes the user question from the same Turn, and provides a searchable cross-backend, cross-thread favorites library with source navigation.
-- Stores favorites in SQLite, automatically migrates the legacy JSON library, and exports the full global library as Markdown.
+- Stores favorites in SQLite and exports the full global library as Markdown.
 - Provides persistent Chinese/English/system-language selection, light/dark themes, typography, contrast, Comfortable/Wide/Full content width, selected thread, comment drafts, and language-specific annotation prompt templates.
 - Switches between isolated Codex and OpenCode session lists, remembers the selected session for each backend, and namespaces comment drafts per backend.
 - Loads additional machine-local Codex-compatible instances from `backends.json`. Each instance has an independent process, session namespace, connection, and native model catalog; private launcher configuration stays outside the repository. See [local backend instances](docs/backend-instances.md).

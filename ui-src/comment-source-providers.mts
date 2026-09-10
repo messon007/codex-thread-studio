@@ -105,7 +105,11 @@ function normalizeDocumentAnchor(value: unknown = {}) {
   const anchor = commentRecord(value)
   const target = normalizeAnnotationTarget({ target: { ...anchor, kind: 'fileRange' } })
   const { kind: _kind, ...normalized } = target
-  return normalized
+  return { ...normalized,
+    previewStartOffset: boundedOffset(anchor.previewStartOffset),
+    previewEndOffset: boundedOffset(anchor.previewEndOffset),
+    previewHash: String(anchor.previewHash || '').slice(0, 128),
+  }
 }
 
 function fileTarget(value: unknown = {}): CommentRecord {

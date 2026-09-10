@@ -39,6 +39,7 @@ export function createWorkspaceTools({
   let sourceOwner = ''
   let fileWatch = null
   let fileWatchRetry = null
+  let closeLocationMenu = () => {}
 
   function stopFileWatch() {
     clearTimeout(fileWatchRetry)
@@ -135,6 +136,12 @@ export function createWorkspaceTools({
     element('open-workspace-review')?.addEventListener('click', () => open('review'))
     element('close-workspace-tools')?.addEventListener('click', close)
     element('workspace-files-refresh')?.addEventListener('click', refreshFiles)
+    const locationButton = element('workspace-open-location')
+    if (locationButton) {
+      locationButton.disabled = Boolean(window.__CODEX_THREAD_STUDIO_GATEWAY__?.remote)
+      if (locationButton.disabled) locationButton.title = translate('System file manager is unavailable in remote browser mode.')
+      locationButton.addEventListener('click', () => openItemLocation())
+    }
     element('workspace-file-filter')?.addEventListener('input', (event) => {
       const state = stateForCurrent()
       if (!state) return
@@ -142,6 +149,35 @@ export function createWorkspaceTools({
       renderFileTree(state)
     })
     element('workspace-file-tree')?.addEventListener('click', handleTreeClick)
+    element('workspace-file-tree')?.addEventListener('contextmenu', event => {
+      const row = event.target.closest('.workspace-tree-row')
+      if (!row || window.__CODEX_THREAD_STUDIO_GATEWAY__?.remote) return
+      event.preventDefault()
+      closeLocationMenu()
+      const state = stateForCurrent()
+      if (!state) return
+      state.selected = row.dataset.path
+      renderFileTree(state)
+      const menu = document.createElement('div')
+      menu.className = 'workspace-location-menu'
+      menu.setAttribute('role', 'menu')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.setAttribute('role', 'menuitem')
+      button.textContent = translate('Open Item Location')
+      menu.append(button)
+      document.body.append(menu)
+      menu.style.left = `${Math.max(0, Math.min(event.clientX, innerWidth - menu.offsetWidth))}px`
+      menu.style.top = `${Math.max(0, Math.min(event.clientY, innerHeight - menu.offsetHeight))}px`
+      const closeMenu = () => { menu.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', keydown, true) }
+      closeLocationMenu = closeMenu
+      const outside = event => { if (!menu.contains(event.target)) closeMenu() }
+      const keydown = event => { if (event.key === 'Escape') { event.preventDefault(); closeMenu() } }
+      document.addEventListener('pointerdown', outside, true)
+      document.addEventListener('keydown', keydown, true)
+      button.addEventListener('click', () => { closeMenu(); void openItemLocation(state) })
+      button.focus()
+    })
     element('start-workspace-terminal')?.addEventListener('click', startTerminal)
     element('clear-workspace-terminal')?.addEventListener('click', clearTerminal)
     element('stop-workspace-terminal')?.addEventListener('click', stopTerminal)
@@ -181,18 +217,24 @@ export function createWorkspaceTools({
     closePeerRails?.()
     activeTool = tool
     visibleKey = currentSessionKey()
+    const openingKey = visibleKey
     element('workspace-tools-rail').classList.remove('hidden')
     setTool(tool)
     sync()
     if (tool === 'files') await ensureDirectory(stateForCurrent(), '')
     if (tool === 'review') await gitReview.open()
+    if (visibleKey !== openingKey || activeTool !== tool) return
     render()
     if (tool === 'terminal' && stateForCurrent()?.terminalStarted) {
-      setTimeout(() => fitTerminal(stateForCurrent(), { focus: true }), 30)
+      const terminalState = stateForCurrent()
+      setTimeout(() => {
+        if (visibleKey === openingKey && activeTool === tool) fitTerminal(terminalState, { focus: true })
+      }, 30)
     }
   }
 
   function close() {
+    closeLocationMenu()
     stopFileWatch()
     gitReview.close()
     activeTool = null
@@ -336,6 +378,14 @@ export function createWorkspaceTools({
     const state = stateForCurrent()
     if (!state) return
     for (const path of watchedPaths(state)) void ensureDirectory(state, path, true)
+  }
+
+  async function openItemLocation(state = stateForCurrent()) {
+    if (!state) return
+    try {
+      const response = await gatewayFetch('/studio/workspace/open-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: state.root, path: state.selected || '' }) })
+      if (!response.ok) throw new Error((await response.json()).error || 'Unable to open item location')
+    } catch (error) { notify(error.message, 'error') }
   }
 
   function clearTerminal() {
@@ -515,6 +565,7 @@ export function createWorkspaceTools({
     developerBackend = backend
     sourceOwner = ownerKey()
     await open(tool)
+    if (developerThread !== thread || developerBackend !== backend || !isOpen()) return
     element('workspace-tools-path').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
     element('workspace-terminal-cwd').textContent = `${thread.name || thread.title || thread.id} · ${thread.cwd}`
   }
@@ -541,7 +592,12 @@ export function createWorkspaceTools({
     return true
   }
 
-  return { bind, sync, open, openForDebug, openForSession, reveal, close, isOpen, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
+  function snapshot() {
+    if (!isOpen()) return null
+    return { tool: activeTool, source: sourceOwner ? { backend: currentBackend(), id: currentThread()?.id } : null,
+      scroll: ['workspace-file-tree', 'workspace-review-files', 'workspace-review-diff'].map(id => ({ id, top: element(id)?.scrollTop || 0, left: element(id)?.scrollLeft || 0 })) }
+  }
+  return { bind, sync, open, openForDebug, openForSession, reveal, close, isOpen, snapshot, resize: () => fitTerminal(stateForCurrent()), refreshTypography }
 }
 
 function fileIcon(name) {

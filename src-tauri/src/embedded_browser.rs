@@ -799,7 +799,7 @@ fn log_network_storage(role: &str, webview: &WebView) {
         return;
     };
     eprintln!(
-        "Embedded Browser storage: role={role}, ephemeral={}, data={}, cache={}, hsts={}",
+        "Embedded Browser storage: role={role}, ephemeral={}, data={}, cache={}",
         manager.is_ephemeral(),
         manager
             .base_data_directory()
@@ -808,11 +808,7 @@ fn log_network_storage(role: &str, webview: &WebView) {
         manager
             .base_cache_directory()
             .as_deref()
-            .unwrap_or("<default>"),
-        manager
-            .hsts_cache_directory()
-            .as_deref()
-            .unwrap_or("<memory/default>")
+            .unwrap_or("<default>")
     );
 }
 

@@ -3,24 +3,24 @@ import assert from 'node:assert/strict'
 import { routerAttentionEntries, responseIsVisible } from './router-attention.mjs'
 import { RouterTurnCoordinator } from './router-coordination.mjs'
 
-test('only latest request per target is eligible; controller and backend identities stay isolated', () => {
+test('only the controller session model latest turn is eligible', () => {
   const dispatches = new Map(), controllers = new Map()
   const add = (key, target, requestedAt, status, unread = true, controller = 'codex:router') => {
     controllers.set(key, controller)
     dispatches.set(key, { decision: { targetSessionKey: target }, requestedAt, status, unread })
   }
-  add('old', 'codex:worker', 1, 'completed')
-  add('new', 'codex:worker', 2, 'running', false)
-  add('other-backend', 'opencode:worker', 1, 'completed')
-  add('error', 'codex:error', 3, 'failed')
+  add('old-worker', 'codex:worker', 1, 'completed')
+  add('old-other-backend', 'opencode:worker', 2, 'completed')
+  add('latest', 'codex:error', 3, 'running', false)
   add('other-router', 'codex:worker', 5, 'completed', true, 'codex:other')
-  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router').map(x => x.key), ['other-backend', 'error'])
-  dispatches.get('new').status = 'completed'; dispatches.get('new').unread = true
-  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router').map(x => x.key), ['other-backend', 'new', 'error'])
-  dispatches.get('new').unread = false
-  assert.equal(routerAttentionEntries(dispatches, controllers, 'codex:router').some(x => x.key === 'old'), false)
+  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router', 'latest'), [])
+  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router', 'non-routed-latest'), [])
+  dispatches.get('latest').status = 'failed'; dispatches.get('latest').unread = true
+  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router', 'latest').map(x => x.key), ['latest'])
+  dispatches.get('latest').unread = false
+  assert.deepEqual(routerAttentionEntries(dispatches, controllers, 'codex:router', 'latest'), [])
   const restored = new Map(JSON.parse(JSON.stringify([...dispatches])))
-  assert.deepEqual(routerAttentionEntries(restored, controllers, 'codex:router'), routerAttentionEntries(dispatches, controllers, 'codex:router'))
+  assert.deepEqual(routerAttentionEntries(restored, controllers, 'codex:router', 'latest'), routerAttentionEntries(dispatches, controllers, 'codex:router', 'latest'))
 })
 
 test('completion is unread once; interrupted work is an exception rather than success', () => {

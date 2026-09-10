@@ -12,7 +12,7 @@ export async function checkRouterAttention(page) {
   const result = await page.evaluate(async () => {
     const { routerAttentionEntries, responseIsVisible } = await import('/router-attention.mjs')
     const source = await (await fetch('/thread-router-controller.mjs')).text()
-    const start = source.indexOf('  const readTimers =')
+    const start = source.indexOf('  const returnPositions =')
     const end = source.indexOf('  function bind()', start)
     const bindStart = source.indexOf("    element('transcript')?.addEventListener('scroll'", end)
     const bindEnd = source.indexOf("    element('router-settings-action')", bindStart)
@@ -27,41 +27,43 @@ export async function checkRouterAttention(page) {
       ['codex:r1', { status: 'completed', unread: true, requestedAt: 1, targetTurnId: 't1', decision: { targetSessionKey: 'codex:worker', forwardedPrompt: 'Check latest progress' } }],
       ['codex:r2', { status: 'failed', unread: true, requestedAt: 2, targetTurnId: 't2', decision: { targetSessionKey: 'codex:second', forwardedPrompt: 'Run the tests' } }],
     ]) }
-    const state = { backend: 'codex', selectedId: 'router', threadsByBackend: { codex: [{ id: 'worker', name: 'Worker one' }, { id: 'second', name: 'Worker two' }] } }
+    const state = { backend: 'codex', selectedId: 'router', model: { turns: [{ id: 'r1' }, { id: 'r2' }] }, threadsByBackend: { codex: [{ id: 'worker', name: 'Worker one' }, { id: 'second', name: 'Worker two' }] } }
     let saves = 0, returns = 0
     const view = {
       captureReadingPosition: () => ({ top: transcript.scrollTop }),
       restoreReadingPosition: position => { returns++; transcript.scrollTop = position.top },
       showRouterResponse: () => { transcript.scrollTop = transcript.querySelector('.router-turn').offsetTop },
     }
-    const api = new Function('state', 'runtime', 'element', 'isThread', 'sessionRefKey', 'routerAttentionEntries', 'responseIsVisible', 'view', 'saveDispatch', 'notify', 'parseSessionRefKey', 'threadTitle', 't', 'escapeHtml', `${source.slice(start, end)};${source.slice(bindStart, bindEnd)};return {renderAttention, unreadTurnIds, dispose(){for(const timer of readTimers.values())clearTimeout(timer);if(attentionFrame!=null)cancelAnimationFrame(attentionFrame);document.removeEventListener('visibilitychange',scheduleAttentionRead);window.removeEventListener('focus',scheduleAttentionRead)}}`)(
-      state, runtime, element, () => true, (backend, id) => `${backend}:${id}`, routerAttentionEntries, responseIsVisible, view,
+    const api = new Function('state', 'runtime', 'element', 'isThread', 'sessionRefKey', 'routerRuntimeKey', 'routerAttentionEntries', 'responseIsVisible', 'view', 'saveDispatch', 'notify', 'parseSessionRefKey', 'threadTitle', 't', 'escapeHtml', `${source.slice(start, end)};${source.slice(bindStart, bindEnd)};return {renderAttention, unreadTurnIds, dispose(){if(attentionFrame!=null)cancelAnimationFrame(attentionFrame);document.removeEventListener('visibilitychange',scheduleAttentionRead);window.removeEventListener('focus',scheduleAttentionRead)}}`)(
+      state, runtime, element, () => true, (backend, id) => `${backend}:${id}`, (backend, id) => `${backend}:${id}`, routerAttentionEntries, responseIsVisible, view,
       async () => { saves++ }, message => { throw Error(message) }, key => { const [backend, id] = key.split(':'); return { backend, id } }, thread => thread.name,
       (text, values) => text.replace('{count}', values?.count ?? ''), text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
     )
     const check = (ok, message) => { if (!ok) throw Error(message) }
     try {
       api.renderAttention()
-      check(element('router-attention').textContent.includes('2 responses'), 'Multiple results not grouped')
-      check(api.unreadTurnIds().size === 2, 'Navigation markers missing')
+      check(!element('router-attention').querySelector('[data-router-unread="codex:r1"]'), 'Older Router turn should not remain eligible')
+      check(element('router-attention').querySelector('[data-router-unread="codex:r2"]'), 'Latest Router turn reminder missing')
+      check(api.unreadTurnIds().size === 1 && api.unreadTurnIds().has('r2'), 'Only the latest Router turn should have a navigation marker')
       check(transcript.scrollTop === 0, 'Reminder moved reading position')
-      element('router-attention').querySelector('details').open = true
-      element('router-attention').querySelector('[data-router-unread="codex:r1"]').click()
-      await new Promise(resolve => setTimeout(resolve, 900))
-      check(runtime.dispatches.get('codex:r1').unread === false && saves === 1, 'Visible response was not marked read exactly once')
+      element('router-attention').querySelector('[data-router-unread="codex:r2"]').click()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      check(runtime.dispatches.get('codex:r2').unread === false && saves === 1, 'Clicked response was not marked read exactly once')
       element('router-attention').querySelector('[data-router-return]').click()
       check(returns === 1 && transcript.scrollTop === 0, 'Return to previous reading position failed')
+      state.model.turns = [{ id: 'r2' }, { id: 'r1' }]
       runtime.dispatches.get('codex:r1').unread = true
       transcript.scrollTop = transcript.querySelector('.router-turn').offsetTop
       api.renderAttention()
       check(!element('router-attention').querySelector('[data-router-unread="codex:r1"]'), 'Visible completion should not show a reminder')
+      await new Promise(resolve => setTimeout(resolve, 20))
+      check(runtime.dispatches.get('codex:r1').unread === false && saves === 2, 'Visible completion was not acknowledged automatically')
       transcript.scrollTop = 0
       transcript.dispatchEvent(new Event('scroll'))
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      check(element('router-attention').querySelector('[data-router-unread="codex:r1"]'), 'Briefly visible unread response lost its reminder after scrolling away')
-      element('router-attention').querySelector('details').open = true
+      check(!element('router-attention').querySelector('[data-router-unread="codex:r1"]'), 'Acknowledged visible completion became unread after scrolling away')
       if (window.captureRouterAttention) await window.captureRouterAttention()
-      return 'PASS: grouped unread results, navigation markers, no automatic jump, 700ms visible-body read confirmation, return position and visible-result suppression'
+      return 'PASS: latest-turn-only reminder, navigation marker, no automatic jump, visible-result acknowledgement and return position'
     } finally { api.dispose(); host.remove() }
   })
   return result

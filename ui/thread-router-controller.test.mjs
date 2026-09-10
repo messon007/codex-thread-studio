@@ -71,6 +71,8 @@ function controllerFixture(overrides = {}) {
       ...overrides.view,
     },
     persistPreferences: async () => {},
+    gatewayFetch: overrides.gatewayFetch,
+    notify: overrides.notify,
   })
   return { activity, calls, controller, state }
 }
@@ -163,4 +165,88 @@ test('removing a session repairs Router controllers and fallback references', ()
   assert.equal(controller.removeSession('codex', 'router'), true)
   assert.deepEqual(state.router.controllers, {})
   assert.equal(controller.removeSession('codex', 'missing'), false)
+})
+
+test('markReminderReadForTurn resolves the Router dispatch key and stays within the active controller', async () => {
+  const view = { renderTranscript: () => {}, refreshTurnNavigator: () => calls.push('refresh-turn-navigator'), renderAttention: () => {} }
+  const calls = []
+  const { state, controller } = controllerFixture({
+    dispatch: { supports: () => true, prepareTurn: async () => {}, startTurn: async () => ({ turn: { id: 'route-turn', status: 'inProgress', items: [] } }) },
+    view,
+  })
+  state.routerRuntime.dispatches.set('codex:route-turn', { status: 'completed', unread: true, decision: { targetSessionKey: 'codex:worker' }, targetTurnId: '1', requestedAt: 1 })
+  state.routerRuntime.dispatches.set('codex:other', { status: 'completed', unread: true, decision: { targetSessionKey: 'codex:worker' }, targetTurnId: 'route-turn', requestedAt: 2 })
+  state.routerRuntime.controllers.set('codex:route-turn', 'codex:router')
+  state.routerRuntime.controllers.set('codex:other', 'codex:other')
+
+  await controller.markReminderReadForTurn('route-turn')
+  assert.equal(state.routerRuntime.dispatches.get('codex:route-turn')?.unread, false)
+  assert.equal(state.routerRuntime.dispatches.get('codex:other')?.unread, true)
+  assert.deepEqual(calls, ['refresh-turn-navigator'])
+})
+
+test('markReminderRead consumes persistence failures, restores unread state, and refreshes navigation', async () => {
+  const calls = []
+  const { state, controller } = controllerFixture({
+    gatewayFetch: async () => ({ ok: false }),
+    notify: (message, level) => calls.push(['notify', message, level]),
+    view: { refreshTurnNavigator: () => calls.push(['refresh-turn-navigator']) },
+  })
+  state.routerRuntime.dispatches.set('codex:route-turn', { status: 'completed', unread: true, decision: { targetSessionKey: 'codex:worker' }, targetTurnId: 'target-turn', requestedAt: 1 })
+  state.routerRuntime.controllers.set('codex:route-turn', 'codex:router')
+
+  await controller.markReminderReadForTurn('route-turn')
+
+  assert.equal(state.routerRuntime.dispatches.get('codex:route-turn')?.unread, true)
+  assert.deepEqual(calls, [
+    ['notify', 'Unable to save Router delivery state', 'error'],
+    ['refresh-turn-navigator'],
+  ])
+})
+
+test('a visible latest response is acknowledged before it can become an offscreen reminder', async () => {
+  const originalDocument = globalThis.document
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame
+  const originalCss = globalThis.CSS
+  const frames = []
+  const response = { getBoundingClientRect: () => ({ top: 120, bottom: 200, height: 80 }) }
+  const section = { querySelector: selector => selector.includes('.markdown-body') ? response : null }
+  const transcript = {
+    querySelector: selector => selector.includes('data-turn-id="route-turn"') ? section : null,
+    getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+  }
+  const attention = { classList: { toggle() {} }, innerHTML: '' }
+  globalThis.document = {
+    hidden: false,
+    hasFocus: () => true,
+    getElementById: id => ({ transcript, 'router-attention': attention })[id] || null,
+  }
+  globalThis.requestAnimationFrame = callback => { frames.push(callback); return frames.length }
+  globalThis.CSS = { escape: value => String(value) }
+  try {
+    const calls = []
+    const { state, controller } = controllerFixture({
+      state: { model: { activeTurnId: null, turns: [{ id: 'route-turn' }] } },
+      view: { refreshTurnNavigator: () => calls.push('refresh-turn-navigator') },
+    })
+    state.routerRuntime.dispatches.set('codex:route-turn', { status: 'completed', unread: true, decision: { targetSessionKey: 'codex:worker' }, targetTurnId: 'target-turn', requestedAt: 1 })
+    state.routerRuntime.controllers.set('codex:route-turn', 'codex:router')
+
+    controller.renderAttention()
+    assert.equal(state.routerRuntime.dispatches.get('codex:route-turn')?.unread, true)
+    assert.equal(frames.length, 1)
+    frames.shift()()
+    await new Promise(resolve => setImmediate(resolve))
+
+    assert.equal(state.routerRuntime.dispatches.get('codex:route-turn')?.unread, false)
+    assert.deepEqual(calls, ['refresh-turn-navigator'])
+
+    response.getBoundingClientRect = () => ({ top: 600, bottom: 680, height: 80 })
+    controller.renderAttention()
+    assert.equal(attention.innerHTML, '')
+  } finally {
+    globalThis.document = originalDocument
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame
+    globalThis.CSS = originalCss
+  }
 })

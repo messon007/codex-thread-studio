@@ -1,17 +1,13 @@
 // Generated from ui-src; run npm run build:ui. Do not edit.
-/** A new request supersedes the previous reminder, even while still running. */
-export function routerAttentionEntries(dispatches, controllers, controller) {
-    const latest = new Map();
-    for (const [key, entry] of dispatches) {
-        const target = entry.decision?.targetSessionKey;
-        if (!target || controllers.get(key) !== controller)
-            continue;
-        const previous = latest.get(target);
-        if (!previous || (entry.requestedAt || 0) >= (previous.entry.requestedAt || 0))
-            latest.set(target, { key, entry });
-    }
-    return [...latest.values()].filter(({ entry }) => entry.unread && ['completed', 'failed'].includes(entry.status || ''))
-        .sort((a, b) => (a.entry.requestedAt || 0) - (b.entry.requestedAt || 0));
+/** Only the controller session's latest routed turn can require attention. */
+export function routerAttentionEntries(dispatches, controllers, controller, latestTurnKey) {
+    const entry = dispatches.get(latestTurnKey);
+    return entry?.decision?.targetSessionKey
+        && controllers.get(latestTurnKey) === controller
+        && entry.unread
+        && ['completed', 'failed'].includes(entry.status || '')
+        ? [{ key: latestTurnKey, entry }]
+        : [];
 }
 export function responseIsVisible(rect, viewport) {
     const overlap = Math.min(rect.bottom, viewport.bottom) - Math.max(rect.top, viewport.top);

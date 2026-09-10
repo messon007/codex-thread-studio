@@ -6,19 +6,17 @@ export interface AttentionDispatch {
   decision?: { targetSessionKey?: string; forwardedPrompt?: string }
 }
 
-/** A new request supersedes the previous reminder, even while still running. */
+/** Only the controller session's latest routed turn can require attention. */
 export function routerAttentionEntries(
-  dispatches: Map<string, AttentionDispatch>, controllers: Map<string, string>, controller: string,
+  dispatches: Map<string, AttentionDispatch>, controllers: Map<string, string>, controller: string, latestTurnKey: string,
 ) {
-  const latest = new Map<string, { key: string; entry: AttentionDispatch }>()
-  for (const [key, entry] of dispatches) {
-    const target = entry.decision?.targetSessionKey
-    if (!target || controllers.get(key) !== controller) continue
-    const previous = latest.get(target)
-    if (!previous || (entry.requestedAt || 0) >= (previous.entry.requestedAt || 0)) latest.set(target, { key, entry })
-  }
-  return [...latest.values()].filter(({ entry }) => entry.unread && ['completed', 'failed'].includes(entry.status || ''))
-    .sort((a, b) => (a.entry.requestedAt || 0) - (b.entry.requestedAt || 0))
+  const entry = dispatches.get(latestTurnKey)
+  return entry?.decision?.targetSessionKey
+    && controllers.get(latestTurnKey) === controller
+    && entry.unread
+    && ['completed', 'failed'].includes(entry.status || '')
+    ? [{ key: latestTurnKey, entry }]
+    : []
 }
 
 export function responseIsVisible(rect: { top: number; bottom: number; height: number }, viewport: { top: number; bottom: number }) {

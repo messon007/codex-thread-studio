@@ -4497,6 +4497,7 @@ function handleTurnNavigatorClick(event) {
   const button = event.target.closest('[data-turn-nav-id]')
   if (!button) return
   navigateTranscriptTurn(button.dataset.turnNavId)
+  void threadRouter.markReminderReadForTurn?.(button.dataset.turnNavId)
 }
 
 function navigateTranscriptTurn(turnId) {

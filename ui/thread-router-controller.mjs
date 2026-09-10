@@ -88,13 +88,15 @@ export function createThreadRouterController({
   const runtime = state.routerRuntime
   const coordination = new RouterTurnCoordinator(runtime)
   const element = (id) => document.getElementById(id)
-  const readTimers = new Map()
   const returnPositions = new Map()
   let attentionFrame = null
   let attentionSignature = ''
 
   function unreadResponses() {
-    return isThread() ? routerAttentionEntries(runtime.dispatches, runtime.controllers, sessionRefKey(state.backend, state.selectedId)) : []
+    const latestTurnId = String(state.model?.turns?.at(-1)?.id || '')
+    return isThread() && latestTurnId
+      ? routerAttentionEntries(runtime.dispatches, runtime.controllers, sessionRefKey(state.backend, state.selectedId), routerRuntimeKey(state.backend, latestTurnId))
+      : []
   }
 
   function unreadTurnIds() {
@@ -118,29 +120,44 @@ export function createThreadRouterController({
     if (attentionFrame != null) return
     attentionFrame = requestAnimationFrame(() => {
       attentionFrame = null
-      const entries = unreadResponses()
-      const keys = new Set(entries.map(item => item.key))
-      for (const [key, timer] of readTimers) {
-        if (!keys.has(key) || !visibleResponse(key)) { clearTimeout(timer); readTimers.delete(key) }
-      }
-      for (const { key, entry } of entries) {
-        if (readTimers.has(key) || !visibleResponse(key)) continue
-        const controller = runtime.controllers.get(key), targetTurnId = entry.targetTurnId
-        readTimers.set(key, setTimeout(async () => {
-          readTimers.delete(key)
-          if (!isThread() || sessionRefKey(state.backend, state.selectedId) !== controller || !visibleResponse(key)) return
-          const current = runtime.dispatches.get(key)
-          if (!current?.unread || current.targetTurnId !== targetTurnId || !unreadResponses().some(item => item.key === key)) return
-          current.unread = false
-          try { await saveDispatch(key) } catch (error) { current.unread = true; notify(error.message, 'error') }
-          renderAttention()
-          view.refreshTurnNavigator?.()
-        }, 700))
+      const visibleKeys = unreadResponses().filter(({ key }) => visibleResponse(key)).map(({ key }) => key)
+      if (visibleKeys.length) {
+        void markReminderRead(visibleKeys)
+        return
       }
       const previousSignature = attentionSignature
       renderAttention(true)
       if (previousSignature !== attentionSignature) view.refreshTurnNavigator?.()
     })
+  }
+
+  async function markReminderRead(keyOrKeys) {
+    const keys = Array.isArray(keyOrKeys) ? keyOrKeys.map((key) => String(key || '')) : [String(keyOrKeys || '')]
+    const controller = sessionRefKey(state.backend, state.selectedId)
+    const changed = []
+    for (const key of keys) {
+      const entry = runtime.dispatches.get(key)
+      if (!entry || !entry.unread || runtime.controllers.get(key) !== controller) continue
+      entry.unread = false
+      changed.push(key)
+    }
+    if (!changed.length) return
+    try {
+      await Promise.all(changed.map((key) => saveDispatch(key)))
+    } catch (error) {
+      for (const key of changed) {
+        const entry = runtime.dispatches.get(key)
+        if (entry) entry.unread = true
+      }
+      notify(error.message, 'error')
+    }
+    if (typeof globalThis.document !== 'undefined' && typeof globalThis.document.getElementById === 'function') renderAttention(true)
+    view.refreshTurnNavigator?.()
+  }
+
+  function markReminderReadForTurn(turnId) {
+    if (!turnId) return Promise.resolve()
+    return markReminderRead(routerRuntimeKey(state.backend, turnId))
   }
 
   function renderAttention(skipRead = false) {
@@ -186,7 +203,9 @@ export function createThreadRouterController({
       const button = event.target.closest('[data-router-unread]')
       if (!button) return
       if (!returnPositions.has(controller)) returnPositions.set(controller, view.captureReadingPosition?.())
-      view.showRouterResponse?.(button.dataset.routerUnread.slice(button.dataset.routerUnread.indexOf(':') + 1))
+      const key = button.dataset.routerUnread
+      view.showRouterResponse?.(key.slice(key.indexOf(':') + 1))
+      void markReminderRead(key)
       renderAttention()
     })
     element('router-settings-action')?.addEventListener('click', openDialog)
@@ -786,6 +805,8 @@ export function createThreadRouterController({
     sourceContext,
     handleAction,
     followSupervisedTurn,
+    markReminderRead,
+    markReminderReadForTurn,
   }
 }
 

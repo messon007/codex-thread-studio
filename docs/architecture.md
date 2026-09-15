@@ -86,6 +86,7 @@ The composer is a structured App Server client rather than a terminal command pa
 - A composer value beginning with `!` calls `thread/shellCommand`. App Server evaluates the remainder with the Thread shell and publishes the resulting structured Items. Per the protocol, this user-invoked command runs with local user access and does not inherit the model Turn sandbox.
 - `/model`, `/skills`, and `/mcp` populate controls through `model/list`, `skills/list`, and `mcpServerStatus/list`.
 - `/compact` and `/review` invoke `thread/compact/start` and `review/start`.
+- `/agent` and `/subagents` resolve the current Agent tree through experimental `thread/list` parent/ancestor filters, then switch through the normal Thread selection and resume path.
 - `/permissions` stores a valid approval/sandbox override for the next `turn/start`.
 - Local Thread operations such as rename, fork, archive, and delete reuse the same structured RPCs as their toolbar actions.
 

@@ -72,6 +72,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 35. Git status handles spaces, untracked files, staged/unstaged overlap, renames, and conflicts through NUL-delimited porcelain output. Diff and mutation requests accept only current root-relative changed paths, remain bounded, and never pass a command through a shell.
 36. Session Resources scans completed narrative Items in only the latest Turn rather than streaming deltas, ignores file-change activity, never fetches a URL while detecting it, keeps paths confined to the selected session root, and restores the resource panel after a document opened from it is closed.
 37. Image attachments are validated by byte signature, limited to four images, 10 MiB each, and 20 MiB total, sent as structured protocol input rather than prompt markup, and displayed in both pending composer state and user-message history. Authenticated Codex/OpenCode transport bodies are capped at 32 MiB to include base64 and JSON overhead. Failed sends restore the original text and attachments.
+38. In a Codex session, `/agent` and `/subagents` load the root Agent and all descendants through App Server parent/ancestor metadata, display their hierarchy, and switch to a selected Agent through the standard Thread selection path. OpenCode reports the feature as unsupported.
 
 ## Deferred
 

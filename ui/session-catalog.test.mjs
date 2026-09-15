@@ -5,8 +5,11 @@ import test from 'node:test'
 import {
   catalogListParams,
   mergeCatalogMetadata,
+  orderAgentThreadTree,
+  preserveSelectedSubagent,
   reconcileStartedThreadCatalog,
   shouldRecoverCodexCatalog,
+  subagentCatalogListParams,
   turnStartParams,
 } from './session-catalog.mjs'
 
@@ -28,6 +31,47 @@ test('Codex rollout recovery runs only for an empty catalog or a missing preferr
   assert.equal(shouldRecoverCodexCatalog(catalog, 'thread-missing'), true)
   assert.equal(shouldRecoverCodexCatalog(catalog, 'thread-1'), false)
   assert.equal(shouldRecoverCodexCatalog(catalog, null), false)
+})
+
+test('subagent catalog queries include every App Server subagent source', () => {
+  assert.deepEqual(subagentCatalogListParams('root', 'next', 500), {
+    ancestorThreadId: 'root',
+    cursor: 'next',
+    limit: 100,
+    sourceKinds: ['subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'],
+  })
+  assert.throws(() => subagentCatalogListParams(''), /root thread ID/u)
+})
+
+test('agent threads are ordered as a stable parent-child tree', () => {
+  const root = { id: 'root', createdAt: 1 }
+  const entries = orderAgentThreadTree(root, [
+    { id: 'nested', parentThreadId: 'second', createdAt: 4 },
+    { id: 'second', parentThreadId: 'root', createdAt: 3 },
+    { id: 'first', parentThreadId: 'root', createdAt: 2 },
+    { id: 'orphan', parentThreadId: 'missing', createdAt: 5 },
+    { id: 'first', parentThreadId: 'root', createdAt: 2 },
+  ])
+  assert.deepEqual(entries.map(({ thread, depth }) => [thread.id, depth]), [
+    ['root', 0],
+    ['first', 1],
+    ['second', 1],
+    ['nested', 2],
+    ['orphan', 1],
+  ])
+})
+
+test('catalog refresh retains only the selected subagent omitted by interactive listings', () => {
+  const previous = [
+    { id: 'selected-agent', parentThreadId: 'root', turns: [{}] },
+    { id: 'old-agent', parentThreadId: 'root' },
+    { id: 'root' },
+  ]
+  assert.deepEqual(preserveSelectedSubagent([{ id: 'root' }], previous, 'selected-agent'), [
+    { id: 'selected-agent', parentThreadId: 'root', turns: undefined },
+    { id: 'root' },
+  ])
+  assert.deepEqual(preserveSelectedSubagent([{ id: 'root' }], previous, 'root'), [{ id: 'root' }])
 })
 
 test('catalog refreshes retain newly started sessions until the backend lists them', () => {
@@ -135,6 +179,8 @@ test('Studio applies DB catalogs and recovery only to Codex-compatible backends'
   assert.match(focusRefresh, /refreshBackendCatalog\(backend\)/u)
   assert.match(focusRefresh, /scheduleCodexCatalogRecovery\(backend\)/u)
   assert.match(app, /scheduleInactiveCatalogRefresh\(\)/u)
+  assert.match(app, /thread\/list', subagentCatalogListParams\(rootThreadId, cursor\)/u)
+  assert.match(app, /selectThread\(target\.id, \{ force: true, backend \}\)/u)
 })
 
 test('Studio binds canonical cwd to Codex turns without changing the OpenCode adapter', () => {

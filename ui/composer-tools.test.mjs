@@ -83,6 +83,8 @@ test('replaces only the active composer trigger', () => {
 
 test('filters slash commands and formats file references', () => {
   assert.equal(matchingSlashCommands('comp')[0].name, 'compact')
+  assert.equal(matchingSlashCommands('agent').find(({ name }) => name === 'agent')?.action, 'subagents')
+  assert.equal(matchingSlashCommands('subagents').find(({ name }) => name === 'subagents')?.action, 'subagents')
   assert.equal(selectedFileReference({ path: 'src/main.rs' }), 'src/main.rs ')
   assert.equal(selectedFileReference({ path: 'docs/design notes.md' }), '"docs/design notes.md" ')
 })

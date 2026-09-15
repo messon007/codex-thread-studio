@@ -1272,6 +1272,9 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .command-card strong { font-size: var(--ui-font-label); }
 .command-card small { color: var(--muted); font-size: var(--ui-font-xs); overflow-wrap: anywhere; }
 .command-card select { min-width: 110px; height: 30px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); color: var(--text); }
+.command-card:disabled { cursor: default; opacity: .72; }
+.command-card:disabled:hover { border-color: var(--border); background: var(--panel-soft); }
+.agent-thread-card.current { border-color: color-mix(in srgb, var(--brand) 45%, var(--border)); background: var(--brand-soft); opacity: 1; }
 .command-summary { display: grid; gap: 1px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .command-summary .detail-row { padding: 10px 12px; background: var(--panel-soft); }
 .command-empty { padding: 24px; color: var(--muted); text-align: center; }

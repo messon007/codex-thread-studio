@@ -6,6 +6,7 @@ import {
   findTextMatchRanges,
   isHtmlFile,
   isMarkdownFile,
+  lineNumberAt,
   renderStructuredTextPreview,
   STATIC_HTML_FORBIDDEN_ATTRIBUTES,
   STATIC_HTML_FORBIDDEN_TAGS,
@@ -293,8 +294,15 @@ function setArtifactView(view) {
     && !isHtmlFile(state.artifact.path)
     && !structuredTextPreviewKind(state.artifact.path)) return
   if (!['preview', 'source', 'edit'].includes(view)) return
+  const file = state.artifact
+  const sourceLine = view === 'preview' && state.artifactView === 'source' && (isMarkdownFile(file.path) || isHtmlFile(file.path))
+    ? artifactSourceLineAtViewport()
+    : null
+  const previewLocation = sourceLine == null ? null : artifactPreviewLocation(file, sourceLine)
+  if (sourceLine != null && !previewLocation) return
   state.artifactView = view
   renderArtifact()
+  if (previewLocation) navigateArtifactPreviewLocation(file, previewLocation, sourceLine)
 }
 
 function toggleArtifactSearch() {
@@ -1170,6 +1178,14 @@ function formatFileSize(value) {
 
   function jumpArtifactToLine(line, column = 1) {
     if (!state.artifact || !Number.isInteger(Number(line)) || Number(line) < 1) return
+    const file = state.artifact
+    if (file.kind === 'text' && state.artifactView === 'preview' && (isMarkdownFile(file.path) || isHtmlFile(file.path))) {
+      const previewLocation = artifactPreviewLocation(file, Number(line))
+      if (previewLocation) {
+        navigateArtifactPreviewLocation(file, previewLocation, Number(line), column)
+        return
+      }
+    }
     if (state.artifact.kind === 'text') setArtifactView('source')
     requestAnimationFrame(() => {
       const source = $('#artifact-content .artifact-source')
@@ -1189,6 +1205,72 @@ function formatFileSize(value) {
       const rect = range.getBoundingClientRect()
       $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
     })
+  }
+
+  function artifactPreviewLocation(file, line) {
+    const content = file.editContent ?? file.content
+    const items = isMarkdownFile(file.path) ? extractMarkdownOutline(content) : extractHtmlOutline(content)
+    const item = outlineItemForLocation(items, { line })
+    return item ? { items, item } : null
+  }
+
+  function navigateArtifactPreviewLocation(file, location, sourceLine, column = 1) {
+    requestAnimationFrame(() => {
+      if (state.artifact !== file || state.artifactView !== 'preview') return
+      const content = $('#artifact-content')
+      const index = location.items.findIndex((candidate) => candidate.id === location.item.id)
+      const heading = index >= 0 ? content.querySelectorAll('h1, h2, h3, h4, h5, h6')[index] : null
+      if (!heading) {
+        setArtifactView('source')
+        jumpArtifactToLine(sourceLine, column)
+        return
+      }
+      const targetTop = content.scrollTop + heading.getBoundingClientRect().top - content.getBoundingClientRect().top - 18
+      content.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+      setArtifactOutlineActive(location.item.id)
+      flashArtifactOutlineTarget(heading)
+    })
+  }
+
+  function artifactSourceLineAtViewport() {
+    const content = $('#artifact-content')
+    const source = content?.querySelector('.artifact-source')
+    if (!content || !source) return null
+    const sourceOffset = (node, offset) => {
+      if (!node || (node !== source && !source.contains(node))) return null
+      try {
+        const prefix = document.createRange()
+        prefix.selectNodeContents(source)
+        prefix.setEnd(node, offset)
+        return prefix.toString().length
+      } catch {
+        return null
+      }
+    }
+    const contentRect = content.getBoundingClientRect()
+    const sourceRect = source.getBoundingClientRect()
+    const x = Math.min(contentRect.right - 2, Math.max(contentRect.left + 2, sourceRect.left + 2))
+    const y = Math.min(contentRect.bottom - 2, Math.max(contentRect.top + 2, sourceRect.top + 2))
+    const caret = document.caretPositionFromPoint?.(x, y)
+    const caretRange = caret ? null : document.caretRangeFromPoint?.(x, y)
+    const offset = caret
+      ? sourceOffset(caret.offsetNode, caret.offset)
+      : sourceOffset(caretRange?.startContainer, caretRange?.startOffset)
+    if (offset != null) return lineNumberAt(source.textContent, offset)
+    const selection = window.getSelection()
+    if (selection?.rangeCount) {
+      const range = selection.getRangeAt(0)
+      const rangeRect = range.getBoundingClientRect()
+      if (rangeRect.bottom >= contentRect.top && rangeRect.top <= contentRect.bottom) {
+        const selectedOffset = sourceOffset(range.startContainer, range.startOffset)
+        if (selectedOffset != null) return lineNumberAt(source.textContent, selectedOffset)
+      }
+    }
+    const lineCount = String(source.textContent || '').split('\n').length
+    const maxScroll = Math.max(0, content.scrollHeight - content.clientHeight)
+    return maxScroll > 0
+      ? Math.min(lineCount, Math.max(1, Math.floor((content.scrollTop / maxScroll) * Math.max(0, lineCount - 1)) + 1))
+      : 1
   }
   function goToPdfPage(page) {
     return richArtifactReader?.goToPage?.(page)

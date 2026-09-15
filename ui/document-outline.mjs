@@ -98,6 +98,13 @@ export function outlineItemForLocation(items, location) {
     if (Number.isFinite(page)) {
         return [...list].reverse().find((item) => Number(item.target?.page) <= page) || null;
     }
+    const line = Number(location?.line);
+    if (Number.isFinite(line)) {
+        return [...list].reverse().find((item) => {
+            const targetLine = Number(item.target?.line);
+            return Number.isFinite(targetLine) && targetLine <= line;
+        }) || null;
+    }
     return null;
 }
 export async function extractPdfOutline(document) {

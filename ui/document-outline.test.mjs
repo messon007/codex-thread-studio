@@ -48,3 +48,11 @@ test('rich document locations resolve to the closest outline item', () => {
   ])
   assert.equal(outlineItemForLocation(pdf, { page: 7 })?.id, 'p5')
 })
+
+test('source lines resolve to the closest preceding preview heading', () => {
+  const markdown = extractMarkdownOutline('# Guide\n\nIntro\n\n## Setup\n\nSteps\n\n## Finish')
+  assert.equal(outlineItemForLocation(markdown, { line: 1 })?.id, 'guide')
+  assert.equal(outlineItemForLocation(markdown, { line: 7 })?.id, 'setup')
+  assert.equal(outlineItemForLocation(markdown, { line: 9 })?.id, 'finish')
+  assert.equal(outlineItemForLocation(markdown, { line: 0 }), null)
+})

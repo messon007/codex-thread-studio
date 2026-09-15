@@ -2,11 +2,36 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_STATUS_FILES: usize = 1_000;
 pub const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_HISTORY_COMMITS: usize = 100;
+pub const MAX_COMMIT_FILES: usize = 1_000;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRootRequest {
     pub root: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryRequest {
+    pub root: String,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitRequest {
+    pub root: String,
+    pub commit: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDiffRequest {
+    pub root: String,
+    pub commit: String,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -56,12 +81,60 @@ pub struct GitChangedFile {
     pub conflicted: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryResponse {
+    pub root: String,
+    pub commits: Vec<GitCommitSummary>,
+    pub has_more: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitSummary {
+    pub hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub authored_at: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFilesResponse {
+    pub root: String,
+    pub commit: String,
+    pub files: Vec<GitCommitFile>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFile {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_path: Option<String>,
+    pub status: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffResponse {
     pub root: String,
     pub path: String,
     pub scope: GitDiffScopeResponse,
+    pub content: String,
+    pub binary: bool,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDiffResponse {
+    pub root: String,
+    pub commit: String,
+    pub path: String,
     pub content: String,
     pub binary: bool,
     pub truncated: bool,
@@ -186,12 +259,151 @@ pub fn repository_root_arguments(root: &str) -> Vec<String> {
     .collect()
 }
 
+pub fn history_arguments(root: &str, offset: usize, limit: usize) -> Vec<String> {
+    vec![
+        "--literal-pathspecs".to_owned(),
+        "-C".to_owned(),
+        root.to_owned(),
+        "log".to_owned(),
+        "--no-color".to_owned(),
+        "--no-decorate".to_owned(),
+        format!("--skip={offset}"),
+        format!("--max-count={}", limit.saturating_add(1)),
+        "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e".to_owned(),
+    ]
+}
+
+pub fn commit_files_arguments(root: &str, commit: &str) -> Vec<String> {
+    [
+        "--literal-pathspecs",
+        "-C",
+        root,
+        "show",
+        "--format=",
+        "--first-parent",
+        "--name-status",
+        "-z",
+        "-M",
+        "-C",
+        commit,
+        "--",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+pub fn commit_diff_arguments(root: &str, commit: &str, path: &str) -> Vec<String> {
+    [
+        "--literal-pathspecs",
+        "-C",
+        root,
+        "show",
+        "--format=",
+        "--first-parent",
+        "--no-ext-diff",
+        "--no-color",
+        "--unified=3",
+        commit,
+        "--",
+        path,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
 pub fn parse_repository_root(output: &[u8]) -> Result<String, String> {
     let root = String::from_utf8_lossy(output).trim().to_owned();
     if root.is_empty() || root.contains('\0') || root.contains('\n') || root.contains('\r') {
         return Err("git returned an invalid repository root".to_owned());
     }
     Ok(root)
+}
+
+pub fn parse_history(
+    root: String,
+    output: &[u8],
+    limit: usize,
+) -> Result<GitHistoryResponse, String> {
+    let mut commits = Vec::new();
+    for raw_record in output.split(|byte| *byte == 0x1e) {
+        let record = raw_record
+            .iter()
+            .copied()
+            .skip_while(|byte| matches!(byte, b'\n' | b'\r'))
+            .collect::<Vec<_>>();
+        if record.is_empty() {
+            continue;
+        }
+        let fields = record
+            .split(|byte| *byte == 0x1f)
+            .map(|field| String::from_utf8_lossy(field).into_owned())
+            .collect::<Vec<_>>();
+        if fields.len() != 6 {
+            return Err("git returned an invalid history record".to_owned());
+        }
+        commits.push(GitCommitSummary {
+            hash: fields[0].clone(),
+            short_hash: fields[1].clone(),
+            author_name: fields[2].clone(),
+            author_email: fields[3].clone(),
+            authored_at: fields[4].clone(),
+            subject: fields[5].clone(),
+        });
+    }
+    let has_more = commits.len() > limit;
+    commits.truncate(limit);
+    Ok(GitHistoryResponse {
+        root,
+        commits,
+        has_more,
+    })
+}
+
+pub fn parse_commit_files(
+    root: String,
+    commit: String,
+    output: &[u8],
+) -> Result<GitCommitFilesResponse, String> {
+    let records = output
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut index = 0;
+    while index < records.len() {
+        let status = String::from_utf8_lossy(records[index]).into_owned();
+        index += 1;
+        let code = status.chars().next().unwrap_or_default();
+        let renamed = matches!(code, 'R' | 'C');
+        let previous_path = if renamed {
+            let Some(path) = records.get(index) else {
+                return Err("git returned an invalid renamed path record".to_owned());
+            };
+            index += 1;
+            Some(String::from_utf8_lossy(path).into_owned())
+        } else {
+            None
+        };
+        let Some(path) = records.get(index) else {
+            return Err("git returned an invalid commit path record".to_owned());
+        };
+        index += 1;
+        files.push(GitCommitFile {
+            path: String::from_utf8_lossy(path).into_owned(),
+            previous_path,
+            status: code.to_string(),
+        });
+    }
+    let truncated = files.len() > MAX_COMMIT_FILES;
+    files.truncate(MAX_COMMIT_FILES);
+    Ok(GitCommitFilesResponse {
+        root,
+        commit,
+        files,
+        truncated,
+    })
 }
 
 pub fn diff_arguments(root: &str, path: &str, scope: GitDiffScope, untracked: bool) -> Vec<String> {
@@ -254,6 +466,13 @@ pub fn validate_relative_path(path: &str) -> Result<(), String> {
         || normalized.get(1..3) == Some(":/")
     {
         return Err("Git paths must stay inside the project directory".to_owned());
+    }
+    Ok(())
+}
+
+pub fn validate_commit_id(commit: &str) -> Result<(), String> {
+    if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Git commit must be a full object ID".to_owned());
     }
     Ok(())
 }
@@ -378,6 +597,50 @@ mod tests {
     }
 
     #[test]
+    fn parses_paginated_history_records() {
+        let output = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x1faaaaaaa\x1fAda\x1fada@example.com\x1f2026-09-15T10:00:00+08:00\x1fFirst commit\x1e\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\x1fbbbbbbb\x1fLin\x1flin@example.com\x1f2026-09-14T09:00:00+08:00\x1fSecond commit\x1e";
+        let history = parse_history("/project".to_owned(), output, 1).unwrap();
+        assert_eq!(history.commits.len(), 1);
+        assert!(history.has_more);
+        assert_eq!(history.commits[0].short_hash, "aaaaaaa");
+        assert_eq!(history.commits[0].subject, "First commit");
+    }
+
+    #[test]
+    fn parses_commit_files_with_rename_records() {
+        let output = b"M\0README.md\0R100\0docs/old.md\0docs/new.md\0";
+        let response = parse_commit_files(
+            "/project".to_owned(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            output,
+        )
+        .unwrap();
+        assert_eq!(response.files.len(), 2);
+        assert_eq!(response.files[0].status, "M");
+        assert_eq!(response.files[1].path, "docs/new.md");
+        assert_eq!(
+            response.files[1].previous_path.as_deref(),
+            Some("docs/old.md")
+        );
+    }
+
+    #[test]
+    fn accepts_only_full_hex_commit_ids() {
+        assert!(validate_commit_id("0123456789abcdef0123456789abcdef01234567").is_ok());
+        assert!(validate_commit_id(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_ok());
+        for commit in [
+            "HEAD",
+            "deadbeef",
+            "0123456789abcdef0123456789abcdef0123456g",
+        ] {
+            assert!(validate_commit_id(commit).is_err());
+        }
+    }
+
+    #[test]
     fn command_arguments_keep_literal_paths_after_double_dash() {
         let path = "docs/data [final].csv";
         assert_eq!(
@@ -406,6 +669,57 @@ mod tests {
                 "-report.csv",
             ]
         );
+        assert_eq!(
+            commit_diff_arguments(
+                "/project",
+                "0123456789abcdef0123456789abcdef01234567",
+                "docs/data [final].csv",
+            ),
+            [
+                "--literal-pathspecs",
+                "-C",
+                "/project",
+                "show",
+                "--format=",
+                "--first-parent",
+                "--no-ext-diff",
+                "--no-color",
+                "--unified=3",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--",
+                "docs/data [final].csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_history_commands_read_real_commits_and_files() {
+        let repository = TestRepository::new();
+        std::fs::write(repository.path().join("README.md"), "first\n").unwrap();
+        repository.git(&["add", "--", "README.md"]);
+        repository.git(&["commit", "-m", "first"]);
+        std::fs::write(repository.path().join("README.md"), "second\n").unwrap();
+        repository.git(&["commit", "-am", "second"]);
+
+        let root = repository.path().to_string_lossy().into_owned();
+        let history_output = repository.run_arguments(&history_arguments(&root, 0, 1));
+        assert!(history_output.status.success());
+        let history = parse_history(root.clone(), &history_output.stdout, 1).unwrap();
+        assert_eq!(history.commits.len(), 1);
+        assert!(history.has_more);
+        assert_eq!(history.commits[0].subject, "second");
+
+        let commit = &history.commits[0].hash;
+        let files_output = repository.run_arguments(&commit_files_arguments(&root, commit));
+        assert!(files_output.status.success());
+        let files = parse_commit_files(root.clone(), commit.clone(), &files_output.stdout).unwrap();
+        assert_eq!(files.files.len(), 1);
+        assert_eq!(files.files[0].path, "README.md");
+
+        let diff_output =
+            repository.run_arguments(&commit_diff_arguments(&root, commit, "README.md"));
+        assert!(diff_output.status.success());
+        assert!(String::from_utf8_lossy(&diff_output.stdout).contains("+second"));
     }
 
     #[test]

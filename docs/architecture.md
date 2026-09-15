@@ -44,7 +44,7 @@ Studio declares experimental structured-interaction and MCP form capabilities du
 
 Artifact binaries and project environment profiles stay behind authenticated gateway routes. PDF/XLSX bytes are bounded and signature-checked before entering local parsers. Environment GET responses redact Secret values; the Rust layer injects them into PTYs or applies them to Codex through `thread/resume.config.shell_environment_policy` without sending stored values back to the WebView.
 
-Git Review also stays behind the authenticated loopback gateway. Rust invokes `git` with explicit argument arrays and literal pathspecs in the selected session root, parses NUL-delimited porcelain status, caps status/diff output, and validates mutations against the current changed-path set. The WebView receives structured status plus bounded unified text; it can stage or unstage but has no discard endpoint.
+Git Review also stays behind the authenticated loopback gateway. Rust invokes `git` with explicit argument arrays and literal pathspecs in the selected session root, parses NUL-delimited porcelain status and commit file lists, caps status/diff output, and validates mutations against the current changed-path set. Read-only history endpoints page commit summaries and compare each selected commit against its first parent. The WebView receives structured status/history plus bounded unified text; it can stage or unstage current changes but has no discard or history-mutation endpoint.
 
 ## UI state model
 

@@ -1,4 +1,5 @@
-export interface ReviewFile { path: string; previousPath?: string; staged?: boolean; unstaged?: boolean; conflicted?: boolean; untracked?: boolean; worktreeStatus?: string; indexStatus?: string }
+export interface ReviewFile { path: string; previousPath?: string; status?: string; staged?: boolean; unstaged?: boolean; conflicted?: boolean; untracked?: boolean; worktreeStatus?: string; indexStatus?: string }
+export interface ReviewCommit { hash: string; shortHash?: string; authorName?: string; authorEmail?: string; authoredAt?: string; subject?: string }
 export function parseUnifiedDiff(source: unknown) {
   let oldLine: number | null = null
   let newLine: number | null = null
@@ -35,9 +36,17 @@ export function parseUnifiedDiff(source: unknown) {
 export function reviewFileStatus(file: ReviewFile | null | undefined) {
   if (file?.conflicted) return { label: '!', title: 'Conflict', tone: 'conflict' }
   if (file?.untracked) return { label: 'U', title: 'Untracked', tone: 'untracked' }
-  const code = file?.worktreeStatus?.trim() || file?.indexStatus?.trim() || 'M'
+  const code = file?.status?.trim() || file?.worktreeStatus?.trim() || file?.indexStatus?.trim() || 'M'
   const labels: Record<string, string> = { A: 'Added', D: 'Delete', M: 'Modified', R: 'Rename', C: 'Copy', T: 'Type changed' }
   return { label: code, title: labels[code] || 'Changed', tone: code.toLowerCase() }
+}
+
+export function visibleReviewCommits<T extends ReviewCommit>(commits: readonly T[], filter = '') {
+  const query = String(filter || '').trim().toLowerCase()
+  if (!query) return [...(commits || [])]
+  return (commits || []).filter((commit) => [
+    commit.hash, commit.shortHash, commit.subject, commit.authorName, commit.authorEmail,
+  ].some((value) => String(value || '').toLowerCase().includes(query)))
 }
 
 export function visibleReviewFiles<T extends ReviewFile>(files: readonly T[], scope = 'all', filter = '') {
@@ -62,5 +71,4 @@ export function createPendingGitReads<T = unknown>() {
     return promise
   }
 }
-
 

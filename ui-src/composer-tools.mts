@@ -20,6 +20,8 @@ export const SLASH_COMMANDS = Object.freeze([
   { name: 'model', description: 'Select the model and reasoning effort', action: 'model' },
   { name: 'permissions', description: 'Set approval and sandbox policies for subsequent turns', action: 'permissions' },
   { name: 'status', description: 'View the current session, model, and token status', action: 'status' },
+  { name: 'agent', description: 'Inspect and switch between agent threads', action: 'subagents' },
+  { name: 'subagents', description: 'Inspect and switch between agent threads', action: 'subagents' },
   { name: 'compact', description: 'Compact the current session context', action: 'compact' },
   { name: 'review', description: 'Review current uncommitted code changes', action: 'review' },
   { name: 'diff', description: 'View the aggregate Git diff for the current turn', action: 'diff' },

@@ -56,7 +56,9 @@ use codex_app_server::CodexAppServer;
 use favorites::{Favorite, MAX_FAVORITE_BODY_BYTES};
 use gateway_security::{AuthorizationError, GatewaySecurity};
 use git_review::{
-    GitDiffRequest, GitDiffResponse, GitPathsRequest, GitRootRequest, GitStatusResponse,
+    GitCommitDiffRequest, GitCommitDiffResponse, GitCommitFilesResponse, GitCommitRequest,
+    GitDiffRequest, GitDiffResponse, GitHistoryRequest, GitHistoryResponse, GitPathsRequest,
+    GitRootRequest, GitStatusResponse,
 };
 #[cfg(not(windows))]
 use opencode_server::find_opencode_binary;
@@ -920,6 +922,12 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(save_workspace_file),
         )
         .route("/studio/git/status", axum::routing::post(git_status))
+        .route("/studio/git/history", axum::routing::post(git_history))
+        .route("/studio/git/commit", axum::routing::post(git_commit))
+        .route(
+            "/studio/git/commit-diff",
+            axum::routing::post(git_commit_diff),
+        )
         .route("/studio/git/diff", axum::routing::post(git_diff))
         .route("/studio/git/stage", axum::routing::post(git_stage))
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
@@ -1602,6 +1610,88 @@ async fn git_status(
     }
 }
 
+async fn git_history(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitHistoryRequest>,
+) -> Response<Body> {
+    let status = match load_git_status(&state, &request.root).await {
+        Ok(status) => status,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    if !status.has_head {
+        return json_response(
+            StatusCode::OK,
+            &GitHistoryResponse {
+                root: status.root,
+                commits: Vec::new(),
+                has_more: false,
+            },
+        );
+    }
+    let limit = request
+        .limit
+        .unwrap_or(git_review::MAX_HISTORY_COMMITS)
+        .clamp(1, git_review::MAX_HISTORY_COMMITS);
+    let arguments = git_review::history_arguments(&status.root, request.offset.unwrap_or(0), limit);
+    let output = match run_git(&state, &arguments, true).await {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => return git_command_error("read commit history", output),
+        Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error),
+    };
+    match git_review::parse_history(status.root, &output.stdout, limit) {
+        Ok(history) => json_response(StatusCode::OK, &history),
+        Err(message) => json_error(StatusCode::BAD_GATEWAY, &message),
+    }
+}
+
+async fn git_commit(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitCommitRequest>,
+) -> Response<Body> {
+    if let Err(message) = git_review::validate_commit_id(&request.commit) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    match load_git_commit_files(&state, &request.root, &request.commit).await {
+        Ok(response) => json_response(StatusCode::OK, &response),
+        Err((status, message)) => json_error(status, &message),
+    }
+}
+
+async fn git_commit_diff(
+    State(state): State<GatewayState>,
+    Json(request): Json<GitCommitDiffRequest>,
+) -> Response<Body> {
+    if let Err(message) = git_review::validate_commit_id(&request.commit) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    if let Err(message) = git_review::validate_relative_path(&request.path) {
+        return json_error(StatusCode::BAD_REQUEST, &message);
+    }
+    let commit = match load_git_commit_files(&state, &request.root, &request.commit).await {
+        Ok(response) => response,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    if !commit.files.iter().any(|file| file.path == request.path) {
+        return json_error(StatusCode::NOT_FOUND, "file is not changed by this commit");
+    }
+    let arguments = git_review::commit_diff_arguments(&commit.root, &request.commit, &request.path);
+    let output = match run_git(&state, &arguments, true).await {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => return git_command_error("read commit diff", output),
+        Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error),
+    };
+    let (content, truncated) = git_review::bounded_diff(output.stdout);
+    let response = GitCommitDiffResponse {
+        root: commit.root,
+        commit: request.commit,
+        path: request.path,
+        binary: content.contains("Binary files ") || content.contains("GIT binary patch"),
+        content,
+        truncated,
+    };
+    json_response(StatusCode::OK, &response)
+}
+
 async fn git_diff(
     State(state): State<GatewayState>,
     Json(request): Json<GitDiffRequest>,
@@ -1782,6 +1872,31 @@ async fn load_git_status_at_root(
         ));
     }
     git_review::parse_status(root, &output.stdout)
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))
+}
+
+async fn load_git_commit_files(
+    state: &GatewayState,
+    requested_root: &str,
+    commit: &str,
+) -> Result<GitCommitFilesResponse, (StatusCode, String)> {
+    let status = load_git_status(state, requested_root).await?;
+    let arguments = git_review::commit_files_arguments(&status.root, commit);
+    let output = run_git(state, &arguments, true)
+        .await
+        .map_err(|message| (StatusCode::BAD_GATEWAY, message))?;
+    if !output.status.success() {
+        let message = bounded_command_stderr(&output.stderr);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            if message.is_empty() {
+                "unable to read commit".to_owned()
+            } else {
+                format!("unable to read commit: {message}")
+            },
+        ));
+    }
+    git_review::parse_commit_files(status.root, commit.to_owned(), &output.stdout)
         .map_err(|message| (StatusCode::BAD_GATEWAY, message))
 }
 

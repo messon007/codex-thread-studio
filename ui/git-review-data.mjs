@@ -36,9 +36,17 @@ export function reviewFileStatus(file) {
         return { label: '!', title: 'Conflict', tone: 'conflict' };
     if (file?.untracked)
         return { label: 'U', title: 'Untracked', tone: 'untracked' };
-    const code = file?.worktreeStatus?.trim() || file?.indexStatus?.trim() || 'M';
+    const code = file?.status?.trim() || file?.worktreeStatus?.trim() || file?.indexStatus?.trim() || 'M';
     const labels = { A: 'Added', D: 'Delete', M: 'Modified', R: 'Rename', C: 'Copy', T: 'Type changed' };
     return { label: code, title: labels[code] || 'Changed', tone: code.toLowerCase() };
+}
+export function visibleReviewCommits(commits, filter = '') {
+    const query = String(filter || '').trim().toLowerCase();
+    if (!query)
+        return [...(commits || [])];
+    return (commits || []).filter((commit) => [
+        commit.hash, commit.shortHash, commit.subject, commit.authorName, commit.authorEmail,
+    ].some((value) => String(value || '').toLowerCase().includes(query)));
 }
 export function visibleReviewFiles(files, scope = 'all', filter = '') {
     const query = String(filter || '').trim().toLowerCase();

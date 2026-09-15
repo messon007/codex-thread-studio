@@ -18,10 +18,10 @@ fn verify_typescript_assets() {
         let file = root.join(path);
         println!("cargo:rerun-if-changed={}", file.display());
         let content = fs::read_to_string(&file).expect("Missing TypeScript input/output");
-        let actual = format!(
-            "{:x}",
-            Sha256::digest(content.replace("\r\n", "\n").as_bytes())
-        );
+        let actual = Sha256::digest(content.replace("\r\n", "\n").as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         assert_eq!(actual, expected, "Stale {path}; run npm run build:ui");
     }
     for entry in fs::read_dir(root.join("ui-src")).unwrap() {

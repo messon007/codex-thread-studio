@@ -37,8 +37,9 @@ weight. Existing preferences migrate to the new defaults automatically.
 - Status uses NUL-delimited Git porcelain records so paths with spaces and rename sources remain unambiguous.
 - The file list covers staged, unstaged, overlapping, untracked, renamed, deleted, and conflicted paths. Filters never mutate Git state.
 - Unified diffs are capped at 4 MiB, rendered with old/new line numbers, and retain horizontal scrolling for source and CSV rows. Binary changes show a non-text state.
+- **History** loads up to 100 commits per page. Selecting a commit shows its changed files and a bounded per-file diff against the commit's first parent; root commits compare against an empty tree.
 - **Stage file** and **Unstage** operate only on a selected path from the current status response. Commands use argument arrays and literal pathspecs, never a shell.
-- The UI deliberately has no discard/revert action. Hunk staging, token syntax highlighting, side-by-side comparison, and line comments remain future work.
+- Historical review is read-only. The UI deliberately has no discard/revert action. Hunk staging, token syntax highlighting, side-by-side comparison, and line comments remain future work.
 
 ## Files and editing
 

@@ -117,7 +117,7 @@ test('builds candidates across backends and excludes every Router controller', (
     controllers: { codex: 'router-cx', 'company-codex': 'router-company', opencode: 'router-oc' },
     fallbacks: [{ sessionKey: 'codex:learn', condition: 'No regular learning session matches.' }],
   }, {
-    codex: [{ id: 'router-cx' }, { id: 'learn', name: 'Books', cwd: '/work/books' }],
+    codex: [{ id: 'router-cx' }, { id: 'learn', name: 'Books', cwd: '/work/books' }, { id: 'child', parentThreadId: 'learn', cwd: '/work/books' }],
     'company-codex': [{ id: 'router-company' }, { id: 'design', name: 'Company Design', cwd: '/work/design' }],
     opencode: [{ id: 'router-oc' }, { id: 'learn', name: 'OC Books', cwd: '/work/oc-books' }],
   }, {

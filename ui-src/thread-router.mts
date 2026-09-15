@@ -153,7 +153,7 @@ export function routerCandidates(config: unknown, catalogs: Record<string, Route
     : (Array.isArray(catalogs) ? catalogs : []).map((thread) => ({ backend: 'codex', thread }))
   return entries
     .map(({ backend, thread }) => ({ backend: cleanBackend(backend), thread }))
-    .filter(({ backend, thread }) => backend && thread?.id && !thread.archived && !thread.ephemeral)
+    .filter(({ backend, thread }) => backend && thread?.id && !thread.archived && !thread.ephemeral && !thread.parentThreadId)
     .map(({ backend, thread }) => {
       const id = String(thread.id)
       const key = sessionRefKey(backend, id)

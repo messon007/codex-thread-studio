@@ -371,18 +371,28 @@
             <button id="workspace-review-refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh Git changes">↻</button>
           </div>
           <div class="workspace-review-repository"><span class="workspace-root-dot"></span><strong id="workspace-review-branch" data-no-i18n>Git</strong><small id="workspace-review-count">0 changes</small></div>
+          <div id="workspace-review-modes" class="workspace-review-modes" role="tablist" aria-label="Git Review mode">
+            <button class="active" type="button" role="tab" data-review-mode="changes" aria-selected="true">Changes</button>
+            <button type="button" role="tab" data-review-mode="history" aria-selected="false">History</button>
+          </div>
           <div id="workspace-review-scopes" class="workspace-review-scopes" role="tablist" aria-label="Git change scope">
             <button class="active" type="button" role="tab" data-review-filter="all" aria-selected="true">All <span>0</span></button>
             <button type="button" role="tab" data-review-filter="unstaged" aria-selected="false">Unstaged <span>0</span></button>
             <button type="button" role="tab" data-review-filter="staged" aria-selected="false">Staged <span>0</span></button>
           </div>
           <div id="workspace-review-files" class="workspace-review-files" aria-label="Git changed files"></div>
+          <div id="workspace-review-history" class="workspace-review-history hidden">
+            <div id="workspace-review-commits" class="workspace-review-commits" aria-label="Git commit history"></div>
+            <button id="workspace-review-history-more" class="workspace-review-history-more hidden" type="button">Load older commits</button>
+            <div class="workspace-review-commit-heading"><strong id="workspace-review-commit-title">Commit files</strong><small id="workspace-review-commit-count">0 files</small></div>
+            <div id="workspace-review-commit-files" class="workspace-review-commit-files" aria-label="Files changed by commit"></div>
+          </div>
           <header id="workspace-review-diff-header" class="workspace-review-diff-header hidden">
             <div><strong id="workspace-review-diff-path" data-no-i18n></strong><div id="workspace-review-diff-scopes" class="workspace-review-diff-scopes"><button type="button" data-diff-scope="unstaged">Working tree</button><button type="button" data-diff-scope="staged">Index</button></div></div>
             <div><button id="workspace-review-open-file" class="subtle-button compact" type="button">Open file</button><button id="workspace-review-action" class="primary-button compact" type="button">Stage file</button></div>
           </header>
           <div id="workspace-review-diff" class="workspace-review-diff"><div class="workspace-review-diff-empty"><span>±</span><strong>Select a file to view its diff</strong></div></div>
-          <footer class="workspace-review-safety"><span>✓</span><p><strong>Safe review</strong><small>Stage or unstage files without discarding working-tree changes</small></p></footer>
+          <footer class="workspace-review-safety"><span>✓</span><p><strong id="workspace-review-safety-title">Safe review</strong><small id="workspace-review-safety-detail">Stage or unstage files without discarding working-tree changes</small></p></footer>
         </section>
       </aside>
 

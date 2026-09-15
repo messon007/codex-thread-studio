@@ -44,7 +44,7 @@ Studio declares experimental structured-interaction and MCP form capabilities du
 
 Artifact binaries and project environment profiles stay behind authenticated gateway routes. PDF/XLSX bytes are bounded and signature-checked before entering local parsers. Environment GET responses redact Secret values; the Rust layer injects them into PTYs or applies them to Codex through `thread/resume.config.shell_environment_policy` without sending stored values back to the WebView.
 
-Git Review also stays behind the authenticated loopback gateway. Rust invokes `git` with explicit argument arrays and literal pathspecs in the selected session root, parses NUL-delimited porcelain status, caps status/diff output, and validates mutations against the current changed-path set. The WebView receives structured status plus bounded unified text; it can stage or unstage but has no discard endpoint.
+Git Review also stays behind the authenticated loopback gateway. Rust invokes `git` with explicit argument arrays and literal pathspecs in the selected session root, parses NUL-delimited porcelain status and commit file lists, caps status/diff output, and validates mutations against the current changed-path set. Read-only history endpoints page commit summaries and compare each selected commit against its first parent. The WebView receives structured status/history plus bounded unified text; it can stage or unstage current changes but has no discard or history-mutation endpoint.
 
 ## UI state model
 
@@ -86,6 +86,7 @@ The composer is a structured App Server client rather than a terminal command pa
 - A composer value beginning with `!` calls `thread/shellCommand`. App Server evaluates the remainder with the Thread shell and publishes the resulting structured Items. Per the protocol, this user-invoked command runs with local user access and does not inherit the model Turn sandbox.
 - `/model`, `/skills`, and `/mcp` populate controls through `model/list`, `skills/list`, and `mcpServerStatus/list`.
 - `/compact` and `/review` invoke `thread/compact/start` and `review/start`.
+- `/agent` and `/subagents` resolve the current Agent tree through experimental `thread/list` parent/ancestor filters, then switch through the normal Thread selection and resume path.
 - `/permissions` stores a valid approval/sandbox override for the next `turn/start`.
 - Local Thread operations such as rename, fork, archive, and delete reuse the same structured RPCs as their toolbar actions.
 

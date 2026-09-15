@@ -5,7 +5,7 @@ export interface RouterConfiguration {
 }
 export interface RouterThread {
   id?: string; cwd?: string; name?: string; title?: string
-  archived?: boolean; ephemeral?: boolean
+  archived?: boolean; ephemeral?: boolean; parentThreadId?: string | null
 }
 export interface RouterOpening { responsibility?: string; text?: string }
 export interface RouterCandidate {

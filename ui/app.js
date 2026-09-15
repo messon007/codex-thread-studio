@@ -28,7 +28,10 @@ import { createTranscriptDom } from './transcript-dom.mjs'
 import {
   catalogListParams,
   mergeCatalogMetadata,
+  orderAgentThreadTree,
+  preserveSelectedSubagent,
   shouldRecoverCodexCatalog,
+  subagentCatalogListParams,
   turnStartParams,
 } from './session-catalog.mjs'
 import {
@@ -2550,9 +2553,15 @@ function clearStartedThreadsForBackend(backend, reason) {
 }
 
 function installBackendCatalog(backend, threads) {
+  const previous = state.threadsByBackend[backend]
+  const selectedId = state.selectedByBackend[backend]
   const visible = preserveCatalogActivity(
-    reconcileCatalogWithStartedThreads(backend, threads),
-    state.threadsByBackend[backend],
+    preserveSelectedSubagent(
+      reconcileCatalogWithStartedThreads(backend, threads),
+      previous,
+      selectedId,
+    ),
+    previous,
   )
     .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
@@ -2864,9 +2873,15 @@ async function loadThreads({ applyCachedEnvironment = true } = {}) {
 }
 
 function setActiveThreads(threads, backend = state.backend) {
+  const previous = state.threadsByBackend[backend]
+  const selectedId = state.selectedByBackend[backend]
   const visible = preserveCatalogActivity(
-    reconcileCatalogWithStartedThreads(backend, threads),
-    state.threadsByBackend[backend],
+    preserveSelectedSubagent(
+      reconcileCatalogWithStartedThreads(backend, threads),
+      previous,
+      selectedId,
+    ),
+    previous,
   )
     .filter((thread) => !hiddenUtilityThread(backend, thread))
   state.threadsByBackend[backend] = visible
@@ -3633,7 +3648,7 @@ function openThreadInfo() {
   const opening = state.openingMessages[selectedStateKey()]
   const status = state.model.status === 'disconnected' ? threadStatus(thread) : state.model.status
   const source = threadSourceLabel(thread.source)
-  const routable = !isRouterThread()
+  const routable = !isRouterThread() && !thread.parentThreadId
   $('#thread-info-content').innerHTML = `
     <section class="opening-message-card">
       <header><strong>${t('Opening question')}</strong><span>${opening ? `${opening.source === 'history' ? t('Extracted from history') : escapeHtml(opening.source)}${opening.truncated ? ` · ${t('Truncated')}` : ''}` : t('Not identified')}</span></header>
@@ -5995,6 +6010,86 @@ function openStatusCommand() {
   showCommandDialog('Session status', `<div class="command-summary">${rows.map(([label, value]) => `<div class="detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`)
 }
 
+async function readAgentThreadSummary(backend, threadId) {
+  const result = await dispatchBackendRpc(backend, 'thread/read', { threadId, includeTurns: false })
+  if (!result?.thread?.id) throw new Error(t('The agent thread is no longer available.'))
+  return result.thread
+}
+
+async function resolveAgentLineage(backend, threadId) {
+  const lineage = []
+  const seen = new Set()
+  let thread = await readAgentThreadSummary(backend, threadId)
+  while (thread?.id && !seen.has(thread.id)) {
+    lineage.push(thread)
+    seen.add(thread.id)
+    const parentId = String(thread.parentThreadId || '')
+    if (!parentId) break
+    thread = await readAgentThreadSummary(backend, parentId)
+  }
+  return lineage
+}
+
+async function listAgentDescendants(backend, rootThreadId) {
+  const descendants = []
+  const seenCursors = new Set()
+  let cursor = null
+  do {
+    const result = await dispatchBackendRpc(backend, 'thread/list', subagentCatalogListParams(rootThreadId, cursor))
+    if (Array.isArray(result?.data)) descendants.push(...result.data)
+    cursor = typeof result?.nextCursor === 'string' && result.nextCursor ? result.nextCursor : null
+    if (cursor && seenCursors.has(cursor)) throw new Error(t('The App Server returned a repeated subagent page.'))
+    if (cursor) seenCursors.add(cursor)
+  } while (cursor)
+  return descendants
+}
+
+function agentThreadName(thread, main) {
+  return compactSidebarText(String(thread.agentNickname || thread.name || thread.agentRole || thread.preview || (main ? t('Main agent') : t('Subagent · {id}', { id: String(thread.id || '').slice(0, 8) }))).split('\n')[0])
+}
+
+async function openSubagentsCommand() {
+  if (!isCodexBackend(state.backend)) {
+    showCommandDialog(t('Agents'), `<div class="command-empty">${escapeHtml(t('Subagent navigation is available only for Codex App Server sessions.'))}</div>`)
+    return
+  }
+  const backend = state.backend
+  const selectedId = state.selectedId
+  showCommandDialog(t('Agents'), `<div class="command-empty">${escapeHtml(t('Loading agent tree from App Server…'))}</div>`)
+  const lineage = await resolveAgentLineage(backend, selectedId)
+  if (state.backend !== backend || state.selectedId !== selectedId) return
+  const root = lineage.at(-1)
+  const descendants = await listAgentDescendants(backend, root.id)
+  if (state.backend !== backend || state.selectedId !== selectedId) return
+  const entries = orderAgentThreadTree(root, [...lineage, ...descendants])
+  if (entries.length <= 1) {
+    $('#command-content').innerHTML = `<div class="command-empty">${escapeHtml(t('This session has no subagents.'))}</div>`
+    return
+  }
+  $('#command-content').innerHTML = `<div class="command-list">${entries.map(({ thread, depth }) => {
+    const current = thread.id === selectedId
+    const prefix = depth ? `${'· '.repeat(Math.min(depth, 8))}↳ ` : ''
+    const detail = compactSidebarText(String(thread.agentRole || thread.preview || thread.cwd || ''))
+    return `<button class="command-card agent-thread-card${current ? ' current' : ''}" type="button" data-agent-thread="${escapeHtml(thread.id)}"${current ? ' disabled' : ''}><strong>${escapeHtml(prefix + agentThreadName(thread, depth === 0))}</strong><small>${escapeHtml(detail)}</small><span>${escapeHtml(statusLabel(threadStatus(thread)))}</span><span>${t(current ? 'Current' : 'Open')}</span></button>`
+  }).join('')}</div>`
+  $('#command-content').onclick = async (event) => {
+    const button = event.target.closest('[data-agent-thread]')
+    if (!button || button.disabled) return
+    const target = entries.find(({ thread }) => thread.id === button.dataset.agentThread)?.thread
+    if (!target) return
+    button.disabled = true
+    try {
+      mergeThreadIntoCatalog(backend, target)
+      renderThreadList()
+      $('#command-dialog').close()
+      await selectThread(target.id, { force: true, backend })
+    } catch (error) {
+      button.disabled = false
+      showError(error)
+    }
+  }
+}
+
 async function compactCurrentThread() {
   if (state.model.activeTurnId) throw new Error('The current turn is still running. Finish or stop it before compacting.')
   await rpc('thread/compact/start', { threadId: state.selectedId })
@@ -6077,6 +6172,7 @@ async function executeSlashCommand(action) {
     model: openModelCommand,
     permissions: openPermissionsCommand,
     status: openStatusCommand,
+    subagents: openSubagentsCommand,
     compact: compactCurrentThread,
     review: reviewCurrentChanges,
     diff: openDiffCommand,
@@ -7143,7 +7239,7 @@ function setNativeError(message) {
 }
 
 function threadTitle(thread) {
-  return compactSidebarText(thread?.name || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex session'))
+  return compactSidebarText(thread?.agentNickname || thread?.name || thread?.agentRole || thread?.preview || basename(thread?.cwd) || thread?.id || t('Codex session'))
 }
 function basename(path) { return String(path || '').split(/[\\/]/).filter(Boolean).at(-1) || '' }
 function shortId(value) { const text = String(value || ''); return text.length > 12 ? `${text.slice(0, 8)}…` : text }

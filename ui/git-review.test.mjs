@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { createPendingGitReads, parseUnifiedDiff, reviewFileStatus, visibleReviewFiles } from './git-review.mjs'
+import { createPendingGitReads, parseUnifiedDiff, reviewFileStatus, visibleReviewCommits, visibleReviewFiles } from './git-review.mjs'
 
 test('Git reads coalesce only while pending, never cache results or failures', async () => {
   const read = createPendingGitReads()
@@ -47,4 +48,26 @@ test('review status gives conflicts and untracked files priority', () => {
   assert.equal(reviewFileStatus({ conflicted: true }).label, '!')
   assert.equal(reviewFileStatus({ untracked: true }).label, 'U')
   assert.equal(reviewFileStatus({ indexStatus: 'A', worktreeStatus: ' ' }).title, 'Added')
+  assert.equal(reviewFileStatus({ status: 'R' }).title, 'Rename')
+})
+
+test('commit history filters by hash, subject and author', () => {
+  const commits = [
+    { hash: 'a'.repeat(40), shortHash: 'aaaaaaa', subject: 'Add history', authorName: 'Ada' },
+    { hash: 'b'.repeat(40), shortHash: 'bbbbbbb', subject: 'Fix review', authorEmail: 'lin@example.com' },
+  ]
+  assert.deepEqual(visibleReviewCommits(commits, 'history').map((commit) => commit.shortHash), ['aaaaaaa'])
+  assert.deepEqual(visibleReviewCommits(commits, 'LIN@').map((commit) => commit.shortHash), ['bbbbbbb'])
+  assert.deepEqual(visibleReviewCommits(commits, 'bbbb').map((commit) => commit.shortHash), ['bbbbbbb'])
+})
+
+test('Git Review wires history tabs to read-only commit endpoints', () => {
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  const review = readFileSync(new URL('./git-review.mjs', import.meta.url), 'utf8')
+  assert.match(html, /data-review-mode="history"/u)
+  assert.match(html, /id="workspace-review-commits"/u)
+  assert.match(html, /id="workspace-review-commit-files"/u)
+  assert.match(review, /'\/studio\/git\/history'/u)
+  assert.match(review, /'\/studio\/git\/commit'/u)
+  assert.match(review, /'\/studio\/git\/commit-diff'/u)
 })

@@ -850,6 +850,10 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .workspace-review-repository { height: 38px; min-height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
 .workspace-review-repository strong { min-width: 0; flex: 1; overflow: hidden; font: var(--ui-font-weight) var(--ui-font-label)/1 var(--ui-font-family); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-review-repository small { color: var(--faint); font-size: var(--ui-font-label); }
+.workspace-review-modes { height: 36px; min-height: 36px; padding: 5px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.workspace-review-modes button { border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; font-size: var(--ui-font-label); }
+.workspace-review-modes button:hover { background: var(--panel-soft); color: var(--text); }
+.workspace-review-modes button.active { background: var(--brand-soft); color: var(--brand); font-weight: var(--ui-font-emphasis); }
 .workspace-review-scopes { height: 36px; min-height: 36px; padding: 5px 10px; display: flex; align-items: center; gap: 3px; border-bottom: 1px solid var(--border); background: var(--panel-soft); }
 .workspace-review-scopes button { height: 25px; padding: 0 8px; display: flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; font-size: max(10px, calc(var(--ui-font-size) - 2px)); }
 .workspace-review-scopes button:hover { color: var(--text); }
@@ -869,6 +873,23 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .workspace-review-file-copy small { color: var(--faint); font: var(--ui-font-weight) var(--ui-font-label)/1.3 var(--ui-font-family); }
 .workspace-review-file-scopes { display: flex; gap: 3px; }
 .workspace-review-file-scopes i { width: 17px; height: 17px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--faint); font: var(--ui-font-weight) var(--ui-font-label)/1 var(--ui-font-family); font-style: normal; }
+.workspace-review-history { min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
+.workspace-review-commits, .workspace-review-commit-files { height: clamp(105px, 18vh, 170px); min-height: 90px; padding: 5px 7px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.workspace-review-commits { border-bottom: 1px solid var(--border); }
+.workspace-review-commit { width: 100%; min-height: 48px; padding: 6px 8px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
+.workspace-review-commit:hover { background: var(--panel-soft); color: var(--text); }
+.workspace-review-commit.selected { background: var(--brand-soft); color: var(--text); }
+.workspace-review-commit-hash { flex: 0 0 auto; padding: 3px 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-soft); color: var(--brand); font: var(--code-font-weight) var(--ui-font-compact)/1 var(--code-font-family); }
+.workspace-review-commit-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.workspace-review-commit-copy strong, .workspace-review-commit-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-review-commit-copy strong { color: inherit; font-size: var(--ui-font-label); font-weight: var(--ui-font-emphasis); }
+.workspace-review-commit-copy small { color: var(--faint); font-size: var(--ui-font-xs); }
+.workspace-review-history-more { min-height: 30px; border: 0; border-bottom: 1px solid var(--border); background: var(--panel-soft); color: var(--brand); cursor: pointer; font-size: var(--ui-font-xs); }
+.workspace-review-history-more:hover { background: var(--brand-soft); }
+.workspace-review-history-more:disabled { color: var(--faint); cursor: default; }
+.workspace-review-commit-heading { min-height: 34px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); }
+.workspace-review-commit-heading strong { min-width: 0; flex: 1; overflow: hidden; font-size: var(--ui-font-label); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-review-commit-heading small { color: var(--faint); font-size: var(--ui-font-xs); white-space: nowrap; }
 .workspace-review-state { min-height: 95px; padding: 21px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--faint); font-size: var(--ui-font-xs); text-align: center; }
 .workspace-review-state strong { color: var(--muted); font-size: var(--ui-font-label); }.workspace-review-state.error strong { color: var(--red); }
 .workspace-review-diff-header { min-height: 53px; padding: 7px 9px 7px 13px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--border); }
@@ -1272,6 +1293,9 @@ body.resizing-right-rail iframe { pointer-events: none !important; }
 .command-card strong { font-size: var(--ui-font-label); }
 .command-card small { color: var(--muted); font-size: var(--ui-font-xs); overflow-wrap: anywhere; }
 .command-card select { min-width: 110px; height: 30px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel); color: var(--text); }
+.command-card:disabled { cursor: default; opacity: .72; }
+.command-card:disabled:hover { border-color: var(--border); background: var(--panel-soft); }
+.agent-thread-card.current { border-color: color-mix(in srgb, var(--brand) 45%, var(--border)); background: var(--brand-soft); opacity: 1; }
 .command-summary { display: grid; gap: 1px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .command-summary .detail-row { padding: 10px 12px; background: var(--panel-soft); }
 .command-empty { padding: 24px; color: var(--muted); text-align: center; }

@@ -86,7 +86,7 @@ export function filterDocumentOutline(items: OutlineItem[], query: unknown) {
   return list.filter((item) => visibleIds.has(item.id)).map((item) => ({ ...item, contextOnly: !matchingIds.has(item.id) }))
 }
 
-export function outlineItemForLocation(items: OutlineItem[], location: string | { page?: unknown } | null) {
+export function outlineItemForLocation(items: OutlineItem[], location: string | { page?: unknown; line?: unknown } | null) {
   const list = Array.isArray(items) ? items : []
   if (!list.length || location == null) return null
   if (typeof location === 'string') {
@@ -96,6 +96,13 @@ export function outlineItemForLocation(items: OutlineItem[], location: string | 
   const page = Number(location?.page)
   if (Number.isFinite(page)) {
     return [...list].reverse().find((item) => Number(item.target?.page) <= page) || null
+  }
+  const line = Number(location?.line)
+  if (Number.isFinite(line)) {
+    return [...list].reverse().find((item) => {
+      const targetLine = Number(item.target?.line)
+      return Number.isFinite(targetLine) && targetLine <= line
+    }) || null
   }
   return null
 }
@@ -186,4 +193,3 @@ function clampDepth(value: unknown) {
 function stripFragment(value: unknown) {
   return String(value || '').split('#')[0]!.replace(/^\.\//u, '')
 }
-

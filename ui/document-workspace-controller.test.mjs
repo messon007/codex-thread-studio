@@ -25,6 +25,30 @@ test('Document outline keeps active-row scrolling inside its own list', () => {
   assert.doesNotMatch(scroll, /scrollIntoView/u)
 })
 
+test('line links keep rendered Markdown and HTML in Preview', () => {
+  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('function jumpArtifactToLine(')
+  const end = source.indexOf('\n  return {', start)
+  const jump = source.slice(start, end)
+
+  assert.match(jump, /state\.artifactView === 'preview'/u)
+  assert.match(jump, /artifactPreviewLocation\(file, Number\(line\)\)/u)
+  assert.match(jump, /navigateArtifactPreviewLocation\(file, previewLocation, Number\(line\), column\)/u)
+  assert.ok(jump.indexOf("state.artifactView === 'preview'") < jump.indexOf("setArtifactView('source')"))
+})
+
+test('manual Source to Preview uses the same nearest-heading mapping', () => {
+  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('function setArtifactView(')
+  const end = source.indexOf('\nfunction toggleArtifactSearch(', start)
+  const switchView = source.slice(start, end)
+
+  assert.match(switchView, /artifactSourceLineAtViewport\(\)/u)
+  assert.match(switchView, /artifactPreviewLocation\(file, sourceLine\)/u)
+  assert.match(switchView, /if \(sourceLine != null && !previewLocation\) return/u)
+  assert.match(switchView, /navigateArtifactPreviewLocation\(file, previewLocation, sourceLine\)/u)
+})
+
 test('Document outline is transient and remains open after chapter navigation', () => {
   const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
   const navigate = source.slice(source.indexOf('async function navigateArtifactOutlineItem('), source.indexOf('function setArtifactOutlineActive('))

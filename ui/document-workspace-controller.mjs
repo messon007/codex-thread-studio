@@ -622,6 +622,10 @@ function renderArtifact() {
     resetArtifactSearch()
     return
   }
+  if (state.activeRightWorkspace !== 'document') {
+    rail.classList.add('hidden')
+    return
+  }
   disposeArtifactEditor()
   disposeArtifactOutlineBindings()
   disposeEpubReader()

@@ -648,7 +648,10 @@ function closeAnnotationRail() {
     if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
     syncRightWorkspaceLaunchers()
     if ($('#favorites-rail').classList.contains('hidden')) {
-      if (state.artifact) renderArtifact()
+      if (state.artifact) {
+        activateRightWorkspace('document')
+        renderArtifact()
+      }
       else renderSessionMap()
     }
   }
@@ -1058,7 +1061,10 @@ function closeFavoritesRail() {
   if (state.activeRightWorkspace === 'favorites') state.activeRightWorkspace = null
   syncRightWorkspaceLaunchers()
   if ($('#annotation-rail').classList.contains('hidden')) {
-    if (state.artifact) renderArtifact()
+    if (state.artifact) {
+      activateRightWorkspace('document')
+      renderArtifact()
+    }
     else renderSessionMap()
   }
 }

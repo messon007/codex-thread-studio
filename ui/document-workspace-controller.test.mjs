@@ -49,6 +49,19 @@ test('manual Source to Preview uses the same nearest-heading mapping', () => {
   assert.match(switchView, /navigateArtifactPreviewLocation\(file, previewLocation, sourceLine\)/u)
 })
 
+test('late document rendering cannot reopen an inactive right workspace', () => {
+  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
+  const start = source.indexOf('function renderArtifact()')
+  const end = source.indexOf('\nfunction disposeArtifactEditor()', start)
+  const render = source.slice(start, end)
+  const inactiveGuard = render.indexOf("if (state.activeRightWorkspace !== 'document')")
+  const showRail = render.indexOf("rail.classList.remove('hidden')")
+
+  assert.ok(inactiveGuard >= 0)
+  assert.ok(inactiveGuard < showRail)
+  assert.match(render.slice(inactiveGuard, showRail), /rail\.classList\.add\('hidden'\)[\s\S]*return/u)
+})
+
 test('Document outline is transient and remains open after chapter navigation', () => {
   const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
   const navigate = source.slice(source.indexOf('async function navigateArtifactOutlineItem('), source.indexOf('function setArtifactOutlineActive('))

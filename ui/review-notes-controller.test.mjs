@@ -91,6 +91,17 @@ test('closing the Comment rail preserves the live transcript layout anchor', () 
   assert.match(close, /if \(preserveTranscriptLayout\) preserveTranscriptLayout\(close\)/u)
 })
 
+test('closing Comments or Favorites restores documents through the shared right workspace activation', () => {
+  const source = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
+  const comments = source.slice(source.indexOf('function closeAnnotationRail('), source.indexOf('\nfunction renderAnnotationRail'))
+  const favorites = source.slice(source.indexOf('function closeFavoritesRail('), source.indexOf('\nasync function exportFavorites'))
+
+  for (const close of [comments, favorites]) {
+    assert.match(close, /if \(state\.artifact\) \{[\s\S]*activateRightWorkspace\('document'\)[\s\S]*renderArtifact\(\)/u)
+    assert.ok(close.indexOf("activateRightWorkspace('document')") < close.indexOf('renderArtifact()'))
+  }
+})
+
 test('Review Notes restores the injected Session Map view without a global dependency', () => {
   const source = readFileSync(new URL('./review-notes-controller.mjs', import.meta.url), 'utf8')
 

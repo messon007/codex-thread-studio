@@ -17,6 +17,23 @@ test('CSV parsing keeps quoted commas and escaped quotes', async () => {
   assert.deepEqual(workbook.sheets[0].rows[1], ['alpha', 'hello, "world"'])
 })
 
+test('CSV parsing detects tab separators despite commas inside quoted fields', async () => {
+  const workbook = await parseTabularArtifact({
+    path: 'annotations.csv',
+    text: '\uFEFFdocument\tquestion\r\nspec.md\t"Why, now?"\r\nother.md\t"How, exactly?"\r\n',
+  })
+  assert.deepEqual(workbook.sheets[0].rows, [
+    ['document', 'question'],
+    ['spec.md', 'Why, now?'],
+    ['other.md', 'How, exactly?'],
+  ])
+})
+
+test('CSV parsing detects consistent semicolon separators', async () => {
+  const workbook = await parseTabularArtifact({ path: 'metrics.csv', text: 'name;score\nalpha;82\nbeta;91\n' })
+  assert.deepEqual(workbook.sheets[0].rows, [['name', 'score'], ['alpha', '82'], ['beta', '91']])
+})
+
 test('table column resizing is bounded and changes only the requested column', () => {
   assert.equal(clampTableColumnWidth(12), 82)
   assert.equal(clampTableColumnWidth(2_000), 720)

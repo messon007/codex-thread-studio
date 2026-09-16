@@ -1,12 +1,14 @@
 import { Workbook } from './vendor/artifact-table.mjs'
-import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, parseDelimited, cellText, columnName } from './table-data.mjs'
+import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, detectDelimitedSeparator, parseDelimited, cellText, columnName } from './table-data.mjs'
 export { clampTableColumnWidth, resizeTableColumnWidths } from './table-data.mjs'
 
 const COLUMN_RESIZE_STEP = 12
 
 export async function parseTabularArtifact({ bytes, path, text = '' }) {
-  if (/\.csv$/iu.test(path)) return parseDelimited(text, ',')
-  if (/\.tsv$/iu.test(path)) return parseDelimited(text, '\t')
+  if (/\.(csv|tsv)$/iu.test(path)) {
+    const fallback = /\.tsv$/iu.test(path) ? '\t' : ','
+    return parseDelimited(text, detectDelimitedSeparator(text, fallback))
+  }
   const workbook = new Workbook()
   await workbook.xlsx.load(bytes)
   return {

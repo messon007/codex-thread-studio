@@ -55,6 +55,85 @@ export function defaultTableSql(columns: readonly string[]) {
   return `SELECT\n${selection}\nFROM data\nLIMIT 1000`
 }
 
+export function formatTableSqlColumns(sql: unknown, compact: boolean) {
+  const source = String(sql || '')
+  const parsed = parseSelectColumns(source)
+  if (!parsed || parsed.columns.length < 2) return source
+  const columns = parsed.columns.map(compactSqlFragment)
+  const selection = compact ? ` ${columns.join(', ')}\n` : `\n  ${columns.join(',\n  ')}\n`
+  return `${source.slice(0, parsed.selectEnd)}${selection}${source.slice(parsed.fromStart)}`
+}
+
+function parseSelectColumns(source: string) {
+  const select = /^\s*SELECT\b/iu.exec(source)
+  if (!select) return null
+  const selectEnd = select[0].length
+  const columns: string[] = []
+  let itemStart = selectEnd
+  let quote = ''
+  let depth = 0
+  for (let index = selectEnd; index < source.length; index += 1) {
+    const character = source[index]!
+    if (quote) {
+      if (quote === '[' && character === ']') {
+        if (source[index + 1] === ']') index += 1
+        else quote = ''
+      } else if (character === quote) {
+        if (source[index + 1] === quote) index += 1
+        else quote = ''
+      }
+      continue
+    }
+    if ((character === '-' && source[index + 1] === '-') || (character === '/' && source[index + 1] === '*')) return null
+    if (character === "'" || character === '"' || character === '`' || character === '[') { quote = character; continue }
+    if (character === '(') { depth += 1; continue }
+    if (character === ')') { depth = Math.max(0, depth - 1); continue }
+    if (depth === 0 && character === ',') {
+      columns.push(source.slice(itemStart, index).trim())
+      itemStart = index + 1
+      continue
+    }
+    if (depth === 0 && source.slice(index, index + 4).toUpperCase() === 'FROM' && !/[\p{L}\p{N}_]/u.test(source[index - 1] || '') && !/[\p{L}\p{N}_]/u.test(source[index + 4] || '')) {
+      columns.push(source.slice(itemStart, index).trim())
+      if (columns.some((column) => !column)) return null
+      return { selectEnd, fromStart: index, columns }
+    }
+  }
+  return null
+}
+
+function compactSqlFragment(source: string) {
+  let output = ''
+  let quote = ''
+  let pendingSpace = false
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!
+    if (quote) {
+      output += character
+      if (quote === '[' && character === ']') {
+        if (source[index + 1] === ']') output += source[++index]!
+        else quote = ''
+      } else if (character === quote) {
+        if (source[index + 1] === quote) output += source[++index]!
+        else quote = ''
+      }
+      continue
+    }
+    if (character === "'" || character === '"' || character === '`' || character === '[') {
+      if (pendingSpace && output) output += ' '
+      pendingSpace = false
+      quote = character
+      output += character
+    } else if (/\s/u.test(character)) pendingSpace = true
+    else {
+      if (pendingSpace && output) output += ' '
+      pendingSpace = false
+      output += character
+    }
+  }
+  return output.trim()
+}
+
 export function detectDelimitedSeparator(text: unknown, fallback = ',') {
   const source = String(text || '').replace(/^\uFEFF/u, '')
   const candidates = [...new Set([fallback, ...COMMON_DELIMITERS])]

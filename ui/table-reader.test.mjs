@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { clampTableColumnWidth, parseTabularArtifact, resizeTableColumnWidths } from './table-reader.mjs'
-import { defaultTableSql, tableSqlSource } from './table-data.mjs'
+import { defaultTableSql, formatTableSqlColumns, tableSqlSource } from './table-data.mjs'
 
 const source = readFileSync(new URL('./table-reader.mjs', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
@@ -64,6 +64,20 @@ test('default SQL lists every source column for direct editing', () => {
   ].join('\n'))
 })
 
+test('SQL column layout switches between expanded and compact modes', () => {
+  const expanded = [
+    'SELECT',
+    '  "document",',
+    '  printf(\'%s,%s\', "component_name", "status") AS "label"',
+    'FROM data',
+    'WHERE "status" = \'open\'',
+  ].join('\n')
+  const compact = 'SELECT "document", printf(\'%s,%s\', "component_name", "status") AS "label"\nFROM data\nWHERE "status" = \'open\''
+  assert.equal(formatTableSqlColumns(expanded, true), compact)
+  assert.equal(formatTableSqlColumns(compact, false), expanded)
+  assert.equal(formatTableSqlColumns('WITH selected AS (SELECT * FROM data) SELECT * FROM selected', true), 'WITH selected AS (SELECT * FROM data) SELECT * FROM selected')
+})
+
 test('table reader resizes through column elements and exposes complete selected-cell copy', () => {
   assert.match(source, /<col data-table-column-width=/u)
   assert.match(source, /data-table-column-resizer=/u)
@@ -80,6 +94,7 @@ test('delimited table reader exposes SQL querying and width-aware wrapping', () 
   assert.match(source, /data-table-chart[^\n]+data-table-copy[^\n]+data-table-wrap/u)
   assert.match(styles, /\.table-toolbar \[data-table-chart\] \{ margin-left: auto; \}/u)
   assert.match(source, /table-query-composer[^\n]+data-table-sql[^\n]+data-table-run[^\n]+translate\('Query'\)/u)
+  assert.match(source, /data-table-sql-density/u)
   assert.match(source, /input\.style\.height = `\$\{input\.scrollHeight\}px`/u)
   assert.match(source, /event\.ctrlKey \|\| event\.metaKey/u)
   assert.doesNotMatch(source, /table-query-schema/u)

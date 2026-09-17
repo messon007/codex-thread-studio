@@ -1,5 +1,5 @@
 import { Workbook } from './vendor/artifact-table.mjs'
-import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, defaultTableSql, detectDelimitedSeparator, parseDelimited, tableSqlSource, cellText, columnName } from './table-data.mjs'
+import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, defaultTableSql, formatTableSqlColumns, detectDelimitedSeparator, parseDelimited, tableSqlSource, cellText, columnName } from './table-data.mjs'
 export { clampTableColumnWidth, resizeTableColumnWidths } from './table-data.mjs'
 
 const COLUMN_RESIZE_STEP = 12
@@ -37,6 +37,7 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   let queryGeneration = 0
   let destroyed = false
   const columnWidthsByView = new Map()
+  const queryCompactBySheet = new Map()
   const querySqlBySheet = new Map()
   const sqlSources = new Map()
   const shell = document.createElement('div')
@@ -88,11 +89,12 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
         ? translate('Result limited to {count} rows', { count: queryResult.rows.length })
         : queryResult ? translate('Query returned {rows} rows', { rows: queryResult.rows.length }) : '')
     const querySql = source ? currentQuerySql() : ''
+    const queryCompact = queryCompactBySheet.get(sheetIndex) === true
     const viewSwitch = typeof executeQuery === 'function'
       ? `<div class="segmented-control table-view-switch" role="tablist" aria-label="${escapeHtml(translate('Table view'))}"><button data-table-view="data" type="button" role="tab" aria-selected="${String(!showingQuery)}" class="${!showingQuery ? 'active' : ''}">${escapeHtml(translate('Data'))}</button><button data-table-view="sql" type="button" role="tab" aria-selected="${String(showingQuery)}" class="${showingQuery ? 'active' : ''}">${escapeHtml(translate('SQL'))}</button></div>`
       : ''
     const toolbar = `<div class="table-toolbar">${viewSwitch}<select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button"${gridInfo ? '' : ' disabled'}>${escapeHtml(translate('Chart'))}</button><button data-table-copy type="button" disabled>${escapeHtml(translate('Copy'))}</button><button data-table-wrap type="button" class="${wrap ? 'active' : ''}" aria-pressed="${String(wrap)}" title="${escapeHtml(translate(wrap ? 'Disable wrapping' : 'Enable wrapping'))}">${escapeHtml(translate('Wrap'))}</button></div>`
-    const queryView = `<div class="table-query-view"><section class="table-query-editor"><div class="table-query-composer"><textarea data-table-sql rows="3" spellcheck="false" aria-label="${escapeHtml(translate('SQLite query'))}">${escapeHtml(querySql)}</textarea><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-run class="primary-button compact" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Query'))}</button></div></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
+    const queryView = `<div class="table-query-view"><section class="table-query-editor"><div class="table-query-composer"><textarea data-table-sql rows="3" spellcheck="false" aria-label="${escapeHtml(translate('SQLite query'))}">${escapeHtml(querySql)}</textarea><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-sql-density class="subtle-button compact" type="button" aria-pressed="${String(queryCompact)}">${escapeHtml(translate(queryCompact ? 'Expand' : 'Compact'))}</button><button data-table-run class="primary-button compact" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Query'))}</button></div></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
     shell.innerHTML = `${toolbar}${showingQuery ? queryView : `${gridInfo.html}<div class="table-chart hidden"></div>`}`
 
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => {
@@ -120,6 +122,13 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
         if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return
         event.preventDefault()
         void runQuery()
+      })
+      shell.querySelector('[data-table-sql-density]').addEventListener('click', () => {
+        const compact = !queryCompact
+        queryCompactBySheet.set(sheetIndex, compact)
+        querySqlBySheet.set(sheetIndex, formatTableSqlColumns(currentQuerySql(), compact))
+        render()
+        requestAnimationFrame(() => shell.querySelector('[data-table-sql]')?.focus())
       })
       shell.querySelector('[data-table-run]').addEventListener('click', () => { void runQuery() })
     }

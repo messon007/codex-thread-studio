@@ -77,6 +77,7 @@ test('table reader resizes through column elements and exposes complete selected
 test('delimited table reader exposes SQL querying and width-aware wrapping', () => {
   assert.match(source, /data-table-view="sql"/u)
   assert.match(source, /data-table-wrap/u)
+  assert.match(source, /data-table-chart[^\n]+data-table-copy[^\n]+data-table-wrap/u)
   assert.match(source, /event\.ctrlKey \|\| event\.metaKey/u)
   assert.doesNotMatch(source, /table-query-schema/u)
   assert.match(styles, /\.table-grid\.wrapped td \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u)

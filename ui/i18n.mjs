@@ -130,7 +130,6 @@ const chinese = {
   'Disable wrapping': '关闭自动换行',
   'Table view': '表格视图',
   'SQLite query': 'SQLite 查询',
-  'Table': '表',
   'Run query': '运行查询',
   'Running query…': '正在运行查询…',
   'Result limited to {count} rows': '结果已限制为 {count} 行',

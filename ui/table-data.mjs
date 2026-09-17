@@ -52,6 +52,12 @@ export function tableSqlSource(rows) {
         rows: rows.slice(1).map((row) => Array.from({ length: width }, (_, index) => String(row[index] || ''))),
     };
 }
+export function defaultTableSql(columns) {
+    const selection = columns.length
+        ? columns.map((column) => `  "${String(column).replaceAll('"', '""')}"`).join(',\n')
+        : '  *';
+    return `SELECT\n${selection}\nFROM data\nLIMIT 1000`;
+}
 export function detectDelimitedSeparator(text, fallback = ',') {
     const source = String(text || '').replace(/^\uFEFF/u, '');
     const candidates = [...new Set([fallback, ...COMMON_DELIMITERS])];

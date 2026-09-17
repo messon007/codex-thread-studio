@@ -48,6 +48,13 @@ export function tableSqlSource(rows: readonly (readonly string[])[]) {
   }
 }
 
+export function defaultTableSql(columns: readonly string[]) {
+  const selection = columns.length
+    ? columns.map((column) => `  "${String(column).replaceAll('"', '""')}"`).join(',\n')
+    : '  *'
+  return `SELECT\n${selection}\nFROM data\nLIMIT 1000`
+}
+
 export function detectDelimitedSeparator(text: unknown, fallback = ',') {
   const source = String(text || '').replace(/^\uFEFF/u, '')
   const candidates = [...new Set([fallback, ...COMMON_DELIMITERS])]

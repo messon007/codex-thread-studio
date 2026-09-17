@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import { clampTableColumnWidth, parseTabularArtifact, resizeTableColumnWidths } from './table-reader.mjs'
-import { tableSqlSource } from './table-data.mjs'
+import { defaultTableSql, tableSqlSource } from './table-data.mjs'
 
 const source = readFileSync(new URL('./table-reader.mjs', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
@@ -53,6 +53,17 @@ test('SQL source uses the first row as unique column names', () => {
   })
 })
 
+test('default SQL lists every source column for direct editing', () => {
+  assert.equal(defaultTableSql(['document', 'component_name', 'say "yes"']), [
+    'SELECT',
+    '  "document",',
+    '  "component_name",',
+    '  "say ""yes"""',
+    'FROM data',
+    'LIMIT 1000',
+  ].join('\n'))
+})
+
 test('table reader resizes through column elements and exposes complete selected-cell copy', () => {
   assert.match(source, /<col data-table-column-width=/u)
   assert.match(source, /data-table-column-resizer=/u)
@@ -67,6 +78,7 @@ test('delimited table reader exposes SQL querying and width-aware wrapping', () 
   assert.match(source, /data-table-view="sql"/u)
   assert.match(source, /data-table-wrap/u)
   assert.match(source, /event\.ctrlKey \|\| event\.metaKey/u)
+  assert.doesNotMatch(source, /table-query-schema/u)
   assert.match(styles, /\.table-grid\.wrapped td \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u)
   assert.match(styles, /\.table-query-view/u)
   assert.match(workspaceSource, /gatewayFetch\('\/studio\/table\/query'/u)

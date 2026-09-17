@@ -249,11 +249,17 @@ mod tests {
     #[test]
     fn projects_filters_and_sorts_table_data() {
         let result = execute(request(
-            "SELECT name, CAST(score AS INTEGER) AS points FROM data WHERE \"group\" = 'A' ORDER BY points DESC",
+            "SELECT name, CAST(score AS INTEGER) AS points, CASE WHEN CAST(score AS INTEGER) >= 100 THEN 'high' ELSE 'standard' END AS band FROM data WHERE \"group\" = 'A' ORDER BY points DESC",
         ))
         .expect("query");
-        assert_eq!(result.columns, vec!["name", "points"]);
-        assert_eq!(result.rows, vec![vec!["gamma", "105"], vec!["alpha", "82"]]);
+        assert_eq!(result.columns, vec!["name", "points", "band"]);
+        assert_eq!(
+            result.rows,
+            vec![
+                vec!["gamma", "105", "high"],
+                vec!["alpha", "82", "standard"]
+            ]
+        );
         assert!(!result.truncated);
     }
 

@@ -398,9 +398,7 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .table-query-editor label { min-width: 0; display: grid; gap: 6px; color: var(--muted); font-size: var(--ui-font-label); font-weight: var(--ui-font-emphasis); }
 .table-query-editor textarea { width: 100%; min-height: 92px; max-height: 30vh; box-sizing: border-box; resize: vertical; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); font: var(--content-font-weight) var(--ui-font-secondary)/1.5 var(--mono-font-family); }
 .table-query-editor textarea:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-.table-query-schema, .table-query-actions { min-width: 0; display: flex; align-items: center; gap: 9px; }
-.table-query-schema { color: var(--muted); font-size: var(--ui-font-label); }
-.table-query-schema > code:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-query-actions { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .table-query-actions { justify-content: flex-end; }
 .table-query-status { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: var(--ui-font-label); text-overflow: ellipsis; white-space: nowrap; }
 .table-query-status.error { color: var(--red); }

@@ -1,5 +1,5 @@
 import { Workbook } from './vendor/artifact-table.mjs'
-import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, detectDelimitedSeparator, parseDelimited, tableSqlSource, cellText, columnName } from './table-data.mjs'
+import { MAX_ROWS, MAX_COLUMNS, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH, clampTableColumnWidth, resizeTableColumnWidths, chartData, defaultTableSql, detectDelimitedSeparator, parseDelimited, tableSqlSource, cellText, columnName } from './table-data.mjs'
 export { clampTableColumnWidth, resizeTableColumnWidths } from './table-data.mjs'
 
 const COLUMN_RESIZE_STEP = 12
@@ -31,13 +31,13 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   let sheetIndex = Math.min(workbook.sheets.length - 1, Math.max(0, Number(initialSheet) || 0))
   let activeView = 'data'
   let wrap = false
-  let querySql = 'SELECT * FROM data LIMIT 1000'
   let queryResult = null
   let queryError = ''
   let queryRunning = false
   let queryGeneration = 0
   let destroyed = false
   const columnWidthsByView = new Map()
+  const querySqlBySheet = new Map()
   const sqlSources = new Map()
   const shell = document.createElement('div')
   shell.className = 'table-reader'
@@ -53,6 +53,11 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
   function sqlSource() {
     if (!sqlSources.has(sheetIndex)) sqlSources.set(sheetIndex, tableSqlSource(sourceSheet().rows))
     return sqlSources.get(sheetIndex)
+  }
+
+  function currentQuerySql() {
+    if (!querySqlBySheet.has(sheetIndex)) querySqlBySheet.set(sheetIndex, defaultTableSql(sqlSource().columns))
+    return querySqlBySheet.get(sheetIndex)
   }
 
   function gridMarkup(sheet, labels = null) {
@@ -82,12 +87,12 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
       : queryError || (queryResult?.truncated
         ? translate('Result limited to {count} rows', { count: queryResult.rows.length })
         : queryResult ? translate('Query returned {rows} rows', { rows: queryResult.rows.length }) : '')
-    const schema = source?.columns.map(quoteSqlIdentifier).join(', ') || ''
+    const querySql = source ? currentQuerySql() : ''
     const viewSwitch = typeof executeQuery === 'function'
       ? `<div class="segmented-control table-view-switch" role="tablist" aria-label="${escapeHtml(translate('Table view'))}"><button data-table-view="data" type="button" role="tab" aria-selected="${String(!showingQuery)}" class="${!showingQuery ? 'active' : ''}">${escapeHtml(translate('Data'))}</button><button data-table-view="sql" type="button" role="tab" aria-selected="${String(showingQuery)}" class="${showingQuery ? 'active' : ''}">${escapeHtml(translate('SQL'))}</button></div>`
       : ''
     const toolbar = `<div class="table-toolbar">${viewSwitch}<select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-wrap type="button" class="${wrap ? 'active' : ''}" aria-pressed="${String(wrap)}" title="${escapeHtml(translate(wrap ? 'Disable wrapping' : 'Enable wrapping'))}">${escapeHtml(translate('Wrap'))}</button><button data-table-chart type="button"${gridInfo ? '' : ' disabled'}>${escapeHtml(translate('Chart'))}</button><button data-table-copy type="button" disabled>${escapeHtml(translate('Copy'))}</button></div>`
-    const queryView = `<div class="table-query-view"><section class="table-query-editor"><label><span>${escapeHtml(translate('SQLite query'))}</span><textarea data-table-sql spellcheck="false">${escapeHtml(querySql)}</textarea></label><div class="table-query-schema"><span>${escapeHtml(translate('Table'))}: <code>data</code></span><code title="${escapeHtml(schema)}">${escapeHtml(schema)}</code></div><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-run class="primary-button" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Run query'))}</button></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
+    const queryView = `<div class="table-query-view"><section class="table-query-editor"><label><span>${escapeHtml(translate('SQLite query'))}</span><textarea data-table-sql spellcheck="false">${escapeHtml(querySql)}</textarea></label><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-run class="primary-button" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Run query'))}</button></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
     shell.innerHTML = `${toolbar}${showingQuery ? queryView : `${gridInfo.html}<div class="table-chart hidden"></div>`}`
 
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => {
@@ -106,7 +111,7 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
     shell.querySelector('[data-table-wrap]').addEventListener('click', () => { wrap = !wrap; render() })
     const sqlInput = shell.querySelector('[data-table-sql]')
     if (sqlInput) {
-      sqlInput.addEventListener('input', (event) => { querySql = event.target.value })
+      sqlInput.addEventListener('input', (event) => { querySqlBySheet.set(sheetIndex, event.target.value) })
       sqlInput.addEventListener('keydown', (event) => {
         if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return
         event.preventDefault()
@@ -277,7 +282,7 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
     queryError = ''
     render()
     try {
-      const result = await executeQuery({ ...source, sql: querySql })
+      const result = await executeQuery({ ...source, sql: currentQuerySql() })
       if (destroyed || generation !== queryGeneration) return
       queryResult = {
         columns: Array.isArray(result?.columns) ? result.columns.map(String) : [],
@@ -308,8 +313,6 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
     },
   }
 }
-
-function quoteSqlIdentifier(value) { return `"${String(value).replaceAll('"', '""')}"` }
 
 function toggleChart(shell, sheet, translate) {
   const grid = shell.querySelector('.table-grid-wrap')

@@ -92,7 +92,7 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
       ? `<div class="segmented-control table-view-switch" role="tablist" aria-label="${escapeHtml(translate('Table view'))}"><button data-table-view="data" type="button" role="tab" aria-selected="${String(!showingQuery)}" class="${!showingQuery ? 'active' : ''}">${escapeHtml(translate('Data'))}</button><button data-table-view="sql" type="button" role="tab" aria-selected="${String(showingQuery)}" class="${showingQuery ? 'active' : ''}">${escapeHtml(translate('SQL'))}</button></div>`
       : ''
     const toolbar = `<div class="table-toolbar">${viewSwitch}<select data-table-sheet>${workbook.sheets.map((item, index) => `<option value="${index}"${index === sheetIndex ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select><span>${escapeHtml(dimensions)}</span><button data-table-chart type="button"${gridInfo ? '' : ' disabled'}>${escapeHtml(translate('Chart'))}</button><button data-table-copy type="button" disabled>${escapeHtml(translate('Copy'))}</button><button data-table-wrap type="button" class="${wrap ? 'active' : ''}" aria-pressed="${String(wrap)}" title="${escapeHtml(translate(wrap ? 'Disable wrapping' : 'Enable wrapping'))}">${escapeHtml(translate('Wrap'))}</button></div>`
-    const queryView = `<div class="table-query-view"><section class="table-query-editor"><label><span>${escapeHtml(translate('SQLite query'))}</span><textarea data-table-sql spellcheck="false">${escapeHtml(querySql)}</textarea></label><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-run class="primary-button" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Run query'))}</button></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
+    const queryView = `<div class="table-query-view"><section class="table-query-editor"><div class="table-query-composer"><textarea data-table-sql rows="3" spellcheck="false" aria-label="${escapeHtml(translate('SQLite query'))}">${escapeHtml(querySql)}</textarea><div class="table-query-actions"><span class="table-query-status${queryError ? ' error' : ''}" role="status">${escapeHtml(queryStatus)}</span><button data-table-run class="primary-button compact" type="button"${queryRunning ? ' disabled' : ''}>${escapeHtml(translate('Query'))}</button></div></div></section>${gridInfo?.html || `<div class="table-query-empty"><strong>${escapeHtml(translate('Query CSV data with SQLite'))}</strong><p>${escapeHtml(translate('Paste a read-only SELECT or WITH query, then run it with Ctrl/Cmd+Enter.'))}</p></div>`}<div class="table-chart hidden"></div></div>`
     shell.innerHTML = `${toolbar}${showingQuery ? queryView : `${gridInfo.html}<div class="table-chart hidden"></div>`}`
 
     shell.querySelector('[data-table-sheet]').addEventListener('change', (event) => {
@@ -111,7 +111,11 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
     shell.querySelector('[data-table-wrap]').addEventListener('click', () => { wrap = !wrap; render() })
     const sqlInput = shell.querySelector('[data-table-sql]')
     if (sqlInput) {
-      sqlInput.addEventListener('input', (event) => { querySqlBySheet.set(sheetIndex, event.target.value) })
+      fitSqlInput(sqlInput)
+      sqlInput.addEventListener('input', (event) => {
+        querySqlBySheet.set(sheetIndex, event.target.value)
+        fitSqlInput(event.target)
+      })
       sqlInput.addEventListener('keydown', (event) => {
         if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return
         event.preventDefault()
@@ -312,6 +316,11 @@ export function renderTableArtifact({ container, workbook, initialSheet = 0, onS
       shell.remove()
     },
   }
+}
+
+function fitSqlInput(input) {
+  input.style.height = 'auto'
+  input.style.height = `${input.scrollHeight}px`
 }
 
 function toggleChart(shell, sheet, translate) {

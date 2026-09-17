@@ -4,6 +4,27 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
+### Added
+
+- Add hierarchical Subagents navigation with parent/child session relationships and direct session opening.
+- Add paginated Git commit history with per-commit changed-file lists and read-only unified diffs.
+- Add a read-only SQLite workspace for CSV and TSV files, including editable projected columns, filtering, sorting, compact/expanded SQL layouts, and bounded query execution.
+
+### Changed
+
+- Improve delimited-table reading with automatic comma, tab, and semicolon detection, adjustable columns, full-cell viewing, width-aware wrapping, and grouped table actions.
+- Improve Router completion reminders, target-session navigation, acknowledgement persistence, backend prompts, and compact attention layout.
+- Show manual shell output directly while preserving agent activity grouping.
+
+### Fixed
+
+- Keep right-side Document, Terminal, Git Review, and other workspace panels mutually exclusive during asynchronous loading.
+- Keep Markdown links with source line locations in Preview by mapping them to the nearest heading, and use the same mapping when switching manually from Source.
+- Restore per-session workspace state and document comment markers across session changes.
+- Keep Windows WebView2 and Linux WebKitGTK integration compatible with current dependencies.
+
 ## [0.2.1] - 2026-09-07
 
 ### Added
@@ -61,7 +82,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Initial Tauri desktop shell and structured Codex App Server v2 integration.
 
-[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/messon007/codex-thread-studio/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/messon007/codex-thread-studio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/messon007/codex-thread-studio/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/messon007/codex-thread-studio/releases/tag/v0.1.0

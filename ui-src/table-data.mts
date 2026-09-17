@@ -29,6 +29,25 @@ export function chartData(rows: string[][]) {
   return rows.slice(1).map((row, index) => ({ label: labelColumn >= 0 ? String(row[labelColumn] || index + 1) : String(index + 1), value: Number(row[valueColumn]) })).filter((item) => Number.isFinite(item.value)).slice(0, 100)
 }
 
+export function tableSqlSource(rows: readonly (readonly string[])[]) {
+  const width = Math.max(1, ...rows.map((row) => row.length))
+  const header = rows[0] || []
+  const used = new Set<string>()
+  const columns = Array.from({ length: width }, (_, index) => {
+    let base = String(header[index] || '').replaceAll('\0', '').trim().slice(0, 128)
+    if (!base) base = `column_${index + 1}`
+    let candidate = base
+    let suffix = 2
+    while (used.has(candidate.toLowerCase())) candidate = `${base}_${suffix++}`
+    used.add(candidate.toLowerCase())
+    return candidate
+  })
+  return {
+    columns,
+    rows: rows.slice(1).map((row) => Array.from({ length: width }, (_, index) => String(row[index] || ''))),
+  }
+}
+
 export function detectDelimitedSeparator(text: unknown, fallback = ',') {
   const source = String(text || '').replace(/^\uFEFF/u, '')
   const candidates = [...new Set([fallback, ...COMMON_DELIMITERS])]
@@ -113,4 +132,3 @@ export function cellText(value: unknown) {
 }
 
 export function columnName(number: number) { let value = ''; for (let n = number; n; n = Math.floor((n - 1) / 26)) value = String.fromCharCode(65 + ((n - 1) % 26)) + value; return value }
-

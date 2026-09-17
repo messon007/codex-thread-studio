@@ -32,6 +32,26 @@ export function chartData(rows) {
     const labelColumn = valueColumn === 0 ? -1 : 0;
     return rows.slice(1).map((row, index) => ({ label: labelColumn >= 0 ? String(row[labelColumn] || index + 1) : String(index + 1), value: Number(row[valueColumn]) })).filter((item) => Number.isFinite(item.value)).slice(0, 100);
 }
+export function tableSqlSource(rows) {
+    const width = Math.max(1, ...rows.map((row) => row.length));
+    const header = rows[0] || [];
+    const used = new Set();
+    const columns = Array.from({ length: width }, (_, index) => {
+        let base = String(header[index] || '').replaceAll('\0', '').trim().slice(0, 128);
+        if (!base)
+            base = `column_${index + 1}`;
+        let candidate = base;
+        let suffix = 2;
+        while (used.has(candidate.toLowerCase()))
+            candidate = `${base}_${suffix++}`;
+        used.add(candidate.toLowerCase());
+        return candidate;
+    });
+    return {
+        columns,
+        rows: rows.slice(1).map((row) => Array.from({ length: width }, (_, index) => String(row[index] || ''))),
+    };
+}
 export function detectDelimitedSeparator(text, fallback = ',') {
     const source = String(text || '').replace(/^\uFEFF/u, '');
     const candidates = [...new Set([fallback, ...COMMON_DELIMITERS])];

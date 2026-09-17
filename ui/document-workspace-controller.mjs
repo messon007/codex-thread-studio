@@ -841,6 +841,16 @@ async function mountTableReader(file, parent) {
   if (state.artifact !== file || !parent.isConnected) return
   richArtifactReader = renderTableArtifact({
     container: parent, workbook: file.workbook, translate: t,
+    executeQuery: /\.(csv|tsv)$/iu.test(file.path) ? async (request) => {
+      const response = await gatewayFetch('/studio/table/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+      return result
+    } : null,
     onSelection: (selection) => {
       if (state.artifact !== file) return
       setSelection(

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, Request, State};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
@@ -42,6 +42,7 @@ mod router_history;
 mod session_map;
 mod session_state;
 mod speech;
+mod table_query;
 mod terminal_runtime;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
@@ -933,6 +934,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
+            "/studio/table/query",
+            axum::routing::post(query_table).layer(DefaultBodyLimit::max(
+                table_query::MAX_TABLE_QUERY_BODY_BYTES,
+            )),
+        )
+        .route(
             "/studio/workspace/open-location",
             axum::routing::post(open_item_location),
         )
@@ -1281,6 +1288,14 @@ async fn read_review_file(
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
     }
+}
+
+async fn query_table(Json(request): Json<table_query::TableQueryRequest>) -> Response<Body> {
+    run_studio_database(move || match table_query::execute(request) {
+        Ok(result) => json_response(StatusCode::OK, &result),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    })
+    .await
 }
 
 async fn read_review_epub(

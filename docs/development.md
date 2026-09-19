@@ -131,6 +131,26 @@ Prepare a release as follows:
 
 `version:check` rejects mismatches between Cargo and `Cargo.lock`, a duplicated Tauri config version, a missing changelog section, or a release tag that differs from `v<Cargo version>`. Linux, macOS, and Windows 11 desktop bundles are built automatically. The Windows client requires WSL2 for its Codex and OpenCode backends.
 
+### macOS signing and notarization
+
+Public macOS bundles are ad-hoc signed through `bundle.macOS.signingIdentity`, so a browser download
+is quarantined and needs the first-launch step in [troubleshooting](troubleshooting.md#macos-says-the-app-is-damaged-or-cannot-be-verified).
+Maintainers who own a Developer ID can remove that step by adding repository secrets; the release
+workflow exports them only when they are present, and Tauri prefers `APPLE_SIGNING_IDENTITY` over the
+configuration value.
+
+| Secret | Purpose |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded `Developer ID Application` `.p12`. |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for that `.p12`. |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)`. |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Apple ID notarization credentials; `APPLE_PASSWORD` is an app-specific password. |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH` | Alternative App Store Connect API key credentials. |
+
+`bundle.macOS.hardenedRuntime` is enabled because notarization requires it. Without the certificate
+the release keeps the ad-hoc signature and logs a notice; a partially configured credential group
+fails the job before bundling instead of producing an unsigned or un-notarized release silently.
+
 Windows runs the Studio client natively while both AI backends run inside WSL2. It does not discover or launch Windows `codex.cmd`, `codex.exe`, or `opencode.exe`. Configure the WSL distribution, Linux user, and backend commands in Studio settings, restart Studio, and use Linux project paths such as `/home/user/project`.
 
 ```powershell

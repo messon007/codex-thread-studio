@@ -4,6 +4,21 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Document macOS first launch for quarantined browser downloads, including the `curl` install path that never sets the quarantine attribute.
+- Link the macOS first-launch steps from the GitHub release body and document the optional Developer ID and notarization secrets in the release guide.
+
+### Changed
+
+- Ad-hoc sign the macOS bundle so a release ships a sealed app signature without a Developer ID account.
+- Export Apple signing and notarization credentials during releases when they are configured, and enable the macOS hardened runtime that notarization requires.
+- Search `/opt/homebrew/bin` and `/usr/local/bin` on macOS so a Finder or Launchpad launch finds Codex and OpenCode installed through Homebrew, the Node.js installer, or a similar prefix.
+
+### Fixed
+
+- Restore Open Item Location on macOS, which previously reported that the system file manager was unavailable because the route reused the embedded-browser capability flag.
+
 ## [0.3.0] - 2026-09-17
 
 ### Added

@@ -80,12 +80,75 @@ jobs:
             xdg-utils
       - name: Install UI and release tooling
         run: npm ci --ignore-scripts
+      # Optional Developer ID signing and notarization. The secrets are exported only when they
+      # exist, because Tauri treats a present-but-empty APPLE_* variable as configured.
+      - name: Configure macOS signing and notarization
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          set -eu
+
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "::notice::macOS signing credentials are absent; bundles stay ad-hoc signed and browser downloads remain quarantined."
+            exit 0
+          fi
+
+          if [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::APPLE_CERTIFICATE requires APPLE_CERTIFICATE_PASSWORD and APPLE_SIGNING_IDENTITY."
+            exit 1
+          fi
+
+          if [ -n "${APPLE_ID:-}" ] && { [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; }; then
+            echo "::error::Set APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID together, or omit all three."
+            exit 1
+          fi
+
+          if [ -n "${APPLE_API_KEY:-}" ] && [ -z "${APPLE_API_ISSUER:-}" ]; then
+            echo "::error::APPLE_API_KEY requires APPLE_API_ISSUER."
+            exit 1
+          fi
+
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH; do
+            value="${!name:-}"
+            if [ -n "$value" ]; then
+              printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+            fi
+          done
+
+          if [ -n "${APPLE_ID:-}" ] || [ -n "${APPLE_API_KEY:-}" ]; then
+            echo "::notice::Signing and notarizing macOS bundles."
+          else
+            echo "::warning::Signing without notarization; macOS downloads stay quarantined until notary credentials are added."
+          fi
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Codex Thread Studio v__VERSION__"
+          releaseBody: |
+            Desktop bundles for Linux, macOS (Apple Silicon and Intel), and Windows 11. Studio uses the Codex and OpenCode CLIs you already have installed and stores no model credentials.
+
+            ### macOS first launch
+
+            If macOS reports the app as damaged or from an unidentified developer, remove the download quarantine attribute once, before the first launch:
+
+            ```bash
+            xattr -dr com.apple.quarantine "/Applications/Codex Thread Studio.app"
+            ```
+
+            Installing the `curl` bundle avoids the attribute entirely. Details: [macOS troubleshooting](https://github.com/messon007/codex-thread-studio/blob/${{ github.ref_name }}/docs/troubleshooting.md#macos-says-the-app-is-damaged-or-cannot-be-verified).
+
+            Changes: [CHANGELOG.md](https://github.com/messon007/codex-thread-studio/blob/${{ github.ref_name }}/CHANGELOG.md).
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true

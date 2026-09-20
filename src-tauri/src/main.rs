@@ -4759,13 +4759,26 @@ mod tests {
                 .await
                 .expect("remote location response");
             assert_eq!(remote.status(), StatusCode::NOT_IMPLEMENTED);
+            let remote_body = axum::body::to_bytes(remote.into_body(), 4096)
+                .await
+                .expect("remote location body");
+            assert!(String::from_utf8_lossy(&remote_body).contains("remote browser mode"));
 
             state.system_file_manager = true;
             let desktop = gateway_router(state)
                 .oneshot(request())
                 .await
                 .expect("desktop location response");
+            #[cfg(not(windows))]
             assert_eq!(desktop.status(), StatusCode::BAD_REQUEST);
+            #[cfg(windows)]
+            {
+                assert_eq!(desktop.status(), StatusCode::NOT_IMPLEMENTED);
+                let desktop_body = axum::body::to_bytes(desktop.into_body(), 4096)
+                    .await
+                    .expect("desktop location body");
+                assert!(String::from_utf8_lossy(&desktop_body).contains("WSL item locations"));
+            }
         });
     }
 

@@ -1,5 +1,47 @@
 # Troubleshooting
 
+## macOS says the app is damaged or cannot be verified
+
+Public release builds are ad-hoc signed, and they are notarized only when the maintainers have
+configured Apple notarization credentials. macOS quarantines a browser download whenever the build is
+not notarized, and Gatekeeper then reports the app as damaged or as coming from an unidentified
+developer.
+
+Remove the download attribute right after copying Studio to Applications, before the first launch:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Codex Thread Studio.app"
+```
+
+Then open Studio normally. macOS evaluates the attribute only when the app launches, and a refused
+launch leaves a pending warning that can absorb the next attempt, so an app that was already
+double-clicked may keep refusing until that warning is dismissed and the command is repeated. When
+macOS offers **Open Anyway** in System Settings → Privacy & Security, that also releases the app;
+from macOS 15 onward the older Control-click → Open shortcut no longer bypasses the check.
+
+Installing with `curl` avoids the attribute entirely, because only browsers and similar download
+agents add it:
+
+```bash
+curl -fL -o studio.dmg "<release asset URL>"
+hdiutil attach studio.dmg
+cp -R "/Volumes/Codex Thread Studio/Codex Thread Studio.app" /Applications/
+xattr -dr com.apple.quarantine "/Applications/Codex Thread Studio.app"
+hdiutil detach "/Volumes/Codex Thread Studio"
+```
+
+Both routes trust the downloaded file without a reputation check, so confirm it came from the
+official release first.
+
+## Attach images closes Studio on macOS
+
+Pressing **Attach images** opens a native file picker, and the WebKit file-upload delegate that
+implements it panics on recent macOS releases. The panic happens inside `wry`, Studio's WebView layer,
+and aborts the process; it is an upstream defect rather than a Studio one.
+
+Pasting an image into the composer, for example a screenshot taken with ⇧⌃⌘4, uses a different path and
+still works until the upstream fix lands.
+
 ## Windows Rust build says `link.exe not found`
 
 Install Visual Studio 2022 Build Tools with the C++ desktop workload and Windows SDK, then open a
@@ -68,7 +110,9 @@ Then launch with an explicit path:
 CODEX_THREAD_STUDIO_CODEX_BIN=/absolute/path/to/codex cargo run -p codex-thread-studio
 ```
 
-Studio also searches NVM, FNM, `~/.local/bin`, and `~/.cargo/bin`.
+Studio also searches NVM, FNM, `~/.local/bin`, `~/.cargo/bin`, and the macOS `/opt/homebrew/bin` and
+`/usr/local/bin` prefixes, so a Finder or Launchpad launch still finds a Homebrew, Node.js installer,
+or similar CLI installation.
 
 ## App Server starts but initialization fails
 

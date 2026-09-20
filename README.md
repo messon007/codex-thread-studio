@@ -51,6 +51,13 @@ The Rust broker owns the Codex handshake and the OpenCode process/authentication
 - A supported system WebView (WebKitGTK on Linux, WKWebView on macOS, or WebView2 on Windows 11)
 - WSL2 with Codex and/or OpenCode installed inside the selected distribution when running the Windows client
 
+## Install a release build
+
+Release bundles target Linux, macOS (Apple Silicon and Intel), and Windows 11. The macOS bundle is
+ad-hoc signed rather than notarized, so the first launch of a browser download is quarantined; see
+[macOS says the app is damaged or cannot be verified](docs/troubleshooting.md#macos-says-the-app-is-damaged-or-cannot-be-verified)
+for the one-command workaround.
+
 ## Run
 
 ```bash

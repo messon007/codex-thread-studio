@@ -99,6 +99,7 @@ struct GatewayState {
     environment_lock: Arc<Mutex<()>>,
     security: GatewaySecurity,
     embedded_browser: bool,
+    system_file_manager: bool,
 }
 
 #[derive(Clone)]
@@ -624,7 +625,7 @@ fn main() {
     #[cfg(not(any(target_os = "linux", windows)))]
     let embedded_browser = false;
     let (state, startup_preferences, _profile_lock) =
-        initialize_gateway(security, embedded_browser).unwrap_or_else(|error| {
+        initialize_gateway(security, embedded_browser, true).unwrap_or_else(|error| {
             eprintln!("Codex Thread Studio could not open its profile: {error}");
             std::process::exit(2);
         });
@@ -737,7 +738,7 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
     let origin = format!("http://{address}");
     let security = GatewaySecurity::new(origin.clone());
     let access_url = format!("{origin}/#token={}", security.token());
-    let (state, _, _profile_lock) = initialize_gateway(security, false)?;
+    let (state, _, _profile_lock) = initialize_gateway(security, false, false)?;
     let router = gateway_router(state);
 
     println!("Codex Thread Studio remote server is listening on {origin}");
@@ -760,6 +761,7 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
 fn initialize_gateway(
     security: GatewaySecurity,
     embedded_browser: bool,
+    system_file_manager: bool,
 ) -> Result<(GatewayState, StudioPreferences, fs::File), String> {
     let cli_path = augmented_cli_path();
     let preferences_path = studio_preferences_path();
@@ -828,6 +830,7 @@ fn initialize_gateway(
         environment_lock: Arc::new(Mutex::new(())),
         security,
         embedded_browser,
+        system_file_manager,
     };
     Ok((state, startup_preferences, profile_lock))
 }
@@ -1549,7 +1552,7 @@ async fn open_item_location(
     State(state): State<GatewayState>,
     Json(request): Json<WorkspaceListRequest>,
 ) -> Response<Body> {
-    if !state.embedded_browser {
+    if !state.system_file_manager {
         return json_error(
             StatusCode::NOT_IMPLEMENTED,
             "System file manager is unavailable in remote browser mode.",
@@ -4294,8 +4297,32 @@ fn display_command(command: &str, args: &[String]) -> String {
         .join(" ")
 }
 
+/// CLI prefixes a Finder or Launchpad launch never inherits from an interactive shell.
+#[cfg(target_os = "macos")]
+const SHARED_CLI_DIRECTORIES: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+#[cfg(not(target_os = "macos"))]
+const SHARED_CLI_DIRECTORIES: [&str; 0] = [];
+
+struct CliPathSources {
+    original: OsString,
+    home: Option<PathBuf>,
+    nvm_bin: Option<PathBuf>,
+    fnm_multishell: Option<PathBuf>,
+    shared: Vec<PathBuf>,
+}
+
 fn augmented_cli_path() -> OsString {
-    let original = env::var_os("PATH").unwrap_or_default();
+    composed_cli_path(CliPathSources {
+        original: env::var_os("PATH").unwrap_or_default(),
+        home: env::var_os("HOME").map(PathBuf::from),
+        nvm_bin: env::var_os("NVM_BIN").map(PathBuf::from),
+        fnm_multishell: env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from),
+        shared: SHARED_CLI_DIRECTORIES.iter().map(PathBuf::from).collect(),
+    })
+}
+
+fn composed_cli_path(sources: CliPathSources) -> OsString {
+    let original = sources.original;
     let mut paths = Vec::<PathBuf>::new();
     let mut add = |path: PathBuf| {
         if path.is_dir() && !paths.contains(&path) {
@@ -4303,15 +4330,14 @@ fn augmented_cli_path() -> OsString {
         }
     };
 
-    if let Some(path) = env::var_os("NVM_BIN") {
-        add(PathBuf::from(path));
+    if let Some(path) = sources.nvm_bin {
+        add(path);
     }
-    if let Some(path) = env::var_os("FNM_MULTISHELL_PATH") {
-        let path = PathBuf::from(path);
+    if let Some(path) = sources.fnm_multishell {
         let bin = path.join("bin");
         add(if bin.is_dir() { bin } else { path });
     }
-    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = sources.home {
         add(home.join(".local/bin"));
         add(home.join(".cargo/bin"));
         if let Ok(entries) = fs::read_dir(home.join(".nvm/versions/node")) {
@@ -4325,6 +4351,9 @@ fn augmented_cli_path() -> OsString {
                 add(version.join("bin"));
             }
         }
+    }
+    for path in sources.shared {
+        add(path);
     }
     for path in env::split_paths(&original) {
         add(path);
@@ -4376,6 +4405,59 @@ mod tests {
     use super::*;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    #[test]
+    fn prepends_shared_cli_directories_before_the_inherited_path() {
+        let root = env::temp_dir().join(format!("studio-cli-path-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let shared = root.join("shared/bin");
+        let inherited = root.join("inherited/bin");
+        for directory in [
+            home.join(".local/bin"),
+            home.join(".cargo/bin"),
+            home.join(".nvm/versions/node/v18.2.0/bin"),
+            home.join(".nvm/versions/node/v20.1.0/bin"),
+            home.join("fnm"),
+            shared.clone(),
+            inherited.clone(),
+        ] {
+            fs::create_dir_all(directory).expect("fixture directory");
+        }
+        let composed = composed_cli_path(CliPathSources {
+            original: inherited.clone().into_os_string(),
+            home: Some(home.clone()),
+            nvm_bin: Some(home.join(".local/bin")),
+            fnm_multishell: Some(home.join("fnm")),
+            shared: vec![shared.clone(), root.join("missing/bin")],
+        });
+        assert_eq!(
+            env::split_paths(&composed).collect::<Vec<_>>(),
+            vec![
+                home.join(".local/bin"),
+                home.join("fnm"),
+                home.join(".cargo/bin"),
+                home.join(".nvm/versions/node/v20.1.0/bin"),
+                home.join(".nvm/versions/node/v18.2.0/bin"),
+                shared,
+                inherited,
+            ]
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn shares_existing_shared_cli_directories() {
+        let entries = env::split_paths(&augmented_cli_path()).collect::<Vec<_>>();
+        for directory in SHARED_CLI_DIRECTORIES {
+            let directory = PathBuf::from(directory);
+            assert_eq!(
+                entries.contains(&directory),
+                directory.is_dir(),
+                "an installed CLI prefix must be searched: {}",
+                directory.display()
+            );
+        }
+    }
 
     #[test]
     fn studio_profile_lock_excludes_other_instances_and_releases_on_close() {
@@ -4533,6 +4615,7 @@ mod tests {
             environment_lock: Arc::new(Mutex::new(())),
             security,
             embedded_browser: false,
+            system_file_manager: false,
         }
     }
 
@@ -4651,6 +4734,50 @@ mod tests {
                     .await
                     .expect("foreign websocket response");
                 assert_eq!(websocket.status(), StatusCode::FORBIDDEN, "{path}");
+            }
+        });
+    }
+
+    #[test]
+    fn opens_item_locations_only_for_desktop_sessions() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        runtime.block_on(async {
+            let mut state = secured_test_gateway(GatewaySecurity::disabled_for_tests());
+            let request = || {
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/studio/workspace/open-location")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({ "root": "/studio-missing-root", "path": "" }).to_string(),
+                    ))
+                    .expect("location request")
+            };
+
+            let remote = gateway_router(state.clone())
+                .oneshot(request())
+                .await
+                .expect("remote location response");
+            assert_eq!(remote.status(), StatusCode::NOT_IMPLEMENTED);
+            let remote_body = axum::body::to_bytes(remote.into_body(), 4096)
+                .await
+                .expect("remote location body");
+            assert!(String::from_utf8_lossy(&remote_body).contains("remote browser mode"));
+
+            state.system_file_manager = true;
+            let desktop = gateway_router(state)
+                .oneshot(request())
+                .await
+                .expect("desktop location response");
+            #[cfg(not(windows))]
+            assert_eq!(desktop.status(), StatusCode::BAD_REQUEST);
+            #[cfg(windows)]
+            {
+                assert_eq!(desktop.status(), StatusCode::NOT_IMPLEMENTED);
+                let desktop_body = axum::body::to_bytes(desktop.into_body(), 4096)
+                    .await
+                    .expect("desktop location body");
+                assert!(String::from_utf8_lossy(&desktop_body).contains("WSL item locations"));
             }
         });
     }
@@ -4887,6 +5014,7 @@ mod tests {
                 environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
+                system_file_manager: false,
             };
             let router = gateway_router(state);
             for path in [
@@ -5115,6 +5243,7 @@ mod tests {
                 environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
+                system_file_manager: false,
             };
             let response = gateway_router(state)
                 .oneshot(
@@ -5181,6 +5310,7 @@ mod tests {
                 environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
+                system_file_manager: false,
             };
             let router = gateway_router(state);
             let missing = router
@@ -5319,6 +5449,7 @@ mod tests {
                 environment_lock: Arc::new(Mutex::new(())),
                 security: GatewaySecurity::disabled_for_tests(),
                 embedded_browser: false,
+                system_file_manager: false,
             };
             let router = gateway_router(state);
             let favorite = json!({

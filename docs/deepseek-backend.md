@@ -6,9 +6,14 @@ provider, credentials, model catalog, and session history belong to DeepSeek, wh
 **Codex** entry keeps whatever its own Codex home already is. Either side can be the OpenAI one —
 Studio does not care which; whichever home an instance points at defines that instance.
 
-The two instances must not share a Codex home. Studio passes only `command` and `args` to the
-process, and the schema rejects unknown fields, so there is no `env` field to set: put `CODEX_HOME`
-in the arguments or wrap the CLI in a short script.
+**Preferred setup:** use shape B below—a wrapper with a dedicated `CODEX_HOME` and an API key loaded
+through `env_key`. This keeps DeepSeek configuration, credentials, sessions, history, and the model
+catalog separate from the built-in Codex backend, while keeping the key out of `backends.json` and
+the process arguments. A shared Codex home is supported by shape A, but is intended only when that
+shared state is acceptable.
+
+Studio passes only `command` and `args` to the process, and the schema rejects unknown fields, so
+there is no `env` field to set: put `CODEX_HOME` in the arguments or wrap the CLI in a short script.
 
 ## 1. Create an isolated Codex home
 
@@ -47,7 +52,7 @@ approvals_reviewer = "auto_review"
 name = "deepseek"
 base_url = "https://api.deepseek.com/"
 wire_api = "responses"
-experimental_bearer_token = "sk-..."
+env_key = "DEEPSEEK_API_KEY"
 ```
 
 - `model` must exist in the catalog named by `model_catalog_json`. A private alias such as
@@ -55,10 +60,12 @@ experimental_bearer_token = "sk-..."
   copy the working catalog into the new home or regenerate it for this instance.
 - `model_provider` selects the provider block, while `preferred_auth_method` and
   `forced_login_method` keep the instance on API-key auth instead of a ChatGPT login.
-- `wire_api` must match the endpoint: `responses` for the deployment verified here, `chat` for a
-  plain OpenAI-compatible chat-completions endpoint.
+- Current Codex releases support only `wire_api = "responses"`. A provider that exposes only an
+  OpenAI-compatible chat-completions endpoint needs a Responses-compatible adapter or proxy before
+  Codex App Server can use it.
 - Credentials live either in `experimental_bearer_token` (then `chmod 600` the file) or in
-  `env_key = "DEEPSEEK_API_KEY"`, which the launcher in step 2 supplies. Codex 0.155.1 supports both.
+  `env_key = "DEEPSEEK_API_KEY"`, which the preferred launcher in step 2 supplies. Codex 0.155.1
+  supports both; `env_key` is preferred because it keeps the key out of `config.toml`.
 - `model_reasoning_effort`, `web_search`, and `approvals_reviewer` carry the profile's behaviour;
   keep the values that work for the deployment.
 
@@ -69,6 +76,7 @@ trusted-project list. Nothing here changes the built-in backend.
 
 Studio runs `<command> <args> app-server --stdio`, so `args` must stop before the subcommand: never
 add `app-server` yourself. Three shapes work, and they differ in how much the two backends share.
+Shape B is preferred for a normal Studio installation.
 
 **A. Override the model on a shared Codex home.** Keep the DeepSeek provider block in the ordinary
 `~/.codex/config.toml`, then let the instance select it:
@@ -83,12 +91,21 @@ expect. The app server accepts `-c key=value` overrides, and the credential stay
 The cost is shared state: both backends read the same `auth.json`, `sessions/`, and model catalog, so
 their thread lists are identical and only the model and provider differ.
 
-A profile name cannot replace those overrides: the app server rejects `--profile`
-(`error: unexpected argument '--profile' found`), so `-p deepseek` only works for runtime commands
-such as `codex exec`, not for the backend Studio launches.
+A profile can replace the overrides when its configuration lives in
+`$CODEX_HOME/deepseek.config.toml`:
 
-**B. Give the instance its own Codex home through a wrapper.** This is the shape that isolates
-`auth.json`, `sessions/`, history, and the model catalog from the built-in backend:
+```text
+command: codex
+args:    ["--profile", "deepseek"]
+```
+
+Studio places these arguments before `app-server`, producing
+`codex --profile deepseek app-server --stdio`. Putting `--profile` after `app-server` is what Codex
+rejects. Like the `-c` form, a profile shares that Codex home's authentication and session state, so
+use shape B when the DeepSeek backend should be independent.
+
+**B. Give the instance its own Codex home through a wrapper (preferred).** This is the shape that
+isolates `auth.json`, `sessions/`, history, and the model catalog from the built-in backend:
 
 ```bash
 cat > ~/.codex-deepseek/launch-codex <<'EOF'

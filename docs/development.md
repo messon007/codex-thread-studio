@@ -145,7 +145,8 @@ configuration value.
 | `APPLE_CERTIFICATE_PASSWORD` | Password for that `.p12`. |
 | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)`. |
 | `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Apple ID notarization credentials; `APPLE_PASSWORD` is an app-specific password. |
-| `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH` | Alternative App Store Connect API key credentials. |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER` | Alternative App Store Connect API key ID and issuer. |
+| `APPLE_API_KEY_P8_BASE64` | Base64-encoded contents of the API key `.p8`; the workflow writes it to a runner-temporary file and supplies its path to Tauri. |
 
 `bundle.macOS.hardenedRuntime` is enabled because notarization requires it. Without the certificate
 the release keeps the ad-hoc signature and logs a notice; a partially configured credential group

@@ -2,9 +2,11 @@
 
 Studio 将渲染配置保存在普通的 `settings.json` 中，目前不在设置界面提供入口。
 
-- Linux：`~/.config/codex-thread-studio/settings.json`
-- macOS：`~/Library/Application Support/codex-thread-studio/settings.json`
-- Windows：`%APPDATA%\\codex-thread-studio\\settings.json`
+- Linux 与 macOS：`$XDG_CONFIG_HOME/codex-thread-studio/settings.json`；未设置 `XDG_CONFIG_HOME`
+  时为 `~/.config/codex-thread-studio/settings.json`。macOS 用的是同一路径，不是
+  `~/Library/Application Support`。
+- Windows：`%XDG_CONFIG_HOME%\codex-thread-studio\settings.json`。请提前定义
+  `XDG_CONFIG_HOME` 或 `HOME`，否则 Studio 会退回到临时目录。
 
 请先关闭 Studio，再编辑配置文件，然后重新启动。Studio 启动时会把默认配置补写到文件中；以后保存其他设置时也会保留这些字段。
 

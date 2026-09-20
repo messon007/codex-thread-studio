@@ -2,9 +2,11 @@
 
 Studio keeps rendering preferences in its ordinary `settings.json`; there is intentionally no settings-dialog control for them yet.
 
-- Linux: `~/.config/codex-thread-studio/settings.json`
-- macOS: `~/Library/Application Support/codex-thread-studio/settings.json`
-- Windows: `%APPDATA%\\codex-thread-studio\\settings.json`
+- Linux and macOS: `$XDG_CONFIG_HOME/codex-thread-studio/settings.json`, or
+  `~/.config/codex-thread-studio/settings.json` when `XDG_CONFIG_HOME` is unset. macOS uses this same
+  path rather than `~/Library/Application Support`.
+- Windows: `%XDG_CONFIG_HOME%\codex-thread-studio\settings.json`. Define `XDG_CONFIG_HOME` or `HOME`
+  before launching, otherwise Studio falls back to its temporary directory.
 
 Close Studio before editing the file, then restart it. Studio writes the defaults into the file on startup and preserves them when other settings are saved.
 

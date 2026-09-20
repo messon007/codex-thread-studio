@@ -71,7 +71,7 @@ Build without launching:
 
 ```bash
 cargo build -p codex-thread-studio --release
-./target/debug/codex-thread-studio
+./target/release/codex-thread-studio
 ```
 
 If a GUI launcher cannot find Codex:

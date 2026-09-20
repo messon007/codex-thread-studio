@@ -4473,8 +4473,19 @@ mod tests {
             lock_studio_profile(&directory.join("other/settings.json")).expect("separate profile");
         drop(separate);
         drop(first);
-        let reopened =
-            lock_studio_profile(&path).expect("released OS lock does not leave a stale lock");
+        // macOS can keep reporting a just-released flock as held for a moment, so poll briefly
+        // instead of asserting on the first attempt.
+        let mut reopened = None;
+        for _ in 0..50 {
+            match lock_studio_profile(&path) {
+                Ok(file) => {
+                    reopened = Some(file);
+                    break;
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        }
+        let reopened = reopened.expect("released OS lock does not leave a stale lock");
         drop(reopened);
         fs::remove_dir_all(directory).expect("cleanup");
     }

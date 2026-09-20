@@ -20,23 +20,27 @@ there is no `env` field to set: put `CODEX_HOME` in the arguments or wrap the CL
 Skip this step if you pick shape A in step 2: it reuses the ordinary `~/.codex` and only needs the
 DeepSeek provider block inside that existing config.
 
-Fastest and least error-prone: copy the profile that already works on the machine, keeping it in its
-own home.
+For the preferred isolated setup, create a fresh home instead of copying the ordinary OpenAI Codex
+configuration:
 
 ```bash
 mkdir -p ~/.codex-deepseek
 chmod 700 ~/.codex-deepseek
-cp ~/.codex/config.toml ~/.codex-deepseek/config.toml
-[ -f ~/.codex/models.json ] && cp ~/.codex/models.json ~/.codex-deepseek/models.json
 ```
 
-The copied `config.toml` still points `model_catalog_json` at the original path. That keeps working
-while the file is readable there; to make the instance own its catalog, update that line to
-`~/.codex-deepseek/models.json` so it matches the copy.
+Install the current `models.json` from the manual setup section of the
+[official DeepSeek Codex guide](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)
+as `~/.codex-deepseek/models.json`, then set its permissions to `600`. The official setup script can
+also generate this catalog in a temporary directory before it is installed into the isolated home.
+Do not substitute Codex's `models_cache.json`; it is a different file managed by Codex itself.
 
-Configuring from scratch instead, a working DeepSeek profile has every field below. Dropping any of
-them changes behaviour: without `model_catalog_json` the private model name never reaches the model
-picker, and a `wire_api` that does not match the endpoint fails at request time.
+If another DeepSeek Codex home already works on the machine, copying its `config.toml` and
+`models.json` is also valid. Review absolute paths and replace any credential stored directly in the
+copied TOML with the `env_key` form below.
+
+Create `~/.codex-deepseek/config.toml` with the following recommended configuration. The provider,
+authentication, model, and catalog fields establish the DeepSeek connection; the reasoning and web
+search fields define compatible runtime behaviour.
 
 ```toml
 model = "deepseek-flash"
@@ -46,7 +50,6 @@ forced_login_method = "api"
 model_reasoning_effort = "high"
 web_search = "disabled"
 model_catalog_json = "~/.codex-deepseek/models.json"
-approvals_reviewer = "auto_review"
 
 [model_providers.deepseek]
 name = "deepseek"
@@ -66,8 +69,8 @@ env_key = "DEEPSEEK_API_KEY"
 - Credentials live either in `experimental_bearer_token` (then `chmod 600` the file) or in
   `env_key = "DEEPSEEK_API_KEY"`, which the preferred launcher in step 2 supplies. Codex 0.155.1
   supports both; `env_key` is preferred because it keeps the key out of `config.toml`.
-- `model_reasoning_effort`, `web_search`, and `approvals_reviewer` carry the profile's behaviour;
-  keep the values that work for the deployment.
+- `model_reasoning_effort` and `web_search` carry the provider-compatible runtime behaviour.
+  `approvals_reviewer` is optional and can be added separately when that policy is wanted.
 
 Because the home is separate, this instance has its own `auth.json`, `sessions/`, history, and
 trusted-project list. Nothing here changes the built-in backend.
@@ -111,6 +114,12 @@ isolates `auth.json`, `sessions/`, history, and the model catalog from the built
 cat > ~/.codex-deepseek/launch-codex <<'EOF'
 #!/bin/sh
 export CODEX_HOME="$HOME/.codex-deepseek"
+
+if [ -r "$CODEX_HOME/api-key" ]; then
+  DEEPSEEK_API_KEY=$(tr -d '\r\n' < "$CODEX_HOME/api-key")
+  export DEEPSEEK_API_KEY
+fi
+
 exec codex "$@"
 EOF
 chmod +x ~/.codex-deepseek/launch-codex
@@ -120,14 +129,17 @@ chmod +x ~/.codex-deepseek/launch-codex
 command: /Users/you/.codex-deepseek/launch-codex
 ```
 
-The wrapper is also the place to export an `env_key` credential, so the key never appears in `args`:
+The wrapper exports the optional `env_key` credential, so the key never appears in `args` or shell
+history. Create the protected file with an editor:
 
 ```bash
-printf '%s' 'sk-your-deepseek-key' > ~/.codex-deepseek/api-key
-chmod 600 ~/.codex-deepseek/api-key
-# and inside launch-codex, before exec:
-export DEEPSEEK_API_KEY="$(cat "$HOME/.codex-deepseek/api-key" 2>/dev/null)"
+install -m 600 /dev/null ~/.codex-deepseek/api-key
+${EDITOR:-vi} ~/.codex-deepseek/api-key
 ```
+
+Studio does not read `api-key` itself. It starts `launch-codex`; the wrapper reads the file and
+exports `DEEPSEEK_API_KEY`; then Codex resolves the provider's `env_key = "DEEPSEEK_API_KEY"` from
+that process environment. The file can therefore remain absent until the API key is available.
 
 **C. Its own Codex home without a script.** `backends.json` has no `env` field, so the variable has
 to travel as an argument. `/usr/bin/env` is the trampoline: it sets `CODEX_HOME` and then executes
@@ -179,8 +191,8 @@ The entry below uses shape B; replace `command` and `args` with the shape you ch
 
 ```bash
 python3 -m json.tool ~/.config/codex-thread-studio/backends.json > /dev/null && echo "backends.json valid"
-CODEX_HOME=$HOME/.codex-deepseek codex --version
-CODEX_HOME=$HOME/.codex-deepseek codex app-server --stdio < /dev/null   # starts, exits at EOF
+~/.codex-deepseek/launch-codex --version
+~/.codex-deepseek/launch-codex app-server --stdio < /dev/null   # starts, exits at EOF
 ```
 
 In Studio, **Connections** lists the new backend and reports any validation error. Selecting it gives

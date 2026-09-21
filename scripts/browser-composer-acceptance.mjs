@@ -26,13 +26,14 @@ export async function checkComposerAcceptance(page) {
     const { createCodexViewModel, applyCodexNotification } = await import('/codex-native.mjs')
     const { applyOpenCodeEvent } = await import('/opencode-native.mjs')
     const { resolveModelDisplay } = await import('/model-display.mjs')
+    const { resolveFastMode } = await import('/service-tier.mjs')
     const reports = []
     for (const backend of ['codex', 'ept-codex', 'opencode']) {
       const fixture = document.createElement('section')
       fixture.dataset.composerAcceptance = backend
       fixture.style.cssText = 'width:780px;padding:24px;background:white;color:#243536;font:14px sans-serif'
       fixture.innerHTML = '<form id="composer-form"><textarea id="composer-input"></textarea>' + [
-        'composer-model-backend', 'composer-model-name', 'composer-model',
+        'composer-model-backend', 'composer-model-name', 'composer-model', 'composer-model-fast',
         'interrupt-turn', 'queue-message', 'continue-thread', 'archive-thread', 'delete-thread',
         'send-message', 'composer-add-image',
       ].map(id => `<button type="button" id="${id}"></button>`).join('')
@@ -59,7 +60,7 @@ export async function checkComposerAcceptance(page) {
       const dependencies = {
         state, $, currentTurnOptions: () => ({}), currentBackend: () => ({ name: backend, tag: backend }),
         composerModelContext: () => ({ options: {}, ref: { backend }, thread: {}, descriptor: { name: backend, tag: backend } }),
-        resolveModelDisplay, selectedThread: () => ({}), shellCommandFromComposer: () => null,
+        resolveModelDisplay, resolveFastMode, selectedThread: () => ({}), shellCommandFromComposer: () => null,
         selectedStateKey: () => key, isRouterThread: () => Boolean(state.routerMode), isCodexBackend: b => b !== 'opencode',
         composerHasPendingContent: () => Boolean($('#composer-input').value.trim() || state.pendingImages[key]?.length || state.pendingFiles[key]?.length || state.pendingSkills[key]?.length),
         renderComposerTools: noop, renderComposerImages: noop, renderMessageQueue: noop, reviewNotes: { renderComposerContext: noop },

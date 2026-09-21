@@ -6,7 +6,7 @@ function fixture(codex = true) {
   const state = { hiddenUtilityThreadNames: new Set(), hiddenUtilityThreads: new Set(), hiddenCodexThreads: new Set(), hiddenCodexTurns: new Set(), structuredUtilityTasks: new Map() }
   const calls = []
   const options = {
-    backend: codex ? 'ept-codex' : 'opencode', codex, cwd: '/project', model: 'chosen-model', effort: 'low', name: 'utility',
+    backend: codex ? 'ept-codex' : 'opencode', codex, cwd: '/project', model: 'chosen-model', effort: 'low', serviceTier: codex ? 'fast' : '', name: 'utility',
     instructions: 'instructions', input: 'input', outputSchema: { type: 'object' }, validateBeforeStart: true,
     missingTaskMessage: 'missing task', timeoutMessage: 'timeout', ensureCurrent() {},
     parse: () => ({ status: 'completed', prompt: 'next' }), translateError: value => value,
@@ -41,7 +41,9 @@ test('hidden Codex task preserves model/schema and reads notifications, not remo
   assert.deepEqual(calls.map(call => call[0]), ['thread/start', 'turn/start', 'delete'])
   assert.equal(calls[0][1].ephemeral, true)
   assert.equal(calls[0][1].model, 'chosen-model')
+  assert.equal(calls[0][1].serviceTier, 'fast')
   assert.equal(calls[1][1].effort, 'low')
+  assert.equal(calls[1][1].serviceTier, 'fast')
   assert.deepEqual(calls[1][1].outputSchema, { type: 'object' })
   assert.deepEqual(calls[2], ['delete', 'ept-codex', { threadId: 'session' }, 15000])
   for (const collection of Object.values(state)) assert.equal(collection.size, 0)

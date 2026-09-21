@@ -34,7 +34,7 @@ test('session persistence snapshots FIFO payloads and isolates sessions even whe
   await Promise.all([first, second, third, fourth])
   assert.equal(calls[0][2].messages[0].text, 'first')
   assert.deepEqual(calls.slice(1), [
-    ['/studio/session-state/turn-options', 'PUT', { sessionKey: 'opencode:b', model: 'provider/model', effort: 'low' }],
+    ['/studio/session-state/turn-options', 'PUT', { sessionKey: 'opencode:b', model: 'provider/model', effort: 'low', serviceTier: '' }],
     ['/studio/session-state/pin', 'PUT', { sessionKey: 'codex:a', pinned: false }],
     ['/studio/session-state/session', 'DELETE', { sessionKey: 'opencode:b' }],
   ])
@@ -49,7 +49,7 @@ test('missing session values use explicit clearing payloads without mutating mem
   assert.deepEqual(calls.map(([, body]) => body), [
     { sessionKey: 'codex:a', drafts: [], additional: '' },
     { sessionKey: 'codex:a', message: null },
-    { sessionKey: 'codex:a', model: '', effort: '' },
+    { sessionKey: 'codex:a', model: '', effort: '', serviceTier: '' },
   ])
   assert.deepEqual(state, emptyState())
 })

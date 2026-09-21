@@ -17,6 +17,7 @@ pub(crate) const PIN_LIMIT_ERROR: &str = "at most 10 sessions can be pinned";
 pub(crate) struct SessionTurnOptions {
     pub(crate) model: String,
     pub(crate) effort: String,
+    pub(crate) service_tier: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -103,7 +104,9 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
     snapshot.pinned_sessions = load_pins_with_connection(&connection)?;
 
     let mut statement = connection
-        .prepare("SELECT session_key, model, effort FROM session_turn_options ORDER BY session_key")
+        .prepare(
+            "SELECT session_key, model, effort, service_tier FROM session_turn_options ORDER BY session_key",
+        )
         .map_err(sql_error)?;
     let rows = statement
         .query_map([], |row| {
@@ -112,6 +115,7 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
                 SessionTurnOptions {
                     model: row.get(1)?,
                     effort: row.get(2)?,
+                    service_tier: row.get(3)?,
                 },
             ))
         })
@@ -223,9 +227,10 @@ pub(crate) fn put_turn_options(
     session_key: &str,
     model: &str,
     effort: &str,
+    service_tier: &str,
 ) -> Result<(), String> {
     let connection = connection(path)?;
-    if model.is_empty() && effort.is_empty() {
+    if model.is_empty() && effort.is_empty() && service_tier.is_empty() {
         connection
             .execute(
                 "DELETE FROM session_turn_options WHERE session_key = ?1",
@@ -235,9 +240,9 @@ pub(crate) fn put_turn_options(
     } else {
         connection
             .execute(
-                "INSERT INTO session_turn_options(session_key, model, effort) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(session_key) DO UPDATE SET model = excluded.model, effort = excluded.effort",
-                params![session_key, model, effort],
+                "INSERT INTO session_turn_options(session_key, model, effort, service_tier) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(session_key) DO UPDATE SET model = excluded.model, effort = excluded.effort, service_tier = excluded.service_tier",
+                params![session_key, model, effort, service_tier],
             )
             .map_err(sql_error)?;
     }
@@ -405,7 +410,8 @@ fn connection(path: &Path) -> Result<Connection, String> {
              CREATE TABLE IF NOT EXISTS session_turn_options (
                session_key TEXT PRIMARY KEY,
                model TEXT NOT NULL,
-               effort TEXT NOT NULL
+               effort TEXT NOT NULL,
+               service_tier TEXT NOT NULL DEFAULT ''
              );
              CREATE TABLE IF NOT EXISTS session_message_queues (
                session_key TEXT PRIMARY KEY,
@@ -413,6 +419,22 @@ fn connection(path: &Path) -> Result<Connection, String> {
              );",
         )
         .map_err(sql_error)?;
+    let has_service_tier = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('session_turn_options') WHERE name = 'service_tier'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(sql_error)?
+        > 0;
+    if !has_service_tier {
+        connection
+            .execute(
+                "ALTER TABLE session_turn_options ADD COLUMN service_tier TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(sql_error)?;
+    }
     Ok(connection)
 }
 
@@ -463,7 +485,7 @@ mod tests {
         replace_annotations(&path, "codex:one", &[draft("a"), draft("b")], "overall").unwrap();
         put_opening_message(&path, "codex:one", Some(&opening("hello"))).unwrap();
         set_pinned_at(&path, "codex:one", true, 100).unwrap();
-        put_turn_options(&path, "codex:one", "gpt-session", "high").unwrap();
+        put_turn_options(&path, "codex:one", "gpt-session", "high", "fast").unwrap();
         replace_message_queue(
             &path,
             "codex:one",
@@ -486,6 +508,7 @@ mod tests {
             SessionTurnOptions {
                 model: "gpt-session".to_string(),
                 effort: "high".to_string(),
+                service_tier: "fast".to_string(),
             }
         );
         assert_eq!(state.message_queues["codex:one"][0].text, "later");
@@ -493,7 +516,7 @@ mod tests {
         replace_annotations(&path, "codex:one", &[], "").unwrap();
         put_opening_message(&path, "codex:one", None).unwrap();
         set_pinned_at(&path, "codex:one", false, 0).unwrap();
-        put_turn_options(&path, "codex:one", "", "").unwrap();
+        put_turn_options(&path, "codex:one", "", "", "").unwrap();
         replace_message_queue(&path, "codex:one", &[]).unwrap();
         let state = load(&path).unwrap();
         assert!(state.annotation_drafts.is_empty());
@@ -506,13 +529,41 @@ mod tests {
     }
 
     #[test]
+    fn migrates_legacy_turn_options_with_default_service_tier() {
+        let path = database_path("service-tier-migration");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE session_turn_options (
+                   session_key TEXT PRIMARY KEY,
+                   model TEXT NOT NULL,
+                   effort TEXT NOT NULL
+                 );
+                 INSERT INTO session_turn_options(session_key, model, effort)
+                 VALUES ('codex:legacy', 'gpt-legacy', 'medium');",
+            )
+            .unwrap();
+        drop(connection);
+
+        initialize(&path).unwrap();
+        let state = load(&path).unwrap();
+        assert_eq!(state.turn_options["codex:legacy"].service_tier, "");
+        put_turn_options(&path, "codex:legacy", "gpt-legacy", "medium", "fast").unwrap();
+        assert_eq!(
+            load(&path).unwrap().turn_options["codex:legacy"].service_tier,
+            "fast"
+        );
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn delete_session_removes_all_state_for_only_that_session() {
         let path = database_path("delete");
         for key in ["codex:one", "opencode:two"] {
             replace_annotations(&path, key, &[draft(key)], key).unwrap();
             put_opening_message(&path, key, Some(&opening(key))).unwrap();
             set_pinned_at(&path, key, true, if key == "codex:one" { 1 } else { 2 }).unwrap();
-            put_turn_options(&path, key, key, "medium").unwrap();
+            put_turn_options(&path, key, key, "medium", "default").unwrap();
             replace_message_queue(
                 &path,
                 key,

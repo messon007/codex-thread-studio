@@ -24,6 +24,7 @@ import {
 } from './codex-native.mjs'
 import { createOpenCodeLoopGuard, mergeOpenCodeThreadTail, normalizeOpenCodeStatus, replayOpenCodeEventsAfterHistory } from './opencode-native.mjs'
 import { resolveModelDisplay } from './model-display.mjs'
+import { modelSupportsFast, resolveFastMode } from './service-tier.mjs'
 import { createTranscriptDom } from './transcript-dom.mjs'
 import {
   catalogListParams,
@@ -5930,26 +5931,50 @@ async function openModelCommand() {
     if (!button) return
     const key = context.key
     let options = state.turnOptions[key]
+    const previousServiceTier = options.serviceTier
     const useDefault = button.hasAttribute('data-model-default')
     const effort = useDefault ? '' : button.closest('.command-card')?.querySelector('select')?.value
     if (useDefault) {
       if (!backendDefaultId) return
-      options = { model: backendDefaultId }
+      options = { model: backendDefaultId, ...(previousServiceTier ? { serviceTier: previousServiceTier } : {}) }
       if (backendDefault.defaultReasoningEffort) options.effort = backendDefault.defaultReasoningEffort
       state.turnOptions[key] = options
-      persistSessionTurnOptions(key).catch(showError)
     } else {
       options.model = button.dataset.model
       if (effort) options.effort = effort
       else delete options.effort
-      persistSessionTurnOptions(key).catch(showError)
     }
+    const selectedModel = models.find((model) => String(model.model || model.id || '') === options.model)
+    if (options.serviceTier === 'fast' && !modelSupportsFast(selectedModel)) options.serviceTier = 'default'
+    persistSessionTurnOptions(key).catch(showError)
     $('#command-dialog').close()
     renderComposerState()
     toast(useDefault
       ? t('This session now uses the saved backend default model {model}', { model: options.model })
       : t('Selected model {model}{effort}', { model: options.model, effort: effort ? ` · ${effort}` : '' }))
   }
+}
+
+async function toggleFastMode() {
+  const context = composerModelContext()
+  if (!isCodexBackend(context.ref.backend)) {
+    throw new Error(t('Fast mode is available only for Codex App Server sessions.'))
+  }
+  const models = await loadBackendModels({ refresh: true, backend: context.ref.backend })
+  const mode = resolveFastMode({
+    models,
+    overrideModel: context.options.model,
+    sessionModel: context.thread?.model,
+    overrideServiceTier: context.options.serviceTier,
+    sessionServiceTier: context.thread?.serviceTier,
+  })
+  if (!mode.supported) {
+    throw new Error(t('Fast mode is not available for {model}.', { model: mode.model || context.descriptor.name }))
+  }
+  context.options.serviceTier = mode.enabled ? 'default' : 'fast'
+  await persistSessionTurnOptions(context.key)
+  renderComposerState()
+  toast(t(mode.enabled ? 'Fast mode disabled for this session' : 'Fast mode enabled for this session'))
 }
 
 async function loadBackendModels({ refresh = false, backend = state.backend } = {}) {
@@ -5997,12 +6022,20 @@ function openPermissionsCommand() {
 function openStatusCommand() {
   const thread = selectedThread()
   const options = currentTurnOptions()
+  const fastMode = resolveFastMode({
+    models: state.backendModels[state.backend] || [],
+    overrideModel: options.model,
+    sessionModel: thread?.model,
+    overrideServiceTier: options.serviceTier,
+    sessionServiceTier: thread?.serviceTier,
+  })
   const rows = [
     ['Thread', thread?.name || thread?.id || '—'],
     ['Status', statusLabel(state.model.status)],
     ['Directory', thread?.cwd || '—'],
     ['Model', options.model || thread?.model || t('{backend} default', { backend: currentBackend().name })],
     ['Reasoning effort', options.effort || t('{backend} default', { backend: currentBackend().name })],
+    [t('Service tier'), t(fastMode.enabled ? 'Fast' : 'Standard')],
     ['Approval policy', options.approvalPolicy || 'Inherit session'],
     ['Sandbox', options.sandboxPolicy?.type || 'Inherit session'],
     ['Token', state.model.usage ? valueText(state.model.usage) : 'No data'],
@@ -6170,6 +6203,7 @@ async function executeSlashCommand(action) {
   if (!state.selectedId && !['new'].includes(action)) throw new Error('Select a Codex session first.')
   const actions = {
     model: openModelCommand,
+    fast: toggleFastMode,
     permissions: openPermissionsCommand,
     status: openStatusCommand,
     subagents: openSubagentsCommand,
@@ -6203,10 +6237,19 @@ function renderComposerState() {
     models: state.backendModels[context.ref.backend] || [],
     fallback: `${descriptor.name} default`,
   })
+  const fastMode = resolveFastMode({
+    models: state.backendModels[context.ref.backend] || [],
+    overrideModel: options.model,
+    sessionModel: context.thread?.model,
+    overrideServiceTier: options.serviceTier,
+    sessionServiceTier: context.thread?.serviceTier,
+  })
   $('#composer-model-backend').textContent = descriptor.tag
   $('#composer-model-name').textContent = display.label
-  $('#composer-model').title = `Current model and effort: ${display.label}`
-  $('#composer-model').setAttribute('aria-label', `Current model and effort: ${display.label}`)
+  $('#composer-model-fast').classList.toggle('hidden', !fastMode.enabled)
+  const modelStatus = fastMode.enabled ? `${display.label} · Fast` : display.label
+  $('#composer-model').title = `Current model, effort, and service tier: ${modelStatus}`
+  $('#composer-model').setAttribute('aria-label', `Current model, effort, and service tier: ${modelStatus}`)
   const shellCommand = shellCommandFromComposer($('#composer-input').value)
   const shellMode = shellCommand !== null
   const queue = state.messageQueues[selectedStateKey()] || []

@@ -3,7 +3,7 @@ import { applyCodexNotification, createCodexViewModel } from './codex-native.mjs
 import { waitForUtilityResult } from './utility-task.mjs';
 /** One hidden task, with backend-pinned cleanup that never blocks its result. */
 export async function runHiddenUtilitySession(state, options) {
-    const { backend, codex, cwd, model, effort, name } = options;
+    const { backend, codex, cwd, model, effort, serviceTier, name } = options;
     const nameKey = `${backend}:${name}`;
     state.hiddenUtilityThreadNames.add(nameKey);
     let threadId = '';
@@ -16,6 +16,7 @@ export async function runHiddenUtilitySession(state, options) {
             ...(model ? { model } : {}),
             ...(codex ? {
                 ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only', developerInstructions: options.instructions,
+                ...(serviceTier ? { serviceTier } : {}),
             } : { name }),
         }, 30_000);
         threadId = String(started?.thread?.id || '');
@@ -38,6 +39,7 @@ export async function runHiddenUtilitySession(state, options) {
             outputSchema: options.outputSchema,
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
+            ...(codex && serviceTier ? { serviceTier } : {}),
         }, 150_000);
         if (task && startedTurn?.turn?.id) {
             const turnId = String(startedTurn.turn.id);

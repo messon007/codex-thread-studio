@@ -98,8 +98,9 @@ export function createComposerActions(state, services) {
         const selectedModel = selectedThread()?.model;
         const model = String(options.model || (typeof selectedModel === 'string' ? selectedModel : '')).trim();
         const effort = String(options.effort || '').trim();
+        const serviceTier = String(options.serviceTier || selectedThread()?.serviceTier || '').trim();
         const draft = await runHiddenUtilitySession(state, {
-            backend, codex: isCodexBackend(backend), cwd, model, effort,
+            backend, codex: isCodexBackend(backend), cwd, model, effort, serviceTier,
             name: `Studio continuation ${randomId()}`,
             instructions: CONTINUATION_DRAFT_INSTRUCTIONS,
             input: continuationDraftInput(source),

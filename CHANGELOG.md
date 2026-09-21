@@ -6,6 +6,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Added
 
+- Add `/fast` for Codex models that advertise the Fast service tier, with a visible Composer badge and per-session persistence.
 - Document macOS first launch for quarantined browser downloads, including the `curl` install path that never sets the quarantine attribute.
 - Link the macOS first-launch steps from the GitHub release body and document the optional Developer ID and notarization secrets in the release guide.
 - Document how to run an independent DeepSeek Codex instance alongside the built-in backend.

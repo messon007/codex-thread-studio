@@ -12,6 +12,9 @@ export interface CatalogModel {
   modelID?: string
   isDefault?: boolean
   defaultReasoningEffort?: string
+  defaultServiceTier?: string | null
+  serviceTiers?: { id?: string; name?: string; description?: string }[]
+  additionalSpeedTiers?: string[]
 }
 export type ModelReference = string | CatalogModel | null
 export interface ModelDisplayOptions {

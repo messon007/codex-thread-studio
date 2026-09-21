@@ -9,13 +9,15 @@ export function normalizeStoredTurnOptions(value) {
             continue;
         const model = String(entry.model || '').trim().slice(0, 256);
         const effort = String(entry.effort || '').trim().slice(0, 64);
-        if (!model && !effort)
+        const serviceTier = String(entry.serviceTier || '').trim().slice(0, 64);
+        if (!model && !effort && !serviceTier)
             continue;
-        if (/\p{Cc}/u.test(model) || /\p{Cc}/u.test(effort))
+        if (/\p{Cc}/u.test(model) || /\p{Cc}/u.test(effort) || /\p{Cc}/u.test(serviceTier))
             continue;
         normalized[key] = {
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
+            ...(serviceTier ? { serviceTier } : {}),
         };
     }
     return normalized;
@@ -25,6 +27,7 @@ export function sessionModelPreferencePayload(sessionKey, options = {}) {
         sessionKey,
         model: String(options.model || ''),
         effort: String(options.effort || ''),
+        serviceTier: String(options.serviceTier || ''),
     };
 }
 /** Read at dispatch time, not enqueue time. Preserve transient turn options too. */

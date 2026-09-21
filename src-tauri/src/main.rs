@@ -454,6 +454,8 @@ struct TurnOptionsStateRequest {
     model: String,
     #[serde(default)]
     effort: String,
+    #[serde(default)]
+    service_tier: String,
 }
 
 #[derive(Deserialize)]
@@ -1066,6 +1068,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/continuation-draft.mjs", get(continuation_draft_js))
         .route("/backends.mjs", get(backends_js))
         .route("/model-display.mjs", get(model_display_js))
+        .route("/service-tier.mjs", get(service_tier_js))
         .route("/message-queue.mjs", get(message_queue_js))
         .route("/session-catalog.mjs", get(session_catalog_js))
         .route(
@@ -2568,6 +2571,10 @@ async fn model_display_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/model-display.mjs"))
 }
 
+async fn service_tier_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/service-tier.mjs"))
+}
+
 async fn message_queue_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/message-queue.mjs"))
 }
@@ -3373,6 +3380,7 @@ async fn put_turn_options_state(State(state): State<GatewayState>, body: String)
             || !valid_router_session_key(&request.session_key)
             || (!request.model.is_empty() && !valid_runtime_value(&request.model, 256))
             || (!request.effort.is_empty() && !valid_runtime_value(&request.effort, 64))
+            || (!request.service_tier.is_empty() && !valid_runtime_value(&request.service_tier, 64))
         {
             return json_error(StatusCode::BAD_REQUEST, "session turn options are invalid");
         }
@@ -3385,6 +3393,7 @@ async fn put_turn_options_state(State(state): State<GatewayState>, body: String)
             &request.session_key,
             &request.model,
             &request.effort,
+            &request.service_tier,
         ) {
             Ok(()) => StatusCode::NO_CONTENT.into_response(),
             Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
@@ -4866,7 +4875,7 @@ mod tests {
                         .uri("/studio/session-state/turn-options")
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(
-                            r#"{"sessionKey":"codex:thread-1","model":"gpt-session","effort":"high"}"#,
+                            r#"{"sessionKey":"codex:thread-1","model":"gpt-session","effort":"high","serviceTier":"fast"}"#,
                         ))
                         .expect("turn options request"),
                 )
@@ -4901,7 +4910,7 @@ mod tests {
             assert_eq!(value["pinnedSessions"], json!(["codex:thread-1"]));
             assert_eq!(
                 value["turnOptions"]["codex:thread-1"],
-                json!({ "model": "gpt-session", "effort": "high" })
+                json!({ "model": "gpt-session", "effort": "high", "serviceTier": "fast" })
             );
             assert_eq!(
                 value["messageQueues"]["codex:thread-1"][0]["text"],
@@ -5063,6 +5072,7 @@ mod tests {
                 "/continuation-draft.mjs",
                 "/backends.mjs",
                 "/model-display.mjs",
+                "/service-tier.mjs",
                 "/session-catalog.mjs",
                 "/session-management.mjs",
                 "/thread-catalog.mjs",

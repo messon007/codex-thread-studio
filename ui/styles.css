@@ -496,6 +496,7 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .composer-model { max-width: min(280px, 42vw); height: 27px; flex-shrink: 0; padding: 0 7px 0 5px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); color: var(--muted); }
 .composer-model-backend { min-width: 20px; height: max(17px, calc(var(--ui-font-label) + 4px)); padding: 0 4px; display: inline-grid; place-items: center; border-radius: 4px; background: var(--brand-soft); color: var(--brand); font-size: var(--ui-font-xs); font-weight: var(--ui-font-emphasis); letter-spacing: .02em;  line-height: 1; }
 .composer-model strong { overflow: hidden; font: var(--ui-font-weight) var(--ui-font-label)/1 var(--ui-font-family); text-overflow: ellipsis; white-space: nowrap; }
+.composer-model-fast { padding: 2px 4px; border-radius: 4px; background: var(--brand); color: var(--panel); font-size: var(--ui-font-xs); font-weight: var(--ui-font-emphasis); letter-spacing: .03em; line-height: 1; }
 .message.user .message-content { min-width: 0; margin-inline: -8px; padding: 6px 8px; border-radius: 9px; background: color-mix(in srgb, var(--brand-soft) 44%, transparent); }
 .message-user-images { max-width: min(520px, 100%); margin: 0 0 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 7px; }
 .message-user-image { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-soft); }

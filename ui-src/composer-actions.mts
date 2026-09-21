@@ -31,8 +31,8 @@ export interface ComposerActionServices {
   setComposerDraftValue: (key: string, text: string) => void
   gatewayFetch: (path: string, options: RequestInit) => Promise<Response>
   truncateCharacters: (text: string, limit: number) => string
-  selectedThread: () => { cwd?: string; model?: unknown } | null
-  currentTurnOptions: () => { model?: string; effort?: string }
+  selectedThread: () => { cwd?: string; model?: unknown; serviceTier?: unknown } | null
+  currentTurnOptions: () => { model?: string; effort?: string; serviceTier?: string }
   isCodexBackend: (backend: string) => boolean
   randomId: () => string
   rpc: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<UtilityRpcResult>
@@ -136,8 +136,9 @@ async function draftContinueWithSessionModel(source: string, stateKey: string) {
   const selectedModel = selectedThread()?.model
   const model = String(options.model || (typeof selectedModel === 'string' ? selectedModel : '')).trim()
   const effort = String(options.effort || '').trim()
+  const serviceTier = String(options.serviceTier || selectedThread()?.serviceTier || '').trim()
   const draft = await runHiddenUtilitySession(state, {
-    backend, codex: isCodexBackend(backend), cwd, model, effort,
+    backend, codex: isCodexBackend(backend), cwd, model, effort, serviceTier,
     name: `Studio continuation ${randomId()}`,
     instructions: CONTINUATION_DRAFT_INSTRUCTIONS,
     input: continuationDraftInput(source),

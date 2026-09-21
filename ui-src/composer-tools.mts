@@ -18,6 +18,7 @@ export function composerReferenceInput(reference: { kind?: string; name?: string
 }
 export const SLASH_COMMANDS = Object.freeze([
   { name: 'model', description: 'Select the model and reasoning effort', action: 'model' },
+  { name: 'fast', description: 'Toggle Fast mode for the current Codex model', action: 'fast' },
   { name: 'permissions', description: 'Set approval and sandbox policies for subsequent turns', action: 'permissions' },
   { name: 'status', description: 'View the current session, model, and token status', action: 'status' },
   { name: 'agent', description: 'Inspect and switch between agent threads', action: 'subagents' },

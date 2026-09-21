@@ -50,12 +50,13 @@ test('session state mutations use bounded per-session endpoints', () => {
   assert.match(app, /if \(!preferencesReady\) return Promise\.resolve\(\)/u)
 })
 
-test('session model and effort choices persist the concrete backend default', () => {
+test('session model, effort, and service tier choices persist the concrete backend default', () => {
   assert.match(app, /persistSessionTurnOptions\(key\)/u)
   assert.match(app, /data-model-default/u)
-  assert.match(app, /backendDefaultId[\s\S]{0,1200}state\.turnOptions\[key\] = options[\s\S]{0,120}persistSessionTurnOptions\(key\)/u)
+  assert.match(app, /backendDefaultId[\s\S]{0,1800}state\.turnOptions\[key\] = options[\s\S]{0,500}persistSessionTurnOptions\(key\)/u)
   assert.doesNotMatch(app, /if \(useDefault\) \{[\s\S]{0,160}delete state\.turnOptions\[key\]/u)
   assert.match(persistence, /sessionModelPreferencePayload\(key, state\.turnOptions\[key\] \|\| \{\}\)/u)
+  assert.match(app, /serviceTier/u)
   assert.match(operations, /async function createThread[\s\S]*state\.turnOptions\[key\] = \{ \.\.\.defaultTurnOptions\(backend\), model \}[\s\S]*persistSessionTurnOptions\(selectedStateKey\(createdThreadId, backend\)\)/u)
   assert.match(operations, /async function forkThread[\s\S]*state\.turnOptions\[forkKey\] = sourceOptions[\s\S]*persistSessionTurnOptions\(forkKey\)/u)
 })

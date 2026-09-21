@@ -27,6 +27,7 @@ export async function runHiddenUtilitySession<T>(state: HiddenUtilityState, opti
   cwd: string
   model: string
   effort: string
+  serviceTier: string
   name: string
   instructions: string
   input: string
@@ -44,7 +45,7 @@ export async function runHiddenUtilitySession<T>(state: HiddenUtilityState, opti
   sessionKey: (backend: string, id: string) => string
   turnKey: (backend: string, id: string) => string
 }): Promise<{ status: 'completed' } & T> {
-  const { backend, codex, cwd, model, effort, name } = options
+  const { backend, codex, cwd, model, effort, serviceTier, name } = options
   const nameKey = `${backend}:${name}`
   state.hiddenUtilityThreadNames.add(nameKey)
   let threadId = ''
@@ -56,6 +57,7 @@ export async function runHiddenUtilitySession<T>(state: HiddenUtilityState, opti
       ...(model ? { model } : {}),
       ...(codex ? {
         ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only', developerInstructions: options.instructions,
+        ...(serviceTier ? { serviceTier } : {}),
       } : { name }),
     }, 30_000)
     threadId = String(started?.thread?.id || '')
@@ -76,6 +78,7 @@ export async function runHiddenUtilitySession<T>(state: HiddenUtilityState, opti
       outputSchema: options.outputSchema,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
+      ...(codex && serviceTier ? { serviceTier } : {}),
     }, 150_000)
     if (task && startedTurn?.turn?.id) {
       const turnId = String(startedTurn.turn.id)

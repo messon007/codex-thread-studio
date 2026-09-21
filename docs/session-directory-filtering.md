@@ -4,9 +4,11 @@ Studio can hide sessions from selected project directories without deleting, arc
 
 Edit the ordinary Studio settings file while Studio is closed:
 
-- Linux: `~/.config/codex-thread-studio/settings.json`
-- macOS: `~/Library/Application Support/codex-thread-studio/settings.json`
-- Windows: `%APPDATA%\codex-thread-studio\settings.json`
+- Linux and macOS: `$XDG_CONFIG_HOME/codex-thread-studio/settings.json`, or
+  `~/.config/codex-thread-studio/settings.json` when `XDG_CONFIG_HOME` is unset. macOS uses this same
+  path rather than `~/Library/Application Support`.
+- Windows: `%XDG_CONFIG_HOME%\codex-thread-studio\settings.json`. Define `XDG_CONFIG_HOME` or `HOME`
+  before launching, otherwise Studio falls back to its temporary directory.
 
 Add Gitignore-style rules under `sessionDirectoryIgnore` at the top level:
 

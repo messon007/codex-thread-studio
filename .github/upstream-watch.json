@@ -4,17 +4,17 @@
     "codex": {
       "name": "Codex CLI",
       "package": "@openai/codex",
-      "acceptedVersion": "0.151.0",
-      "acceptedContractSha256": "a2470b480e43252ee9c055588bce0dcd627f75684d97eff00cec50e3f6a6699b",
-      "acceptedAt": "2026-09-02T09:13:41.544Z",
+      "acceptedVersion": "0.154.0",
+      "acceptedContractSha256": "5d610a79394f0eee470e009385b53a3aa9b2e7d139c75d047826ddbf59838788",
+      "acceptedAt": "2026-09-21T06:24:08.310Z",
       "releaseUrl": "https://developers.openai.com/codex/changelog"
     },
     "opencode": {
       "name": "OpenCode",
       "package": "opencode-ai",
-      "acceptedVersion": "1.18.23",
+      "acceptedVersion": "1.18.31",
       "acceptedContractSha256": "20b00baf4b309a0dbeb6b8623d123d3f9aac91b01667385498cb312dd13c4547",
-      "acceptedAt": "2026-09-02T09:13:41.544Z",
+      "acceptedAt": "2026-09-21T06:24:08.310Z",
       "releaseUrl": "https://github.com/anomalyco/opencode/releases"
     }
   },
@@ -80,25 +80,82 @@
     },
     "opencode": {
       "operations": [
-        { "method": "GET", "path": "/global/health" },
-        { "method": "GET", "path": "/global/event" },
-        { "method": "GET", "path": "/experimental/session" },
-        { "method": "GET", "path": "/session/status" },
-        { "method": "POST", "path": "/session" },
-        { "method": "GET", "path": "/session/{sessionID}" },
-        { "method": "PATCH", "path": "/session/{sessionID}" },
-        { "method": "DELETE", "path": "/session/{sessionID}" },
-        { "method": "GET", "path": "/session/{sessionID}/message" },
-        { "method": "POST", "path": "/session/{sessionID}/fork" },
-        { "method": "POST", "path": "/session/{sessionID}/abort" },
-        { "method": "POST", "path": "/session/{sessionID}/prompt_async" },
-        { "method": "POST", "path": "/session/{sessionID}/command" },
-        { "method": "POST", "path": "/session/{sessionID}/shell" },
-        { "method": "GET", "path": "/find/file" },
-        { "method": "GET", "path": "/config/providers" },
-        { "method": "GET", "path": "/command" },
-        { "method": "GET", "path": "/mcp" },
-        { "method": "POST", "path": "/permission/{requestID}/reply" }
+        {
+          "method": "GET",
+          "path": "/global/health"
+        },
+        {
+          "method": "GET",
+          "path": "/global/event"
+        },
+        {
+          "method": "GET",
+          "path": "/experimental/session"
+        },
+        {
+          "method": "GET",
+          "path": "/session/status"
+        },
+        {
+          "method": "POST",
+          "path": "/session"
+        },
+        {
+          "method": "GET",
+          "path": "/session/{sessionID}"
+        },
+        {
+          "method": "PATCH",
+          "path": "/session/{sessionID}"
+        },
+        {
+          "method": "DELETE",
+          "path": "/session/{sessionID}"
+        },
+        {
+          "method": "GET",
+          "path": "/session/{sessionID}/message"
+        },
+        {
+          "method": "POST",
+          "path": "/session/{sessionID}/fork"
+        },
+        {
+          "method": "POST",
+          "path": "/session/{sessionID}/abort"
+        },
+        {
+          "method": "POST",
+          "path": "/session/{sessionID}/prompt_async"
+        },
+        {
+          "method": "POST",
+          "path": "/session/{sessionID}/command"
+        },
+        {
+          "method": "POST",
+          "path": "/session/{sessionID}/shell"
+        },
+        {
+          "method": "GET",
+          "path": "/find/file"
+        },
+        {
+          "method": "GET",
+          "path": "/config/providers"
+        },
+        {
+          "method": "GET",
+          "path": "/command"
+        },
+        {
+          "method": "GET",
+          "path": "/mcp"
+        },
+        {
+          "method": "POST",
+          "path": "/permission/{requestID}/reply"
+        }
       ],
       "events": [
         "message.part.delta",

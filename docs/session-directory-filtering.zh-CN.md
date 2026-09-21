@@ -4,9 +4,11 @@ Studio 可以隐藏指定项目目录中的会话，但不会删除、归档或�
 
 关闭 Studio 后，编辑其普通设置文件：
 
-- Linux：`~/.config/codex-thread-studio/settings.json`
-- macOS：`~/Library/Application Support/codex-thread-studio/settings.json`
-- Windows：`%APPDATA%\codex-thread-studio\settings.json`
+- Linux 与 macOS：`$XDG_CONFIG_HOME/codex-thread-studio/settings.json`；未设置 `XDG_CONFIG_HOME`
+  时为 `~/.config/codex-thread-studio/settings.json`。macOS 用的是同一路径，不是
+  `~/Library/Application Support`。
+- Windows：`%XDG_CONFIG_HOME%\codex-thread-studio\settings.json`。请提前定义
+  `XDG_CONFIG_HOME` 或 `HOME`，否则 Studio 会退回到临时目录。
 
 在 JSON 顶层增加 Gitignore 风格的 `sessionDirectoryIgnore`：
 

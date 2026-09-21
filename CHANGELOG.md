@@ -8,6 +8,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Document macOS first launch for quarantined browser downloads, including the `curl` install path that never sets the quarantine attribute.
 - Link the macOS first-launch steps from the GitHub release body and document the optional Developer ID and notarization secrets in the release guide.
+- Document how to run an independent DeepSeek Codex instance alongside the built-in backend.
 
 ### Changed
 
@@ -18,6 +19,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 ### Fixed
 
 - Restore Open Item Location on macOS, which previously reported that the system file manager was unavailable because the route reused the embedded-browser capability flag.
+- Correct the documented settings paths (macOS uses the XDG path, not `~/Library/Application Support`) and the release binary path in the README.
 
 ## [0.3.0] - 2026-09-17
 

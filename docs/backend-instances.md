@@ -103,3 +103,6 @@ to operating-system process inspection.
 
 Keep `backends.json` outside the repository. It is a machine preference, not a
 project file.
+
+See [Add a DeepSeek Codex backend](deepseek-backend.md) for a worked example that runs an
+independent provider alongside the built-in backend.

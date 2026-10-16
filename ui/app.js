@@ -6625,7 +6625,7 @@ function activateRightWorkspace(tool) {
   if (tool !== 'browser') {
     state.embeddedBrowserVisible = false
     renderBrowserMenuStatus()
-    window.location.href = 'studio-action://hide-browser'
+    if (usesEmbeddedBrowser()) window.location.href = 'studio-action://hide-browser'
     setTimeout(applyRightRailWidth, 80)
   }
   closeActionMenus()

@@ -598,11 +598,16 @@ const chinese = {
   'Next match': '下一个匹配',
   'Hide source': '隐藏源码',
   'Mermaid diagram': 'Mermaid 图表',
+  'PlantUML diagram': 'PlantUML 图表',
+  'D2 diagram': 'D2 图表',
   'Rendering diagram…': '正在渲染图表…',
   'Unable to render diagram': '图表无法渲染',
   'The diagram is too large; its source is shown.': '图表内容过大，已显示源码。',
   'Reload': '重新载入',
   'Opening document…': '正在打开文档…',
+  'Markdown parsing timed out': 'Markdown 解析超时',
+  'Markdown parser worker failed': 'Markdown 解析工作线程失败',
+  'Invalid Markdown parser response': 'Markdown 解析响应无效',
   'Unable to open document': '无法打开文档',
   'Close document': '关闭文档',
   'Resize document': '调整文档宽度',
@@ -854,6 +859,7 @@ const chinese = {
   'Choose a target session to search its files': '请先选择目标会话，再搜索其项目文件',
   'Other sessions': '其他会话',
   'Session refreshed': '会话已刷新',
+  'The turn already ended. You can send a new message.': '本轮会话已结束，现在可以发送新消息。',
   'Opening question copied': '起始问题已复制',
   'Non-text input': '非文字输入',
   '(non-text input)': '(非文字输入)',
@@ -1327,7 +1333,7 @@ export function startTranslationObserver() {
 
 function translateNode(node) {
   if (node.nodeType === Node.TEXT_NODE) return translateTextNode(node)
-  if (node.nodeType !== Node.ELEMENT_NODE || node.matches(skippedSelector)) return
+  if (node.nodeType !== Node.ELEMENT_NODE || node.closest(skippedSelector)) return
   for (const attribute of ['placeholder', 'title', 'aria-label']) translateAttribute(node, attribute)
   node.childNodes.forEach(translateNode)
 }

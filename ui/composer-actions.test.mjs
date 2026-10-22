@@ -17,8 +17,10 @@ function fixture() {
     showError: error => calls.push(error.message), t: s => s, currentBackend: () => ({ name: 'Codex' }), renderComposerState: () => calls.push('render'), toast: s => calls.push(s),
     setComposerDraftValue: (key, text) => { if (key === `${state.backend}:${state.selectedId}`) $('#composer-input').value = text },
     gatewayFetch: async () => new Response(JSON.stringify({ prompt: 'continue draft' })), truncateCharacters: (s, n) => s.slice(0, n),
+    isCodexBackend: backend => backend === 'codex',
     randomId: () => 'q', persistMessageQueue: async () => calls.push('persist'),
     rpc: async () => { calls.push('interrupt'); return {} }, pauseMessageQueue: () => { calls.push('pause'); state.pausedMessageQueues.add('codex:a') },
+    recoverMissingActiveTurn: async () => { calls.push('recover'); state.model.activeTurnId = null; state.model.status = 'idle'; return true },
     sessionRefFromKey: () => ({ backend: state.backend, id: state.selectedId }), runNextQueuedMessage: async () => calls.push('run'),
   }
   return { state, calls, $, services, controller: () => createComposerActions(state, services) }
@@ -88,4 +90,14 @@ test('quick Continue submits once and Stop pauses its queue before the RPC', asy
   await c.interruptTurn()
   assert.ok(f.calls.indexOf('pause') < f.calls.indexOf('interrupt'))
   assert.ok(f.state.pausedMessageQueues.has('codex:a'))
+})
+
+test('Stop repairs a stale turn after the backend reports no active turn', async () => {
+  const f = fixture()
+  f.state.model.activeTurnId = 'stale'
+  f.services.rpc = async () => { throw new Error('no active turn to interrupt') }
+  await f.controller().interruptTurn()
+  assert.equal(f.state.model.activeTurnId, null)
+  assert.ok(f.calls.includes('recover'))
+  assert.equal(f.calls.some(call => call === 'no active turn to interrupt'), false)
 })

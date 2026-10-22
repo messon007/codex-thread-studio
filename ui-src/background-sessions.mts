@@ -106,6 +106,25 @@ export function createBackgroundSessions(state: BackgroundState, services: Backg
   let openCodeLifecycleReconciliation: Promise<void> | null = null
   const codexOffscreenHistoryRefreshes = new Map<string, Promise<void>>()
   const codexOffscreenHistoryRefreshRetries = new Map<string, boolean>()
+  const selectedCodexIdleReconciliations = new Set<string>()
+
+function scheduleSelectedCodexIdleReconciliation(backend: string, threadId: string, model: BackgroundModel) {
+  const activeTurnId = model.activeTurnId
+  const key = threadCatalogKey(backend, threadId)
+  if (!activeTurnId || activeTurnId.startsWith('studio-pending-') || selectedCodexIdleReconciliations.has(key)) return
+  selectedCodexIdleReconciliations.add(key)
+  scheduleStudioIdleWork(async () => {
+    try {
+      if (state.backend !== backend || state.selectedId !== threadId || !state.ready
+        || state.model !== model || model.activeTurnId !== activeTurnId) return
+      await refreshSelectedThread({ quiet: true })
+    } catch (error) {
+      console.warn('Unable to reconcile an idle Codex session', error)
+    } finally {
+      selectedCodexIdleReconciliations.delete(key)
+    }
+  }, { delay: 250, timeout: 1_000 })
+}
 function scheduleOpenCodeLifecycleReconciliation(): Promise<void> {
   if (openCodeLifecycleReconciliation) return openCodeLifecycleReconciliation
   openCodeLifecycleReconciliation = new Promise<void>((resolve) => {
@@ -342,6 +361,10 @@ function handleCodexLifecycleNotification(backend: string, message: BackgroundNo
       beforeActiveTurnId,
     })
     return true
+  }
+  if (event.method === 'thread/status/changed' && event.notificationStatus === 'idle'
+    && state.backend === backend && state.selectedId === threadId && targetModel === state.model) {
+    scheduleSelectedCodexIdleReconciliation(backend, threadId, targetModel)
   }
   const fullEventCoverage = state.backend === backend
   if (fullEventCoverage) markCachedModelValidated(backend, targetModel)

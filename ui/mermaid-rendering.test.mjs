@@ -20,16 +20,16 @@ test('pins and embeds Mermaid before the application module', () => {
   assert.match(rust, /route\("\/vendor\/mermaid\.min\.js", get\(mermaid_js\)\)/u)
 })
 
-test('renders only fenced Mermaid blocks with strict bounded post-sanitization', () => {
-  assert.match(app, /normalizedLanguage === 'mermaid'/u)
-  assert.match(app, /MAX_MERMAID_SOURCE_CHARS = 100_000/u)
+test('renders Mermaid blocks with strict bounded post-sanitization', () => {
+  assert.match(app, /diagramKind\(normalizedLanguage/u)
+  assert.match(app, /MAX_DIAGRAM_SOURCE_CHARS = 100_000/u)
   assert.match(config, /securityLevel: 'strict'/u)
   assert.match(config, /htmlLabels: false/u)
   assert.match(config, /startOnLoad: false/u)
   assert.match(config, /suppressErrorRendering: true/u)
-  assert.match(app, /DOMPurify\.sanitize\(result\.svg/u)
+  assert.match(app, /DOMPurify\.sanitize\(svg/u)
   assert.match(app, /MutationObserver/u)
-  assert.match(app, /showMermaidError/u)
+  assert.match(app, /showDiagramError/u)
 })
 
 test('keeps multilingual labels in sanitizable SVG text instead of foreignObject HTML', () => {
@@ -51,8 +51,8 @@ test('renders fenced plain text without a title or copy action', () => {
 })
 
 test('provides responsive diagram and source-fallback styles', () => {
-  assert.match(styles, /\.markdown-mermaid-canvas/u)
-  assert.match(styles, /\.markdown-mermaid-canvas svg/u)
-  assert.match(styles, /\.markdown-mermaid\.show-source \.markdown-mermaid-source/u)
-  assert.match(styles, /data-mermaid-state="error"/u)
+  assert.match(styles, /\.markdown-diagram-canvas/u)
+  assert.match(styles, /\.markdown-diagram-canvas svg/u)
+  assert.match(styles, /\.markdown-diagram\.show-source \.markdown-diagram-source/u)
+  assert.match(styles, /\.markdown-diagram\[data-diagram-state="error"\]/u)
 })

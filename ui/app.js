@@ -20,6 +20,7 @@ import {
   hydrateCodexThread,
   resolveCodexApproval,
   resolveCodexInteraction,
+  settleMissingActiveTurn,
   textFromUserContent,
 } from './codex-native.mjs'
 import { createOpenCodeLoopGuard, mergeOpenCodeThreadTail, normalizeOpenCodeStatus, replayOpenCodeEventsAfterHistory } from './opencode-native.mjs'
@@ -58,7 +59,6 @@ import {
   resolveMarkdownImagePath,
 } from './document-review.mjs'
 import {
-  extractMarkdownOutline,
 } from './document-outline.mjs'
 import {
   CommentSourceRegistry,
@@ -75,6 +75,7 @@ import { createPdfCommentProvider } from './pdf-comment-provider.mjs'
 import { createTableCommentProvider } from './table-comment-provider.mjs'
 import { questionForTurn } from './favorites.mjs'
 import { MERMAID_PREFERENCES_DEFAULTS, mermaidInitializeConfig } from './mermaid-config.mjs'
+import { diagramKind, hasUnsafePlantumlDirective, plantumlLines, markdownParserForSource } from './diagram-source.mjs'
 import {
   sessionMapKey,
   sessionMapVisibleText,
@@ -92,6 +93,7 @@ import {
   createDocumentWorkspaceState,
 } from './document-workspace-controller.mjs'
 import { marked } from './vendor/marked.esm.js'
+import { createMarkdownDocumentClient } from './markdown-document-client.mjs'
 import {
   activeTurnAtMarker,
   navigableTurns,
@@ -402,14 +404,17 @@ const transcriptContentObserver = createTranscriptContentObserver({ onResize: ha
 const composerDrafts = createComposerDraftStore()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
+const markdownDocumentClient = createMarkdownDocumentClient()
 const MAX_MARKDOWN_RENDER_CACHE_BYTES = 24 * 1024 * 1024
 let markdownRenderCacheBytes = 0
-const MAX_MERMAID_SOURCE_CHARS = 100_000
-let mermaidObserver = null
-let mermaidRenderChain = Promise.resolve()
-let mermaidRenderSequence = 0
-let mermaidGeneration = 0
+const MAX_DIAGRAM_SOURCE_CHARS = 100_000
+let diagramObserver = null
+let diagramRenderChain = Promise.resolve()
+let diagramRenderSequence = 0
+let diagramGeneration = 0
 let mermaidInitializedConfig = ''
+let plantumlVizPromise = null
+let d2Renderer = null
 let activityLogContext = null
 let rightRailResize = null
 let embeddedBrowserWidthTimer = null
@@ -622,7 +627,7 @@ const submissionController = createSubmissionController(state, {
   hideComposerMenu, renderComposerState, renderTranscript, beginTranscriptFollowingLatest,
   setCatalogThreadActivity, rollbackCatalogThreadActivity, markCachedModelValidated,
   beginTurnLatencyTrace, bindTurnLatencyTrace, markTurnLatency, finishTurnLatencyTrace,
-  randomId, persistMessageQueue, showError, toast, t,
+  randomId, persistMessageQueue, showError, toast, t, recoverMissingActiveTurn,
 })
 
 const reviewNotes = createReviewNotesController({
@@ -677,6 +682,7 @@ const documentWorkspace = createDocumentWorkspaceController({
     closeActionMenus,
     applyRightRailWidth,
     renderMarkdownDocument,
+    cancelMarkdownDocument: () => markdownDocumentClient.cancel(),
     hydrateMarkdownImages,
     disconnectMarkdownImageObserver,
     disposeMarkdownImageAssets,
@@ -816,7 +822,7 @@ function renderComposerTools() {
 }
 
 const composerActions = createComposerActions(state, {
-  $, selectedStateKey, composerDrafts, setCurrentComposerValue, hideComposerMenu, latestAgentResponseText, showError, t, currentBackend, renderComposerState, toast, setComposerDraftValue, gatewayFetch, truncateCharacters, selectedThread, currentTurnOptions, isCodexBackend, randomId, rpc, dispatchBackendRpc, sessionRefKey, routerRuntimeKey, persistMessageQueue, runNextQueuedMessage, sessionRefFromKey, pauseMessageQueue,
+  $, selectedStateKey, composerDrafts, setCurrentComposerValue, hideComposerMenu, latestAgentResponseText, showError, t, currentBackend, renderComposerState, toast, setComposerDraftValue, gatewayFetch, truncateCharacters, selectedThread, currentTurnOptions, isCodexBackend, randomId, rpc, dispatchBackendRpc, sessionRefKey, routerRuntimeKey, persistMessageQueue, runNextQueuedMessage, sessionRefFromKey, pauseMessageQueue, recoverMissingActiveTurn,
 })
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -918,7 +924,7 @@ async function init() {
   setLanguage(state.language)
   startTranslationObserver()
   applyAppearance()
-  startMermaidRendering()
+  startDiagramRendering()
   applyBackendCopy()
   await loadBrowserInfo().catch((error) => console.warn('Unable to load Browser info', error))
   syncEmbeddedBrowserTranslations()
@@ -1109,17 +1115,21 @@ function bindUI() {
     resizer.addEventListener('pointerdown', beginRightRailResize)
     resizer.addEventListener('pointermove', continueRightRailResize)
     resizer.addEventListener('pointerup', finishRightRailResize)
-    resizer.addEventListener('pointercancel', finishRightRailResize)
+    resizer.addEventListener('pointercancel', cancelRightRailResize)
+    resizer.addEventListener('lostpointercapture', cancelRightRailResize)
     resizer.addEventListener('dblclick', resetRightRailWidth)
     resizer.addEventListener('keydown', handleRightRailResizeKey)
   }
   $('#transcript').addEventListener('click', handleTranscriptClick)
   document.addEventListener('click', (event) => handleMarkdownActionClick(event).catch(reportClientError))
   window.addEventListener('resize', () => {
+    cancelRightRailResize()
     scheduleTurnNavigatorSync()
     applyRightRailWidth()
     workspaceTools.resize()
   })
+  window.addEventListener('blur', cancelRightRailResize)
+  window.addEventListener('keydown', handleRightRailResizeEscape, true)
   $('#connections-button').addEventListener('click', openConnectionsDialog)
   $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
   $('#settings-button').addEventListener('click', () => {
@@ -1634,31 +1644,69 @@ function applyRightRailWidth(ratio = state.rightRailWidthRatio, { updateState = 
 }
 
 function beginRightRailResize(event) {
-  if (event.button !== 0) return
+  if (event.button !== 0 || rightRailResize) return
   event.preventDefault()
   window.getSelection?.()?.removeAllRanges()
-  rightRailResize = { pointerId: event.pointerId, rail: event.currentTarget.parentElement }
-  event.currentTarget.setPointerCapture(event.pointerId)
-  document.body.classList.add('resizing-right-rail')
-  continueRightRailResize(event)
+  const resizer = event.currentTarget
+  const rail = resizer.parentElement.getBoundingClientRect()
+  const bounds = appRightRailWidthBounds()
+  const overlay = document.createElement('div')
+  overlay.className = 'right-rail-resize-overlay'
+  overlay.setAttribute('aria-hidden', 'true')
+  overlay.dataset.noI18n = ''
+  const guide = document.createElement('div')
+  guide.className = 'right-rail-resize-guide'
+  guide.style.transform = `translate3d(${rail.left}px, 0, 0)`
+  overlay.append(guide)
+  rightRailResize = { pointerId: event.pointerId, resizer, bounds, right: rail.right, initialWidth: rail.width, width: rail.width, startX: event.clientX, overlay, guide }
+  document.body.append(overlay)
+  try {
+    resizer.setPointerCapture(event.pointerId)
+  } catch {
+    cancelRightRailResize()
+  }
 }
 
 function continueRightRailResize(event) {
   if (!rightRailResize || rightRailResize.pointerId !== event.pointerId) return
-  const right = rightRailResize.rail?.getBoundingClientRect().right || window.innerWidth
-  const { available } = appRightRailWidthBounds()
-  applyRightRailWidth((right - event.clientX) / available, { updateState: true })
+  const drag = rightRailResize
+  const ratio = normalizeRightRailWidthRatio((drag.initialWidth + drag.startX - event.clientX) / drag.bounds.available)
+  drag.width = Math.min(drag.bounds.max, Math.max(drag.bounds.min, drag.bounds.available * ratio))
+  drag.guide.style.transform = `translate3d(${drag.right - drag.width}px, 0, 0)`
 }
 
 function finishRightRailResize(event) {
   if (!rightRailResize || rightRailResize.pointerId !== event.pointerId) return
-  rightRailResize = null
-  document.body.classList.remove('resizing-right-rail')
-  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  continueRightRailResize(event)
+  const drag = clearRightRailResize()
+  if (Math.abs(drag.width - drag.initialWidth) < 0.5) return
+  applyRightRailWidth(drag.width / drag.bounds.available, { updateState: true })
   persistPreferences()
 }
 
+function clearRightRailResize() {
+  const drag = rightRailResize
+  if (!drag) return null
+  rightRailResize = null
+  drag.overlay.remove()
+  if (drag.resizer.hasPointerCapture(drag.pointerId)) drag.resizer.releasePointerCapture(drag.pointerId)
+  return drag
+}
+
+function cancelRightRailResize(event) {
+  if (!rightRailResize || (event?.pointerId != null && event.pointerId !== rightRailResize.pointerId)) return
+  clearRightRailResize()
+}
+
+function handleRightRailResizeEscape(event) {
+  if (event.key !== 'Escape' || !rightRailResize) return
+  event.preventDefault()
+  event.stopPropagation()
+  cancelRightRailResize()
+}
+
 function resetRightRailWidth() {
+  cancelRightRailResize()
   state.rightRailWidthRatio = 0.44
   applyRightRailWidth()
   persistPreferences()
@@ -1668,6 +1716,7 @@ function handleRightRailResizeKey(event) {
   const step = event.shiftKey ? 64 : 24
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
+  cancelRightRailResize()
   const { available, min, max } = appRightRailWidthBounds()
   const current = event.currentTarget.parentElement?.getBoundingClientRect().width || min
   const next = event.key === 'Home' ? min
@@ -3405,6 +3454,24 @@ async function refreshSelectedThread(options = {}) {
     () => refreshSelectedThreadUncached({ ...options, backend, threadId, historyEpoch }))
 }
 
+async function recoverMissingActiveTurn(ref, expectedTurnId) {
+  if (!isCodexBackend(ref.backend) || state.backend !== ref.backend || state.selectedId !== ref.id) return false
+  if (state.model.activeTurnId !== expectedTurnId) return false
+  try {
+    await refreshSelectedThread({ quiet: true })
+  } catch (error) {
+    console.warn('Unable to refresh a turn that the backend says has ended', error)
+  }
+  if (state.backend !== ref.backend || state.selectedId !== ref.id) return false
+  if (state.model.activeTurnId === expectedTurnId) settleMissingActiveTurn(state.model, expectedTurnId)
+  if (state.model.activeTurnId) return false
+  setCatalogThreadActivity(ref.backend, ref.id, { status: 'idle' })
+  renderTranscript()
+  renderComposerState()
+  toast(t('The turn already ended. You can send a new message.'))
+  return true
+}
+
 async function refreshSelectedThreadUncached({
   quiet = false,
   environmentRoot = '',
@@ -4895,17 +4962,19 @@ function renderMarkdown(value) {
   return rendered
 }
 
-function renderMarkdownDocument(value) {
+async function renderMarkdownDocument(value) {
   const source = String(value || '')
   if (!source) return { html: '', outline: [] }
   const cacheKey = `document\u0000${getLocale()}\u0000${source}`
   const cached = readMarkdownRenderCache(cacheKey)
   if (cached != null) return cached
-  const tokens = marked.lexer(source)
+  const finish = studioPerformance.start('markdown.document', { characters: source.length })
+  const parsed = await markdownDocumentClient.parse(source)
   const rendered = {
-    html: renderMarkdownHtml(source, { tokens, documentImages: true }),
-    outline: extractMarkdownOutline(source, tokens),
+    html: renderMarkdownHtml('', { dirtyHtml: parsed.html, documentImages: true }),
+    outline: parsed.outline,
   }
+  finish({ engine: parsed.engine })
   const outlineSize = rendered.outline.reduce((size, item) => size + item.id.length + item.label.length + 64, 0)
   writeMarkdownRenderCache(cacheKey, rendered, (rendered.html.length * 2) + outlineSize)
   return rendered
@@ -4934,8 +5003,9 @@ function writeMarkdownRenderCache(key, value, size) {
   }
 }
 
-function renderMarkdownHtml(source, { tokens = null, documentImages = false } = {}) {
-  const dirty = tokens ? marked.parser(tokens) : marked.parse(source)
+function renderMarkdownHtml(source, { tokens = null, parser = null, dirtyHtml = null, documentImages = false } = {}) {
+  const activeParser = parser || markdownParserForSource(source)
+  const dirty = dirtyHtml ?? (tokens ? activeParser.parser(tokens) : activeParser.parse(source))
   const clean = DOMPurify.sanitize(dirty, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ['button', 'form', 'iframe', 'object', 'embed', 'script', 'style'],
@@ -4980,27 +5050,29 @@ function renderMarkdownHtml(source, { tokens = null, documentImages = false } = 
     copy.type = 'button'
     copy.textContent = t('Copy')
     pre.replaceWith(block)
-    if (normalizedLanguage === 'mermaid') {
-      block.classList.add('markdown-mermaid')
-      block.dataset.mermaidState = 'pending'
-      block.dataset.mermaidGeneration = String(mermaidGeneration)
+    const kind = diagramKind(normalizedLanguage, code.textContent || '')
+    if (kind) {
+      block.classList.add('markdown-diagram')
+      block.dataset.diagramKind = kind
+      block.dataset.diagramState = 'pending'
+      block.dataset.diagramGeneration = String(diagramGeneration)
       const actions = document.createElement('div')
       actions.className = 'markdown-code-actions'
       const sourceToggle = document.createElement('button')
-      sourceToggle.className = 'mermaid-source-button'
+      sourceToggle.className = 'diagram-source-button'
       sourceToggle.type = 'button'
       sourceToggle.setAttribute('aria-expanded', 'false')
       sourceToggle.textContent = t('Source code')
       actions.append(sourceToggle, copy)
       header.append(label, actions)
       const canvas = document.createElement('div')
-      canvas.className = 'markdown-mermaid-canvas'
+      canvas.className = 'markdown-diagram-canvas'
       canvas.dataset.noI18n = ''
       canvas.setAttribute('role', 'img')
-      canvas.setAttribute('aria-label', t('Mermaid diagram'))
+      canvas.setAttribute('aria-label', t(`${kind === 'd2' ? 'D2' : kind === 'plantuml' ? 'PlantUML' : 'Mermaid'} diagram`))
       canvas.setAttribute('aria-busy', 'true')
       canvas.textContent = t('Rendering diagram…')
-      pre.classList.add('markdown-mermaid-source')
+      pre.classList.add('markdown-diagram-source')
       block.append(header, canvas, pre)
     } else if (normalizedLanguage === 'text' || normalizedLanguage === 'plaintext' || normalizedLanguage === 'txt') {
       block.classList.add('markdown-plain-text')
@@ -5109,122 +5181,172 @@ function disposeMarkdownImageAssets(file) {
   file?.markdownImageAssets?.clear()
 }
 
-function startMermaidRendering() {
-  if (mermaidObserver || !globalThis.MutationObserver) return
-  mermaidObserver = new MutationObserver((records) => {
-    records.forEach((record) => record.addedNodes.forEach(scanMermaidNode))
+function startDiagramRendering() {
+  if (diagramObserver || !globalThis.MutationObserver) return
+  diagramObserver = new MutationObserver((records) => {
+    records.forEach((record) => record.addedNodes.forEach(scanDiagramNode))
   })
-  mermaidObserver.observe(document.body, { subtree: true, childList: true })
-  scanMermaidNode(document.body)
+  diagramObserver.observe(document.body, { subtree: true, childList: true })
+  scanDiagramNode(document.body)
 }
 
-function scanMermaidNode(node) {
+function scanDiagramNode(node) {
   if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return
-  if (node.matches?.('.markdown-mermaid[data-mermaid-state="pending"]')) queueMermaidBlock(node)
-  node.querySelectorAll?.('.markdown-mermaid[data-mermaid-state="pending"]').forEach(queueMermaidBlock)
+  if (node.matches?.('.markdown-diagram[data-diagram-state="pending"]')) queueDiagramBlock(node)
+  node.querySelectorAll?.('.markdown-diagram[data-diagram-state="pending"]').forEach(queueDiagramBlock)
 }
 
-function queueMermaidBlock(block) {
-  if (block.dataset.mermaidState !== 'pending') return
-  block.dataset.mermaidState = 'queued'
-  const generation = Number(block.dataset.mermaidGeneration || mermaidGeneration)
-  mermaidRenderChain = mermaidRenderChain
-    .then(() => renderMermaidBlock(block, generation))
+function queueDiagramBlock(block) {
+  if (block.dataset.diagramState !== 'pending') return
+  block.dataset.diagramState = 'queued'
+  const generation = Number(block.dataset.diagramGeneration || diagramGeneration)
+  diagramRenderChain = diagramRenderChain
+    .then(() => renderDiagramBlock(block, generation))
     .catch(reportClientError)
 }
 
-async function renderMermaidBlock(block, generation) {
-  if (!block.isConnected || generation !== mermaidGeneration) return
-  const source = block.querySelector('.markdown-mermaid-source code')?.textContent || ''
-  if (source.length > MAX_MERMAID_SOURCE_CHARS) {
-    showMermaidError(block, t('The diagram is too large; its source is shown.'))
+async function renderDiagramBlock(block, generation) {
+  if (!block.isConnected || generation !== diagramGeneration) return
+  const source = block.querySelector('.markdown-diagram-source code')?.textContent || ''
+  if (source.length > MAX_DIAGRAM_SOURCE_CHARS) {
+    showDiagramError(block, t('The diagram is too large; its source is shown.'))
     return
   }
-  const mermaid = globalThis.mermaid
-  if (!mermaid?.initialize || !mermaid?.render) {
-    showMermaidError(block, t('Unable to render diagram'))
-    return
-  }
-  const config = mermaidInitializeConfig(state.mermaid, {
-    dark: state.theme === 'dark',
-    fontFamily: state.typography.contentFontFamily,
-  })
-  const configSignature = JSON.stringify(config)
-  if (mermaidInitializedConfig !== configSignature) {
-    mermaid.initialize(config)
-    mermaidInitializedConfig = configSignature
-  }
-  const canvas = block.querySelector('.markdown-mermaid-canvas')
+  const canvas = block.querySelector('.markdown-diagram-canvas')
   if (!canvas) return
-  block.dataset.mermaidState = 'rendering'
+  block.dataset.diagramState = 'rendering'
   canvas.setAttribute('aria-busy', 'true')
   canvas.textContent = t('Rendering diagram…')
-  const diagramId = `studio-mermaid-${++mermaidRenderSequence}`
+  const diagramId = `studio-diagram-${++diagramRenderSequence}`
   try {
-    const result = await mermaid.render(diagramId, source)
-    if (!block.isConnected || generation !== mermaidGeneration) return
-    const cleanSvg = DOMPurify.sanitize(result.svg, {
+    const kind = block.dataset.diagramKind
+    let svg
+    let bindFunctions
+    if (kind === 'mermaid') {
+      const mermaid = globalThis.mermaid
+      if (!mermaid?.initialize || !mermaid?.render) throw new Error('Mermaid is unavailable')
+      const config = mermaidInitializeConfig(state.mermaid, {
+        dark: state.theme === 'dark',
+        fontFamily: state.typography.contentFontFamily,
+      })
+      const configSignature = JSON.stringify(config)
+      if (mermaidInitializedConfig !== configSignature) {
+        mermaid.initialize(config)
+        mermaidInitializedConfig = configSignature
+      }
+      const result = await mermaid.render(diagramId, source)
+      svg = result.svg
+      bindFunctions = result.bindFunctions
+    } else if (kind === 'plantuml') {
+      if (hasUnsafePlantumlDirective(source)) throw new Error('PlantUML includes, themes, imports, and data loading are unavailable in Markdown')
+      await loadPlantumlViz()
+      const { renderToString } = await import('./vendor/plantuml.js')
+      svg = await new Promise((resolve, reject) => {
+        renderToString(plantumlLines(source), resolve, (message) => reject(new Error(String(message))))
+      })
+    } else if (kind === 'd2') {
+      if (!d2Renderer) {
+        const { D2 } = await import('./vendor/d2.js')
+        d2Renderer = new D2()
+      }
+      const result = await d2Renderer.compile(source)
+      svg = await d2Renderer.render(result.diagram, {
+        ...result.renderOptions,
+        themeID: state.theme === 'dark'
+          ? result.renderOptions.darkThemeID ?? 200
+          : result.renderOptions.themeID ?? 0,
+        salt: diagramId,
+        noXMLTag: true,
+      })
+    } else throw new Error('Unknown diagram format')
+    if (!block.isConnected || generation !== diagramGeneration) return
+    const cleanSvg = DOMPurify.sanitize(svg, {
       USE_PROFILES: { html: true, svg: true, svgFilters: true },
-      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'foreignObject', 'image'],
     })
     const template = document.createElement('template')
     template.innerHTML = cleanSvg
-    if (!template.content.querySelector('svg')) throw new Error('Mermaid did not produce an SVG')
+    if (!template.content.querySelector('svg')) throw new Error('The diagram did not produce an SVG')
+    template.content.querySelectorAll('[href], [xlink\\:href]').forEach((element) => {
+      const target = element.getAttribute('href') || element.getAttribute('xlink:href') || ''
+      if (!target.startsWith('#')) {
+        element.removeAttribute('href')
+        element.removeAttribute('xlink:href')
+      }
+    })
     canvas.replaceChildren(template.content.cloneNode(true))
     canvas.setAttribute('aria-busy', 'false')
-    block.dataset.mermaidState = 'rendered'
-    result.bindFunctions?.(canvas)
+    block.dataset.diagramState = 'rendered'
+    bindFunctions?.(canvas)
     requestAnimationFrame(() => {
       if (block.closest('#transcript')) followTranscriptOutput()
       scheduleTurnNavigatorSync()
     })
   } catch (error) {
     document.getElementById(diagramId)?.remove()
-    showMermaidError(block, t('Unable to render diagram'))
+    showDiagramError(block, t('Unable to render diagram'))
     reportClientError(error)
   }
 }
 
-function showMermaidError(block, message) {
-  const canvas = block.querySelector('.markdown-mermaid-canvas')
+function loadPlantumlViz() {
+  if (globalThis.Viz) return Promise.resolve()
+  if (!plantumlVizPromise) {
+    plantumlVizPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = '/vendor/plantuml-viz-global.js'
+      script.onload = resolve
+      script.onerror = () => {
+        script.remove()
+        plantumlVizPromise = null
+        reject(new Error('PlantUML Viz renderer is unavailable'))
+      }
+      document.head.append(script)
+    })
+  }
+  return plantumlVizPromise
+}
+
+function showDiagramError(block, message) {
+  const canvas = block.querySelector('.markdown-diagram-canvas')
   if (canvas) {
     canvas.textContent = message
     canvas.setAttribute('aria-busy', 'false')
   }
-  block.dataset.mermaidState = 'error'
-  setMermaidSourceVisible(block, true)
+  block.dataset.diagramState = 'error'
+  setDiagramSourceVisible(block, true)
 }
 
-function setMermaidSourceVisible(block, visible) {
+function setDiagramSourceVisible(block, visible) {
   block.classList.toggle('show-source', visible)
-  const button = block.querySelector('.mermaid-source-button')
+  const button = block.querySelector('.diagram-source-button')
   if (!button) return
   button.setAttribute('aria-expanded', String(visible))
   button.textContent = t(visible ? 'Hide source' : 'Source code')
 }
 
-function resetMermaidRendering() {
-  if (!mermaidObserver) return
-  mermaidGeneration += 1
+function resetDiagramRendering() {
+  if (!diagramObserver) return
+  diagramGeneration += 1
   mermaidInitializedConfig = ''
-  document.querySelectorAll('.markdown-mermaid').forEach((block) => {
-    block.dataset.mermaidState = 'pending'
-    block.dataset.mermaidGeneration = String(mermaidGeneration)
-    const canvas = block.querySelector('.markdown-mermaid-canvas')
+  document.querySelectorAll('.markdown-diagram').forEach((block) => {
+    block.dataset.diagramState = 'pending'
+    block.dataset.diagramGeneration = String(diagramGeneration)
+    const canvas = block.querySelector('.markdown-diagram-canvas')
     if (canvas) {
       canvas.setAttribute('aria-busy', 'true')
       canvas.textContent = t('Rendering diagram…')
     }
-    queueMermaidBlock(block)
+    queueDiagramBlock(block)
   })
 }
 
 async function handleMarkdownActionClick(event) {
-  const sourceButton = event.target.closest('.mermaid-source-button')
+  const sourceButton = event.target.closest('.diagram-source-button')
   if (sourceButton) {
-    const block = sourceButton.closest('.markdown-mermaid')
+    const block = sourceButton.closest('.markdown-diagram')
     if (block) {
-      setMermaidSourceVisible(block, !block.classList.contains('show-source'))
+      setDiagramSourceVisible(block, !block.classList.contains('show-source'))
       if (state.artifactSearch.trim() && block.closest('#artifact-content')) applyArtifactSearchHighlights()
     }
     return
@@ -6609,6 +6731,7 @@ function closeWorkspacePeerRails() {
 }
 
 function activateRightWorkspace(tool) {
+  cancelRightRailResize()
   state.activeRightWorkspace = tool
   if (tool !== 'browser' && !state.embeddedBrowserVisible) applyRightRailWidth()
   const rails = {
@@ -7184,7 +7307,7 @@ function applyAppearance() {
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
   workspaceTools.refreshTypography()
   syncEmbeddedBrowserTypography()
-  resetMermaidRendering()
+  resetDiagramRendering()
 }
 
 function backendStatusView(backend) {
@@ -7293,7 +7416,7 @@ function threadSourceLabel(source) {
 }
 function threadStatus(thread) { return thread?.status?.type || thread?.status || 'notLoaded' }
 function statusLabel(status) {
-  return t(({ active: 'Running', running: 'Running', inProgress: 'In progress', idle: 'Idle', notLoaded: 'Not loaded', completed: 'Done', interrupted: 'Stopped', failed: 'Failed', systemError: 'Error', declined: 'Declined' })[status] || status || 'Unknown')
+  return t(({ active: 'Running', running: 'Running', inProgress: 'In progress', idle: 'Idle', notLoaded: 'Not loaded', completed: 'Done', interrupted: 'Stopped', failed: 'Failed', systemError: 'Error', declined: 'Declined', unknown: 'Unknown' })[status] || status || 'Unknown')
 }
 function arrayText(value) {
   if (!Array.isArray(value)) return typeof value === 'string' ? value : ''

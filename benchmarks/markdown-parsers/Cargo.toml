@@ -1,0 +1,14 @@
+[package]
+name = "studio-markdown-parser-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+pulldown-simd = ["pulldown-cmark/simd"]
+
+[dependencies]
+comrak = { version = "=0.57.0", default-features = false }
+pulldown-cmark = { version = "=0.13.5", default-features = false, features = ["html"] }

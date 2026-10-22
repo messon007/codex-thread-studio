@@ -1,0 +1,18 @@
+[package]
+name = "studio-markdown-paging-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+comrak = { version = "=0.57.0", default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

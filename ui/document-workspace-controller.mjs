@@ -14,7 +14,6 @@ import {
 } from './document-review.mjs'
 import {
   extractHtmlOutline,
-  extractMarkdownOutline,
   filterDocumentOutline,
   normalizeDocumentOutline,
   outlineItemForLocation,
@@ -23,7 +22,7 @@ import { epubCommentSource } from './epub-comment-provider.mjs'
 import { pdfCommentSource } from './pdf-comment-provider.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
-import { t } from './i18n.mjs'
+import { getLocale, t } from './i18n.mjs'
 
 export function createDocumentWorkspaceState() {
   return {
@@ -56,6 +55,7 @@ export function createDocumentWorkspaceController({
     closeActionMenus,
     applyRightRailWidth,
     renderMarkdownDocument,
+    cancelMarkdownDocument = () => {},
     renderDocumentCommentMarkers = () => {},
     hydrateMarkdownImages,
     disconnectMarkdownImageObserver,
@@ -137,6 +137,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   }
   const kind = reviewableFileKind(file)
   if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
+  cancelMarkdownDocument()
   resetArtifactSearch()
   resetArtifactOutline()
   activateRightWorkspace('document')
@@ -158,100 +159,94 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
       : kind === 'pdf' ? '/studio/review-pdf'
         : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
           : '/studio/review-file'
-  const response = await gatewayFetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, path }),
-  })
-  if (!response.ok) {
-    const result = await response.json().catch(() => null)
-    const message = result?.error?.message || `HTTP ${response.status}`
+  try {
+    const response = await gatewayFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root, path }),
+    })
+    if (!response.ok) {
+      const result = await response.json().catch(() => null)
+      const message = result?.error?.message || `HTTP ${response.status}`
+      throw new Error(message)
+    }
+    if (kind === 'image') {
+      const blob = await response.blob()
+      if (!blob.type.startsWith('image/')) {
+        throw new Error(t('The image response format is invalid'))
+      }
+      const imageUrl = await blobToDataUrl(blob)
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
+        return
+      }
+      state.artifact = {
+        ...state.artifact,
+        loading: false,
+        mimeType: blob.type,
+        imageUrl,
+        relativePath: path,
+        size: blob.size,
+      }
+      state.artifactView = 'image'
+    } else if (kind === 'epub') {
+      const bookHash = response.headers.get('x-studio-epub-hash') || ''
+      const bytes = await response.arrayBuffer()
+      if (!bookHash || !bytes.byteLength) {
+        throw new Error(t('Invalid EPUB response'))
+      }
+      const readingState = await loadEpubReadingState(root, path, bookHash)
+      if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      state.artifact = {
+        ...state.artifact,
+        kind: 'epub',
+        loading: false,
+        bytes,
+        hash: bookHash,
+        relativePath: path,
+        size: bytes.byteLength,
+        readingState,
+      }
+      state.artifactView = 'epub'
+    } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
+      const bytes = await response.arrayBuffer()
+      if (!bytes.byteLength) throw new Error(t('Invalid document response'))
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      state.artifact = {
+        ...state.artifact, kind, loading: false, bytes,
+        hash: response.headers.get('x-studio-content-hash') || '',
+        relativePath: path, size: bytes.byteLength,
+      }
+      state.artifactView = kind
+    } else {
+      const result = await response.json()
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      state.artifactView = kind === 'table'
+        ? 'table'
+        : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
+    }
+    if (viewState) {
+      if (state.artifact.kind === 'text' && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
+      if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
+      state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
+      state.artifactOutlineFilter = viewState.outlineFilter || ''
+      state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
+      state.artifactSearch = viewState.search || ''
+      state.artifactSearchOpen = Boolean(viewState.searchOpen)
+    }
+    await renderArtifact()
+    if (viewState) requestAnimationFrame(() => {
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      $('#artifact-content').scrollTop = viewState.scrollTop || 0
+      $('#artifact-content').scrollLeft = viewState.scrollLeft || 0
+    })
+  } catch (error) {
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...state.artifact, loading: false, error: message }
+    state.artifact = { ...state.artifact, loading: false, error: error?.message || String(error) }
     renderArtifact()
-    throw new Error(message)
+    throw error
   }
-  if (kind === 'image') {
-    const blob = await response.blob()
-    if (!blob.type.startsWith('image/')) {
-      const message = t('The image response format is invalid')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const imageUrl = await blobToDataUrl(blob)
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
-      return
-    }
-    state.artifact = {
-      ...state.artifact,
-      loading: false,
-      mimeType: blob.type,
-      imageUrl,
-      relativePath: path,
-      size: blob.size,
-    }
-    state.artifactView = 'image'
-  } else if (kind === 'epub') {
-    const bookHash = response.headers.get('x-studio-epub-hash') || ''
-    const bytes = await response.arrayBuffer()
-    if (!bookHash || !bytes.byteLength) {
-      const message = t('Invalid EPUB response')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const readingState = await loadEpubReadingState(root, path, bookHash)
-    if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact,
-      kind: 'epub',
-      loading: false,
-      bytes,
-      hash: bookHash,
-      relativePath: path,
-      size: bytes.byteLength,
-      readingState,
-    }
-    state.artifactView = 'epub'
-  } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
-    const bytes = await response.arrayBuffer()
-    if (!bytes.byteLength) throw new Error(t('Invalid document response'))
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact, kind, loading: false, bytes,
-      hash: response.headers.get('x-studio-content-hash') || '',
-      relativePath: path, size: bytes.byteLength,
-    }
-    state.artifactView = kind
-  } else {
-    const result = await response.json()
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
-    state.artifactView = kind === 'table'
-      ? 'table'
-      : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
-  }
-  if (viewState) {
-    if (state.artifact.kind === 'text' && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
-    if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
-    state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
-    state.artifactOutlineFilter = viewState.outlineFilter || ''
-    state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
-    state.artifactSearch = viewState.search || ''
-    state.artifactSearchOpen = Boolean(viewState.searchOpen)
-  }
-  renderArtifact()
-  if (viewState) requestAnimationFrame(() => {
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    $('#artifact-content').scrollTop = viewState.scrollTop || 0
-    $('#artifact-content').scrollLeft = viewState.scrollLeft || 0
-  })
 }
 
 async function refreshArtifact() {
@@ -263,6 +258,7 @@ async function refreshArtifact() {
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
   const sourceSessionKey = state.artifact?.sourceSessionKey || ''
   if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return false
+  cancelMarkdownDocument()
   const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
   const artifactThreadKey = state.artifact?.threadKey
   $('#artifact-rail').classList.add('hidden')
@@ -490,7 +486,7 @@ function configureTextArtifactOutline(file, content, source, { markdown, html, v
   }
   let items = Array.isArray(preparedItems)
     ? preparedItems
-    : markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
+    : markdown ? file.markdownDocument?.source === source ? file.markdownDocument.result.outline : [] : extractHtmlOutline(source)
   if (view === 'preview') {
     const headings = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
     if (html) {
@@ -742,13 +738,7 @@ function renderArtifact() {
     content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
     mountArtifactEditor(file, content.firstElementChild, renderedContent).catch(showError)
   } else if (markdown && state.artifactView === 'preview') {
-    const rendered = renderMarkdownDocument(renderedContent)
-    content.className = 'artifact-content markdown-body'
-    content.innerHTML = rendered.html
-    hydrateMarkdownImages(file, content)
-    scheduleTextArtifactOutline(file, content, renderedContent, {
-      markdown, html, view: state.artifactView, items: rendered.outline,
-    })
+    return renderMarkdownArtifact(file, content, renderedContent)
   } else if (html && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body artifact-html-preview'
     content.innerHTML = renderStaticHtml(renderedContent)
@@ -767,11 +757,60 @@ function renderArtifact() {
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
   }
   if (!(markdown && state.artifactView === 'preview')) {
-    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
+    const view = state.artifactView
+    const items = markdown ? file.markdownDocument?.source === renderedContent ? file.markdownDocument.result.outline : [] : null
+    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view, items })
+    if (markdown && file.markdownDocument?.source !== renderedContent) {
+      prepareMarkdownArtifact(file, renderedContent).then(rendered => {
+        if (state.artifact !== file || state.artifactView !== view || (file.editContent ?? file.content) !== renderedContent) return
+        configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view, items: rendered.outline })
+      }).catch(error => { if (error?.name !== 'AbortError' && state.artifact === file) showError(error) })
+    }
   }
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
   renderDocumentCommentMarkers()
+}
+
+function prepareMarkdownArtifact(file, source) {
+  const locale = getLocale()
+  if (file.markdownDocument?.source === source && file.markdownDocument.locale === locale) return Promise.resolve(file.markdownDocument.result)
+  if (file.markdownDocumentJob?.source === source && file.markdownDocumentJob.locale === locale) return file.markdownDocumentJob.promise
+  const job = { source, locale, promise: null }
+  job.promise = Promise.resolve().then(() => renderMarkdownDocument(source)).then(result => {
+    if (state.artifact === file && (file.editContent ?? file.content) === source && getLocale() === locale) file.markdownDocument = { source, locale, result }
+    return result
+  }).finally(() => { if (file.markdownDocumentJob === job) delete file.markdownDocumentJob })
+  file.markdownDocumentJob = job
+  return job.promise
+}
+
+function renderMarkdownArtifact(file, content, source) {
+  content.classList.add('hidden')
+  $('#artifact-loading').classList.remove('hidden')
+  const locale = getLocale()
+  if (file.markdownRenderJob?.source === source && file.markdownRenderJob.locale === locale) return file.markdownRenderJob.promise
+  const current = () => state.artifact === file && state.artifactView === 'preview' && state.activeRightWorkspace === 'document' && (file.editContent ?? file.content) === source && getLocale() === locale
+  const job = { source, locale, promise: null }
+  job.promise = prepareMarkdownArtifact(file, source).then(rendered => {
+    if (!current()) return
+    content.className = 'artifact-content markdown-body'
+    content.innerHTML = rendered.html
+    content.classList.remove('hidden')
+    $('#artifact-loading').classList.add('hidden')
+    hydrateMarkdownImages(file, content)
+    scheduleTextArtifactOutline(file, content, source, { markdown: true, html: false, view: 'preview', items: rendered.outline })
+    if (state.artifactSearch) applyArtifactSearchHighlights()
+    else renderArtifactSearchStatus()
+    renderDocumentCommentMarkers()
+  }).catch(error => {
+    if (error?.name === 'AbortError' || !current()) return
+    file.error = t(error?.message || String(error))
+    renderArtifact()
+    showError(error)
+  }).finally(() => { if (file.markdownRenderJob === job) delete file.markdownRenderJob })
+  file.markdownRenderJob = job
+  return job.promise
 }
 
 function disposeArtifactEditor() {
@@ -1223,7 +1262,9 @@ function formatFileSize(value) {
 
   function artifactPreviewLocation(file, line) {
     const content = file.editContent ?? file.content
-    const items = isMarkdownFile(file.path) ? extractMarkdownOutline(content) : extractHtmlOutline(content)
+    const items = isMarkdownFile(file.path)
+      ? file.markdownDocument?.source === content ? file.markdownDocument.result.outline : []
+      : extractHtmlOutline(content)
     const item = outlineItemForLocation(items, { line })
     return item ? { items, item } : null
   }

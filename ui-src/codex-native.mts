@@ -16,7 +16,7 @@ export function createCodexViewModel(): CodexViewModel {
   }
 }
 
-export function hydrateCodexThread(model: CodexViewModel, thread: { id?: string; turns?: CodexTurn[] | undefined } | null) {
+export function hydrateCodexThread(model: CodexViewModel, thread: { id?: string; turns?: CodexTurn[] | undefined; status?: { type?: string } | string | null } | null) {
   model.threadId = thread?.id || model.threadId
   // RPC history objects are freshly decoded and are not reused by callers.
   // Taking ownership avoids cloning an entire large session a second time.
@@ -30,8 +30,34 @@ export function hydrateCodexThread(model: CodexViewModel, thread: { id?: string;
   }
   model.activeTurnId = active?.id || null
   model.status = model.activeTurnId ? 'running' : 'idle'
+  const nativeStatus = typeof thread?.status === 'string' ? thread.status : thread?.status?.type
+  if (nativeStatus === 'idle' || nativeStatus === 'systemError') {
+    if (model.activeTurnId) clearStaleActiveTurn(model, model.activeTurnId)
+    if (nativeStatus === 'systemError') model.status = 'failed'
+  }
   markTranscriptModelChanged(model)
   return model
+}
+
+export function settleMissingActiveTurn(model: CodexViewModel, expectedTurnId: string) {
+  if (!clearStaleActiveTurn(model, expectedTurnId)) return false
+  markTranscriptModelChanged(model)
+  return true
+}
+
+export function isMissingActiveTurnError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /\bno active turn\b|\bno turn is (?:currently )?active\b|\bturn (?:is )?not active\b|\bturn (?:already|has) (?:completed|finished|ended)\b/iu.test(message)
+}
+
+function clearStaleActiveTurn(model: CodexViewModel, expectedTurnId: string) {
+  if (!expectedTurnId || model.activeTurnId !== expectedTurnId) return false
+  const turn = model.turns.find((candidate) => candidate.id === expectedTurnId)
+  if (turn?.status === 'inProgress') turn.status = 'unknown'
+  model.activeTurnId = null
+  model.status = 'idle'
+  model.error = null
+  return true
 }
 
 export function beginOptimisticCodexTurn(model: CodexViewModel, { clientUserMessageId, input }: { clientUserMessageId?: string; input?: unknown[] }) {

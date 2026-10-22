@@ -1093,6 +1093,21 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/composer-images.mjs", get(composer_images_js))
         .route("/document-review.mjs", get(document_review_js))
         .route("/document-outline.mjs", get(document_outline_js))
+        .route("/diagram-source.mjs", get(diagram_source_js))
+        .route(
+            "/markdown-document-client.mjs",
+            get(markdown_document_client_js),
+        )
+        .route(
+            "/markdown-document-parser.mjs",
+            get(markdown_document_parser_js),
+        )
+        .route(
+            "/markdown-document-worker.mjs",
+            get(markdown_document_worker_js),
+        )
+        .route("/vendor/comrak.js", get(comrak_js))
+        .route("/vendor/comrak_bg.wasm", get(comrak_wasm))
         .route("/environment-profile.mjs", get(environment_profile_js))
         .route("/epub-reader.mjs", get(epub_reader_js))
         .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
@@ -1156,6 +1171,9 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/marked.esm.js", get(marked_js))
         .route("/vendor/purify.es.mjs", get(dompurify_js))
         .route("/vendor/mermaid.min.js", get(mermaid_js))
+        .route("/vendor/plantuml-viz-global.js", get(plantuml_viz_js))
+        .route("/vendor/plantuml.js", get(plantuml_js))
+        .route("/vendor/d2.js", get(d2_js))
         .route("/vendor/epub.mjs", get(epub_vendor_js))
         .route("/vendor/pdf.min.mjs", get(pdf_vendor_js))
         .route("/vendor/pdf.worker.min.mjs", get(pdf_worker_vendor_js))
@@ -1217,7 +1235,7 @@ async fn index() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-store"),
             (
                 header::CONTENT_SECURITY_POLICY,
-                "default-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
+                "default-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
             ),
         ],
         Html(include_str!("../../ui/index.html")),
@@ -2643,6 +2661,33 @@ async fn document_outline_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/document-outline.mjs"))
 }
 
+async fn diagram_source_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/diagram-source.mjs"))
+}
+
+async fn markdown_document_client_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/markdown-document-client.mjs"))
+}
+
+async fn markdown_document_parser_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/markdown-document-parser.mjs"))
+}
+
+async fn markdown_document_worker_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/markdown-document-worker.mjs"))
+}
+
+async fn comrak_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/comrak.js"))
+}
+
+async fn comrak_wasm() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/wasm")],
+        include_bytes!("../../ui/vendor/comrak_bg.wasm").as_slice(),
+    )
+}
+
 async fn environment_profile_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/environment-profile.mjs"))
 }
@@ -2761,6 +2806,18 @@ async fn dompurify_js() -> impl IntoResponse {
 
 async fn mermaid_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/mermaid.min.js"))
+}
+
+async fn plantuml_viz_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/plantuml-viz-global.js"))
+}
+
+async fn plantuml_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/plantuml.js"))
+}
+
+async fn d2_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/vendor/d2.js"))
 }
 
 async fn epub_vendor_js() -> impl IntoResponse {
@@ -5086,6 +5143,11 @@ mod tests {
                 "/table-data.mjs",
                 "/git-review-data.mjs",
                 "/document-outline.mjs",
+                "/diagram-source.mjs",
+                "/markdown-document-client.mjs",
+                "/markdown-document-parser.mjs",
+                "/markdown-document-worker.mjs",
+                "/vendor/comrak.js",
                 "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
                 "/comment-markers.mjs",
@@ -5108,6 +5170,9 @@ mod tests {
                 "/transcript-dom.mjs",
                 "/transcript-presentation.mjs",
                 "/vendor/mermaid.min.js",
+                "/vendor/plantuml-viz-global.js",
+                "/vendor/plantuml.js",
+                "/vendor/d2.js",
                 "/vendor/epub.mjs",
                 "/styles.css",
             ] {
@@ -5127,6 +5192,23 @@ mod tests {
                     "missing route for {path}"
                 );
             }
+
+            let wasm = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/vendor/comrak_bg.wasm")
+                        .body(Body::empty())
+                        .expect("WASM request"),
+                )
+                .await
+                .expect("WASM response");
+            assert_eq!(wasm.status(), StatusCode::OK);
+            assert_eq!(wasm.headers()[header::CONTENT_TYPE], "application/wasm");
+            let wasm = axum::body::to_bytes(wasm.into_body(), 2 * 1024 * 1024)
+                .await
+                .expect("WASM bytes");
+            assert!(wasm.starts_with(b"\0asm"));
 
             let bootstrap = router
                 .clone()
@@ -5211,7 +5293,7 @@ mod tests {
                     StatusCode::OK,
                     "missing route for imported module {module}"
                 );
-                let source = axum::body::to_bytes(response.into_body(), 5 * 1024 * 1024)
+                let source = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
                     .await
                     .expect("imported module body");
                 let source = std::str::from_utf8(&source).expect("UTF-8 frontend module");
@@ -5741,6 +5823,35 @@ mod tests {
         fs::remove_dir(root.join("docs")).ok();
         fs::remove_dir(&root).ok();
         fs::remove_dir(&base).ok();
+    }
+
+    #[test]
+    fn review_file_reader_rejects_large_markdown_before_decoding() {
+        let root = env::temp_dir().join(format!(
+            "codex-thread-studio-large-review-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create review fixture");
+        let path = root.join("large.md");
+        fs::write(&path, [0xff]).expect("write invalid UTF-8 fixture");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open review fixture")
+            .set_len(31 * 1024 * 1024)
+            .expect("create sparse oversized Markdown");
+
+        let result = load_review_file(&ReviewFileRequest {
+            root: root.to_string_lossy().into_owned(),
+            path: "large.md".to_string(),
+        });
+        assert!(matches!(
+            result,
+            Err((StatusCode::PAYLOAD_TOO_LARGE, message))
+                if message == "file exceeds the 5 MiB review limit"
+        ));
+
+        fs::remove_dir_all(&root).expect("remove review fixture");
     }
 
     #[test]

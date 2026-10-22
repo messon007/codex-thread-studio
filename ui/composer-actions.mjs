@@ -2,6 +2,7 @@
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs';
 import { randomContinuePrompt } from './composer-tools.mjs';
 import { CONTINUATION_DRAFT_INSTRUCTIONS, CONTINUATION_DRAFT_SCHEMA, continuationDraftInput, continuationDraftTurnState } from './continuation-draft.mjs';
+import { isMissingActiveTurnError } from './codex-native.mjs';
 export function createComposerActions(state, services) {
     const { $, selectedStateKey, composerDrafts, setCurrentComposerValue, hideComposerMenu, latestAgentResponseText, showError, t, currentBackend, renderComposerState, toast, setComposerDraftValue, gatewayFetch, truncateCharacters, selectedThread, currentTurnOptions, isCodexBackend, randomId, rpc, dispatchBackendRpc, sessionRefKey, routerRuntimeKey, persistMessageQueue, runNextQueuedMessage, sessionRefFromKey, pauseMessageQueue } = services;
     let editingQueuedMessage = null;
@@ -263,12 +264,17 @@ export function createComposerActions(state, services) {
     async function interruptTurn() {
         if (!state.selectedId || !state.model.activeTurnId)
             return;
-        pauseMessageQueue({ backend: state.backend, id: state.selectedId });
+        const ref = { backend: state.backend, id: state.selectedId };
+        const turnId = state.model.activeTurnId;
+        pauseMessageQueue(ref);
         try {
-            await rpc('turn/interrupt', { threadId: state.selectedId, turnId: state.model.activeTurnId });
+            await rpc('turn/interrupt', { threadId: ref.id, turnId });
             toast('Requested interruption of the current turn');
         }
         catch (error) {
+            if (isCodexBackend(ref.backend) && isMissingActiveTurnError(error)
+                && await services.recoverMissingActiveTurn(ref, turnId))
+                return;
             showError(error);
         }
     }

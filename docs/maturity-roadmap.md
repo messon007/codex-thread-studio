@@ -1,5 +1,7 @@
 # Mature Codex client roadmap
 
+Last reviewed against the implementation on 2026-09-21.
+
 ## Product target
 
 Codex Thread Studio aims to be a mature desktop Codex client, not a protocol demo. A mature client must preserve the advantages of a structured UI while covering the daily workflows users expect from Codex CLI.
@@ -35,10 +37,13 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 
 - [x] Local PNG/JPEG/WebP/GIF input from the picker, clipboard, or drag-and-drop, with bounded previews and structured `image`/OpenCode file parts.
 - [x] `item/tool/requestUserInput` questions and MCP elicitation forms, using the installed App Server schema contract.
-- [ ] App and plugin discovery/invocation, including structured mention inputs.
+- [x] Installed plugin discovery through `plugin/list` and structured `mention` invocation from the Composer picker.
+- [ ] App discovery and structured invocation when exposed by the installed App Server.
 - [x] Subagent/thread tree navigation and active-agent switching through `/agent` and `/subagents`.
 - [ ] Background-terminal list, interaction, and termination management.
-- [ ] Prompt history search, queued follow-ups, and edit-previous-message fork.
+- [ ] Composer prompt-history search.
+- [x] Persisted per-session queued follow-ups with pause, edit, delete, retry, and automatic dispatch after completion.
+- [ ] Edit a previous user message and fork its Turn with the revised prompt prefilled.
 
 ### Review and large-session ergonomics
 
@@ -49,7 +54,7 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 - [ ] Virtualized/paged historical Turns using App Server history pagination where supported.
 - [x] Git Review rail with per-file navigation, paginated commit history, staged/unstaged scopes, bounded line-numbered text diffs, and safe stage/unstage actions.
 - [ ] Language-aware token highlighting, side-by-side mode, hunk staging, and line comments on Git diffs.
-- [ ] Search inside a Thread and jump between tool/file/result Items.
+- [x] Search inside the selected Thread across user, assistant, progress, and activity content, with previous/next navigation and direct result jumps.
 - [x] Completed-work/waiting-for-input desktop notifications and inline waiting-input cards. A consolidated Activity Inbox remains future work.
 - [x] Reconnect reconciliation for missed events: lag detection and every re-established Codex connection reload the selected Thread.
 
@@ -57,7 +62,8 @@ The App Server is the source of truth. Studio should call an App Server RPC, con
 
 - [ ] App Server process ownership independent from the Tauri window.
 - [x] Initialize capability declaration, visible initialization metadata, unsupported-request fallback, and a generated-schema compatibility fixture against the installed Codex. Per-method server advertisement remains unavailable in the protocol.
-- [ ] Linux and macOS packages, signatures, upgrade guidance, and Windows/WSL policy.
+- [x] Tag-driven Linux, macOS Apple Silicon/Intel, and Windows release bundles, with draft release publication, first-launch guidance, and documented Windows/WSL policy.
+- [ ] Production distribution hardening: configured macOS Developer ID signing/notarization, Windows signing, and updater metadata.
 - [x] Protocol lifecycle/reconnect fixtures plus gateway route and filesystem/PTY integration tests. Full GUI automation remains future work.
 
 ## Definition of done for a capability

@@ -9,7 +9,7 @@ It lists Codex Threads directly, renders structured Turns and Items, handles app
 ## Features
 
 - Groups Threads by project directory; lists, starts, automatically resumes, reloads, renames, forks, archives, and deletes persisted Codex Threads; and can hide configured directory subtrees from the sidebar without changing backend history. See [session directory filtering](docs/session-directory-filtering.md).
-- Renders user and agent messages, reasoning summaries, plans, commands, command output, file changes, tool calls, turn status, errors, and usage. Agent prose uses locally vendored, sanitized GitHub-flavored Markdown with readable code blocks, tables, configurable reading density, and fenced Mermaid diagrams. See [rendering configuration](docs/rendering-configuration.md).
+- Renders user and agent messages, reasoning summaries, plans, commands, command output, file changes, tool calls, turn status, errors, and usage. Agent prose uses locally vendored, sanitized GitHub-flavored Markdown with readable code blocks, tables, configurable reading density, and Mermaid, PlantUML, and D2 diagrams. See [rendering configuration](docs/rendering-configuration.md).
 - Streams long responses efficiently by batching App Server deltas and updating only the active Item; completed history is not reparsed for every token.
 - Sends new turns, steers an active turn, interrupts work, and answers command/file/permission approvals. The composer accepts bounded PNG/JPEG/WebP/GIF attachments from a picker, clipboard, or drag-and-drop and preserves them through Router dispatch.
 - Renders structured `requestUserInput` questions and MCP elicitation forms, reconciles the selected Thread after reconnect, and can notify when work completes or needs input.

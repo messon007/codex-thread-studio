@@ -22,6 +22,7 @@ function fixture() {
     setCatalogThreadActivity: () => 'activity', rollbackCatalogThreadActivity: () => calls.push('rollback'), markCachedModelValidated() {},
     beginTurnLatencyTrace: () => ({}), bindTurnLatencyTrace() {}, markTurnLatency() {}, finishTurnLatencyTrace() {},
     randomId: () => 'client', persistMessageQueue: async () => calls.push('persist'), showError: error => calls.push(['error', error.message]), toast() {}, t: text => text,
+    recoverMissingActiveTurn: async () => { calls.push('recover'); state.model.activeTurnId = null; state.model.status = 'idle'; return true },
   }
   return { state, services, calls, input, controller: createSubmissionController(state, services) }
 }
@@ -79,6 +80,19 @@ test('Steer targets the active turn without preparing another turn', async () =>
   assert.equal(f.calls.includes('prepare'), false)
   assert.equal(f.calls.find(call => Array.isArray(call))[0], 'turn/steer')
   assert.equal(f.calls.find(call => Array.isArray(call))[1].expectedTurnId, 'active')
+})
+
+test('rejected Steer resynchronizes a stale turn and preserves the draft', async () => {
+  const f = fixture()
+  f.state.model.activeTurnId = 'stale'
+  f.state.model.status = 'running'
+  f.services.rpc = async () => { throw new Error('no active turn') }
+  f.controller = createSubmissionController(f.state, f.services)
+  assert.equal(await f.controller.sendComposer(event), false)
+  assert.equal(f.state.model.activeTurnId, null)
+  assert.equal(f.input.value, 'hello')
+  assert.ok(f.calls.includes('recover'))
+  assert.equal(f.calls.some(call => Array.isArray(call) && call[0] === 'error'), false)
 })
 
 test('queued send uses current session model and persists removal after acknowledgement', async () => {

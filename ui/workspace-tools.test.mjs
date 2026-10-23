@@ -237,5 +237,5 @@ test('workspace rails share the persisted document width and shield pointer resi
   for (const rail of ['annotation', 'favorites', 'session-map', 'artifact', 'workspace-tools', 'resources']) {
     assert.match(styles, new RegExp(`\\.${rail}-rail \\{[^}]*var\\(--right-rail-width\\)`, 'u'))
   }
-  assert.match(styles, /body\.resizing-right-rail::after/u)
+  assert.match(styles, /\.right-rail-resize-overlay \{[^}]*position: fixed;[^}]*z-index: 10000;[^}]*cursor: col-resize/u)
 })

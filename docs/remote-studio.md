@@ -57,6 +57,11 @@ the underlying Codex/OpenCode accounts or their session histories.
 
 ## Connect from Windows
 
+Large Markdown reading is built into Studio; no separate MarkNoria installation
+or server-side Chrome/Chromium is needed. The reader uses the same Studio port,
+so no extra SSH forward is required. See [large Markdown](large-markdown-reader.md)
+for paged editing, read-only shared documents, source-size limits and optional disk-cache configuration.
+
 Build and start the Linux executable:
 
 ```bash

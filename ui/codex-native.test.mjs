@@ -7,10 +7,12 @@ import {
   beginOptimisticCodexTurn,
   createCodexViewModel,
   hydrateCodexThread,
+  isMissingActiveTurnError,
   reconcileOptimisticCodexTurn,
   resolveCodexApproval,
   resolveCodexInteraction,
   rollbackOptimisticCodexTurn,
+  settleMissingActiveTurn,
   selectedThreadStatusChange,
   textFromUserContent,
 } from './codex-native.mjs'
@@ -24,6 +26,31 @@ test('hydrates persisted turns and detects an active turn', () => {
   assert.equal(model.activeTurnId, 'turn-1')
   assert.equal(model.status, 'running')
   assert.equal(transcriptModelRevision(model), 1)
+})
+
+test('authoritative idle history does not revive an orphaned turn', () => {
+  const model = createCodexViewModel()
+  hydrateCodexThread(model, {
+    id: 'thread-1', status: { type: 'idle' },
+    turns: [{ id: 'orphan', status: 'inProgress', items: [] }],
+  })
+  assert.equal(model.activeTurnId, null)
+  assert.equal(model.status, 'idle')
+  assert.equal(model.turns[0].status, 'unknown')
+  assert.equal(transcriptModelRevision(model), 1)
+})
+
+test('a missing-active-turn rejection settles only the rejected turn', () => {
+  const model = createCodexViewModel()
+  hydrateCodexThread(model, { id: 'thread-1', turns: [{ id: 'old', status: 'inProgress', items: [] }] })
+  assert.equal(settleMissingActiveTurn(model, 'new'), false)
+  assert.equal(model.activeTurnId, 'old')
+  assert.equal(settleMissingActiveTurn(model, 'old'), true)
+  assert.equal(model.activeTurnId, null)
+  assert.equal(model.turns[0].status, 'unknown')
+  assert.equal(isMissingActiveTurnError(new Error('no active turn to interrupt')), true)
+  assert.equal(isMissingActiveTurnError(new Error('turn is not active')), true)
+  assert.equal(isMissingActiveTurnError(new Error('connection lost')), false)
 })
 
 test('advances the presentation revision for handled notifications only', () => {

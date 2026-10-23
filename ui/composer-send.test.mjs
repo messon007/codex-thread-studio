@@ -39,3 +39,14 @@ test('Composer finishes even if failure reporting throws, without retrying trans
   assert.equal(sends, 1)
   assert.equal(finished, 1)
 })
+
+test('Composer waits for recovery before re-enabling controls', async () => {
+  const calls = []
+  await executeComposerSend({
+    send: async () => { throw new Error('no active turn') },
+    acknowledged: () => assert.fail('unexpected acknowledgement'),
+    failed: async () => { await Promise.resolve(); calls.push('recovered') },
+    finished: () => calls.push('finished'),
+  })
+  assert.deepEqual(calls, ['recovered', 'finished'])
+})

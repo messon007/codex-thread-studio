@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MarkNoria — Large Markdown Reader</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./checkbox.css">
+  <link id="syntax-theme" rel="stylesheet" href="./syntax-light.css">
+  <script src="./theme.js"></script>
+  <script type="module" src="./reader.mjs"></script>
+</head>
+<body>
+  <div class="reader-shell">
+  <header class="reader-header">
+    <div class="reader-identity"><span class="reader-file-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5 M9 12h6 M9 16h6"/></svg></span><div><h1 id="document-name">Document</h1><p>Markdown · Read-only preview</p></div></div>
+    <div class="reader-header-actions">
+      <button id="compare-files" class="reader-action" type="button" title="Compare two server Markdown files (read only)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h7v16H3Z M14 4h7v16h-7Z M6 8h1 M6 12h1 M17 8h1 M17 12h1"/></svg><span>Compare</span></button>
+      <button class="reader-action" type="button" data-open-server title="Open a Markdown file on the server"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3Z M3 7V4h7l2 3"/></svg><span>Open</span></button>
+      <div id="view-modes" class="view-modes" role="group" aria-label="Document view" hidden><button id="preview-mode" type="button" aria-pressed="true">Preview</button><button id="source-mode" type="button" aria-pressed="false">Source</button><button id="edit-mode" type="button" aria-pressed="false" hidden>Edit</button></div>
+      <button id="contents-toggle" class="reader-icon-button" aria-label="Contents" title="Contents" aria-expanded="false" aria-controls="reader-outline"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h1 M3 12h1 M3 18h1"/></svg></button>
+      <button id="search-toggle" class="reader-icon-button" aria-label="Search document" title="Search document" aria-expanded="false" aria-controls="search"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></button>
+      <details class="reader-settings"><summary aria-label="Reading settings" title="Reading settings"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h5 M12 6h9 M3 12h10 M17 12h4 M3 18h3 M10 18h11 M8 3v6 M13 9v6 M6 15v6"/></svg></summary><div class="reader-settings-panel"><strong>Reading settings</strong><label>Column width <span><input id="column-width" type="number" min="80" max="600" step="20" value="180"> px</span></label><label>Wrap cell text <input id="wrap" type="checkbox" checked></label></div></details>
+    </div>
+  </header>
+  <form id="search" hidden role="search"><input id="query" aria-label="Case-sensitive source search" placeholder="Search original Markdown…"><button>Find</button><button type="button" id="search-close" aria-label="Close search">×</button></form>
+  <div id="reading-surface">
+  <button id="contents-backdrop" aria-label="Close contents" hidden></button>
+  <aside id="reader-outline" hidden><div class="reader-outline-heading"><h2>Contents <span id="section-count"></span></h2><button id="contents-close" class="reader-icon-button" aria-label="Close contents">×</button></div><div id="toc" aria-label="Document contents"><div id="toc-space"></div></div></aside>
+  <section id="edit-view" hidden aria-label="Markdown editor">
+    <div id="edit-navigation"><form id="edit-go"><label>Line <input id="edit-line" type="number" min="1" value="1" aria-label="Editing line"></label><button>Go</button></form><span id="edit-range"></span><div class="edit-actions"><button id="edit-undo" type="button" title="Undo current page">Undo</button><button id="edit-redo" type="button" title="Redo current page">Redo</button><button id="edit-previous" type="button" aria-label="Previous editing page">‹</button><button id="edit-next" type="button" aria-label="Next editing page">›</button><button id="edit-save" type="button" class="reader-primary">Save</button><button id="edit-reload" type="button" title="Discard unsaved edits and reload the file">Reload</button></div></div>
+    <div id="editor-mount"></div><div id="edit-status" role="status">Changes stay in memory until Save or changing pages.</div>
+  </section>
+  <dialog id="edit-close-dialog"><p>There are unsaved changes in the current page. Closing will discard them.</p><div><button id="edit-keep-open" type="button">Keep editing</button><button id="edit-discard-close" type="button">Discard and close</button></div></dialog>
+  <div id="workspace">
+    <section id="welcome" class="reader-empty"><div><span class="reader-empty-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5 M9 12h6 M9 16h6"/></svg></span><h2 id="welcome-title">Open a Markdown document</h2><p id="welcome-description">Choose a document on the server. Read large files, explore sections, and choose the columns you need.</p><div class="reader-empty-actions"><button class="reader-primary" type="button" data-open-server>Choose file</button></div><small>Ctrl / ⌘ O to open · Files stay on the server<br>Read only. Your original file is never modified.</small></div></section>
+    <main id="viewport" aria-label="Markdown document" tabindex="0" hidden><div id="space"></div></main>
+    <section id="source-view" aria-label="Markdown source" hidden><form id="source-navigation"><label>Line <input id="source-line" type="number" min="1" value="1" aria-label="Source line"></label><button>Go</button><span id="source-range" role="status"></span><div class="source-pager"><button id="source-previous" type="button" aria-label="Previous source page">‹</button><button id="source-next" type="button" aria-label="Next source page">›</button></div></form><div id="source-viewport" tabindex="0"><div class="source-content"><pre id="source-numbers" aria-hidden="true"></pre><pre id="source-text" aria-label="Original Markdown source"></pre></div></div></section>
+    <ol id="matches" aria-label="Source search results" hidden></ol>
+    <div id="file-feedback" role="status" hidden><span id="file-message"></span><button id="file-dismiss" type="button" aria-label="Dismiss message">×</button></div>
+  </div>
+  </div>
+  <footer class="reader-footer"><span id="document-summary">Opening document…</span><span class="reader-footer-hint">Read only</span><details class="reader-diagnostics"><summary>Diagnostics</summary><output id="status" role="status">Indexing in a separate Rust process…</output></details></footer>
+  <dialog id="file-browser"><div class="file-browser-heading"><div><h2>Open from server</h2><p>Files on the machine running the reader</p></div><button id="file-browser-close" class="reader-icon-button" type="button" aria-label="Close file browser">×</button></div><div class="file-browser-navigation"><button id="file-browser-up" type="button" aria-label="Parent folder">↑</button><span id="file-browser-location"></span></div><div id="file-browser-list" aria-label="Server files"></div><div class="file-browser-footer"><span id="file-browser-note">Browsing is limited to the server folder.</span><button id="file-browser-cancel" type="button">Cancel</button></div></dialog>
+  </div>
+</body>
+</html>

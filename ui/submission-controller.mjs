@@ -5,7 +5,7 @@ import { startTurnWithPreparation } from './session-dispatch.mjs';
 import { turnStartParams } from './session-catalog.mjs';
 import { composerImageInputs } from './composer-images.mjs';
 import { completedQueueShouldAdvance } from './message-queue.mjs';
-import { beginOptimisticCodexTurn, reconcileOptimisticCodexTurn, rollbackOptimisticCodexTurn, applyCodexNotification } from './codex-native.mjs';
+import { beginOptimisticCodexTurn, reconcileOptimisticCodexTurn, rollbackOptimisticCodexTurn, applyCodexNotification, isMissingActiveTurnError } from './codex-native.mjs';
 export function createSubmissionController(state, services) {
     const { $, selectedStateKey, shellCommandFromComposer, matchingSlashCommands, executeSlashCommand, isRouterThread, threadRouter, rpc, dispatchBackendRpc, sessionDispatch, prepareComposerTurn, isCodexBackend, isSupportedBackend, backendDescriptor, currentBackend, threadForRef, configuredTurnOptions, queuedTurnOptions, messageQueueModel, setComposerDraftValue, composerDrafts, hideComposerMenu, renderComposerState, renderTranscript, beginTranscriptFollowingLatest, setCatalogThreadActivity, rollbackCatalogThreadActivity, markCachedModelValidated, beginTurnLatencyTrace, bindTurnLatencyTrace, markTurnLatency, finishTurnLatencyTrace, randomId, persistMessageQueue, showError, toast, t } = services;
     async function sendComposer(event) {
@@ -95,13 +95,15 @@ export function createSubmissionController(state, services) {
         let latencyTrace = null;
         let composerCleared = false;
         let catalogActivity = null;
+        let steeringTurnId = '';
         return executeComposerSend({
             send: async () => {
                 if (state.model.activeTurnId) {
+                    steeringTurnId = state.model.activeTurnId;
                     catalogActivity = setCatalogThreadActivity(backend, threadId, { status: 'active', touch: true });
                     await rpc('turn/steer', {
                         threadId,
-                        expectedTurnId: state.model.activeTurnId,
+                        expectedTurnId: steeringTurnId,
                         clientUserMessageId: randomId(),
                         input: turnInput,
                     });
@@ -162,7 +164,7 @@ export function createSubmissionController(state, services) {
                 hideComposerMenu();
                 renderComposerState();
             },
-            failed: (error, turnAccepted) => {
+            failed: async (error, turnAccepted) => {
                 if (!turnAccepted)
                     rollbackCatalogThreadActivity(catalogActivity);
                 if (optimisticTurnId) {
@@ -183,6 +185,9 @@ export function createSubmissionController(state, services) {
                     if (state.backend === backend && state.selectedId === threadId)
                         renderComposerState();
                 }
+                if (steeringTurnId && isCodexBackend(backend) && isMissingActiveTurnError(error)
+                    && await services.recoverMissingActiveTurn({ backend, id: threadId }, steeringTurnId))
+                    return;
                 showError(error);
             },
             finished: () => renderComposerState(),

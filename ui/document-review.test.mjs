@@ -159,7 +159,7 @@ test('resolves Markdown images beside a read-only shared document', () => {
     resolveMarkdownImagePath(file, 'images/example.png'),
     { path: '/shared/library/docs/images/example.png' },
   )
-  assert.match(documentWorkspaceSource, /const editable = textReady && !file\.readOnly/u)
+  assert.match(documentWorkspaceSource, /const editable = \(textReady \|\| largeMarkdownReady\) && !file\.readOnly/u)
   assert.match(documentWorkspaceSource, /view === 'edit' && state\.artifact\.readOnly/u)
 })
 

@@ -19,7 +19,8 @@ function fixture() {
     codexBackendsNeedingRestartRecovery: new Set(), isCodexBackend: (b) => b !== 'opencode',
     backendDescriptor: (name) => ({ name }), sessionDispatch: { clearPrepared: record('clearPrepared') },
     clearStartedThreadsForBackend: record('clearStarted'), reportSessionLifecycle: record('log'),
-    refreshBackendCatalog: async () => {}, threadStatus: (t) => t?.status,
+    refreshBackendCatalog: async () => {}, refreshSelectedThread: async () => calls.push(['refresh-selected']),
+    scheduleStudioIdleWork: () => {}, threadStatus: (t) => t?.status,
     threadCatalogKey: (b, id) => `${b}:${id}`, sessionRefKey: (b, id) => `${b}:${id}`,
     cachedThreadModel: (b, id) => state.threadModels.get(`${b}:${id}`),
     cacheThreadModel: (b, id, m) => state.threadModels.set(`${b}:${id}`, { model: m, validatedAt: 1 }),
@@ -107,6 +108,30 @@ test('selected completion still renders and clears the active turn', () => {
   assert.equal(m.activeTurnId, null)
   assert.ok(f.calls.some(([n]) => n === 'render'))
   assert.ok(f.calls.some(([n]) => n === 'composer'))
+})
+
+test('idle lifecycle status rereads a selected turn only if completion remains missing', async () => {
+  const f = fixture(), model = running(), scheduled = []
+  f.state.model = model
+  f.state.selectedId = 'a'
+  f.state.threadModels.set('codex:a', { model })
+  f.services.scheduleStudioIdleWork = callback => scheduled.push(callback)
+  const controller = f.controller()
+  const idle = { method: 'thread/status/changed', params: { threadId: 'a', status: { type: 'idle' } } }
+  controller.handleCodexLifecycleNotification('codex', idle)
+  controller.handleCodexLifecycleNotification('codex', idle)
+  assert.equal(scheduled.length, 1)
+  assert.equal(model.activeTurnId, 't')
+  controller.handleCodexLifecycleNotification('codex', completed)
+  await scheduled[0]()
+  assert.equal(f.calls.some(([name]) => name === 'refresh-selected'), false)
+
+  const second = running()
+  f.state.model = second
+  f.state.threadModels.set('codex:a', { model: second })
+  controller.handleCodexLifecycleNotification('codex', idle)
+  await scheduled[1]()
+  assert.equal(f.calls.filter(([name]) => name === 'refresh-selected').length, 1)
 })
 
 test('OpenCode history failure always releases its event buffer', async () => {

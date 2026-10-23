@@ -4,9 +4,22 @@ import { marked } from './vendor/marked.esm.js'
 const MAX_OUTLINE_ITEMS = 2_000
 const MAX_LABEL_LENGTH = 512
 
+export function outlineFromMarkdownHeadings(headings: { raw: string; label: string; depth: number; line: number; offset: number }[]) {
+  const occurrences = new Map<string, number>()
+  return withHierarchy(headings.slice(0, MAX_OUTLINE_ITEMS).map((heading, index) => {
+    const token = heading.raw.length <= 8_192 ? marked.lexer(heading.raw).find(token => token.type === 'heading') : null
+    const label = boundedLabel(token ? inlineTokenText(token.tokens) || token.text : heading.label) || 'Untitled section'
+    const baseId = outlineSlug(label) || `section-${index + 1}`
+    const occurrence = (occurrences.get(baseId) || 0) + 1
+    occurrences.set(baseId, occurrence)
+    return { id: occurrence === 1 ? baseId : `${baseId}-${occurrence}`, label, depth: clampDepth(heading.depth), target: { kind: 'text-heading', offset: heading.offset, line: heading.line } }
+  }))
+}
+
 export function extractMarkdownOutline(source: unknown, parsedTokens: InlineToken[] | null = null) {
   const value = String(source || '')
   const tokens = Array.isArray(parsedTokens) ? parsedTokens : marked.lexer(value)
+  const lineNumberAt = createLineNumberReader(value)
   const items: OutlineItem[] = []
   const occurrences = new Map<string, number>()
   let cursor = 0
@@ -26,7 +39,7 @@ export function extractMarkdownOutline(source: unknown, parsedTokens: InlineToke
       target: {
         kind: 'text-heading',
         offset: Math.max(0, offset),
-        line: lineNumberAt(value, Math.max(0, offset)),
+        line: lineNumberAt(Math.max(0, offset)),
       },
     })
     if (items.length >= MAX_OUTLINE_ITEMS) break
@@ -36,6 +49,7 @@ export function extractMarkdownOutline(source: unknown, parsedTokens: InlineToke
 
 export function extractHtmlOutline(source: unknown) {
   const value = String(source || '')
+  const lineNumberAt = createLineNumberReader(value)
   const items: OutlineItem[] = []
   const occurrences = new Map()
   const blockedRanges: [number, number][] = [...value.matchAll(/<!--[\s\S]*?-->|<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/giu)]
@@ -54,7 +68,7 @@ export function extractHtmlOutline(source: unknown) {
       id: occurrence === 1 ? baseId : `${baseId}-${occurrence}`,
       label,
       depth: clampDepth(Number(match[1]) - 1),
-      target: { kind: 'text-heading', offset: match.index, line: lineNumberAt(value, match.index) },
+      target: { kind: 'text-heading', offset: match.index, line: lineNumberAt(match.index) },
     })
   }
   return withHierarchy(items)
@@ -178,8 +192,22 @@ function decodeHtml(value: unknown) {
   })
 }
 
-function lineNumberAt(value: unknown, offset: number) {
-  return String(value || '').slice(0, Math.max(0, offset)).split('\n').length
+function createLineNumberReader(value: string) {
+  let line = 1
+  let previousOffset = 0
+  let newline = value.indexOf('\n')
+  return (offset: number) => {
+    if (offset < previousOffset) {
+      line = 1
+      newline = value.indexOf('\n')
+    }
+    while (newline >= 0 && newline < offset) {
+      line += 1
+      newline = value.indexOf('\n', newline + 1)
+    }
+    previousOffset = offset
+    return line
+  }
 }
 
 function boundedLabel(value: unknown) {

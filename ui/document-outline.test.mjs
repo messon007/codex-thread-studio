@@ -26,6 +26,20 @@ test('HTML outline preserves safe source order and heading levels', () => {
   ])
 })
 
+test('Markdown outline preserves source locations across paragraphs and fenced code', () => {
+  const source = ['', '# Top', '', 'Paragraph', '', 'Setext', '---', '', '```md', '# Hidden', '```', '', '## End', ''].join('\n')
+  const outline = extractMarkdownOutline(source)
+  assert.deepEqual(outline.map(({ target }) => target.line), [2, 6, 13])
+  assert.deepEqual(outline.map(({ target }) => target.offset), ['# Top', 'Setext', '## End'].map((heading) => source.indexOf(heading)))
+})
+
+test('HTML outline maps adjacent headings and skips multiline comments without shifting source lines', () => {
+  const source = ['<h1>First</h1><h2>Second</h2>', '<!--<h3>Ignored</h3>', 'still ignored-->', '<p>Gap</p><h2>Third</h2>', '<h2>Fourth</h2>'].join('\r\n')
+  const outline = extractHtmlOutline(source)
+  assert.deepEqual(outline.map(({ target }) => target.line), [1, 1, 4, 5])
+  assert.deepEqual(outline.map(({ target }) => target.offset), ['<h1>First', '<h2>Second', '<h2>Third', '<h2>Fourth'].map((heading) => source.indexOf(heading)))
+})
+
 test('outline filtering retains ancestors as context', () => {
   const outline = normalizeDocumentOutline([
     { id: 'one', label: 'One', depth: 0 },

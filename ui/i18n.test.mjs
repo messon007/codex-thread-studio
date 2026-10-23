@@ -105,6 +105,29 @@ test('translates an English source subtree in both directions without changing p
   assert.equal(root.getAttribute('title'), 'Open settings')
 })
 
+test('skips traversing a subtree inserted inside protected document content', () => {
+  const originalNode = globalThis.Node
+  globalThis.Node = { TEXT_NODE: 3, ELEMENT_NODE: 1 }
+  const protectedRoot = {}
+  let childVisits = 0
+  const inserted = {
+    nodeType: Node.ELEMENT_NODE,
+    matches: () => false,
+    closest: () => protectedRoot,
+    hasAttribute: () => false,
+    get childNodes() {
+      childVisits += 1
+      return []
+    },
+  }
+  try {
+    translateDocument(inserted)
+    assert.equal(childVisits, 0)
+  } finally {
+    globalThis.Node = originalNode
+  }
+})
+
 test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
   const runtimeFiles = readdirSync(new URL('.', import.meta.url), { withFileTypes: true })
     .filter((entry) => entry.isFile()

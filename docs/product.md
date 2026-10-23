@@ -79,7 +79,7 @@ The long-term target is a mature Codex desktop client: daily CLI workflows shoul
 - Custom user-defined groups and archived-Thread browsing/unarchive management. The current sidebar groups by `cwd`; `sessionId` represents Codex's native Thread tree rather than a user-defined group.
 - A literal Thread “restart.” Native Threads have no dedicated tmux or worker process; selecting resumes them and Reload re-reads persisted state.
 - App Server daemon/control-socket ownership so active Turns survive window close.
-- Authentication/login, app/plugin pickers, math rendering, and diff syntax highlighting.
+- Authentication/login, App discovery/invocation, math rendering, and diff syntax highlighting. Installed Plugin discovery and structured Composer mentions are implemented.
 - Notifications for completed background work while Studio is closed.
 - Package signing and native Windows process management.
 - Cross-Thread Session Map knowledge graphs and executable third-party Map renderers. The proposed per-Thread, declarative design is documented in [Session Map templates](session-map/template-system.md).

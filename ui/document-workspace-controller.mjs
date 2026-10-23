@@ -14,7 +14,6 @@ import {
 } from './document-review.mjs'
 import {
   extractHtmlOutline,
-  extractMarkdownOutline,
   filterDocumentOutline,
   normalizeDocumentOutline,
   outlineItemForLocation,
@@ -23,7 +22,8 @@ import { epubCommentSource } from './epub-comment-provider.mjs'
 import { pdfCommentSource } from './pdf-comment-provider.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
-import { t } from './i18n.mjs'
+import { getLocale, t } from './i18n.mjs'
+import { createLargeMarkdownHost } from './large-markdown-host.mjs'
 
 export function createDocumentWorkspaceState() {
   return {
@@ -56,6 +56,7 @@ export function createDocumentWorkspaceController({
     closeActionMenus,
     applyRightRailWidth,
     renderMarkdownDocument,
+    cancelMarkdownDocument = () => {},
     renderDocumentCommentMarkers = () => {},
     hydrateMarkdownImages,
     disconnectMarkdownImageObserver,
@@ -88,6 +89,41 @@ export function createDocumentWorkspaceController({
   let pdfReaderModule = null
   let tableReaderModule = null
   let workspaceEditorModule = null
+  let largeMarkdownFrame = null
+  let largeMarkdownFile = null
+  let largeMarkdownHost = null
+
+  function releaseLargeMarkdown(file) {
+    if (!file?.largeMarkdown?.id) return
+    gatewayFetch('/studio/markdown/close', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: file.largeMarkdown.id }), keepalive: true,
+    }).catch(() => {})
+  }
+
+  function disposeLargeMarkdown() {
+    largeMarkdownHost?.dispose()
+    largeMarkdownHost = null
+    largeMarkdownFrame?.remove()
+    largeMarkdownFrame = null
+    releaseLargeMarkdown(largeMarkdownFile)
+    largeMarkdownFile = null
+  }
+
+  function syncLargeMarkdownTheme() {
+    const target = largeMarkdownFrame?.contentDocument?.documentElement
+    if (!target) return
+    const mode = document.documentElement.dataset.theme || 'light'
+    if (target.dataset.theme !== mode) target.dataset.theme = mode
+    const syntaxTheme = largeMarkdownFrame.contentDocument.getElementById('syntax-theme')
+    const stylesheet = mode === 'dark' ? './syntax-dark.css' : './syntax-light.css'
+    if (syntaxTheme && syntaxTheme.getAttribute('href') !== stylesheet) syntaxTheme.setAttribute('href', stylesheet)
+    const theme = getComputedStyle(document.documentElement)
+    for (const name of ['panel', 'panel-soft', 'text', 'muted', 'faint', 'border', 'brand', 'brand-soft', 'ui-font-family', 'ui-font-size', 'content-font-family', 'content-font-size', 'content-font-weight', 'code-font-family', 'code-font-size']) {
+      target.style.setProperty(`--${name}`, theme.getPropertyValue(`--${name}`))
+    }
+    target.classList.add('studio-host')
+  }
 
   function bind() {
     $('#close-artifact')?.addEventListener('click', closeArtifactRail)
@@ -108,9 +144,16 @@ export function createDocumentWorkspaceController({
     $('#artifact-search-prev')?.addEventListener('click', () => navigateArtifactSearch(-1))
     $('#artifact-search-next')?.addEventListener('click', () => navigateArtifactSearch(1))
     document.addEventListener('keydown', handleArtifactNavigationKeydown)
+    const themeObserver = new MutationObserver(syncLargeMarkdownTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
+    window.addEventListener('beforeunload', event => {
+      if (state.artifact?.kind === 'large-markdown' && (largeMarkdownHost?.dirty || largeMarkdownHost?.busy)) { event.preventDefault(); event.returnValue = '' }
+    })
   }
 
-async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null } = {}) {
+async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null, discardUnsaved = false } = {}) {
+  if (largeMarkdownHost?.busy) return
+  if (largeMarkdownHost?.dirty && state.artifact) state.artifact.dirty = true
   const thread = selectedThread()
   if (!thread?.cwd && !allowDetachedRoot) throw new Error(t('The current session has no project directory, so the file cannot be opened safely.'))
   const root = String(file.root || thread?.cwd || '')
@@ -128,15 +171,16 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
     }
     return
   }
-  if (state.artifact?.dirty && state.artifact.root === root && state.artifact.path === path) {
+  if (!discardUnsaved && state.artifact?.dirty && state.artifact.root === root && state.artifact.path === path) {
     activateRightWorkspace('document')
     return
   }
-  if (state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
+  if (!discardUnsaved && state.artifact?.dirty && (state.artifact.root !== root || state.artifact.path !== path)) {
     if (!confirm(t('The current document has unsaved changes. Open another file anyway?'))) return
   }
   const kind = reviewableFileKind(file)
   if (!kind) throw new Error(t('This file type cannot be opened in the document reviewer'))
+  cancelMarkdownDocument()
   resetArtifactSearch()
   resetArtifactOutline()
   activateRightWorkspace('document')
@@ -149,6 +193,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeArtifactEditor()
   disposeEpubReader()
   disposeRichArtifactReader()
+  disposeLargeMarkdown()
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
   state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
@@ -158,117 +203,121 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
       : kind === 'pdf' ? '/studio/review-pdf'
         : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
           : '/studio/review-file'
-  const response = await gatewayFetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root, path }),
-  })
-  if (!response.ok) {
-    const result = await response.json().catch(() => null)
-    const message = result?.error?.message || `HTTP ${response.status}`
+  try {
+    const response = await gatewayFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root, path }),
+    })
+    if (!response.ok) {
+      const result = await response.json().catch(() => null)
+      const message = result?.error?.message || `HTTP ${response.status}`
+      throw new Error(message)
+    }
+    if (kind === 'image') {
+      const blob = await response.blob()
+      if (!blob.type.startsWith('image/')) {
+        throw new Error(t('The image response format is invalid'))
+      }
+      const imageUrl = await blobToDataUrl(blob)
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
+        return
+      }
+      state.artifact = {
+        ...state.artifact,
+        loading: false,
+        mimeType: blob.type,
+        imageUrl,
+        relativePath: path,
+        size: blob.size,
+      }
+      state.artifactView = 'image'
+    } else if (kind === 'epub') {
+      const bookHash = response.headers.get('x-studio-epub-hash') || ''
+      const bytes = await response.arrayBuffer()
+      if (!bookHash || !bytes.byteLength) {
+        throw new Error(t('Invalid EPUB response'))
+      }
+      const readingState = await loadEpubReadingState(root, path, bookHash)
+      if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      state.artifact = {
+        ...state.artifact,
+        kind: 'epub',
+        loading: false,
+        bytes,
+        hash: bookHash,
+        relativePath: path,
+        size: bytes.byteLength,
+        readingState,
+      }
+      state.artifactView = 'epub'
+    } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
+      const bytes = await response.arrayBuffer()
+      if (!bytes.byteLength) throw new Error(t('Invalid document response'))
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      state.artifact = {
+        ...state.artifact, kind, loading: false, bytes,
+        hash: response.headers.get('x-studio-content-hash') || '',
+        relativePath: path, size: bytes.byteLength,
+      }
+      state.artifactView = kind
+    } else {
+      const result = await response.json()
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
+        releaseLargeMarkdown(result)
+        return
+      }
+      state.artifact = { ...result, kind: result.largeMarkdown ? 'large-markdown' : kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      if (result.largeMarkdown) largeMarkdownFile = state.artifact
+      state.artifactView = kind === 'table'
+        ? 'table'
+        : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
+    }
+    if (viewState) {
+      if (['text', 'large-markdown'].includes(state.artifact.kind) && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
+      if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
+      state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
+      state.artifactOutlineFilter = viewState.outlineFilter || ''
+      state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
+      state.artifactSearch = viewState.search || ''
+      state.artifactSearchOpen = Boolean(viewState.searchOpen)
+    }
+    await renderArtifact()
+    if (viewState) requestAnimationFrame(() => {
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
+      $('#artifact-content').scrollTop = viewState.scrollTop || 0
+      $('#artifact-content').scrollLeft = viewState.scrollLeft || 0
+    })
+  } catch (error) {
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...state.artifact, loading: false, error: message }
+    state.artifact = { ...state.artifact, loading: false, error: error?.message || String(error) }
     renderArtifact()
-    throw new Error(message)
+    throw error
   }
-  if (kind === 'image') {
-    const blob = await response.blob()
-    if (!blob.type.startsWith('image/')) {
-      const message = t('The image response format is invalid')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const imageUrl = await blobToDataUrl(blob)
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
-      return
-    }
-    state.artifact = {
-      ...state.artifact,
-      loading: false,
-      mimeType: blob.type,
-      imageUrl,
-      relativePath: path,
-      size: blob.size,
-    }
-    state.artifactView = 'image'
-  } else if (kind === 'epub') {
-    const bookHash = response.headers.get('x-studio-epub-hash') || ''
-    const bytes = await response.arrayBuffer()
-    if (!bookHash || !bytes.byteLength) {
-      const message = t('Invalid EPUB response')
-      if (state.artifact?.requestId === requestId) {
-        state.artifact = { ...state.artifact, loading: false, error: message }
-        renderArtifact()
-      }
-      throw new Error(message)
-    }
-    const readingState = await loadEpubReadingState(root, path, bookHash)
-    if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact,
-      kind: 'epub',
-      loading: false,
-      bytes,
-      hash: bookHash,
-      relativePath: path,
-      size: bytes.byteLength,
-      readingState,
-    }
-    state.artifactView = 'epub'
-  } else if (kind === 'pdf' || (kind === 'table' && /\.xlsx$/iu.test(path))) {
-    const bytes = await response.arrayBuffer()
-    if (!bytes.byteLength) throw new Error(t('Invalid document response'))
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = {
-      ...state.artifact, kind, loading: false, bytes,
-      hash: response.headers.get('x-studio-content-hash') || '',
-      relativePath: path, size: bytes.byteLength,
-    }
-    state.artifactView = kind
-  } else {
-    const result = await response.json()
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    state.artifact = { ...result, kind: kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
-    state.artifactView = kind === 'table'
-      ? 'table'
-      : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
-  }
-  if (viewState) {
-    if (state.artifact.kind === 'text' && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
-    if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
-    state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
-    state.artifactOutlineFilter = viewState.outlineFilter || ''
-    state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
-    state.artifactSearch = viewState.search || ''
-    state.artifactSearchOpen = Boolean(viewState.searchOpen)
-  }
-  renderArtifact()
-  if (viewState) requestAnimationFrame(() => {
-    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) return
-    $('#artifact-content').scrollTop = viewState.scrollTop || 0
-    $('#artifact-content').scrollLeft = viewState.scrollLeft || 0
-  })
 }
 
 async function refreshArtifact() {
   if (!state.artifact) return
+  if (largeMarkdownHost?.busy) return
+  if (largeMarkdownHost?.dirty) state.artifact.dirty = true
   if (state.artifact.dirty && !confirm(t('Reloading will discard unsaved changes. Continue?'))) return
-  await openArtifact({ root: state.artifact.root, path: state.artifact.path, sourceSessionKey: state.artifact.sourceSessionKey }, { returnTool: state.artifact.returnTool })
+  await openArtifact({ root: state.artifact.root, path: state.artifact.path, sourceSessionKey: state.artifact.sourceSessionKey }, { returnTool: state.artifact.returnTool, discardUnsaved: true })
 }
 
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
+  if (largeMarkdownHost?.busy) return false
+  if (largeMarkdownHost?.dirty && state.artifact) state.artifact.dirty = true
   const sourceSessionKey = state.artifact?.sourceSessionKey || ''
   if (state.artifact?.dirty && !confirm(t('The current document has unsaved changes. Close it anyway?'))) return false
+  cancelMarkdownDocument()
   const returnTool = restoreWorkspace ? state.artifact?.returnTool : ''
   const artifactThreadKey = state.artifact?.threadKey
   $('#artifact-rail').classList.add('hidden')
   disposeArtifactEditor()
   disposeEpubReader()
   disposeRichArtifactReader()
+  disposeLargeMarkdown()
   disposeMarkdownImageAssets(state.artifact)
   resetArtifactOutline()
   state.artifact = null
@@ -287,6 +336,11 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
 }
 
 function setArtifactView(view) {
+  if (state.artifact?.kind === 'large-markdown') {
+    if (view === 'edit' && state.artifact.readOnly) return
+    if (['preview', 'source', 'edit'].includes(view)) largeMarkdownHost?.setView(view).catch(showError)
+    return
+  }
   if (!state.artifact || state.artifact.kind !== 'text') return
   if (view === 'edit' && state.artifact.readOnly) return
   if (view === 'preview'
@@ -325,6 +379,12 @@ function toggleArtifactOutline() {
 
 function setArtifactOutlineOpen(open) {
   state.artifactOutlineOpen = Boolean(open)
+  if (state.artifact?.kind === 'large-markdown') {
+    largeMarkdownHost?.setOutline(state.artifactOutlineOpen)
+    $('#artifact-outline-toggle').classList.toggle('active', state.artifactOutlineOpen)
+    $('#artifact-outline-toggle').setAttribute('aria-expanded', String(state.artifactOutlineOpen))
+    return
+  }
   renderArtifactOutline()
   if (state.artifactOutlineOpen) requestAnimationFrame(() => $('#artifact-outline-filter').focus())
 }
@@ -490,7 +550,7 @@ function configureTextArtifactOutline(file, content, source, { markdown, html, v
   }
   let items = Array.isArray(preparedItems)
     ? preparedItems
-    : markdown ? extractMarkdownOutline(source) : extractHtmlOutline(source)
+    : markdown ? file.markdownDocument?.source === source ? file.markdownDocument.result.outline : [] : extractHtmlOutline(source)
   if (view === 'preview') {
     const headings = [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')]
     if (html) {
@@ -574,6 +634,10 @@ function flashArtifactOutlineTarget(element) {
 
 async function saveArtifact({ overwrite = false } = {}) {
   const file = state.artifact
+  if (file?.kind === 'large-markdown') {
+    if (!file.readOnly && await largeMarkdownHost?.save()) toast('File saved')
+    return
+  }
   if (!file || file.readOnly || state.artifactView !== 'edit' || !file.dirty) return
   const content = artifactEditor?.value() ?? file.editContent ?? file.content
   file.saving = true
@@ -650,7 +714,8 @@ function renderArtifact() {
   const epubReady = !file.loading && !file.error && file.kind === 'epub' && file.bytes instanceof ArrayBuffer
   const pdfReady = !file.loading && !file.error && file.kind === 'pdf' && file.bytes instanceof ArrayBuffer
   const tableReady = !file.loading && !file.error && file.kind === 'table' && (file.bytes instanceof ArrayBuffer || typeof file.content === 'string')
-  const ready = textReady || imageReady || epubReady || pdfReady || tableReady
+  const largeMarkdownReady = !file.loading && !file.error && file.kind === 'large-markdown' && Boolean(file.largeMarkdown?.url)
+  const ready = textReady || imageReady || epubReady || pdfReady || tableReady || largeMarkdownReady
   const content = $('#artifact-content')
   $('#artifact-reader-shell').classList.toggle('hidden', !ready)
   content.classList.toggle('hidden', !ready)
@@ -664,19 +729,23 @@ function renderArtifact() {
   const markdown = textReady && isMarkdownFile(file.path)
   const html = textReady && isHtmlFile(file.path)
   const structured = textReady ? structuredTextPreviewKind(file.path) : null
-  const editable = textReady && !file.readOnly
+  const editable = (textReady || largeMarkdownReady) && !file.readOnly
   const renderedContent = file.editContent ?? file.content
   $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
-  $('#artifact-view-switch').classList.toggle('hidden', !textReady)
-  $('#artifact-preview').disabled = !markdown && !html && !structured
+  $('#artifact-view-switch').classList.toggle('hidden', !textReady && !largeMarkdownReady)
+  $('#artifact-preview').disabled = largeMarkdownReady ? !file.readerReadingReady || Boolean(file.saving) : !markdown && !html && !structured
+  $('#artifact-source').disabled = largeMarkdownReady && (!file.readerReadingReady || Boolean(file.saving))
+  $('#artifact-edit').disabled = largeMarkdownReady && (!file.readerReady || Boolean(file.saving))
+  $('#close-artifact').disabled = largeMarkdownReady && Boolean(file.saving)
+  $('#refresh-artifact').disabled = largeMarkdownReady && Boolean(file.saving)
   $('#artifact-preview').classList.toggle('active', state.artifactView === 'preview')
   $('#artifact-source').classList.toggle('active', state.artifactView === 'source')
   $('#artifact-edit').classList.toggle('active', state.artifactView === 'edit')
   $('#artifact-edit').classList.toggle('hidden', !editable)
   $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
   $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
-  const canSearch = artifactSearchAvailable(file, state.artifactView)
-  const canInlineSearch = artifactInlineSearchAvailable(file, state.artifactView)
+  const canSearch = largeMarkdownReady ? state.artifactView !== 'edit' : artifactSearchAvailable(file, state.artifactView)
+  const canInlineSearch = largeMarkdownReady ? state.artifactView !== 'edit' : artifactInlineSearchAvailable(file, state.artifactView)
   if (!canInlineSearch) state.artifactSearchOpen = false
   $('#artifact-search-toggle').classList.toggle('hidden', !canSearch)
   $('#artifact-search-toggle').classList.toggle('active', canInlineSearch && state.artifactSearchOpen)
@@ -691,6 +760,52 @@ function renderArtifact() {
     setArtifactOutline(file, [])
     return
   }
+  if (largeMarkdownReady) {
+    setArtifactOutline(file, [])
+    $('#artifact-outline-toggle').classList.toggle('hidden', !file.readerHasOutline)
+    $('#artifact-outline-toggle').classList.toggle('active', state.artifactOutlineOpen)
+    $('#artifact-outline-toggle').setAttribute('aria-expanded', String(state.artifactOutlineOpen))
+    $('#artifact-search-toggle').disabled = !file.readerReady
+    $('#artifact-outline-toggle').disabled = !file.readerHasOutline || Boolean(file.saving)
+    $('#artifact-meta').textContent = `${file.lineCount == null ? formatFileSize(file.size) : t('{lines} lines · {size}', { lines: file.lineCount, size: formatFileSize(file.size) })}${file.readOnly ? ` · ${t('Read only')}` : ''}`
+    $('#artifact-hint').textContent = file.readerStatus || ''
+    content.className = 'artifact-content artifact-large-markdown'
+    if (!largeMarkdownFrame || largeMarkdownFile !== file) {
+      largeMarkdownFrame?.remove()
+      largeMarkdownFile = file
+      largeMarkdownFrame = document.createElement('iframe')
+      largeMarkdownFrame.className = 'artifact-large-markdown-frame'
+      largeMarkdownFrame.title = fileDisplayName(file.path)
+      largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
+      largeMarkdownFrame.setAttribute('referrerpolicy', 'no-referrer')
+      largeMarkdownFrame.src = file.largeMarkdown.url
+      largeMarkdownFrame.addEventListener('load', () => {
+        syncLargeMarkdownTheme()
+        if (state.artifact === file && state.artifactView === 'edit') largeMarkdownHost?.setView('edit').catch(showError)
+        if (state.artifact === file && file.readerLine) largeMarkdownFrame.contentWindow?.postMessage({ type: 'marknoria:navigate', line: file.readerLine }, location.origin)
+      })
+      content.replaceChildren(largeMarkdownFrame)
+      largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
+        if (state.artifact !== file) return
+        file.readerReady = snapshot.ready
+        file.readerReadingReady = snapshot.readingReady
+        file.readerHasOutline = snapshot.hasOutline
+        file.dirty = Boolean(snapshot.dirty)
+        file.saving = Boolean(snapshot.busy)
+        file.readerStatus = snapshot.status
+        if (snapshot.size != null) file.size = snapshot.size
+        if (snapshot.lineCount != null) file.lineCount = snapshot.lineCount
+        if (snapshot.view) state.artifactView = snapshot.view
+        if (snapshot.outlineOpen != null) state.artifactOutlineOpen = snapshot.outlineOpen
+        if (snapshot.error && !snapshot.editable) file.error = snapshot.error
+        renderArtifact()
+      })
+    }
+    syncLargeMarkdownTheme()
+    renderArtifactSearchStatus()
+    return
+  }
+  $('#artifact-search-toggle').disabled = false
   delete content.dataset.previewLanguage
   if (imageReady) {
     setArtifactOutline(file, [])
@@ -742,13 +857,7 @@ function renderArtifact() {
     content.innerHTML = '<div class="artifact-editor-shell" data-no-i18n></div>'
     mountArtifactEditor(file, content.firstElementChild, renderedContent).catch(showError)
   } else if (markdown && state.artifactView === 'preview') {
-    const rendered = renderMarkdownDocument(renderedContent)
-    content.className = 'artifact-content markdown-body'
-    content.innerHTML = rendered.html
-    hydrateMarkdownImages(file, content)
-    scheduleTextArtifactOutline(file, content, renderedContent, {
-      markdown, html, view: state.artifactView, items: rendered.outline,
-    })
+    return renderMarkdownArtifact(file, content, renderedContent)
   } else if (html && state.artifactView === 'preview') {
     content.className = 'artifact-content markdown-body artifact-html-preview'
     content.innerHTML = renderStaticHtml(renderedContent)
@@ -767,11 +876,60 @@ function renderArtifact() {
     content.innerHTML = `<pre class="artifact-source" data-no-i18n>${escapeHtml(renderedContent)}</pre>`
   }
   if (!(markdown && state.artifactView === 'preview')) {
-    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view: state.artifactView })
+    const view = state.artifactView
+    const items = markdown ? file.markdownDocument?.source === renderedContent ? file.markdownDocument.result.outline : [] : null
+    configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view, items })
+    if (markdown && file.markdownDocument?.source !== renderedContent) {
+      prepareMarkdownArtifact(file, renderedContent).then(rendered => {
+        if (state.artifact !== file || state.artifactView !== view || (file.editContent ?? file.content) !== renderedContent) return
+        configureTextArtifactOutline(file, content, renderedContent, { markdown, html, view, items: rendered.outline })
+      }).catch(error => { if (error?.name !== 'AbortError' && state.artifact === file) showError(error) })
+    }
   }
   if (state.artifactSearch) applyArtifactSearchHighlights()
   else renderArtifactSearchStatus()
   renderDocumentCommentMarkers()
+}
+
+function prepareMarkdownArtifact(file, source) {
+  const locale = getLocale()
+  if (file.markdownDocument?.source === source && file.markdownDocument.locale === locale) return Promise.resolve(file.markdownDocument.result)
+  if (file.markdownDocumentJob?.source === source && file.markdownDocumentJob.locale === locale) return file.markdownDocumentJob.promise
+  const job = { source, locale, promise: null }
+  job.promise = Promise.resolve().then(() => renderMarkdownDocument(source)).then(result => {
+    if (state.artifact === file && (file.editContent ?? file.content) === source && getLocale() === locale) file.markdownDocument = { source, locale, result }
+    return result
+  }).finally(() => { if (file.markdownDocumentJob === job) delete file.markdownDocumentJob })
+  file.markdownDocumentJob = job
+  return job.promise
+}
+
+function renderMarkdownArtifact(file, content, source) {
+  content.classList.add('hidden')
+  $('#artifact-loading').classList.remove('hidden')
+  const locale = getLocale()
+  if (file.markdownRenderJob?.source === source && file.markdownRenderJob.locale === locale) return file.markdownRenderJob.promise
+  const current = () => state.artifact === file && state.artifactView === 'preview' && state.activeRightWorkspace === 'document' && (file.editContent ?? file.content) === source && getLocale() === locale
+  const job = { source, locale, promise: null }
+  job.promise = prepareMarkdownArtifact(file, source).then(rendered => {
+    if (!current()) return
+    content.className = 'artifact-content markdown-body'
+    content.innerHTML = rendered.html
+    content.classList.remove('hidden')
+    $('#artifact-loading').classList.add('hidden')
+    hydrateMarkdownImages(file, content)
+    scheduleTextArtifactOutline(file, content, source, { markdown: true, html: false, view: 'preview', items: rendered.outline })
+    if (state.artifactSearch) applyArtifactSearchHighlights()
+    else renderArtifactSearchStatus()
+    renderDocumentCommentMarkers()
+  }).catch(error => {
+    if (error?.name === 'AbortError' || !current()) return
+    file.error = t(error?.message || String(error))
+    renderArtifact()
+    showError(error)
+  }).finally(() => { if (file.markdownRenderJob === job) delete file.markdownRenderJob })
+  file.markdownRenderJob = job
+  return job.promise
 }
 
 function disposeArtifactEditor() {
@@ -1044,6 +1202,24 @@ function resetArtifactSearch() {
 function handleArtifactSearchInput(event) {
   state.artifactSearch = event.target.value
   clearTimeout(artifactSearchTimer)
+  if (state.artifact?.kind === 'large-markdown') {
+    const file = state.artifact
+    const query = state.artifactSearch
+    state.artifactSearchMatches = []
+    state.artifactSearchIndex = -1
+    renderArtifactSearchStatus()
+    artifactSearchTimer = setTimeout(async () => {
+      try {
+        const matches = await largeMarkdownHost?.search(query) || []
+        if (state.artifact !== file || state.artifactSearch !== query) return
+        state.artifactSearchMatches = matches
+        state.artifactSearchIndex = matches.length ? 0 : -1
+        if (matches.length) scrollArtifactSearchToMatch(0)
+        else renderArtifactSearchStatus()
+      } catch (error) { if (error?.name !== 'AbortError' && state.artifact === file) showError(error) }
+    }, 140)
+    return
+  }
   if (!state.artifact || !state.artifactSearch.trim()) {
     clearArtifactSearchHighlights()
     renderArtifactSearchStatus()
@@ -1152,7 +1328,7 @@ function renderArtifactSearchStatus() {
   const total = state.artifactSearchMatches.length
   const query = state.artifactSearch.trim()
   if (!summary) return
-  if (!query || !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
+  if (!query || state.artifact?.kind !== 'large-markdown' && !artifactInlineSearchAvailable(state.artifact, state.artifactView)) {
     summary.textContent = ''
     $('#artifact-search-prev').disabled = true
     $('#artifact-search-next').disabled = true
@@ -1169,6 +1345,11 @@ function scrollArtifactSearchToMatch(index, { behavior = 'smooth' } = {}) {
   if (!state.artifactSearchMatches.length) return
   const current = ((index % state.artifactSearchMatches.length) + state.artifactSearchMatches.length) % state.artifactSearchMatches.length
   state.artifactSearchIndex = current
+  if (state.artifact?.kind === 'large-markdown') {
+    Promise.resolve(largeMarkdownHost?.navigateMatch(state.artifactSearchMatches[current])).catch(showError)
+    renderArtifactSearchStatus()
+    return
+  }
   state.artifactSearchMatches.forEach((match, matchIndex) => {
     match.classList.toggle('current', matchIndex === current)
   })
@@ -1193,6 +1374,11 @@ function formatFileSize(value) {
   function jumpArtifactToLine(line, column = 1) {
     if (!state.artifact || !Number.isInteger(Number(line)) || Number(line) < 1) return
     const file = state.artifact
+    if (file.kind === 'large-markdown') {
+      file.readerLine = Number(line)
+      largeMarkdownFrame?.contentWindow?.postMessage({ type: 'marknoria:navigate', line: Number(line) }, location.origin)
+      return
+    }
     if (file.kind === 'text' && state.artifactView === 'preview' && (isMarkdownFile(file.path) || isHtmlFile(file.path))) {
       const previewLocation = artifactPreviewLocation(file, Number(line))
       if (previewLocation) {
@@ -1223,7 +1409,9 @@ function formatFileSize(value) {
 
   function artifactPreviewLocation(file, line) {
     const content = file.editContent ?? file.content
-    const items = isMarkdownFile(file.path) ? extractMarkdownOutline(content) : extractHtmlOutline(content)
+    const items = isMarkdownFile(file.path)
+      ? file.markdownDocument?.source === content ? file.markdownDocument.result.outline : []
+      : extractHtmlOutline(content)
     const item = outlineItemForLocation(items, { line })
     return item ? { items, item } : null
   }

@@ -1,0 +1,9 @@
+{
+  "crates/markdown-wasm/Cargo.toml": "bd73ed714a0e780601fef99e34859579decd472d3ce902e131d02e4718532f72",
+  "crates/markdown-wasm/Cargo.lock": "2a51713ba14aaf0ad0a9b4799fd2e859eac33faa5a945e31612f639d96bbf98b",
+  "crates/markdown-wasm/src/lib.rs": "8cd1eafe1c1eb280e8991f4e5d3a94598e5099c62fe561d11460386f8413272a",
+  "scripts/vendor-comrak.mjs": "8aece2fcfc762cb4321d595135eaa5c685a9530c0258c1edfb4d55a1e32b70bd",
+  "ui/vendor/comrak.js": "31f39e03e67179cc631f43b7d75872f6f00084035b432513c884d74fd59d5b7d",
+  "ui/vendor/comrak_bg.wasm": "7b2c9a58fa362eb108d1a2cb3bc47a4088d23cc670ddff4a281fd32365a29329",
+  "ui/vendor/licenses/comrak-wasm-NOTICES.txt": "1e00d45372ebfe10f9fae819b8267eb69dc67473f4312429f6351a7c83078522"
+}

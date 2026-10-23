@@ -2,10 +2,13 @@
 
 Codex Thread Studio vendors the following browser assets so rendering and artifact readers work without a network connection:
 
-- Marked 18.0.12 — MIT — `ui/vendor/marked.esm.js`
+- Marked 18.0.13 — MIT — `ui/vendor/marked.esm.js`
+- Comrak 0.57.0 — BSD-2-Clause — `ui/vendor/comrak.js` and `ui/vendor/comrak_bg.wasm`
 - DOMPurify 3.4.15 — Apache-2.0 or MPL-2.0 — `ui/vendor/purify.es.mjs`
 - GitHub Markdown CSS 5.9.0 — MIT — `ui/vendor/github-markdown.css`
-- Mermaid 11.17.2 — MIT — `ui/vendor/mermaid.min.js`
+- Mermaid 12.0.0 — MIT — `ui/vendor/mermaid.min.js`
+- PlantUML core 1.2026.8 — MIT — `ui/vendor/plantuml.js` and `ui/vendor/plantuml-viz-global.js`
+- D2 0.1.34 — MPL-2.0 — `ui/vendor/d2.js`
 - CodeMirror 6 and its Lezer parser packages — MIT — `ui/vendor/workspace-editor.mjs`
 - xterm.js 6.0.0 and Fit addon 0.11.0 — MIT — `ui/vendor/workspace-terminal.mjs`
 - EPUB.js 0.3.93 — BSD-2-Clause — `ui/vendor/epub.mjs`
@@ -25,3 +28,7 @@ beside the bundle. The vulnerable XML parser range requested by EPUB.js is repla
 The corresponding license texts are included in `ui/vendor/licenses/`. The files are copied from
 exact, lockfile-pinned npm packages by `npm run vendor:markdown` and
 `npm run vendor:workspace`, `npm run vendor:epub`, and `npm run vendor:artifacts`; they should not be edited by hand.
+
+Comrak WASM and its wasm-bindgen/Rust dependency notices are generated separately
+by `npm run vendor:comrak` from `crates/markdown-wasm/Cargo.lock`. Full license
+texts and package versions are in `ui/vendor/licenses/comrak-wasm-NOTICES.txt`.

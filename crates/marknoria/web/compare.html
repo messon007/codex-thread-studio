@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Compare — MarkNoria</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./checkbox.css">
+  <link id="syntax-theme" rel="stylesheet" href="./syntax-light.css">
+  <script src="./theme.js"></script>
+  <link rel="stylesheet" href="./compare.css">
+  <script type="module" src="./compare.mjs"></script>
+</head>
+<body>
+  <div class="reader-shell compare-shell">
+    <header class="compare-header"><strong>MarkNoria</strong><div class="compare-actions"><span id="change-position" role="status"></span><button id="change-previous" class="reader-action" type="button" disabled>Previous change</button><button id="change-next" class="reader-action" type="button" disabled>Next change</button><div class="view-modes" role="group" aria-label="Workspace mode"><button id="compare-close" type="button" aria-pressed="false">Reader</button><button type="button" aria-pressed="true">Compare</button></div></div></header>
+    <div class="compare-files">
+      <div><strong id="left-file">Choose a Markdown file</strong><div class="compare-document-actions">
+        <button id="choose-left" class="reader-action" type="button" aria-label="Open left file"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3Z M3 7V4h7l2 3"/></svg><span>Open</span></button>
+        <div class="view-modes" role="group" aria-label="Left document view"><button id="left-mode-preview" type="button" aria-pressed="true">Preview</button><button id="left-mode-source" type="button" aria-pressed="false">Source</button></div>
+        <div id="left-tools" class="compare-tools" role="group" aria-label="Left document tools" hidden></div>
+      </div></div>
+      <div><strong id="right-file">Choose a Markdown file</strong><div class="compare-document-actions">
+        <button id="choose-right" class="reader-action" type="button" aria-label="Open right file"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3Z M3 7V4h7l2 3"/></svg><span>Open</span></button>
+        <div class="view-modes" role="group" aria-label="Right document view"><button id="right-mode-preview" type="button" aria-pressed="true">Preview</button><button id="right-mode-source" type="button" aria-pressed="false">Source</button></div>
+        <div id="right-tools" class="compare-tools" role="group" aria-label="Right document tools" hidden></div>
+      </div></div>
+    </div>
+    <div class="compare-body"><section class="compare-pane" aria-label="Left document"><iframe id="left-preview" title="Left Markdown document" hidden></iframe><main id="left-diff" class="compare-diff" tabindex="0" aria-label="Left source differences" hidden><div></div></main><div id="left-empty" class="compare-empty">Open a Markdown file to start reading.</div></section><section class="compare-pane" aria-label="Right document"><iframe id="right-preview" title="Right Markdown document" hidden></iframe><main id="right-diff" class="compare-diff" tabindex="0" aria-label="Right source differences" hidden><div></div></main><div id="right-empty" class="compare-empty">Open another Markdown file to compare.</div></section></div>
+    <footer class="compare-footer"><span id="compare-status" role="status">Choose two Markdown files · read only</span><span class="compare-legend" hidden><b class="removed">− removed</b><b class="added">+ added</b><span>Click a line for complete source</span></span></footer>
+    <div id="file-feedback" role="status" hidden><span id="file-message"></span><button id="file-dismiss" type="button" aria-label="Dismiss message">×</button></div>
+    <dialog id="compare-line"><header><strong id="line-title">Source line</strong><button id="line-close" type="button">Close</button></header><pre id="line-text" tabindex="0"></pre><footer><span id="line-position"></span><div><button id="line-previous" type="button">Previous segment</button><button id="line-next" type="button">Next segment</button></div></footer></dialog>
+    <dialog id="file-browser"><div class="file-browser-heading"><div><h2>Open from server</h2><p>Files on the machine running the reader</p></div><button id="file-browser-close" class="reader-icon-button" type="button" aria-label="Close file browser">×</button></div><div class="file-browser-navigation"><button id="file-browser-up" type="button" aria-label="Parent folder">↑</button><span id="file-browser-location"></span></div><div id="file-browser-list" aria-label="Server files"></div><div class="file-browser-footer"><span id="file-browser-note">Browsing is limited to the server folder.</span><button id="file-browser-cancel" type="button">Cancel</button></div></dialog>
+  </div>
+</body>
+</html>

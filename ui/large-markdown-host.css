@@ -1,0 +1,5 @@
+.reader-shell .reader-header,
+.reader-shell .reader-footer { display: none !important; }
+.reader-shell { grid-template-rows: 0 auto minmax(0,1fr) 0; }
+:root.studio-host .reader-shell { --reader-panel: var(--panel); --reader-soft: var(--panel-soft); --reader-text: var(--text); --reader-muted: var(--muted); --reader-faint: var(--faint); --reader-border: var(--border); --reader-brand: var(--brand); --reader-brand-soft: var(--brand-soft); }
+#edit-save,#edit-reload,#edit-status { display: none !important; }

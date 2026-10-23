@@ -8,7 +8,7 @@ export async function executeComposerSend(effects) {
         effects.acknowledged(result);
     }
     catch (error) {
-        effects.failed(error, accepted);
+        await effects.failed(error, accepted);
     }
     finally {
         effects.finished();

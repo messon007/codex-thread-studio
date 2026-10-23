@@ -27,6 +27,11 @@ test('A global Browser click only shows the embedded presentation', () => {
   assert.doesNotMatch(source, /activateFirstBrowserPage/)
 })
 
+test('right workspace changes do not navigate remote browsers to native actions', () => {
+  const activate = source.match(/function activateRightWorkspace\(tool\) \{[\s\S]*?\n\}/u)?.[0] || ''
+  assert.match(activate, /if \(usesEmbeddedBrowser\(\)\) window\.location\.href = 'studio-action:\/\/hide-browser'/u)
+})
+
 test('Embedded Browser selection enters the shared Comment Core flow', () => {
   assert.match(source, /browserCommentSource\(\{/)
   assert.match(source, /openEmbeddedBrowserComment\(selection\)/)

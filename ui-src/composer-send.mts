@@ -2,7 +2,7 @@
 export async function executeComposerSend<T>(effects: {
   send: () => Promise<T>
   acknowledged: (result: T) => void
-  failed: (error: unknown, accepted: boolean) => void
+  failed: (error: unknown, accepted: boolean) => void | Promise<void>
   finished: () => void
 }): Promise<boolean> {
   let accepted = false
@@ -11,7 +11,7 @@ export async function executeComposerSend<T>(effects: {
     accepted = true
     effects.acknowledged(result)
   } catch (error) {
-    effects.failed(error, accepted)
+    await effects.failed(error, accepted)
   } finally {
     effects.finished()
   }

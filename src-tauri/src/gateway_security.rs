@@ -115,6 +115,11 @@ impl GatewaySecurity {
         &self.token
     }
 
+    pub fn validate_reader_origin(&self, headers: &HeaderMap) -> Result<(), AuthorizationError> {
+        self.validate_host(headers)?;
+        self.validate_optional_origin(headers)
+    }
+
     pub fn initialization_script(&self) -> String {
         let origin = serde_json::to_string(&self.expected_origin).expect("origin is JSON text");
         let token = serde_json::to_string(&self.token).expect("gateway token is JSON text");
@@ -173,6 +178,28 @@ mod tests {
 
     const ORIGIN: &str = "http://127.0.0.1:41721";
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn reader_capabilities_still_require_the_gateway_host_and_origin() {
+        let security = GatewaySecurity::for_tests(ORIGIN, TOKEN);
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            security.validate_reader_origin(&headers),
+            Err(AuthorizationError::InvalidHost)
+        );
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:41721"));
+        assert!(security.validate_reader_origin(&headers).is_ok());
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://untrusted.invalid"),
+        );
+        assert_eq!(
+            security.validate_reader_origin(&headers),
+            Err(AuthorizationError::InvalidOrigin)
+        );
+        headers.insert(header::ORIGIN, HeaderValue::from_static(ORIGIN));
+        assert!(security.validate_reader_origin(&headers).is_ok());
+    }
 
     #[test]
     fn authorizes_http_bearer_token_and_rejects_foreign_origins() {

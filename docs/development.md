@@ -97,6 +97,32 @@ git diff -- package-lock.json ui/vendor THIRD_PARTY_NOTICES.md
 
 Never replace the vendored modules with runtime CDN imports. Keep their license files in `ui/vendor/licenses/` and review sanitizer advisories before an upgrade.
 
+Markdown document previews also embed Comrak WASM. Normal builds use the committed
+`ui/vendor/comrak.js` and `ui/vendor/comrak_bg.wasm`; Rust/WASM tooling is needed
+only when deliberately rebuilding these assets:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.126 --locked
+npm run vendor:comrak
+npm run build:ui
+cargo test --manifest-path crates/markdown-wasm/Cargo.toml --locked
+```
+
+Use `WASM_BINDGEN=/absolute/path/to/wasm-bindgen` to select an existing CLI,
+and `npm run vendor:comrak -- --offline` with cached Rust dependencies. The
+separate crate/lockfile does not add Comrak to the desktop Rust dependency tree.
+The asset manifest verifies source, lockfile, binding, binary and license hashes
+during `npm test`; text hashes normalize CRLF for cross-platform checkouts.
+
+For an optional real-browser Worker/CSP/content/cancellation/error-reporting regression,
+run `node benchmarks/markdown-wasm/integration.mjs --file /absolute/path/to/review.md`.
+It uses synthetic session/backend state and never connects to a running Studio.
+Set `STUDIO_PLAYWRIGHT_MODULE` and `STUDIO_CHROMIUM_PATH` when Playwright is
+installed outside the project. The file argument is optional; without it a small
+GFM/diagram/security fixture is used. Do not pass private documents to external
+services; this runner serves only a temporary loopback fixture.
+
 CodeMirror and xterm.js are also pinned and split into lazy browser bundles. Refresh them only after
 reviewing the dependency and generated-code diff:
 

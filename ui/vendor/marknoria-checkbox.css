@@ -1,0 +1,31 @@
+.reader-shell input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--reader-border);
+  border-radius: 4px;
+  background: var(--reader-panel);
+  box-shadow: 0 1px 1px #14232b0a;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.reader-shell input[type="checkbox"]:checked { background: var(--reader-brand); border-color: var(--reader-brand); }
+.reader-shell input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 10px;
+  background: white;
+  clip-path: polygon(0 50%,12.5% 35%,37.5% 65%,87.5% 5%,100% 20%,37.5% 95%);
+  transform: translate(-50%,-50%);
+}
+.reader-shell input[type="checkbox"]:focus-visible { outline: 2px solid var(--reader-brand); outline-offset: 3px; }
+.reader-shell input[type="checkbox"]:disabled { opacity: .4; cursor: default; }

@@ -724,6 +724,8 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .artifact-outline-empty { margin: 20px 12px; color: var(--faint); font-size: var(--ui-font-label); text-align: center; }
 .artifact-outline-truncated { margin: 0; padding: 9px 13px; border-top: 1px solid var(--border); color: var(--amber); font-size: var(--ui-font-label); }
 .artifact-content { min-width: 0; flex: 1; min-height: 0; overflow: auto; padding: 30px clamp(25px, 4vw, 54px) 56px; scroll-behavior: smooth; user-select: text; }
+.artifact-content.artifact-large-markdown { padding: 0; overflow: hidden; display: flex; }
+.artifact-large-markdown-frame { display: block; width: 100%; height: 100%; flex: 1; min-height: 0; border: 0; background: var(--panel); }
 .artifact-content.markdown-body { color: var(--text); font-size: var(--content-font-size); line-height: 1.75; }
 .artifact-content .markdown-local-image { display: block; max-width: 100%; height: auto; margin: 14px auto; border-radius: 6px; }
 .artifact-content .markdown-local-image.loading { width: min(100%, 520px); min-height: 140px; border: 1px solid var(--border); background: linear-gradient(100deg, var(--panel-soft) 30%, color-mix(in srgb, var(--panel-soft) 68%, var(--border)) 50%, var(--panel-soft) 70%); background-size: 240% 100%; animation: markdown-image-loading 1.4s ease infinite; }

@@ -32,6 +32,13 @@ Check desktop WebViews and remote browsers as well as standalone library timings
 
 ## Implemented
 
+- [Large Markdown reading](large-markdown-reader.md) uses the shared, built-in
+  MarkNoria Rust indexer with virtualized fragments/outline, table pagination and
+  column selection, paged Source and paged editing with Rust streaming saves and
+  conflict checks. Source is not transferred wholesale to the
+  browser. Small documents retain the editable Comrak/WASM path. Browser-side
+  diagrams reuse the existing engines without requiring server-side Chrome.
+
 - Reconcile the mounted transcript by Turn, retaining nodes whose generated HTML
   is unchanged. Do not keep detached DOM trees for other sessions. Retained HTML
   signatures are bounded to 4 MiB; this limit never hides transcript content.

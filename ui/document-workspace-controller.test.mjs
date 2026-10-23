@@ -74,6 +74,50 @@ function assertDocumentError(fixture, message, markdownRenders = 0) {
   assert.equal(fixture.markdownRenders(), markdownRenders)
 }
 
+test('large Markdown uses one retained frame without whole-document rendering and closes its lease', async (context) => {
+  const closed = []
+  const result = { root: '/project', path: 'large.md', size: 32 * 1024 * 1024, readOnly: true, largeMarkdown: { id: 'reader-1', url: '/markdown-reader/reader-1/?embedded=1#token' } }
+  const fixture = documentWorkspaceFixture(context, async (url, options) => {
+    if (url.endsWith('/close')) { closed.push(JSON.parse(options.body).id); return new Response('{}') }
+    return new Response(JSON.stringify(result))
+  })
+  const frames = []
+  document.createElement = () => {
+    const frame = { setAttribute() {}, addEventListener() {}, remove() { this.removed = true } }
+    frames.push(frame)
+    return frame
+  }
+  await fixture.controller.open({ path: 'large.md' })
+  assert.equal(fixture.state.artifact.kind, 'large-markdown')
+  assert.equal(fixture.state.artifact.content, undefined)
+  assert.equal(fixture.markdownRenders(), 0)
+  assert.equal(fixture.element('#artifact-view-switch').classList.contains('hidden'), false)
+  assert.equal(fixture.element('#artifact-edit').classList.contains('hidden'), true)
+  assert.equal(frames.length, 1)
+  assert.equal(frames[0].src, result.largeMarkdown.url)
+  fixture.controller.render()
+  fixture.controller.setView('edit')
+  assert.equal(frames.length, 1)
+  fixture.controller.close({ restoreMap: false })
+  assert.deepEqual(closed, ['reader-1'])
+  assert.equal(frames[0].removed, true)
+})
+
+test('late large Markdown metadata releases its service after the document closes', async (context) => {
+  let resolveResponse
+  const closed = []
+  const fixture = documentWorkspaceFixture(context, async (url, options) => {
+    if (url.endsWith('/close')) { closed.push(JSON.parse(options.body).id); return new Response('{}') }
+    return new Promise(resolve => { resolveResponse = resolve })
+  })
+  const pending = fixture.controller.open({ path: 'large.md' })
+  fixture.controller.close({ restoreMap: false })
+  resolveResponse(new Response(JSON.stringify({ largeMarkdown: { id: 'stale-reader' } })))
+  await pending
+  assert.equal(fixture.state.artifact, null)
+  assert.deepEqual(closed, ['stale-reader'])
+})
+
 test('document network failures clear Loading and display the error', async (context) => {
   const failure = new Error('Network connection closed')
   const fixture = documentWorkspaceFixture(context, async () => { throw failure })

@@ -36,6 +36,7 @@ mod favorites;
 mod gateway_security;
 mod git_review;
 mod item_location;
+mod large_markdown;
 mod ollama;
 mod opencode_server;
 mod router_history;
@@ -80,6 +81,7 @@ struct ServeOptions {
 
 #[derive(Clone)]
 struct GatewayState {
+    markdown_readers: large_markdown::Readers,
     codex: CodexAppServer,
     codex_backends: Arc<BTreeMap<String, CodexBackendInstance>>,
     backend_descriptors: Arc<Vec<BackendDescriptor>>,
@@ -555,6 +557,13 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
+    if let Some(result) = marknoria::server::index_worker() {
+        if let Err(error) = result {
+            eprintln!("Markdown indexing failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let arguments = env::args_os().skip(1).collect::<Vec<_>>();
     match parse_serve_options(&arguments) {
         Ok(Some(options)) => {
@@ -811,6 +820,7 @@ fn initialize_gateway(
         eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
     }
     let state = GatewayState {
+        markdown_readers: large_markdown::Readers::default(),
         codex,
         codex_backends: Arc::new(codex_backends),
         backend_descriptors: Arc::new(backend_descriptors),
@@ -938,6 +948,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/stage", axum::routing::post(git_stage))
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
+        .route(
+            "/studio/markdown/close",
+            axum::routing::post(large_markdown::close),
+        )
         .route(
             "/studio/table/query",
             axum::routing::post(query_table).layer(DefaultBodyLimit::max(
@@ -1189,6 +1203,15 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/xterm.css", get(xterm_css))
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
+        .route(
+            "/large-markdown-host.mjs",
+            get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
+        )
+        .route("/markdown-reader/{id}/", get(large_markdown::page))
+        .route(
+            "/markdown-reader/{id}/{*path}",
+            get(large_markdown::asset).post(large_markdown::asset),
+        )
         .merge(protected)
         .with_state(state)
 }
@@ -1235,7 +1258,7 @@ async fn index() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-store"),
             (
                 header::CONTENT_SECURITY_POLICY,
-                "default-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
+                "default-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws:; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
             ),
         ],
         Html(include_str!("../../ui/index.html")),
@@ -1308,6 +1331,11 @@ async fn read_review_file(
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
+    match large_markdown::try_open(&state, &request).await {
+        Ok(Some(file)) => return json_response(StatusCode::OK, &file),
+        Ok(None) => {}
+        Err((status, message)) => return json_error(status, &message),
+    }
     match load_review_file_with_shared(&request, &shared_directories) {
         Ok(file) => json_response(StatusCode::OK, &file),
         Err((status, message)) => json_error(status, &message),
@@ -4657,6 +4685,7 @@ mod tests {
     fn secured_test_gateway(security: GatewaySecurity) -> GatewayState {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         GatewayState {
+            markdown_readers: large_markdown::Readers::default(),
             codex: CodexAppServer::new(
                 "codex".to_string(),
                 BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5056,6 +5085,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
+                markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5311,6 +5341,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
+                markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5380,6 +5411,7 @@ mod tests {
             );
             let maps_path = env::temp_dir().join(unique);
             let state = GatewayState {
+                markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5519,6 +5551,7 @@ mod tests {
             );
             let studio_path = env::temp_dir().join(unique);
             let state = GatewayState {
+                markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),

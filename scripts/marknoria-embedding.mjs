@@ -4,6 +4,15 @@ function replace(source, before, after) {
 }
 
 export function embedSource(path, source) {
+  if (path === 'src/files.rs') {
+    const start = source.indexOf('    fn names_and_server_paths_are_confined()')
+    const end = source.indexOf('    #[test]', start)
+    if (start < 0 || end < 0) throw Error('MarkNoria path fixture changed')
+    let fixture = source.slice(start, end)
+    fixture = replace(fixture, 'let root = tempfile::tempdir().unwrap();', 'let directory = tempfile::tempdir().unwrap();\n        let root = directory.path().canonicalize().unwrap();')
+    fixture = fixture.replaceAll('root.path()', 'root.as_path()')
+    source = source.slice(0, start) + fixture + source.slice(end)
+  }
   if (path === 'src/edit.rs') {
     source = replace(source, '            path,\n            &Save {', '            &path.canonicalize()?,\n            &Save {')
     source = replace(source, 'save(&current, &path, &request, failed)', 'save(&current, &path.canonicalize().unwrap(), &request, failed)')

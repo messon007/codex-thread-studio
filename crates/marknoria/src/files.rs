@@ -442,19 +442,20 @@ mod tests {
         ] {
             assert!(!markdown_name(name));
         }
-        let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join("file.md"), "# Test").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.as_path().join("file.md"), "# Test").unwrap();
         assert_eq!(
-            confined_path(root.path(), "file.md").unwrap(),
-            root.path().join("file.md")
+            confined_path(root.as_path(), "file.md").unwrap(),
+            root.as_path().join("file.md")
         );
         for path in ["../secret.md", "/etc/passwd", "folder/../file.md"] {
-            assert!(confined_path(root.path(), path).is_err());
+            assert!(confined_path(root.as_path(), path).is_err());
         }
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink("/etc", root.path().join("escape")).unwrap();
-            assert!(confined_path(root.path(), "escape/passwd").is_err());
+            std::os::unix::fs::symlink("/etc", root.as_path().join("escape")).unwrap();
+            assert!(confined_path(root.as_path(), "escape/passwd").is_err());
         }
     }
     #[test]

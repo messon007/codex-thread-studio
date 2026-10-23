@@ -404,7 +404,20 @@ mod tests {
     use super::*;
     #[test]
     fn cache_storage_prefers_explicit_paths_and_defaults_outside_tmp() {
-        let path = |value: &str| Some(PathBuf::from(value));
+        let rooted = |value: &str| {
+            if cfg!(windows) {
+                PathBuf::from(format!("C:{value}"))
+            } else {
+                PathBuf::from(value)
+            }
+        };
+        let path = |value: &str| {
+            Some(if value.starts_with('/') {
+                rooted(value)
+            } else {
+                PathBuf::from(value)
+            })
+        };
         assert_eq!(
             storage_root(
                 path("/explicit"),
@@ -413,19 +426,19 @@ mod tests {
                 path("/home/user")
             )
             .unwrap(),
-            PathBuf::from("/explicit")
+            rooted("/explicit")
         );
         assert_eq!(
             storage_root(None, path("/temporary"), path("/cache"), path("/home/user")).unwrap(),
-            PathBuf::from("/temporary")
+            rooted("/temporary")
         );
         assert_eq!(
             storage_root(None, None, path("/cache"), path("/home/user")).unwrap(),
-            PathBuf::from("/cache/markdown-reader")
+            rooted("/cache/markdown-reader")
         );
         assert_eq!(
             storage_root(None, None, path("relative"), path("/home/user")).unwrap(),
-            PathBuf::from("/home/user/.cache/markdown-reader")
+            rooted("/home/user/.cache/markdown-reader")
         );
         assert!(storage_root(None, None, None, None).is_err());
     }

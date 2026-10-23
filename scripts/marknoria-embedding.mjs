@@ -5,6 +5,14 @@ function replace(source, before, after) {
 
 export function embedSource(path, source) {
   if (path === 'src/files.rs') {
+    const cacheStart = source.indexOf('    fn cache_storage_prefers_explicit_paths_and_defaults_outside_tmp()')
+    const cacheEnd = source.indexOf('    #[test]', cacheStart)
+    if (cacheStart < 0 || cacheEnd < 0) throw Error('MarkNoria cache fixture changed')
+    let cacheFixture = source.slice(cacheStart, cacheEnd)
+    cacheFixture = replace(cacheFixture, 'let path = |value: &str| Some(PathBuf::from(value));', `let rooted = |value: &str| if cfg!(windows) { PathBuf::from(format!("C:{value}")) } else { PathBuf::from(value) };
+        let path = |value: &str| Some(if value.starts_with('/') { rooted(value) } else { PathBuf::from(value) });`)
+    cacheFixture = cacheFixture.replaceAll('PathBuf::from("/', 'rooted("/')
+    source = source.slice(0, cacheStart) + cacheFixture + source.slice(cacheEnd)
     const start = source.indexOf('    fn names_and_server_paths_are_confined()')
     const end = source.indexOf('    #[test]', start)
     if (start < 0 || end < 0) throw Error('MarkNoria path fixture changed')
@@ -16,6 +24,14 @@ export function embedSource(path, source) {
   if (path === 'src/edit.rs') {
     source = replace(source, '            path,\n            &Save {', '            &path.canonicalize()?,\n            &Save {')
     source = replace(source, 'save(&current, &path, &request, failed)', 'save(&current, &path.canonicalize().unwrap(), &request, failed)')
+    source = replace(source, '    temporary.persist(path).map_err(|error| error.error)?;', `    #[cfg(windows)]
+    {
+        drop(original_identity);
+        drop(live_identity);
+        drop(original);
+    }
+    temporary.persist(path).map_err(|error| io::Error::new(error.error.kind(), format!("Replacing the saved file failed: {}", error.error)))?;`)
+    source = replace(source, '        .set_permissions(metadata.permissions())?;', '        .set_permissions(metadata.permissions()).map_err(|error| io::Error::new(error.kind(), format!("Preserving file permissions failed: {error}")))?;')
   }
   if (path === 'src/server.rs') {
     source = replace(source, '    pub async fn start(source: std::path::PathBuf) -> std::io::Result<Self> {', `    pub async fn start(source: std::path::PathBuf) -> std::io::Result<Self> {

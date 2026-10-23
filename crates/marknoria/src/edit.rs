@@ -330,7 +330,13 @@ pub fn save(
     io::copy(&mut source, temporary.as_file_mut())?;
     temporary
         .as_file()
-        .set_permissions(metadata.permissions())?;
+        .set_permissions(metadata.permissions())
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Preserving file permissions failed: {error}"),
+            )
+        })?;
     temporary.as_file().sync_all()?;
     let next = copy_snapshot(temporary.as_file_mut(), directory)?;
     let window = next.range(request.start, request.start + replacement.len())?;
@@ -355,7 +361,18 @@ pub fn save(
     if original_identity != live_identity {
         return Err(conflict("The file was replaced during saving"));
     }
-    temporary.persist(path).map_err(|error| error.error)?;
+    #[cfg(windows)]
+    {
+        drop(original_identity);
+        drop(live_identity);
+        drop(original);
+    }
+    temporary.persist(path).map_err(|error| {
+        io::Error::new(
+            error.error.kind(),
+            format!("Replacing the saved file failed: {}", error.error),
+        )
+    })?;
     let warning = if cfg!(unix) {
         File::open(parent)
             .and_then(|directory| directory.sync_all())

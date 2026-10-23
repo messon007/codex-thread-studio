@@ -17,8 +17,10 @@ use the same bundled browser libraries as Studio's existing Markdown view.
 Checkbox styling is shared with the pinned standalone MarkNoria snapshot and
 recorded in `crates/marknoria/CONTROLS.md`. Reproducible embedding changes in
 `scripts/marknoria-embedding.mjs` add an explicitly editable single-document
-service and a bounded state/control bridge. Parser, source anchors and save logic
-are shared unchanged. The default library service remains read only.
+service and a bounded state/control bridge. Parser and source anchors are shared
+unchanged. The Windows adapter releases validated target handles before atomic
+replacement; the same revision/identity checks run before this step. The default
+library service remains read only.
 The Studio executable handles the index-worker argument before normal startup;
 parser memory peaks leave the main process when the worker exits.
 
@@ -74,7 +76,9 @@ There is no background save or browser draft storage. Undo history is scoped to
 the page; cross-page selections and whole-document replacement are unsupported.
 The existing source-size, UTF-8, LF/CRLF and safe-file restrictions apply. Cache
 snapshots and replacement files need disk space. Unix advisory locks cannot rule
-out a noncooperating writer racing the final version check and rename.
+out a noncooperating writer racing the final version check and rename. Windows
+must release target handles after its final checks to permit replacement; external
+writers can also race that short interval.
 
 Large documents do not support Studio's selection-comment
 workflow yet. Source is paged; browser Find only sees

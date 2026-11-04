@@ -19,7 +19,7 @@ its feature is still absent.
 | Workspace | Native Files, watches/shared roots, VTE terminal, Git status/staging/history and line-numbered diffs, exclusive panels and parent-view navigation. Private repositories/files/PTYs and installed controls have acceptance coverage. |
 | Saved user data | Existing Favorites, comments, pins, session options, queues and settings retain their shared stores. Native capture/source verification, conflict guards, explicit save, exports and restart behavior have focused fixtures. |
 | Settings | Native appearance, language, environment/secrets/network/cache, connections/backend configuration, Router, shared folders, session visibility, notifications, browser and translation settings. Exact editable/model values remain literal. |
-| Desktop and distribution | Wayland launcher/D-Bus activation, file-open/save portal lifecycles, packaged sibling gateway, verified Mermaid worker and optional diagram/PDF runtimes with notices. Existing Tauri and server entry points remain available. |
+| Desktop and distribution | Wayland launcher and real installed cold D-Bus activation/Open, file-open/save portal lifecycles, packaged sibling gateway, verified Mermaid worker and optional diagram/PDF runtimes with notices. Existing Tauri and server entry points remain available. |
 
 These rows summarize implemented areas, not a claim that every interaction or
 format has reached complete parity. Exact test scope and preserved failures are
@@ -1211,3 +1211,44 @@ incompatible with default continuous Preview. Its corrected retained-adapter
 scope and the successful installed default path are recorded separately. The
 [requirement review](gnome-native-acceptance.md) now has no confirmed remaining
 implementation correction; the remote/physical/provider gates above remain.
+
+
+## Installed cold desktop activation
+
+The current optimized package now passes cold D-Bus **Activate** and **Open**
+through its actual installed desktop entry and service, not a replacement
+Gio.Application. Both application processes are independently identified by the
+private bus, validated against the installed native executable and checked for
+`--gapplication-service`; a successful Exec fallback cannot satisfy this check.
+The prefix and document names include spaces, Unicode, percent, dollar,
+backtick, quote and backslash characters.
+
+Opening a file while the first instance is running keeps the same process and
+exact unsent draft. Closing it releases the bus name and its fake providers.
+A later cold file-open creates a new instance, renders the document and switches
+Preview/Source with the exact original Unicode/CRLF text. Original files remain
+unchanged and no model Turn is started. The final private run
+`desktop-activation-ihqzjjzf` observed readiness in 2,598 ms for activation and
+970 ms for cold application file-open. These include the fixture/UI waits and
+warm OS caches; they are not cold-storage benchmarks or general guarantees.
+
+```sh
+python3 scripts/smoke-gnome-desktop-activation.py /path/to/native-bundle
+```
+
+The new test reuses the installer, fake providers, owned Wayland input and
+AT-SPI client. Process identity/termination observation and visible TextView
+lookup are now shared with the existing GNOME portal fixture. That fixture's
+actual Nautilus/xdg-desktop-portal-gnome run `desktop-portal-8lz96314` also passes
+all six Open/folder/Save/cancel cases, retaining source bytes, the draft and
+provider cleanup. It observes no web-content process. Both fixtures accept the
+external QA directory, keeping artifacts off the busy project filesystem.
+
+`DESKTOP-ACTIVATION-EVALUATION.json` in the external QA directory records exact
+package, runtime-source and fixture identities, positive results and the first
+name-only TextView lookup failure. This increment changes test support and
+documentation; the qualified native/gateway bytes and current optimized
+candidate remain those of `30c04b1`. The earlier installer test using a fake
+Gio.Application still covers Exec quoting independently. These real native
+cold-start checks use an isolated Mutter desktop, not a physical GNOME Shell
+launcher; IME, actual Orca, scaling, voice and real-provider gates remain explicit.

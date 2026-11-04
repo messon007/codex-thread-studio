@@ -1,5 +1,33 @@
 """Bounded AT-SPI queries/actions restricted to one owned native process."""
 import time
+from pathlib import Path
+
+
+class ProcessPeer:
+    """Observe a bus-activated fixture process without claiming PID reuse."""
+    def __init__(self, pid, executable):
+        self.pid = pid
+        self.executable = Path(executable).resolve(strict=True)
+        self.started = self.identity()
+        assert self.started is not None
+        assert Path('/proc', str(pid), 'exe').resolve(strict=True) == self.executable
+
+    def identity(self):
+        try:
+            fields = Path('/proc', str(self.pid), 'stat').read_text().rsplit(')', 1)[1].split()
+            return None if fields[0] == 'Z' else fields[19]
+        except OSError:
+            return None
+
+    def poll(self):
+        return None if self.identity() == self.started else 1
+
+    @property
+    def returncode(self):
+        # Not a child of this fixture; only termination is observable.
+        return self.poll()
+
+
 class Client:
     def __init__(self,process,iterate=None):
         import gi
@@ -67,6 +95,10 @@ class Client:
         node=self.wait(name,lambda:self.find(actionable))
         self.activate(node);return node
     def text(self,value):return self.find(lambda n:self.showing(n) and value in n.get_name())
+    def contains_text(self,value):
+        """Read visible labels and TextViews; their text need not be a name."""
+        return self.find(lambda n:self.showing(n) and (value in n.get_name()
+            or (n.get_text_iface() and value in (self.contents(n) or ''))))
     def toggle(self,name,keys,parent=None):
         """Use a native check button, including GTK nodes without AT-SPI Action.
 

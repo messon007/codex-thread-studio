@@ -36,6 +36,18 @@ Remote CI/publication and physical desktop/provider/platform checks remain
 explicit in the [current inventory](gnome-native-status.md). Older candidates
 and the normal installation are preserved.
 
+## Real installed desktop cold-start follow-up
+
+The unchanged optimized candidate above now passes real installed cold D-Bus
+Activate/Open, explicit service-mode and executable identity checks, unusual
+prefix/document names, same-instance file handoff and exact draft/source
+retention. The existing actual GNOME/Nautilus portal workflow also passes after
+its process and TextView helpers were shared with the activation test. This
+closes the earlier evidence gap between fake Exec-quoting tests and activation
+of the real native binary. See [cold desktop activation](gnome-native-status.md#installed-cold-desktop-activation)
+for exact scope and the external `DESKTOP-ACTIVATION-EVALUATION.json` record.
+It does not substitute for physical GNOME Shell/input/screen-reader acceptance.
+
 ## Previous Favorites question candidate
 
 The [Favorites source-preservation checkpoint](gnome-native-status.md#native-favorites-source-preservation)

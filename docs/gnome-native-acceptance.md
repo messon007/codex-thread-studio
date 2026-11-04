@@ -44,7 +44,7 @@ These suffixes identify the existing passages without renumbering that document.
 
 | Product criterion | Verification and practical boundary |
 | --- | --- |
-| 1–4: initialize/list, lazy resume, create, rename | Native transport/selection and installed session controls; private real Codex daemon/CLI integration is recorded separately. Real installed CLI credentials/providers are not used by deterministic fixtures. |
+| 1–4: initialize/list, lazy resume, create, rename | Native transport/selection and installed session controls, plus [real installed cold D-Bus activation/Open](gnome-native-status.md#installed-cold-desktop-activation); private real Codex daemon/CLI integration is recorded separately. Real installed CLI credentials/providers are not used by deterministic fixtures. |
 | 5–7: completion, steer/interrupt, approvals | Native lifecycle, late-event/reconnect, typed permission tests and private-provider GTK controls. Idle is not assumed equivalent to successful completion. |
 | 8–9: three selections, persistence and original anchors | Shared annotation store and native selection/comment fixtures, including repeated selections, restart, exact source and insertion without send. |
 | 10, 13–14: offline Markdown, source anchors and local dependencies | Native parser/source model, safe renderer/resource policies and pinned notices; actual table/code/heading selection and source-comment tests. A native renderer does not apply the browser stylesheet, but retains appearance preferences and document safety boundaries. |
@@ -79,8 +79,10 @@ substitute for remote macOS/Windows builds or an actual fresh GNOME login.
 
 Physical GNOME launcher/notification interaction, real IME composition,
 fractional scaling/multiple monitors, actual Orca use and voice quality require
-manual desktop acceptance. Private Wayland/AT-SPI, portal and isolated Ubuntu
-runtime checks establish only their documented automated scope. Real-provider
+manual desktop acceptance. Real installed cold D-Bus activation/Open, private Wayland/AT-SPI, actual GNOME
+portal and isolated Ubuntu runtime checks establish only their documented
+automated scope. Cold D-Bus startup is now checked on the native executable,
+including service-mode proof, independently of the older fake installer probe. Real-provider
 compatibility also remains separate from deterministic fake-provider coverage.
 
 The native migration adds no requirement to implement product-deferred features,

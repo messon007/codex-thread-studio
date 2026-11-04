@@ -19,7 +19,7 @@ import time
 sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts/test-support'))
-from native_accessibility import Client
+from native_accessibility import Client, ProcessPeer as Peer
 from private_wayland import OwnedMutterInput, isolated_environment
 from memory_sampler import ProcessMemory
 DRAFT = 'Unsent real GNOME portal draft 中文😀 '
@@ -38,23 +38,6 @@ outputs = module('desktop_portal_outputs', 'smoke-gnome-outputs.py')
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-class Peer:
-    def __init__(self, pid, executable):
-        self.pid = pid
-        self.executable = Path(executable)
-        self.started = self.identity()
-        assert Path('/proc', str(pid), 'exe').resolve() == self.executable
-
-    def identity(self):
-        try:
-            return Path('/proc', str(self.pid), 'stat').read_text().rsplit(')', 1)[1].split()[19]
-        except OSError:
-            return None
-
-    def poll(self):
-        return None if self.identity() == self.started else 1
 
 
 def run(native, gateway, root):
@@ -132,8 +115,7 @@ def run(native, gateway, root):
         keys([0xff0d])
 
     def read_text(value):
-        return desktop.find(lambda n: desktop.showing(n) and (value in n.get_name()
-            or (n.get_text_iface() and value in (desktop.contents(n) or ''))))
+        return desktop.contains_text(value)
 
     def activate_row(row):
         # GtkActionRow may expose keyboard activation without an AT-SPI action.
@@ -283,9 +265,10 @@ def main():
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     native, gateway = str(Path(args.native).resolve()), str(Path(args.gateway).resolve())
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or REPO / 'target/gnome-native-smoke').resolve()
     if args.private_root:
-        root = Path(args.private_root)
-        assert root.parent == REPO / 'target/gnome-native-smoke' and root.name.startswith('desktop-portal-')
+        root = Path(args.private_root).resolve()
+        assert root.parent == base and root.name.startswith('desktop-portal-')
         for key, expected in [('XDG_CONFIG_HOME', root / 'config'),
             ('CODEX_THREAD_STUDIO_CODEX_BIN', root / 'fake-codex.py'),
             ('CODEX_THREAD_STUDIO_OPENCODE_BIN', root / 'fake-opencode.py')]:
@@ -293,7 +276,8 @@ def main():
         return run(native, gateway, root)
     for path in ['/usr/bin/nautilus', '/usr/bin/mutter', '/usr/libexec/xdg-desktop-portal-gnome']:
         assert Path(path).exists(), 'Ubuntu GNOME runtime required: ' + path
-    root = Path(tempfile.mkdtemp(prefix='desktop-portal-', dir=REPO / 'target/gnome-native-smoke'))
+    base.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix='desktop-portal-', dir=base))
     runtime.create_profile(root)
     (root / 'raw-items.json').write_text('[]')
     (root / 'project/selected 中文 #.md').write_text('# Real portal selection\n\nUnchanged text.\n')

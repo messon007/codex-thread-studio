@@ -83,9 +83,12 @@ withdrawal, duplicate suppression and notification-driven startup after exit. It
 reproduced and corrected token loss in Studio's nested application activation;
 both warm and cold notification actions now use their original Wayland tokens.
 
-Physical GNOME pointer interaction, real IME composition,
-fractional scaling/multiple monitors, actual Orca use and voice quality require
-manual desktop acceptance. Real installed cold D-Bus activation/Open now also passes in an
+The real [Wayland/IBus pinyin workflow](gnome-native-status.md#native-wayland-ime-composition)
+also checks a real Shell candidate popup, composition/command-menu interaction,
+Enter/Ctrl+Enter, exact committed delivery and cancellation. It reproduced and
+corrected partial-draft sending during preedit. Physical GNOME pointer/input-device
+interaction, other input engines/layouts, fractional scaling/multiple monitors,
+actual Orca use and voice quality still require manual desktop acceptance. Real installed cold D-Bus activation/Open now also passes in an
 [owned actual GNOME Shell session](gnome-native-status.md#real-gnome-shell-session-validation).
 Private Wayland/AT-SPI, actual GNOME portals and isolated Ubuntu runtime checks
 establish only their documented automated scope. Cold D-Bus startup is now checked on the native executable,

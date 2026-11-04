@@ -11715,3 +11715,61 @@ Its gateway, Mermaid component and optional runtime inputs retain the preceding
 distribution candidate's identities. The earlier packages and default installation
 remain untouched. Physical GNOME/assistive-client and real-provider acceptance,
 session information and the connection/activity parity audit remain separate work.
+
+
+## Real Wayland pinyin and unfinished-composition sends
+
+The `native-ime-20261105` external qualification retains a genuine native defect
+from baseline `62f6f40`. In an owned actual GNOME Shell/IBus session,
+Ctrl+Enter after committed text plus a pending `nihao` composition sent only
+`Committed prefix `. Its exact fake-provider request and Wayland preedit trace
+are retained in `ime-go4x_yvf`; this was not inferred from a synthetic signal.
+
+The native submit path now checks the existing composer preedit flag before
+Router dispatch, commands or a normal/active-turn send. Completion and Continue
+already use that same flag. The fix does not alter TextBuffer source semantics,
+force an IM module, run a replacement input engine or modify the common gateway.
+
+The new fixture reuses the previous desktop fixture's fake providers/profile,
+existing bounded AT-SPI client, and the extracted shared `owned_gnome_shell`
+context. Actual Shell startup/readiness, verified compositor input, and teardown
+are now maintained once. The common context refuses a login-bus/non-private
+configuration before starting Shell; all eight ownership/mount tests pass.
+
+Ubuntu's ibus-libpinyin uses a compiled-in system dictionary path in its
+[upstream backend](https://github.com/libpinyin/ibus-libpinyin/blob/1.16.5/src/PYLibPinyin.cc#L64).
+The test supplies extracted official packages in an engine-only mount namespace,
+with private schemas/cache/home/dconf/components and a private IBus socket. Its
+network is disabled. These are QA prerequisites, not application distribution
+dependencies. The primary native client uses normal Wayland text-input v3 with
+`GTK_IM_MODULE` unset. Both actual Shell candidate text and native preedit/commit
+messages are observed, rather than injecting an application test hook.
+
+Optimized `ime-nufpowbp` passes real candidate confirmation/cancellation, command
+completion yielding during composition, Enter and Ctrl+Enter with no partial
+send, pending-candidate retention, then one exact committed fake-provider send
+and its streamed response. The shared Router fake intentionally stores replies
+and returns a stale in-progress ACK without streaming. An initial fixed run
+`ime-_ky8oipu` incorrectly expected it to stream spontaneously; the final fixture
+reuses that fake's existing notification lane to publish its actual stored reply.
+That harness correction is distinct from the reproduced partial-send defect.
+The engine's default Enter commits raw `nihao`; Studio preserves that behavior.
+
+All 408 native tests pass (four opt-in ignored); Rust 1.92 checks all release
+targets and the optimized build succeeds. The same package passes the actual
+Shell keyboard launcher/notification/cold-Open workflow (`desktop-activation-0coke6e8`),
+standalone Mutter activation (`desktop-activation-7hqmqhmc`), installed core
+`release-ui-5hbf27_4` with language/backend/Git/viewers/edit/save/continuous Preview
+and all four math/diagram engines at 400%, and standalone installation. The new
+binary also loads and shows CLI help in the extracted Ubuntu 26.04 runtime,
+without host libraries/source/network/display mounts; this is not fresh-login
+acceptance. Existing native build warnings and the Shell signal-disconnect
+diagnostic remain separate from successful assertions.
+
+`target/gnome-native-candidate-20261105-ime` points to this optimized pair.
+`IME-EVALUATION.json` beside its external package records source/runtime/fixture
+identities and inherited checks. Shared backend/browser/reader inputs are
+unchanged from the previously qualified pair; the 430 default-workspace and
+753 web tests are inherited, not presented as newly rerun here. Other engines,
+physical input devices, actual Orca, mixed/fractional-scale monitors, real
+providers, and remote CI/publication remain explicit acceptance work.

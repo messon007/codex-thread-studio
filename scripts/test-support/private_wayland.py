@@ -8,6 +8,74 @@ from pathlib import Path
 import tempfile
 import subprocess
 import os
+import time
+
+
+@contextmanager
+def owned_gnome_shell(root):
+    """Run one real GNOME Shell on the caller's private bus and Wayland runtime.
+
+    Reuse this for desktop activation, IME and accessibility acceptance. It must
+    never start on a login bus or attach input to the user's compositor.
+    """
+    root = Path(root).resolve(strict=True)
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', ''))
+    if (Path('/proc', str(os.getppid()), 'exe').resolve() != Path('/usr/bin/dbus-run-session').resolve()
+            or runtime.parent != Path('/tmp') or not runtime.name.startswith('studio-wayland-')
+            or not runtime.is_dir() or os.environ.get('XDG_CONFIG_HOME') != str(root/'config')):
+        raise RuntimeError('GNOME Shell requires the owned session bus, runtime and configuration')
+    from gi.repository import Gio, GLib
+    previous = os.environ.get('WAYLAND_DISPLAY')
+    os.environ['WAYLAND_DISPLAY'] = 'studio-shell'
+    controlled = None
+    with (root/'gnome-shell.log').open('w') as log:
+        shell = subprocess.Popen(['/usr/bin/gnome-shell', '--headless', '--wayland',
+            '--no-x11', '--wayland-display', 'studio-shell', '--virtual-monitor', '1600x1000'],
+            stdout=log, stderr=log, start_new_session=True)
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            ready = None
+            deadline = time.monotonic()+30
+            while time.monotonic()<deadline:
+                if shell.poll() is not None:
+                    raise RuntimeError(('Private GNOME Shell exited', shell.returncode, str(root)))
+                try:
+                    owner = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                        'org.freedesktop.DBus', 'GetNameOwner', GLib.Variant('(s)', ('org.gnome.Shell',)),
+                        GLib.VariantType.new('(s)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+                    pid = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                        'org.freedesktop.DBus', 'GetConnectionUnixProcessID', GLib.Variant('(s)', (owner,)),
+                        GLib.VariantType.new('(u)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+                    bus.call_sync(owner, '/org/gnome/Shell', 'org.freedesktop.DBus.Properties',
+                        'Get', GLib.Variant('(ss)', ('org.gnome.Shell', 'OverviewActive')),
+                        GLib.VariantType.new('(v)'), Gio.DBusCallFlags.NONE, 1000, None)
+                    if pid==shell.pid and (runtime/'studio-shell').is_socket():
+                        ready = ready or time.monotonic()
+                        if time.monotonic()-ready>=2:
+                            break
+                except GLib.Error:
+                    ready = None
+                time.sleep(.05)
+            else:
+                raise RuntimeError(('Private GNOME Shell did not become ready', str(root)))
+            controlled = OwnedMutterInput(compositor=shell)
+            yield shell, controlled
+        finally:
+            try:
+                if controlled is not None and shell.poll() is None:
+                    controlled.close()
+            finally:
+                if shell.poll() is None:
+                    shell.terminate()
+                    try:
+                        shell.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        shell.kill()
+                        shell.wait(timeout=5)
+                if previous is None:
+                    os.environ.pop('WAYLAND_DISPLAY', None)
+                else:
+                    os.environ['WAYLAND_DISPLAY'] = previous
 
 
 def _input_compositor_pid(compositor):

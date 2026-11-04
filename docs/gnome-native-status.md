@@ -53,8 +53,9 @@ Remaining validation is explicit:
    the available GitHub token lacks `workflow` scope. Earlier SSH publication
    also failed. Local implementation/testing does not establish remote CI or
    macOS/Windows runtime acceptance.
-3. Physical GNOME pointer interaction, real IME/Orca, fractional scaling,
-   multiple monitors, voice quality and real-provider compatibility remain
+3. Physical GNOME pointer interaction, input-method/device combinations beyond
+   the real IBus pinyin check below, Orca, fractional scaling, multiple monitors,
+   voice quality and real-provider compatibility remain
    manual checks. Real Shell launcher/notification keyboard flows now pass the
    qualification below. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
    runtime startup have their narrower documented scope. Four new private
@@ -1372,3 +1373,62 @@ inherited checks. The private Shell logs one signal-handler disconnect diagnosti
 its cause remains unestablished and is retained separately. Every asserted native
 workflow completed. This headless real-Shell keyboard evidence does not qualify
 physical pointer/IME/Orca/scaling, real providers or remote CI/publication.
+
+
+## Native Wayland IME composition
+
+The optimized real-IME case `ime-nufpowbp` passes using Ubuntu 26.04's IBus
+1.5.34 and ibus-libpinyin 1.16.5 in an owned GNOME Shell 50.1. GTK uses normal
+Wayland text-input v3: `GTK_IM_MODULE` is unset, a real Shell candidate popup is
+observed, and the passive native Wayland trace contains the actual preedit and
+Chinese commit. This is not a synthetic `preedit-changed` signal test.
+
+The workflow reproduced a native defect: Ctrl+Enter while composing sent only
+`Committed prefix `, excluding the uncommitted Chinese. The composer TextBuffer
+correctly excludes preedit; the submit entry point had not checked the state
+already maintained for completion and Continue. It now reuses that same guard
+before normal/active-turn/Router sends or command dispatch. It neither copies
+IME internals nor commits or discards the user's pending candidate itself.
+
+The installed optimized fixture checks candidate confirmation, Escape cancel,
+command completion yielding to real composition, and Enter/Ctrl+Enter avoiding
+an unintended send. After the blocked shortcut, Space still commits the pending
+`你好`; a subsequent explicit Ctrl+Enter sends exactly `Committed prefix 你好`
+once to the private fake provider and displays its streamed reply. The default
+pinyin engine's Enter commits literal `nihao`; that engine behavior is preserved.
+No real model request or login input-method configuration is used.
+
+```sh
+python3 scripts/smoke-gnome-ime.py /path/to/native-bundle --engine-root /path/to/extracted-ubuntu-packages
+```
+
+For this QA command, the engine root contains extracted Ubuntu `ibus-libpinyin`,
+`libpinyin15` and `libpinyin-data` packages. Only the engine receives a private
+mount namespace supplying its compiled-in data paths. The engine has no network;
+its cache, home, dconf, IBus address and components are private. These packages
+and Bubblewrap are test prerequisites, not new native application dependencies.
+The shared `owned_gnome_shell` helper supplies actual Shell readiness, ownership
+verification, input and teardown to both this fixture and desktop activation;
+eight ownership/mount safety tests pass. Existing fake providers, profiles and
+bounded accessibility queries are reused too.
+
+All 408 native tests pass (four opt-in ignored), Rust 1.92 checks all release
+targets, and the optimized binary builds. Matching optimized qualification also
+passes real Shell launcher/notification/cold-Open (`desktop-activation-0coke6e8`),
+standalone Mutter activation (`desktop-activation-7hqmqhmc`), and installed core
+`release-ui-5hbf27_4` with language/backend/Git/viewer controls, original saves,
+default continuous Preview and all four math/diagram engines at 400% zoom. The
+standalone installer and extracted Ubuntu runtime dependency-loading/CLI-help
+checks pass too. These are sequential fixtures, not concurrent desktop loads.
+
+The current optimized candidate is `target/gnome-native-candidate-20261105-ime`.
+Its external `IME-EVALUATION.json` records exact runtime/fixture identities,
+negative and fixed IME evidence, engine packages, checks and inherited coverage.
+The source change since `62f6f40` is limited to the native submit guard and test
+infrastructure/documentation; shared services, Tauri and browser inputs retain
+their preceding identities and 430 default-workspace/753 web-test evidence.
+The native build still has its existing warnings; this is not a warning-free
+qualification. The real Shell also retains its earlier signal-disconnect
+host diagnostic, separately from all completed workflow assertions.
+Physical input devices, other engines/layouts, Orca, fractional scaling, real
+providers and remote CI remain outside this fixture's evidence.

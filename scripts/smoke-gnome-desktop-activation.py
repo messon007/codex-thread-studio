@@ -21,7 +21,7 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts/test-support'))
 from native_accessibility import Client, ProcessPeer
-from private_wayland import OwnedMutterInput, isolated_environment
+from private_wayland import OwnedMutterInput, isolated_environment, owned_gnome_shell
 
 spec = importlib.util.spec_from_file_location('activation_history', REPO / 'scripts/smoke-gnome-turn-navigation-scope.py')
 history = importlib.util.module_from_spec(spec)
@@ -305,60 +305,19 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False):
             if monitor.poll() is None:
                 monitor.terminate();monitor.wait(timeout=5)
             monitor_log.close()
-        owned.close()
+        if controlled is None:
+            owned.close()
 
 
 def run_with_shell(prefix, root, interactions=False):
-    from gi.repository import Gio, GLib
-    os.environ['WAYLAND_DISPLAY'] = 'studio-shell'
-    log = (root/'gnome-shell.log').open('w')
-    shell = subprocess.Popen(['/usr/bin/gnome-shell', '--headless', '--wayland',
-        '--no-x11', '--wayland-display', 'studio-shell', '--virtual-monitor', '1600x1000'],
-        stdout=log, stderr=log, start_new_session=True)
-    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-    try:
-        deadline = time.monotonic()+30
-        ready = None
-        while time.monotonic()<deadline:
-            if shell.poll() is not None:
-                raise RuntimeError(('Private GNOME Shell exited', shell.returncode, str(root)))
-            try:
-                owner = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
-                    'org.freedesktop.DBus', 'GetNameOwner', GLib.Variant('(s)', ('org.gnome.Shell',)),
-                    GLib.VariantType.new('(s)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
-                pid = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
-                    'org.freedesktop.DBus', 'GetConnectionUnixProcessID', GLib.Variant('(s)', (owner,)),
-                    GLib.VariantType.new('(u)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
-                bus.call_sync(owner, '/org/gnome/Shell', 'org.freedesktop.DBus.Properties',
-                    'Get', GLib.Variant('(ss)', ('org.gnome.Shell', 'OverviewActive')),
-                    GLib.VariantType.new('(v)'), Gio.DBusCallFlags.NONE, 1000, None)
-                if pid==shell.pid and (Path(os.environ['XDG_RUNTIME_DIR'])/'studio-shell').is_socket():
-                    ready = ready or time.monotonic()
-                    if time.monotonic()-ready>=2:
-                        break
-            except GLib.Error:
-                ready = None
-            time.sleep(.05)
-        else:
-            raise RuntimeError(('Private GNOME Shell did not become ready', str(root)))
-        controlled=OwnedMutterInput(compositor=shell)
+    from gi.repository import Gio
+    with owned_gnome_shell(root) as (shell, controlled):
         if interactions:
-            assert Path('/proc',str(os.getppid()),'exe').resolve()==Path('/usr/bin/dbus-run-session').resolve()
-            assert os.environ['XDG_CONFIG_HOME']==str(root/'config')
             providers=Gio.Settings.new('org.gnome.desktop.search-providers')
             assert providers.set_boolean('disable-external',True)
             Gio.Settings.sync()
             assert providers.get_boolean('disable-external')
         run(prefix, root, controlled, ProcessPeer(shell.pid, '/usr/bin/gnome-shell'), interactions)
-    finally:
-        if shell.poll() is None:
-            shell.terminate()
-            try:
-                shell.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                shell.kill()
-                shell.wait(timeout=5)
-        log.close()
 
 
 def main():

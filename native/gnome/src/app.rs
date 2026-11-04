@@ -4366,6 +4366,12 @@ impl Ui {
     }
 
     fn submit(self: &Rc<Self>) {
+        // TextBuffer excludes the IME's uncommitted preedit. Reuse the state
+        // that already protects completion and Continue, including when a
+        // Ctrl+Enter key reaches this controller through Wayland text-input.
+        if self.composer_tools.preedit.get() {
+            return;
+        }
         if self.router_selected() {
             self.router_submit();
             return;

@@ -121,8 +121,11 @@ The feature branch is now published through SSH and
 [draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50) is open.
 Remote checks exposed audit, fresh-cache and Windows-path corrections; the
 [main integration follow-up](gnome-native-status.md#main-integration-and-initial-remote-checks)
-records their scope. Passing integrated remote jobs and physical desktop results
-remain required; local tests do not substitute for them.
+records their scope. Application/workflow inputs at `4788ce3` now have a
+[passing integrated remote matrix](gnome-native-status.md#remote-qualification-of-4788ce3),
+including independent Ubuntu installation and cache-free math rendering.
+Physical desktop results remain required; automated results do not substitute
+for them. Documentation-only follow-ups retain that tested software identity.
 
 The [updated optimized package](gnome-native-status.md#optimized-main-integration-qualification)
 passes its installed workflow, actual/32 MiB LF/CRLF documents and both real

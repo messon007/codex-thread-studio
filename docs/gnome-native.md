@@ -29,8 +29,10 @@ Earlier actual-report/32 MiB LF/CRLF, real Codex/OpenCode, GNOME Shell, IBus,
 Orca and mixed-scale checks retain their documented source and binary scope.
 See the [font portability checkpoint](gnome-native-status.md#portable-math-fonts-and-current-installer-fixture),
 [current inventory](gnome-native-status.md) and
-[requirement review](gnome-native-acceptance.md) for exact scope and remaining
-physical/remote gates.
+[requirement review](gnome-native-acceptance.md) for exact scope.
+Application/workflow inputs at `4788ce3` have a
+[passing remote matrix](gnome-native-status.md#remote-qualification-of-4788ce3);
+physical desktop acceptance remains outstanding.
 
 A portable copy of this package and its archive checksum are available under
 `target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz` and the

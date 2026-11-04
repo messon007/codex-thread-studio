@@ -57,11 +57,12 @@ Remaining validation is explicit:
    as corrections close. The final width package and default continuous-reader
    workflow now pass their installed checks below; prior optimized checkpoints
    remain preserved.
-2. SSH publication now succeeds and [draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50)
-   is open. The initial remote checks exposed a Windows CRLF audit error and
-   missing cross-platform license sources in the fresh GNOME build cache.
-   Both corrections pass focused local checks. The integrated remote matrix
-   and physical desktop acceptance still need passing evidence.
+2. [Draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50) is
+   published. Application/workflow inputs at `4788ce3` pass the existing
+   three-platform CI and complete Native GNOME push workflow, including the
+   fresh independent runtime job. The [remote qualification](#remote-qualification-of-4788ce3)
+   identifies exact runs and scope. Subsequent documentation-only commits do
+   not change those tested inputs; their PR check status remains visible separately.
 3. Physical GNOME pointer interaction, input-method/device combinations beyond
    the real IBus pinyin check below, physical Orca use beyond the automated
    composer/menu checks below, physical display/GPU behavior beyond the virtual
@@ -78,6 +79,40 @@ the current image workspace explicitly does not support comments, and the
 existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
+
+## Remote qualification of 4788ce3
+
+Application/workflow source `4788ce3af50aadde7b412417e771af6877336a8f` has
+complete remote qualification:
+
+- [CI run 41921712913](https://github.com/messon007/codex-thread-studio/actions/runs/41921712913)
+  passes Linux, macOS and Windows, including the optional Windows backend.
+- [Native GNOME run 41921702339](https://github.com/messon007/codex-thread-studio/actions/runs/41921702339)
+  passes all three jobs: the Ubuntu 26.04 build/API suite, host PDF runtime
+  checks and independent Ubuntu 26.04 package installation/runtime checks.
+  The main job passes 408 native tests (four opt-in ignored), 21 process/desktop
+  boundary tests, 1,029 renderer-library tests, all notices, complete packaging,
+  and every subsequent API/installer fixture. It uses no sibling MarkNoria checkout.
+- The runtime job downloads only the bundle, installs it under `/opt/studio`,
+  confirms Rust/Cargo are unavailable, loads the installed application with
+  `--help`, then renders a fraction and requires glyph paths with no text
+  fallback. The actual runner executes the assertions with `sh -e`; this
+  qualifies font portability outside the build sources/cache.
+
+The duplicate pull-request Native GNOME run is separately visible in PR checks;
+the completed push run above proves this exact software/workflow revision.
+The current optimized candidate remains package `88a9cc9f`; its local installed
+and hermetic checks retain their recorded identities. Both packaged profiles
+also pass help and five outlined formulas in the isolated extracted Ubuntu
+runtime, mounting neither host libraries nor a source checkout; see
+`native-debug-embed-20261105/INDEPENDENT-RUNTIME.json`.
+
+These are automated checks. Physical pointer/input-device, voice, monitor/GPU,
+hotplug/suspend and user-configured external-provider results are still missing.
+The [desktop checklist](gnome-native-desktop-check.md) remains the final manual
+gate. Do not mark the whole migration complete or merge this draft solely from
+the green automated matrix. The historical checkpoints below preserve their
+original failures and narrower evidence.
 
 ## Main integration and initial remote checks
 

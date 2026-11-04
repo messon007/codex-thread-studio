@@ -85,7 +85,7 @@ fn validate_request(request: &TableQueryRequest) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_columns(columns: &[String]) -> Vec<String> {
+pub(crate) fn normalize_columns(columns: &[String]) -> Vec<String> {
     let mut used = BTreeSet::new();
     columns
         .iter()
@@ -204,7 +204,7 @@ fn query_source(connection: &Connection, sql: &str) -> Result<TableQueryResponse
     })
 }
 
-fn quote_identifier(value: &str) -> String {
+pub(crate) fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 

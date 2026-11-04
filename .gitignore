@@ -6,6 +6,7 @@
 # JavaScript tooling (runtime assets are vendored; dependency installs stay local)
 /node_modules
 /dist/
+__pycache__/
 
 # Local runtime and editor state
 /.codex-thread-studio/

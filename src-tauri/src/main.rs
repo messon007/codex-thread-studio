@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
+use std::future::IntoFuture;
 use std::io::Write;
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
@@ -18,17 +19,21 @@ use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(feature = "desktop")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 mod backend_config;
 mod backend_runtime;
+#[allow(dead_code)]
+mod browser_policy;
 mod browser_runtime;
 mod codex_app_server;
-#[cfg(all(target_os = "linux", debug_assertions))]
+mod continuation_text;
+#[cfg(all(feature = "desktop", target_os = "linux", debug_assertions))]
 mod dev_capture;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "desktop", target_os = "linux"))]
 mod embedded_browser;
-#[cfg(windows)]
+#[cfg(all(feature = "desktop", windows))]
 mod embedded_browser_windows;
 mod environment_config;
 mod epub_reader;
@@ -37,14 +42,47 @@ mod gateway_security;
 mod git_review;
 mod item_location;
 mod large_markdown;
+mod native_appearance;
+mod native_backends;
+mod native_browser_settings;
+mod native_browser_tabs;
+mod native_conversation;
+mod native_epub;
+mod native_files;
+mod native_images;
+mod native_language;
+mod native_message_flow;
+mod native_notifications;
+mod native_pdf;
+mod native_preferences;
+mod native_router;
+mod native_router_backend;
+mod native_router_map;
+mod native_router_plan;
+mod native_session_info;
+mod native_session_visibility;
+mod native_shared_directories;
+mod native_tables;
+mod native_translation_settings;
+mod native_utility_events;
+mod native_utility_sessions;
+mod notification_ids;
 mod ollama;
+mod opencode_permissions;
 mod opencode_server;
+mod pdf_navigation;
+mod preferences_document;
 mod router_history;
+mod session_directory_policy;
 mod session_map;
+mod session_map_protocol;
+mod session_map_types;
 mod session_state;
 mod speech;
 mod table_query;
+mod tabular;
 mod terminal_runtime;
+mod translation_text;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
 mod workspace_watch;
@@ -77,11 +115,18 @@ const DEFAULT_REMOTE_STUDIO_ADDR: &str = "127.0.0.1:38080";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ServeOptions {
     listen: SocketAddr,
+    parent_pipe: bool,
 }
 
 #[derive(Clone)]
 struct GatewayState {
+    utility_sessions: native_utility_sessions::Store,
+    router_runtime: Arc<native_router::Runtime>,
     markdown_readers: large_markdown::Readers,
+    tables: native_tables::Tables,
+    images: native_images::Images,
+    pdfs: native_pdf::Pdfs,
+    epubs: native_epub::Books,
     codex: CodexAppServer,
     codex_backends: Arc<BTreeMap<String, CodexBackendInstance>>,
     backend_descriptors: Arc<Vec<BackendDescriptor>>,
@@ -95,6 +140,7 @@ struct GatewayState {
     studio_lock: Arc<Mutex<()>>,
     session_maps_path: Arc<PathBuf>,
     session_maps_lock: Arc<Mutex<()>>,
+    session_maps_workers: Arc<tokio::sync::Semaphore>,
     epub_reading_path: Arc<PathBuf>,
     epub_reading_lock: Arc<Mutex<()>>,
     environment_path: Arc<PathBuf>,
@@ -429,6 +475,8 @@ struct FavoriteQuery {
 struct AnnotationStateRequest {
     session_key: String,
     #[serde(default)]
+    expected_revision: Option<String>,
+    #[serde(default)]
     drafts: Vec<AnnotationDraft>,
     #[serde(default)]
     additional: String,
@@ -557,6 +605,13 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
+    if let Some(result) = native_pdf::worker() {
+        if let Err(error) = result {
+            eprintln!("PDF worker failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Some(result) = marknoria::server::index_worker() {
         if let Err(error) = result {
             eprintln!("Markdown indexing failed: {error}");
@@ -579,6 +634,17 @@ fn main() {
             std::process::exit(2);
         }
     }
+    #[cfg(feature = "desktop")]
+    run_desktop(arguments);
+    #[cfg(not(feature = "desktop"))]
+    {
+        eprintln!("This gateway-only build requires --serve; launch codex-thread-studio-gnome for the native GNOME interface.");
+        std::process::exit(2);
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn run_desktop(arguments: Vec<OsString>) {
     #[cfg(all(target_os = "linux", debug_assertions))]
     if dev_capture::requested(&arguments) {
         match dev_capture::run_cli(&arguments) {
@@ -635,12 +701,13 @@ fn main() {
     let embedded_browser = embedded_browser_windows::is_supported();
     #[cfg(not(any(target_os = "linux", windows)))]
     let embedded_browser = false;
-    let (state, startup_preferences, _profile_lock) =
+    let (state, _startup_preferences, _profile_lock) =
         initialize_gateway(security, embedded_browser, true).unwrap_or_else(|error| {
             eprintln!("Codex Thread Studio could not open its profile: {error}");
             std::process::exit(2);
         });
-    let embedded_browser_preferences = startup_preferences.browser.clone();
+    #[cfg(any(target_os = "linux", windows))]
+    let embedded_browser_preferences = _startup_preferences.browser.clone();
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -708,10 +775,15 @@ fn parse_serve_options(arguments: &[OsString]) -> Result<Option<ServeOptions>, S
     let mut listen = DEFAULT_REMOTE_STUDIO_ADDR
         .parse::<SocketAddr>()
         .expect("the default remote Studio address is valid");
+    let mut parent_pipe = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].to_str() {
             Some("--serve") => index += 1,
+            Some("--parent-pipe") => {
+                parent_pipe = true;
+                index += 1;
+            }
             Some("--listen") => {
                 let value = arguments
                     .get(index + 1)
@@ -734,7 +806,10 @@ fn parse_serve_options(arguments: &[OsString]) -> Result<Option<ServeOptions>, S
             "--listen must use a loopback address; connect through an SSH tunnel".to_string(),
         );
     }
-    Ok(Some(ServeOptions { listen }))
+    Ok(Some(ServeOptions {
+        listen,
+        parent_pipe,
+    }))
 }
 
 fn run_remote_server(options: ServeOptions) -> Result<(), String> {
@@ -763,9 +838,27 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
     runtime.block_on(async move {
         let listener = tokio::net::TcpListener::from_std(listener)
             .map_err(|error| format!("unable to start the server listener: {error}"))?;
-        axum::serve(listener, router)
-            .await
-            .map_err(|error| format!("server stopped: {error}"))
+        let server = axum::serve(listener, router).into_future();
+        if options.parent_pipe {
+            use tokio::io::AsyncReadExt;
+            let parent_closed = async {
+                let mut stdin = tokio::io::stdin();
+                let mut bytes = [0; 64];
+                while let Ok(count) = stdin.read(&mut bytes).await {
+                    if count == 0 {
+                        break;
+                    }
+                }
+            };
+            tokio::select! {
+                result = server => result.map_err(|error| format!("server stopped: {error}")),
+                _ = parent_closed => Ok(()),
+            }
+        } else {
+            server
+                .await
+                .map_err(|error| format!("server stopped: {error}"))
+        }
     })
 }
 
@@ -782,13 +875,8 @@ fn initialize_gateway(
     let epub_reading_path = preferences_path.with_file_name("epub-reading.sqlite3");
     let environment_path = preferences_path.with_file_name("environments.json");
     let backend_config_path = backend_config::configuration_path(&preferences_path);
-    let startup_preferences = match load_preferences(&preferences_path) {
-        Ok(preferences) => {
-            if let Err(error) = save_preferences(&preferences_path, &preferences) {
-                eprintln!("Codex Thread Studio could not write default settings: {error}");
-            }
-            preferences
-        }
+    let startup_preferences = match load_startup_preferences(&preferences_path) {
+        Ok(preferences) => preferences,
         Err(error) => {
             eprintln!("Codex Thread Studio could not load startup settings: {error}");
             StudioPreferences::default()
@@ -821,6 +909,12 @@ fn initialize_gateway(
     }
     let state = GatewayState {
         markdown_readers: large_markdown::Readers::default(),
+        tables: native_tables::Tables::default(),
+        images: native_images::Images::default(),
+        pdfs: native_pdf::Pdfs::default(),
+        epubs: native_epub::Books::default(),
+        utility_sessions: native_utility_sessions::Store::default(),
+        router_runtime: Arc::new(native_router::Runtime::default()),
         codex,
         codex_backends: Arc::new(codex_backends),
         backend_descriptors: Arc::new(backend_descriptors),
@@ -836,6 +930,7 @@ fn initialize_gateway(
         studio_lock: Arc::new(Mutex::new(())),
         session_maps_path: Arc::new(session_maps_path),
         session_maps_lock: Arc::new(Mutex::new(())),
+        session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
         epub_reading_path: Arc::new(epub_reading_path),
         epub_reading_lock: Arc::new(Mutex::new(())),
         environment_path: Arc::new(environment_path),
@@ -871,8 +966,20 @@ fn lock_studio_profile(preferences_path: &std::path::Path) -> Result<fs::File, S
 
 fn gateway_router(state: GatewayState) -> Router {
     let protected = Router::new()
+        .route("/studio/native/info", get(native_gateway_info))
+        .route(
+            "/studio/native/conversation/read",
+            axum::routing::post(native_conversation::read),
+        )
         .route("/studio/codex", get(codex_info))
         .route("/studio/backends", get(backend_registry_info))
+        .route(
+            "/studio/native/backend-config",
+            get(native_backends::get)
+                .put(native_backends::put)
+                .post(native_backends::validate)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
         .route("/studio/backend/{backend}", get(codex_instance_info))
         .route("/studio/opencode", get(opencode_info))
         .route("/studio/browser", get(browser_info))
@@ -882,12 +989,144 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/studio/session-state", get(get_session_state))
         .route(
+            "/studio/native/preferences",
+            get(native_preferences::get).patch(native_preferences::patch),
+        )
+        .route(
+            "/studio/native/appearance",
+            get(native_appearance::get)
+                .patch(native_appearance::patch)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/studio/native/language",
+            get(native_language::get)
+                .patch(native_language::patch)
+                .layer(DefaultBodyLimit::max(8 * 1024)),
+        )
+        .route(
+            "/studio/native/browser-settings",
+            get(native_browser_settings::get)
+                .patch(native_browser_settings::patch)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/studio/native/browser-tabs",
+            get(native_browser_tabs::get)
+                .put(native_browser_tabs::put)
+                .layer(DefaultBodyLimit::max(128 * 1024)),
+        )
+        .route(
+            "/studio/native/translation-settings",
+            get(native_translation_settings::get)
+                .patch(native_translation_settings::patch)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/studio/native/message-flow",
+            get(native_message_flow::get)
+                .patch(native_message_flow::patch)
+                .layer(DefaultBodyLimit::max(8 * 1024)),
+        )
+        .route(
+            "/studio/native/utility-session",
+            axum::routing::post(native_utility_sessions::post)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/studio/native/opencode-events",
+            get(native_utility_events::get),
+        )
+        .route(
+            "/studio/native/shared-directories",
+            get(native_shared_directories::get)
+                .patch(native_shared_directories::patch)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/studio/native/session-visibility",
+            get(native_session_visibility::get)
+                .patch(native_session_visibility::patch)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/studio/native/notifications",
+            get(native_notifications::get)
+                .patch(native_notifications::patch)
+                .layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/session-info",
+            get(native_session_info::get)
+                .patch(native_session_info::patch)
+                .layer(DefaultBodyLimit::max(128 * 1024)),
+        )
+        .route(
+            "/studio/native/router",
+            get(native_router::get).patch(native_router::patch),
+        )
+        .route(
+            "/studio/native/router/responsibility",
+            axum::routing::patch(native_router::responsibility),
+        )
+        .route(
+            "/studio/native/router/controller",
+            axum::routing::post(native_router::post_controller),
+        )
+        .route(
+            "/studio/native/router/controller/recovery",
+            axum::routing::post(native_router::inspect_controller),
+        )
+        .route(
+            "/studio/native/router/controller/adopt",
+            axum::routing::post(native_router::adopt_controller),
+        )
+        .route(
+            "/studio/native/router/targets",
+            get(native_router::get_targets),
+        )
+        .route(
+            "/studio/native/router/jobs",
+            get(native_router::get_jobs)
+                .post(native_router::post_job)
+                .layer(DefaultBodyLimit::max(native_router::image_input::MAX_BODY)),
+        )
+        .route(
+            "/studio/native/router/seen",
+            axum::routing::post(native_router::acknowledge_jobs),
+        )
+        .route(
+            "/studio/native/router/stop",
+            axum::routing::post(native_router::stop_job),
+        )
+        .route(
+            "/studio/native/router/follow",
+            axum::routing::post(native_router::post_follow).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/router/prepare-supervised",
+            axum::routing::post(native_router::post_prepare)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/studio/native/router/supervision-scope",
+            axum::routing::post(native_router::post_scope).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
             "/studio/router-history",
             get(get_router_history).put(put_router_history),
         )
         .route(
+            "/studio/native/router/browser-history",
+            get(native_router::get_archive),
+        )
+        .route(
             "/studio/session-state/annotations",
-            axum::routing::put(put_annotation_state),
+            get(get_annotation_state).put(put_annotation_state),
+        )
+        .route(
+            "/studio/session-state/annotations/consume",
+            axum::routing::post(consume_annotation_state),
         )
         .route(
             "/studio/session-state/opening-message",
@@ -895,15 +1134,15 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route(
             "/studio/session-state/pin",
-            axum::routing::put(put_session_pin),
+            get(get_session_pins).put(put_session_pin),
         )
         .route(
             "/studio/session-state/turn-options",
-            axum::routing::put(put_turn_options_state),
+            get(get_turn_options_state).put(put_turn_options_state),
         )
         .route(
             "/studio/session-state/message-queue",
-            axum::routing::put(put_message_queue_state),
+            get(get_message_queue_state).put(put_message_queue_state),
         )
         .route(
             "/studio/session-state/session",
@@ -934,8 +1173,24 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(list_workspace_directory),
         )
         .route(
+            "/studio/native/files",
+            axum::routing::post(native_files::handle).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/files/roots",
+            axum::routing::post(native_files::list_roots).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/files/location",
+            axum::routing::post(native_files::item_location)
+                .layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
             "/studio/workspace/save",
-            axum::routing::post(save_workspace_file),
+            axum::routing::post(save_workspace_file)
+                // JSON escaping can expand valid text bytes sixfold. The
+                // decoded file still has its existing strict 5 MiB budget.
+                .layer(DefaultBodyLimit::max(MAX_EDIT_FILE_BYTES * 6 + 64 * 1024)),
         )
         .route("/studio/git/status", axum::routing::post(git_status))
         .route("/studio/git/history", axum::routing::post(git_history))
@@ -949,6 +1204,30 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
+            "/studio/native/markdown/open",
+            axum::routing::post(large_markdown::native_open),
+        )
+        .route(
+            "/studio/native/markdown/open-readonly",
+            axum::routing::post(large_markdown::native_open_readonly),
+        )
+        .route(
+            "/studio/native/compare",
+            axum::routing::post(large_markdown::native_compare),
+        )
+        .route(
+            "/studio/native/compare/{id}/{change}",
+            get(large_markdown::native_compare_change),
+        )
+        .route(
+            "/studio/native/markdown/{id}/locate-quote",
+            axum::routing::post(large_markdown::native_locate_quote),
+        )
+        .route(
+            "/studio/native/markdown/{id}/{operation}",
+            get(large_markdown::native_data).post(large_markdown::native_data),
+        )
+        .route(
             "/studio/markdown/close",
             axum::routing::post(large_markdown::close),
         )
@@ -957,6 +1236,31 @@ fn gateway_router(state: GatewayState) -> Router {
             axum::routing::post(query_table).layer(DefaultBodyLimit::max(
                 table_query::MAX_TABLE_QUERY_BODY_BYTES,
             )),
+        )
+        .route(
+            "/studio/native/epub",
+            axum::routing::post(native_epub::handle).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/pdf",
+            axum::routing::post(native_pdf::handle).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/image/inline",
+            axum::routing::post(native_images::inline)
+                .layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+        )
+        .route(
+            "/studio/native/image",
+            axum::routing::post(native_images::handle).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/image/original",
+            axum::routing::post(native_images::original).layer(DefaultBodyLimit::max(32 * 1024)),
+        )
+        .route(
+            "/studio/native/tables",
+            axum::routing::post(native_tables::handle).layer(DefaultBodyLimit::max(512 * 1024)),
         )
         .route(
             "/studio/workspace/open-location",
@@ -1009,6 +1313,7 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/ws/codex/{backend}", get(codex_instance_ws))
         .route("/ws/terminal", get(terminal_ws))
         .route("/ws/workspace-files", get(workspace_files_ws))
+        .route("/ws/native-files", get(native_files_ws))
         .route("/opencode/{*path}", any(proxy_opencode))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1336,9 +1641,34 @@ async fn read_review_file(
         Ok(None) => {}
         Err((status, message)) => return json_error(status, &message),
     }
-    match load_review_file_with_shared(&request, &shared_directories) {
-        Ok(file) => json_response(StatusCode::OK, &file),
-        Err((status, message)) => json_error(status, &message),
+    run_workspace_file(
+        move || match load_review_file_with_shared(&request, &shared_directories) {
+            Ok(file) => json_response(StatusCode::OK, &file),
+            Err((status, message)) => json_error(status, &message),
+        },
+    )
+    .await
+}
+
+// Keep bounded text decoding, serialization and fsync off the async HTTP lanes.
+async fn run_workspace_file(
+    operation: impl FnOnce() -> Response<Body> + Send + 'static,
+) -> Response<Body> {
+    static WORKSPACE_FILES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let Ok(permit) = WORKSPACE_FILES.try_acquire() else {
+        return json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Workspace file workers are busy; try again",
+        );
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation()
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(_) => gateway_error("Workspace file task stopped"),
     }
 }
 
@@ -1634,9 +1964,13 @@ async fn list_workspace_directory(
             "the workspace demo does not list WSL directories yet",
         );
     }
-    match load_workspace_directory(&request) {
-        Ok(value) => json_response(StatusCode::OK, &value),
-        Err((status, message)) => json_error(status, &message),
+    match tokio::task::spawn_blocking(move || load_workspace_directory(&request)).await {
+        Ok(Ok(value)) => json_response(StatusCode::OK, &value),
+        Ok(Err((status, message))) => json_error(status, &message),
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Directory worker stopped",
+        ),
     }
 }
 
@@ -1651,7 +1985,7 @@ async fn save_workspace_file(
             "editing files in WSL workspaces is not available yet",
         );
     }
-    match persist_workspace_file(&request) {
+    run_workspace_file(move || match persist_workspace_file(&request) {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(WorkspaceSaveError::Conflict(actual_hash)) => {
             let payload = WorkspaceConflictResponse {
@@ -1664,7 +1998,8 @@ async fn save_workspace_file(
             json_response(StatusCode::CONFLICT, &payload)
         }
         Err(WorkspaceSaveError::Http(status, message)) => json_error(status, &message),
-    }
+    })
+    .await
 }
 
 async fn git_status(
@@ -2950,6 +3285,13 @@ async fn codex_info(State(state): State<GatewayState>) -> impl IntoResponse {
     codex_backend_info(&state.codex, state.codex.binary())
 }
 
+async fn native_gateway_info() -> Response<Body> {
+    json_response(
+        StatusCode::OK,
+        &json!({"appName":"Codex Thread Studio","appVersion":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS}),
+    )
+}
+
 async fn backend_registry_info(State(state): State<GatewayState>) -> Json<BackendRegistryInfo> {
     Json(BackendRegistryInfo {
         backends: state.backend_descriptors.as_ref().clone(),
@@ -3019,13 +3361,12 @@ async fn browser_info(State(state): State<GatewayState>) -> Json<BrowserInfo> {
 
 async fn proxy_opencode(
     State(state): State<GatewayState>,
-    AxumPath(path): AxumPath<String>,
     method: Method,
     headers: HeaderMap,
     uri: Uri,
     body: Body,
 ) -> Response<Body> {
-    state.opencode.proxy(path, method, headers, uri, body).await
+    state.opencode.proxy(method, headers, uri, body).await
 }
 
 async fn codex_app_server_ws(
@@ -3153,6 +3494,13 @@ async fn workspace_files_ws(
     ws.protocols([state.security.websocket_protocol()])
         .on_upgrade(workspace_watch::serve)
 }
+async fn native_files_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+) -> impl IntoResponse {
+    ws.protocols([state.security.websocket_protocol()])
+        .on_upgrade(move |socket| workspace_watch::serve_native(socket, state))
+}
 
 async fn terminal_ws(ws: WebSocketUpgrade, State(state): State<GatewayState>) -> impl IntoResponse {
     let protocol = state.security.websocket_protocol();
@@ -3169,11 +3517,11 @@ async fn get_environment_profile(
     State(state): State<GatewayState>,
     Query(query): Query<EnvironmentQuery>,
 ) -> Response<Body> {
-    let _guard = match state.environment_lock.lock() {
-        Ok(value) => value,
-        Err(_) => return gateway_error("environment lock is unavailable"),
-    };
-    match environment_config::read_public(&state.environment_path, &query.root) {
+    match run_environment_operation(state, move |path| {
+        environment_config::read_public(path, &query.root)
+    })
+    .await
+    {
         Ok(profile) => json_response(StatusCode::OK, &profile),
         Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
     }
@@ -3183,14 +3531,29 @@ async fn put_environment_profile(
     State(state): State<GatewayState>,
     Json(request): Json<environment_config::UpdateEnvironmentProfile>,
 ) -> Response<Body> {
-    let _guard = match state.environment_lock.lock() {
-        Ok(value) => value,
-        Err(_) => return gateway_error("environment lock is unavailable"),
-    };
-    match environment_config::update(&state.environment_path, request) {
+    match run_environment_operation(state, move |path| environment_config::update(path, request))
+        .await
+    {
         Ok(profile) => json_response(StatusCode::OK, &profile),
         Err(message) => json_error(StatusCode::BAD_REQUEST, &message),
     }
+}
+
+// Profile I/O, serialization and the shared lock must not block the async
+// workers serving conversation notifications, terminals and document requests.
+async fn run_environment_operation<T: Send + 'static>(
+    state: GatewayState,
+    operation: impl FnOnce(&std::path::Path) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = state
+            .environment_lock
+            .lock()
+            .map_err(|_| "environment lock is unavailable")?;
+        operation(&state.environment_path)
+    })
+    .await
+    .map_err(|error| format!("Environment task failed: {error}"))?
 }
 
 #[derive(Deserialize)]
@@ -3211,15 +3574,14 @@ async fn apply_environment_profile(
     State(state): State<GatewayState>,
     Json(request): Json<ApplyEnvironmentRequest>,
 ) -> Response<Body> {
-    let environment = {
-        let _guard = match state.environment_lock.lock() {
-            Ok(value) => value,
-            Err(_) => return gateway_error("environment lock is unavailable"),
-        };
-        match environment_config::app_server_environment(&state.environment_path, &request.root) {
-            Ok(value) => value,
-            Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
-        }
+    let root = request.root.clone();
+    let environment = match run_environment_operation(state.clone(), move |path| {
+        environment_config::app_server_environment(path, &root)
+    })
+    .await
+    {
+        Ok(value) => value,
+        Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
     let Some(instance) = state.codex_backends.get(&request.backend) else {
         return json_error(
@@ -3237,26 +3599,54 @@ async fn apply_environment_profile(
     if let Some(initial_turns_page) = request.initial_turns_page {
         resume_params["initialTurnsPage"] = initial_turns_page;
     }
+    let environment_configured = resume_params
+        .pointer("/config/shell_environment_policy/set")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|environment| !environment.is_empty());
+    if let Err(error) = state.router_runtime.note_environment(
+        &request.backend,
+        instance.server.current_generation(),
+        &request.thread_id,
+        true,
+    ) {
+        return json_error(StatusCode::BAD_REQUEST, &error);
+    }
     match instance
         .server
         .request("thread/resume", resume_params)
         .await
     {
-        Ok(result) if request.include_thread => json_response(StatusCode::OK, &result),
-        Ok(_) => json_response(StatusCode::OK, &json!({ "applied": true })),
+        Ok(result) => {
+            if let Err(error) = state.router_runtime.note_environment(
+                &request.backend,
+                instance.server.current_generation(),
+                &request.thread_id,
+                environment_configured,
+            ) {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, &error);
+            }
+            if request.include_thread {
+                json_response(StatusCode::OK, &result)
+            } else {
+                json_response(StatusCode::OK, &json!({"applied":true}))
+            }
+        }
         Err(message) => json_error(StatusCode::BAD_GATEWAY, &message),
     }
 }
 
 async fn get_preferences(State(state): State<GatewayState>) -> Response<Body> {
-    let _guard = match state.preferences_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("preferences lock is unavailable"),
-    };
-    match load_preferences(&state.preferences_path) {
-        Ok(preferences) => json_response(StatusCode::OK, &preferences),
-        Err(error) => gateway_error(&format!("failed to read Studio preferences: {error}")),
-    }
+    run_studio_database(move || {
+        let _guard = match state.preferences_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("preferences lock is unavailable"),
+        };
+        match load_preferences(&state.preferences_path) {
+            Ok(preferences) => json_response(StatusCode::OK, &preferences),
+            Err(error) => gateway_error(&format!("failed to read Studio preferences: {error}")),
+        }
+    })
+    .await
 }
 
 // SQLite (including its busy timeout and the shared database mutex) must not
@@ -3319,6 +3709,64 @@ async fn put_router_history(State(state): State<GatewayState>, body: String) -> 
     .await
 }
 
+async fn consume_annotation_state(
+    State(state): State<GatewayState>,
+    body: String,
+) -> Response<Body> {
+    run_studio_database(move || {
+        let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if !valid_router_session_key(&request.session_key) {
+            return json_error(StatusCode::BAD_REQUEST, "Invalid comment session");
+        }
+        let mut preferences = StudioPreferences::default();
+        preferences
+            .annotation_drafts
+            .insert(request.session_key.clone(), request.drafts.clone());
+        preferences
+            .annotation_additional
+            .insert(request.session_key.clone(), request.additional.clone());
+        if let Err(error) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &error);
+        }
+        let Ok(_guard) = state.studio_lock.lock() else {
+            return gateway_error("Studio database lock is unavailable");
+        };
+        match session_state::consume_annotations(
+            &state.studio_path,
+            &request.session_key,
+            &request.drafts,
+            &request.additional,
+        ) {
+            Ok(saved) => json_response(StatusCode::OK, &saved),
+            Err(error) => gateway_error(&error),
+        }
+    })
+    .await
+}
+
+async fn get_annotation_state(
+    State(state): State<GatewayState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response<Body> {
+    let key = query.get("sessionKey").cloned().unwrap_or_default();
+    if key.len() > 256 || !valid_router_session_key(&key) {
+        return json_error(StatusCode::BAD_REQUEST, "session state key is invalid");
+    }
+    run_studio_database(move || {
+        let Ok(_guard) = state.studio_lock.lock() else {
+            return gateway_error("Studio database lock is unavailable");
+        };
+        match session_state::annotations(&state.studio_path, &key) {
+            Ok(value) => json_response(StatusCode::OK, &value),
+            Err(error) => gateway_error(&error),
+        }
+    })
+    .await
+}
+
 async fn put_annotation_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
     run_studio_database(move || {
         let request = match parse_session_state_body::<AnnotationStateRequest>(&body) {
@@ -3347,6 +3795,25 @@ async fn put_annotation_state(State(state): State<GatewayState>, body: String) -
             Ok(guard) => guard,
             Err(_) => return gateway_error("Studio database lock is unavailable"),
         };
+        if let Some(revision) = request.expected_revision.as_deref() {
+            if revision.len() != 64 || !revision.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return json_error(StatusCode::BAD_REQUEST, "Invalid annotation revision");
+            }
+            return match session_state::replace_annotations_checked(
+                &state.studio_path,
+                &request.session_key,
+                &request.drafts,
+                &request.additional,
+                revision,
+            ) {
+                Ok(Some(snapshot)) => json_response(StatusCode::OK, &snapshot),
+                Ok(None) => json_error(
+                    StatusCode::CONFLICT,
+                    "Comments changed elsewhere. Reload before saving; your edits are retained.",
+                ),
+                Err(error) => gateway_error(&error),
+            };
+        }
         match session_state::replace_annotations(
             &state.studio_path,
             &request.session_key,
@@ -3454,6 +3921,19 @@ async fn put_session_pin(State(state): State<GatewayState>, body: String) -> Res
     .await
 }
 
+async fn get_session_pins(State(state): State<GatewayState>) -> Response<Body> {
+    run_studio_database(move || {
+        let Ok(_guard) = state.studio_lock.lock() else {
+            return gateway_error("Studio database lock is unavailable");
+        };
+        match session_state::load_pins(&state.studio_path) {
+            Ok(pins) => json_response(StatusCode::OK, &json!({"pinnedSessions":pins})),
+            Err(error) => gateway_error(&error),
+        }
+    })
+    .await
+}
+
 async fn put_turn_options_state(State(state): State<GatewayState>, body: String) -> Response<Body> {
     run_studio_database(move || {
         let request = match parse_session_state_body::<TurnOptionsStateRequest>(&body) {
@@ -3482,6 +3962,46 @@ async fn put_turn_options_state(State(state): State<GatewayState>, body: String)
         ) {
             Ok(()) => StatusCode::NO_CONTENT.into_response(),
             Err(error) => gateway_error(&format!("failed to save session turn options: {error}")),
+        }
+    })
+    .await
+}
+
+async fn get_turn_options_state(
+    State(state): State<GatewayState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response<Body> {
+    let key = query.get("sessionKey").cloned().unwrap_or_default();
+    if key.len() > 320 || !valid_router_session_key(&key) {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid session state key");
+    }
+    run_studio_database(move || {
+        let Ok(_guard) = state.studio_lock.lock() else {
+            return gateway_error("Studio database lock is unavailable");
+        };
+        match session_state::load_turn_options(&state.studio_path, &key) {
+            Ok(options) => json_response(StatusCode::OK, &options),
+            Err(error) => gateway_error(&error),
+        }
+    })
+    .await
+}
+
+async fn get_message_queue_state(
+    State(state): State<GatewayState>,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> Response<Body> {
+    let key = query.get("sessionKey").cloned().unwrap_or_default();
+    if key.len() > 320 || !valid_router_session_key(&key) {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid session state key");
+    }
+    run_studio_database(move || {
+        let Ok(_guard) = state.studio_lock.lock() else {
+            return gateway_error("Studio database lock is unavailable");
+        };
+        match session_state::load_message_queue(&state.studio_path, &key) {
+            Ok(messages) => json_response(StatusCode::OK, &messages),
+            Err(error) => gateway_error(&error),
         }
     })
     .await
@@ -3569,38 +4089,55 @@ fn configured_shared_document_directories(
 }
 
 async fn put_preferences(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    if body.len() > MAX_PREFERENCES_BODY {
-        return json_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "preferences payload is too large",
-        );
-    }
-    let preferences = match serde_json::from_str::<StudioPreferences>(&body) {
-        Ok(preferences) => preferences,
-        Err(error) => {
+    run_studio_database(move || {
+        if body.len() > MAX_PREFERENCES_BODY {
             return json_error(
-                StatusCode::BAD_REQUEST,
-                &format!("invalid preferences: {error}"),
-            )
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "preferences payload is too large",
+            );
         }
-    };
-    if let Err(message) = validate_preferences(&preferences) {
-        return json_error(StatusCode::BAD_REQUEST, &message);
-    }
-    let _guard = match state.preferences_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("preferences lock is unavailable"),
-    };
-    match save_preferences(&state.preferences_path, &preferences) {
-        Ok(()) => {
-            let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
-                return gateway_error("shared document directory lock is unavailable");
-            };
-            *shared_directories = preferences.shared_document_directories.clone();
-            json_response(StatusCode::OK, &preferences)
+        let preferences = match serde_json::from_str::<StudioPreferences>(&body) {
+            Ok(preferences) => preferences,
+            Err(error) => {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!("invalid preferences: {error}"),
+                )
+            }
+        };
+        if let Err(message) = validate_preferences(&preferences) {
+            return json_error(StatusCode::BAD_REQUEST, &message);
         }
-        Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
-    }
+        let _guard = match state.preferences_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("preferences lock is unavailable"),
+        };
+        let previous = match preferences_document::read(&state.preferences_path) {
+            Ok(value) => value,
+            Err((status, error)) => return json_error(status, &error),
+        };
+        let restore = previous
+            .get("browser")
+            .and_then(|v| v.get("restoreTabs"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if restore != preferences.browser.restore_tabs {
+            if let Err((status, error)) = native_browser_tabs::reset(&state.preferences_path) {
+                return json_error(status, &error);
+            }
+        }
+        match save_preferences(&state.preferences_path, &preferences) {
+            Ok(()) => {
+                let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
+                    return gateway_error("shared document directory lock is unavailable");
+                };
+                *shared_directories = preferences.shared_document_directories.clone();
+                json_response(StatusCode::OK, &preferences)
+            }
+            Err(error) => gateway_error(&format!("failed to save Studio preferences: {error}")),
+        }
+    })
+    .await
 }
 
 async fn client_log(body: String) -> StatusCode {
@@ -3733,37 +4270,70 @@ async fn export_favorites(State(state): State<GatewayState>) -> Response<Body> {
     .await
 }
 
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionMapRevision {
+    revision: Option<u64>,
+    map_id: Option<String>,
+}
+
+async fn run_session_map(
+    gate: Arc<tokio::sync::Semaphore>,
+    operation: impl FnOnce() -> Response<Body> + Send + 'static,
+) -> Response<Body> {
+    let permit = match gate.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Session Map workers are busy; reload and try again",
+            )
+        }
+    };
+    run_studio_database(move || {
+        let _permit = permit;
+        operation()
+    })
+    .await
+}
+
 async fn get_session_map(
     State(state): State<GatewayState>,
     AxumPath((backend, thread_id)): AxumPath<(String, String)>,
 ) -> Response<Body> {
-    let _guard = match state.session_maps_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("session map lock is unavailable"),
-    };
-    match session_map::find(&state.session_maps_path, &backend, &thread_id) {
-        Ok(Some(map)) => json_response(StatusCode::OK, &map),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_session_map(state.session_maps_workers.clone(), move || {
+        let _guard = match state.session_maps_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("session map lock is unavailable"),
+        };
+        match session_map::find(&state.session_maps_path, &backend, &thread_id) {
+            Ok(Some(map)) => json_response(StatusCode::OK, &map),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn create_session_map(State(state): State<GatewayState>, body: String) -> Response<Body> {
-    let request = match parse_map_body::<CreateMapRequest>(&body) {
-        Ok(request) => request,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.session_maps_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("session map lock is unavailable"),
-    };
-    match session_map::create(&state.session_maps_path, request) {
-        Ok(map) => json_response(StatusCode::CREATED, &map),
-        Err(error) if error.contains("already has a map") => {
-            json_error(StatusCode::CONFLICT, &error)
+    run_session_map(state.session_maps_workers.clone(), move || {
+        let request = match parse_map_body::<CreateMapRequest>(&body) {
+            Ok(request) => request,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.session_maps_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("session map lock is unavailable"),
+        };
+        match session_map::create(&state.session_maps_path, request) {
+            Ok(map) => json_response(StatusCode::CREATED, &map),
+            Err(error) if error.contains("already has a map") => {
+                json_error(StatusCode::CONFLICT, &error)
+            }
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
         }
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    })
+    .await
 }
 
 async fn apply_session_map_operations(
@@ -3771,53 +4341,100 @@ async fn apply_session_map_operations(
     AxumPath((backend, thread_id)): AxumPath<(String, String)>,
     body: String,
 ) -> Response<Body> {
-    let request = match parse_map_body::<ApplyOperationsRequest>(&body) {
-        Ok(request) => request,
-        Err((status, message)) => return json_error(status, &message),
-    };
-    let _guard = match state.session_maps_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("session map lock is unavailable"),
-    };
-    match session_map::apply_operations(&state.session_maps_path, &backend, &thread_id, request) {
-        Ok(Some(map)) => json_response(StatusCode::OK, &map),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
-        Err(error) if error.contains("revision conflict") => {
-            json_error(StatusCode::CONFLICT, &error)
+    run_session_map(state.session_maps_workers.clone(), move || {
+        let request = match parse_map_body::<ApplyOperationsRequest>(&body) {
+            Ok(request) => request,
+            Err((status, message)) => return json_error(status, &message),
+        };
+        let _guard = match state.session_maps_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("session map lock is unavailable"),
+        };
+        match session_map::apply_operations(&state.session_maps_path, &backend, &thread_id, request)
+        {
+            Ok(Some(map)) => json_response(StatusCode::OK, &map),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+            Err(error)
+                if error.contains("revision conflict") || error.contains("identity conflict") =>
+            {
+                json_error(StatusCode::CONFLICT, &error)
+            }
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
         }
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    })
+    .await
 }
 
 async fn undo_session_map(
     State(state): State<GatewayState>,
     AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+    Query(revision): Query<SessionMapRevision>,
 ) -> Response<Body> {
-    let _guard = match state.session_maps_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("session map lock is unavailable"),
-    };
-    match session_map::undo(&state.session_maps_path, &backend, &thread_id) {
-        Ok(Some(map)) => json_response(StatusCode::OK, &map),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
-        Err(error) if error.contains("no map change") => json_error(StatusCode::CONFLICT, &error),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_session_map(state.session_maps_workers.clone(), move || {
+        let _guard = match state.session_maps_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("session map lock is unavailable"),
+        };
+        let result = if revision.revision.is_some() || revision.map_id.is_some() {
+            session_map::undo_at_version(
+                &state.session_maps_path,
+                &backend,
+                &thread_id,
+                revision.revision,
+                revision.map_id.as_deref(),
+            )
+        } else {
+            session_map::undo(&state.session_maps_path, &backend, &thread_id)
+        };
+        match result {
+            Ok(Some(map)) => json_response(StatusCode::OK, &map),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+            Err(error)
+                if error.contains("no map change")
+                    || error.contains("revision conflict")
+                    || error.contains("identity conflict") =>
+            {
+                json_error(StatusCode::CONFLICT, &error)
+            }
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 async fn delete_session_map(
     State(state): State<GatewayState>,
     AxumPath((backend, thread_id)): AxumPath<(String, String)>,
+    Query(revision): Query<SessionMapRevision>,
 ) -> Response<Body> {
-    let _guard = match state.session_maps_lock.lock() {
-        Ok(guard) => guard,
-        Err(_) => return gateway_error("session map lock is unavailable"),
-    };
-    match session_map::remove(&state.session_maps_path, &backend, &thread_id) {
-        Ok(Some(map)) => json_response(StatusCode::OK, &map),
-        Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
-    }
+    run_session_map(state.session_maps_workers.clone(), move || {
+        let _guard = match state.session_maps_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => return gateway_error("session map lock is unavailable"),
+        };
+        let result = if revision.revision.is_some() || revision.map_id.is_some() {
+            session_map::remove_at_version(
+                &state.session_maps_path,
+                &backend,
+                &thread_id,
+                revision.revision,
+                revision.map_id.as_deref(),
+            )
+        } else {
+            session_map::remove(&state.session_maps_path, &backend, &thread_id)
+        };
+        match result {
+            Ok(Some(map)) => json_response(StatusCode::OK, &map),
+            Ok(None) => json_error(StatusCode::NOT_FOUND, "session map not found"),
+            Err(error)
+                if error.contains("revision conflict") || error.contains("identity conflict") =>
+            {
+                json_error(StatusCode::CONFLICT, &error)
+            }
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        }
+    })
+    .await
 }
 
 fn parse_map_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, (StatusCode, String)> {
@@ -3877,6 +4494,18 @@ fn load_preferences(path: &std::path::Path) -> Result<StudioPreferences, String>
         Ok(data) => serde_json::from_slice(&data).map_err(|error| error.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(StudioPreferences::default())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn load_startup_preferences(path: &std::path::Path) -> Result<StudioPreferences, String> {
+    match fs::read(path) {
+        Ok(data) => serde_json::from_slice(&data).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let preferences = StudioPreferences::default();
+            save_preferences(path, &preferences)?;
+            Ok(preferences)
         }
         Err(error) => Err(error.to_string()),
     }
@@ -4604,7 +5233,7 @@ mod tests {
                 .find("lock_studio_profile(&preferences_path)")
                 .unwrap()
                 < initializer
-                    .find("load_preferences(&preferences_path)")
+                    .find("load_startup_preferences(&preferences_path)")
                     .unwrap()
         );
     }
@@ -4615,6 +5244,7 @@ mod tests {
             parse_serve_options(&[OsString::from("--serve")]),
             Ok(Some(ServeOptions {
                 listen: "127.0.0.1:38080".parse().expect("test address"),
+                parent_pipe: false,
             }))
         );
         assert_eq!(
@@ -4625,8 +5255,24 @@ mod tests {
             ]),
             Ok(Some(ServeOptions {
                 listen: "[::1]:45200".parse().expect("test address"),
+                parent_pipe: false,
             }))
         );
+    }
+
+    #[test]
+    fn owned_gateway_supports_an_ephemeral_loopback_port() {
+        let options = parse_serve_options(&[
+            OsString::from("--serve"),
+            OsString::from("--parent-pipe"),
+            OsString::from("--listen"),
+            OsString::from("127.0.0.1:0"),
+        ])
+        .expect("native gateway options")
+        .expect("server mode");
+        assert!(options.parent_pipe);
+        assert!(options.listen.ip().is_loopback());
+        assert_eq!(options.listen.port(), 0);
     }
 
     #[test]
@@ -4686,6 +5332,12 @@ mod tests {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         GatewayState {
             markdown_readers: large_markdown::Readers::default(),
+            tables: native_tables::Tables::default(),
+            images: native_images::Images::default(),
+            pdfs: native_pdf::Pdfs::default(),
+            epubs: native_epub::Books::default(),
+            utility_sessions: native_utility_sessions::Store::default(),
+            router_runtime: Arc::new(native_router::Runtime::default()),
             codex: CodexAppServer::new(
                 "codex".to_string(),
                 BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -4711,6 +5363,7 @@ mod tests {
                 "codex-thread-studio-security-maps-{suffix}.sqlite3"
             ))),
             session_maps_lock: Arc::new(Mutex::new(())),
+            session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
             epub_reading_path: Arc::new(env::temp_dir().join(format!(
                 "codex-thread-studio-security-epub-{suffix}.sqlite3"
             ))),
@@ -4790,6 +5443,19 @@ mod tests {
 
             for path in [
                 "/studio/preferences",
+                "/studio/native/router",
+                "/studio/native/router/responsibility",
+                "/studio/native/router/controller",
+                "/studio/native/router/controller/recovery",
+                "/studio/native/router/controller/adopt",
+                "/studio/native/router/jobs",
+                "/studio/native/router/targets",
+                "/studio/native/router/stop",
+                "/studio/native/router/follow",
+                "/studio/native/router/prepare-supervised",
+                "/studio/native/router/supervision-scope",
+                "/studio/native/router/seen",
+                "/studio/native/router/browser-history",
                 "/studio/speech",
                 "/studio/session-state",
                 "/studio/favorites",
@@ -4825,7 +5491,12 @@ mod tests {
                 .expect("authorized response");
             assert_eq!(authorized.status(), StatusCode::OK);
 
-            for path in ["/ws/codex", "/ws/codex-lifecycle", "/ws/workspace-files"] {
+            for path in [
+                "/ws/codex",
+                "/ws/codex-lifecycle",
+                "/ws/workspace-files",
+                "/ws/native-files",
+            ] {
                 let websocket = router
                     .clone()
                     .oneshot(
@@ -4842,6 +5513,154 @@ mod tests {
                 assert_eq!(websocket.status(), StatusCode::FORBIDDEN, "{path}");
             }
         });
+    }
+
+    #[tokio::test]
+    async fn native_files_watch_rechecks_shared_access_before_emitting_changes() {
+        use tokio_tungstenite::{
+            connect_async,
+            tungstenite::{client::IntoClientRequest, Message as ClientMessage},
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let shared = temp.path().join("shared");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&shared).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("http://{address}");
+        let security = GatewaySecurity::for_tests(&origin, "0123456789abcdef0123456789abcdef");
+        let protocol = security.websocket_protocol();
+        let state = secured_test_gateway(security);
+        let access = state.shared_document_directories.clone();
+        *access.lock().unwrap() = vec![shared.to_string_lossy().into()];
+        let server = tokio::spawn(axum::serve(listener, gateway_router(state)).into_future());
+        for revoked in [false, true] {
+            let mut request = format!("ws://{address}/ws/native-files")
+                .into_client_request()
+                .unwrap();
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
+            request
+                .headers_mut()
+                .insert("sec-websocket-protocol", protocol.parse().unwrap());
+            let (mut socket, _) = connect_async(request).await.unwrap();
+            socket
+                .send(ClientMessage::text(
+                    json!({"root":project,"paths":[shared]}).to_string(),
+                ))
+                .await
+                .unwrap();
+            let ready = tokio::time::timeout(std::time::Duration::from_secs(8), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(ready.to_text().unwrap()).unwrap()
+                    ["type"],
+                "ready"
+            );
+            if revoked {
+                access.lock().unwrap().clear();
+            }
+            let path = shared.join(if revoked {
+                "after-revocation.md"
+            } else {
+                "before-revocation.md"
+            });
+            tokio::task::spawn_blocking(move || fs::write(path, "# Private fixture\n"))
+                .await
+                .unwrap()
+                .unwrap();
+            let event = tokio::time::timeout(std::time::Duration::from_secs(8), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let event: serde_json::Value = serde_json::from_str(event.to_text().unwrap()).unwrap();
+            assert_eq!(event["type"], if revoked { "error" } else { "changed" });
+            if !revoked {
+                assert_eq!(event["paths"], json!([shared]));
+                socket.close(None).await.unwrap();
+            }
+            // Closing or revoking releases the server's OS watcher before EOF.
+            let closed = tokio::time::timeout(std::time::Duration::from_secs(8), socket.next())
+                .await
+                .unwrap();
+            assert!(matches!(
+                closed,
+                None | Some(Err(_)) | Some(Ok(ClientMessage::Close(_)))
+            ));
+        }
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[test]
+    fn startup_preserves_existing_preference_bytes_and_creates_only_missing_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        load_startup_preferences(&path).unwrap();
+        assert!(path.exists());
+        let original = r#"{ "queueDepth": 2, "futureSetting": true, "router": {"futureRouter": 42, "controllers": {}} }"#;
+        fs::write(&path, original).unwrap();
+        assert_eq!(
+            load_startup_preferences(&path).unwrap().queue_depth,
+            Some(2)
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        fs::write(&path, "invalid").unwrap();
+        assert!(load_startup_preferences(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "invalid");
+    }
+
+    #[tokio::test]
+    async fn native_router_metadata_failure_does_not_commit_a_failed_settings_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = secured_test_gateway(GatewaySecurity::disabled_for_tests());
+        state.preferences_path = Arc::new(directory.path().join("settings.json"));
+        state.studio_path = Arc::new(directory.path().join("studio.sqlite3"));
+        fs::write(
+            &*state.preferences_path,
+            serde_json::to_vec(&json!({"queueDepth":3,"router":{"controllerBackend":"codex","controllers":{"codex":"existing","opencode":"existing-opencode"}}}))
+                .unwrap(),
+        )
+        .unwrap();
+        session_state::initialize(&state.studio_path).unwrap();
+        let router = gateway_router(state.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/studio/native/router")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let database = rusqlite::Connection::open(&*state.studio_path).unwrap();
+        database
+            .execute(
+                "INSERT INTO session_opening_messages VALUES ('codex:broken','not-json')",
+                [],
+            )
+            .unwrap();
+        drop(database);
+        let response=router.oneshot(Request::builder().method(Method::PATCH).uri("/studio/native/router").header(header::CONTENT_TYPE,"application/json").body(Body::from(serde_json::to_vec(&json!({"expectedRevision":snapshot["revision"],"controllerBackend":"opencode","fallbacks":[]})).unwrap())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let current = load_preferences(&state.preferences_path).unwrap();
+        assert_eq!(current.queue_depth, Some(3));
+        assert_eq!(
+            current.router.unwrap().controller_backend.as_deref(),
+            Some("codex")
+        );
     }
 
     #[test]
@@ -5086,6 +5905,12 @@ mod tests {
         runtime.block_on(async {
             let state = GatewayState {
                 markdown_readers: large_markdown::Readers::default(),
+                tables: native_tables::Tables::default(),
+                images: native_images::Images::default(),
+                pdfs: native_pdf::Pdfs::default(),
+                epubs: native_epub::Books::default(),
+                utility_sessions: native_utility_sessions::Store::default(),
+                router_runtime: Arc::new(native_router::Runtime::default()),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5111,6 +5936,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-route-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
                 epub_reading_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-route-epub-test.sqlite3"),
                 ),
@@ -5342,6 +6168,12 @@ mod tests {
         runtime.block_on(async {
             let state = GatewayState {
                 markdown_readers: large_markdown::Readers::default(),
+                tables: native_tables::Tables::default(),
+                images: native_images::Images::default(),
+                pdfs: native_pdf::Pdfs::default(),
+                epubs: native_epub::Books::default(),
+                utility_sessions: native_utility_sessions::Store::default(),
+                router_runtime: Arc::new(native_router::Runtime::default()),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5367,6 +6199,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-version-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
                 epub_reading_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-version-epub-test.sqlite3"),
                 ),
@@ -5412,6 +6245,12 @@ mod tests {
             let maps_path = env::temp_dir().join(unique);
             let state = GatewayState {
                 markdown_readers: large_markdown::Readers::default(),
+                tables: native_tables::Tables::default(),
+                images: native_images::Images::default(),
+                pdfs: native_pdf::Pdfs::default(),
+                epubs: native_epub::Books::default(),
+                utility_sessions: native_utility_sessions::Store::default(),
+                router_runtime: Arc::new(native_router::Runtime::default()),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5435,6 +6274,7 @@ mod tests {
                 studio_lock: Arc::new(Mutex::new(())),
                 session_maps_path: Arc::new(maps_path.clone()),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
                 epub_reading_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-map-api-epub-test.sqlite3"),
                 ),
@@ -5527,10 +6367,129 @@ mod tests {
             assert_eq!(updated["revision"], 2);
             assert_eq!(updated["items"][0]["id"], "topic-1");
 
+            for (method, suffix, expected) in [
+                (Method::POST, "/undo?revision=1", StatusCode::CONFLICT),
+                (Method::DELETE, "?revision=1", StatusCode::CONFLICT),
+                (
+                    Method::POST,
+                    "/undo?revision=2&mapId=replaced",
+                    StatusCode::CONFLICT,
+                ),
+                (
+                    Method::DELETE,
+                    "?revision=2&mapId=replaced",
+                    StatusCode::CONFLICT,
+                ),
+                (Method::GET, "", StatusCode::OK),
+                (Method::POST, "/undo?revision=2", StatusCode::OK),
+                // The existing browser client still omits revision on delete.
+                (Method::DELETE, "", StatusCode::OK),
+                (Method::GET, "", StatusCode::NOT_FOUND),
+            ] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri(format!("/studio/session-map/codex/thread-optional{suffix}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected, "{method} {suffix}");
+                if method == Method::GET && expected == StatusCode::OK {
+                    let body = axum::body::to_bytes(response.into_body(), MAX_MAP_BODY_BYTES)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                        updated
+                    );
+                }
+            }
+
             for candidate in [
                 maps_path.clone(),
                 maps_path.with_extension("sqlite3-wal"),
                 maps_path.with_extension("sqlite3-shm"),
+            ] {
+                fs::remove_file(candidate).ok();
+            }
+        });
+    }
+
+    #[test]
+    fn session_map_database_waits_do_not_block_the_request_runtime_and_admission_is_bounded() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let state = secured_test_gateway(GatewaySecurity::disabled_for_tests());
+            let path = state.session_maps_path.clone();
+            let lock = state.session_maps_lock.clone();
+            let (held_tx, held_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let holder = std::thread::spawn(move || {
+                let _guard = lock.lock().unwrap();
+                held_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .is_ok()
+            });
+            held_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+            let gate = state.session_maps_workers.clone();
+            let router = gateway_router(state);
+            let mut requests = Vec::new();
+            for _ in 0..8 {
+                let router = router.clone();
+                requests.push(tokio::spawn(async move {
+                    router
+                        .oneshot(
+                            Request::builder()
+                                .uri("/studio/session-map/codex/private-native-map")
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap()
+                }));
+                tokio::task::yield_now().await;
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while gate.available_permits() != 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let overflow = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/session-map/codex/private-native-map")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(overflow.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert!(requests.iter().all(|request| !request.is_finished()));
+            release_tx.send(()).unwrap();
+            for request in requests {
+                assert_eq!(request.await.unwrap().status(), StatusCode::NOT_FOUND);
+            }
+            assert!(
+                holder.join().unwrap(),
+                "The async runtime could not release the database lock"
+            );
+            assert_eq!(gate.available_permits(), 8);
+            for candidate in [
+                path.as_ref().clone(),
+                path.with_extension("sqlite3-wal"),
+                path.with_extension("sqlite3-shm"),
             ] {
                 fs::remove_file(candidate).ok();
             }
@@ -5552,6 +6511,12 @@ mod tests {
             let studio_path = env::temp_dir().join(unique);
             let state = GatewayState {
                 markdown_readers: large_markdown::Readers::default(),
+                tables: native_tables::Tables::default(),
+                images: native_images::Images::default(),
+                pdfs: native_pdf::Pdfs::default(),
+                epubs: native_epub::Books::default(),
+                utility_sessions: native_utility_sessions::Store::default(),
+                router_runtime: Arc::new(native_router::Runtime::default()),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
                     BackendRuntime::new(OsString::new(), WslSettings::default()),
@@ -5575,6 +6540,7 @@ mod tests {
                     env::temp_dir().join("codex-thread-studio-favorites-api-maps-test.sqlite3"),
                 ),
                 session_maps_lock: Arc::new(Mutex::new(())),
+                session_maps_workers: Arc::new(tokio::sync::Semaphore::new(8)),
                 epub_reading_path: Arc::new(
                     env::temp_dir().join("codex-thread-studio-favorites-api-epub-test.sqlite3"),
                 ),

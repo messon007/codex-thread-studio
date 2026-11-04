@@ -50,6 +50,8 @@ pub enum NetworkPolicy {
 pub struct UpdateEnvironmentProfile {
     pub root: String,
     #[serde(default)]
+    pub expected_revision: Option<String>,
+    #[serde(default)]
     pub variables: BTreeMap<String, String>,
     #[serde(default)]
     pub secrets: BTreeMap<String, String>,
@@ -94,6 +96,20 @@ pub fn update(
     validate_map(&request.cache_variables)?;
     let allowed_hosts = normalize_hosts(request.allowed_hosts)?;
     let mut store = load(path)?;
+    if let Some(expected) = request.expected_revision.as_deref() {
+        let current = store.profiles.get(&root).cloned();
+        let configured = current.is_some();
+        let current = to_public(
+            current.unwrap_or_else(|| EnvironmentProfile {
+                root: root.clone(),
+                ..Default::default()
+            }),
+            configured,
+        );
+        if current.revision != expected {
+            return Err("Environment profile changed elsewhere. Reload before saving.".into());
+        }
+    }
     let profile = store
         .profiles
         .entry(root.clone())
@@ -233,28 +249,89 @@ fn save(path: &Path, store: &Store) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let temporary = PathBuf::from(format!("{}.tmp", path.display()));
-    fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(store).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
-    }
-    #[cfg(windows)]
-    if path.exists() {
-        fs::remove_file(path).map_err(|error| error.to_string())?;
-    }
-    fs::rename(temporary, path).map_err(|error| error.to_string())
+    // NamedTempFile is private before secret bytes are written, and persist
+    // replaces atomically on all supported platforms without an absent-file gap.
+    use std::io::Write;
+    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))
+        .map_err(|error| error.to_string())?;
+    serde_json::to_writer_pretty(&mut temporary, store).map_err(|error| error.to_string())?;
+    temporary.flush().map_err(|error| error.to_string())?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    temporary.persist(path).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_revision_cannot_overwrite_secrets_or_variables() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("environments.json");
+        let root = directory.path().to_string_lossy().into_owned();
+        let initial = read_public(&path, &root).unwrap();
+        let saved = update(
+            &path,
+            UpdateEnvironmentProfile {
+                root: root.clone(),
+                expected_revision: Some(initial.revision.clone()),
+                variables: BTreeMap::from([("MULTILINE".into(), " 保留\n😀 ".into())]),
+                secrets: BTreeMap::from([("TOKEN".into(), "private-value".into())]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let before = fs::read(&path).unwrap();
+        let error = update(
+            &path,
+            UpdateEnvironmentProfile {
+                root: root.clone(),
+                expected_revision: Some(initial.revision),
+                remove_secrets: vec!["TOKEN".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("changed elsewhere"));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let preserved = update(
+            &path,
+            UpdateEnvironmentProfile {
+                root: root.clone(),
+                expected_revision: Some(saved.revision),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(preserved.secret_names, vec!["TOKEN"]);
+        assert!(!serde_json::to_string(&preserved)
+            .unwrap()
+            .contains("private-value"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        update(
+            &path,
+            UpdateEnvironmentProfile {
+                root,
+                expected_revision: Some(preserved.revision),
+                remove_secrets: vec!["TOKEN".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("private-value"));
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn secrets_are_redacted_but_injected_into_process_environment() {

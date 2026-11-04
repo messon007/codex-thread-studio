@@ -1,0 +1,2025 @@
+--- a/src/math.rs
++++ b/src/math.rs
+@@ -41,6 +41,26 @@
+     /// HTML-label shell, so math backends may support a slightly different surface here.
+     fn render_sequence_html_label(&self, text: &str, config: &MermaidConfig) -> Option<String> {
+         self.render_html_label(text, config)
++    }
++
++    /// Renders with a role-owned default foreground. Explicit TeX colors retain precedence.
++    fn render_html_label_with_color(
++        &self,
++        text: &str,
++        config: &MermaidConfig,
++        _foreground: &str,
++    ) -> Option<String> {
++        self.render_html_label(text, config)
++    }
++
++    /// Sequence variant of the role-owned default foreground hook.
++    fn render_sequence_html_label_with_color(
++        &self,
++        text: &str,
++        config: &MermaidConfig,
++        _foreground: &str,
++    ) -> Option<String> {
++        self.render_sequence_html_label(text, config)
+     }
+ 
+     /// Optionally measures the rendered HTML label in pixels.
+@@ -154,34 +174,41 @@
+     config: &MermaidConfig,
+     math_renderer: &(dyn MathRenderer + Send + Sync),
+ ) -> Option<(f64, f64)> {
+-    let start = line.find("$$")?;
+-    let content_start = start + 2;
+-    let end_start = line[content_start..].rfind("$$")? + content_start;
+-    if line[content_start..end_start].contains("$$") {
+-        return None;
+-    }
+-
++    let parsed = parse_delimited_math_line(line)?;
+     let mut width = 0.0_f64;
+     let mut height = 0.0_f64;
+-    for text in [&line[..start], &line[end_start + 2..]] {
+-        if text.is_empty() {
+-            continue;
+-        }
+-        let metrics = measure_text_fragment(measurer, text, style);
++    for fragment in parsed.fragments {
++        if !fragment.leading_text.is_empty() {
++            let metrics = measure_text_fragment(measurer, fragment.leading_text, style);
++            width += metrics.width.max(0.0);
++            height = height.max(metrics.height.max(0.0));
++        }
++        let metrics = match math_renderer.measure_html_label(
++            fragment.delimited,
++            config,
++            style,
++            Some(10_000.0),
++            WrapMode::HtmlLike,
++        ) {
++            Some(metrics) => metrics,
++            None if math_renderer
++                .render_html_label(fragment.delimited, config)
++                .is_none() =>
++            {
++                measure_text_fragment(measurer, fragment.delimited, style)
++            }
++            // A custom backend can render without providing metrics. Preserve
++            // that backend's normal measurement delegation, rather than guessing.
++            None => return None,
++        };
+         width += metrics.width.max(0.0);
+         height = height.max(metrics.height.max(0.0));
+     }
+-
+-    let math_metrics = math_renderer.measure_html_label(
+-        &line[start..end_start + 2],
+-        config,
+-        style,
+-        Some(10_000.0),
+-        WrapMode::HtmlLike,
+-    )?;
+-    width += math_metrics.width.max(0.0);
+-    height = height.max(math_metrics.height.max(0.0));
+-
++    if !parsed.trailing_text.is_empty() {
++        let metrics = measure_text_fragment(measurer, parsed.trailing_text, style);
++        width += metrics.width.max(0.0);
++        height = height.max(metrics.height.max(0.0));
++    }
+     Some((width, height.max(1.0)))
+ }
+ 
+@@ -200,7 +227,7 @@
+     let mut line_count = 0usize;
+     for line in crate::text::split_html_br_lines(request.raw_label) {
+         line_count += 1;
+-        let (line_width, line_height) = if line.contains("$$") {
++        let (line_width, line_height) = if parse_delimited_math_line(line).is_some() {
+             saw_math = true;
+             measure_mixed_math_line(
+                 request.measurer,
+@@ -261,6 +288,19 @@
+     Some(merman_core::sanitize::sanitize_xhtml(&rendered, config))
+ }
+ 
++pub(crate) fn render_math_html_label_with_color(
++    text: &str,
++    config: &MermaidConfig,
++    math_renderer: Option<&(dyn MathRenderer + Send + Sync)>,
++    foreground: &str,
++) -> Option<String> {
++    if !text.contains("$$") {
++        return None;
++    }
++    let rendered = math_renderer?.render_html_label_with_color(text, config, foreground)?;
++    Some(merman_core::sanitize::sanitize_xhtml(&rendered, config))
++}
++
+ /// Pure-Rust math renderer backed by RaTeX.
+ ///
+ /// The first Flowchart surface is intentionally narrow: labels where each non-empty line is a
+@@ -306,10 +346,17 @@
+     }
+ 
+     fn render_formula_svg_em(latex: &str) -> Option<(String, f64, f64)> {
++        Self::render_formula_svg_em_with_color(latex, ratex_types::Color::BLACK)
++    }
++
++    fn render_formula_svg_em_with_color(
++        latex: &str,
++        color: ratex_types::Color,
++    ) -> Option<(String, f64, f64)> {
+         let ast = ratex_parser::parse(latex).ok()?;
+         let layout_options = ratex_layout::LayoutOptions::default()
+             .with_style(ratex_types::MathStyle::Display)
+-            .with_color(ratex_types::Color::BLACK);
++            .with_color(color);
+         let layout_box = ratex_layout::layout(&ast, &layout_options);
+         let display_list = ratex_layout::to_display_list(&layout_box);
+         let rendered = glyph_svg::render(&display_list, layout_box.width)?;
+@@ -342,18 +389,34 @@
+         })
+     }
+ 
+-    fn render_katex_like_line_html(parsed: DelimitedMathLine<'_>) -> Option<String> {
++    fn render_katex_like_line_html(
++        parsed: DelimitedMathLine<'_>,
++        color: ratex_types::Color,
++    ) -> (String, bool) {
+         let mut html = String::new();
++        let mut native = false;
+         for fragment in parsed.fragments {
+-            let (svg, _width_em, _height_em) = Self::render_formula_svg_em(fragment.formula)?;
+             html.push_str(fragment.leading_text);
+-            html.push_str(&svg);
++            if let Some((svg, _, _)) =
++                Self::render_formula_svg_em_with_color(fragment.formula, color)
++            {
++                html.push_str(&svg);
++                native = true;
++            } else {
++                // Declining one island must not discard supported siblings.
++                // This is literal source text, never executable label markup.
++                html.push_str(&quick_xml::escape::escape(fragment.delimited));
++            }
+         }
+         html.push_str(parsed.trailing_text);
+-        Some(html)
++        (html, native)
+     }
+ 
+     fn render_katex_like_label(text: &str) -> Option<String> {
++        Self::render_katex_like_label_with_color(text, ratex_types::Color::BLACK)
++    }
++
++    fn render_katex_like_label_with_color(text: &str, color: ratex_types::Color) -> Option<String> {
+         let normalized = Self::normalized_text(text);
+         if !normalized.contains("$$") {
+             return None;
+@@ -363,8 +426,8 @@
+         let mut saw_math = false;
+         for line in split_html_br_lines(&normalized) {
+             if let Some(parsed) = parse_delimited_math_line(line) {
+-                saw_math = true;
+-                let rendered_line = Self::render_katex_like_line_html(parsed)?;
++                let (rendered_line, native) = Self::render_katex_like_line_html(parsed, color);
++                saw_math |= native;
+                 let _ = write!(
+                     &mut html,
+                     r#"<div class="merman-native-math-row" style="display: flex; align-items: center; justify-content: center; white-space: nowrap;">{rendered_line}</div>"#
+@@ -412,6 +475,33 @@
+ 
+     fn render_sequence_html_label(&self, text: &str, _config: &MermaidConfig) -> Option<String> {
+         Self::render_katex_like_label(text)
++    }
++
++    fn render_html_label_with_color(
++        &self,
++        text: &str,
++        _config: &MermaidConfig,
++        foreground: &str,
++    ) -> Option<String> {
++        let c = merman_core::theme_color::ThemeColor::parse(foreground)
++            .ok()?
++            .rgba_channels();
++        let color = ratex_types::Color::new(
++            (c.red / 255.0) as f32,
++            (c.green / 255.0) as f32,
++            (c.blue / 255.0) as f32,
++            c.alpha as f32,
++        );
++        Self::render_katex_like_label_with_color(text, color)
++    }
++
++    fn render_sequence_html_label_with_color(
++        &self,
++        text: &str,
++        config: &MermaidConfig,
++        foreground: &str,
++    ) -> Option<String> {
++        self.render_html_label_with_color(text, config, foreground)
+     }
+ 
+     fn measure_html_label(
+@@ -1113,7 +1203,7 @@
+         let renderer = RatexMathRenderer;
+         let config = MermaidConfig::default();
+         let style = TextStyle::default();
+-        for label in ["$$x", r"$$\frac{1}{$$", r"$$x$$<br>$$\frac{1}{$$"] {
++        for label in ["$$x", r"$$\frac{1}{$$"] {
+             assert!(
+                 renderer.render_html_label(label, &config).is_none(),
+                 "{label}"
+@@ -1131,6 +1221,20 @@
+                 "{label}"
+             );
+         }
++        let partial = r"$$x$$<br>$$\frac{1}{$$";
++        let rendered = renderer.render_html_label(partial, &config).unwrap();
++        assert_eq!(
++            rendered.matches("class=\"merman-native-math-svg\"").count(),
++            1
++        );
++        assert!(rendered.contains(r"$$\frac{1}{$$"));
++        // Mixed-line measurement remains delegated to the common text/math
++        // compositor; a direct math-only probe still declines the whole label.
++        assert!(
++            renderer
++                .measure_html_label(partial, &config, &style, None, WrapMode::HtmlLike)
++                .is_none()
++        );
+         for label in ["value: $$x$$", "$$x$$ $$y$$"] {
+             assert!(
+                 renderer.render_html_label(label, &config).is_some(),
+--- a/src/sequence/metrics.rs
++++ b/src/sequence/metrics.rs
+@@ -258,9 +258,10 @@
+     config: &MermaidConfig,
+     math_renderer: &(dyn MathRenderer + Send + Sync),
+     checkpoints: SequenceTextCheckpoints<'_>,
+-) -> Result<Option<(f64, f64)>> {
++) -> Result<Option<(f64, f64, bool)>> {
+     let mut width = 0.0_f64;
+     let mut height = 0.0_f64;
++    let mut saw_native = false;
+ 
+     for fragment in parsed.fragments {
+         checkpoints.checkpoint()?;
+@@ -290,8 +291,18 @@
+             );
+             checkpoints.checkpoint()?;
+         }
+-        let Some(math_metrics) = math_metrics else {
+-            return Ok(None);
++        let math_metrics = match math_metrics {
++            Some(metrics) => {
++                saw_native = true;
++                metrics
++            }
++            None if math_renderer
++                .render_sequence_html_label(fragment.delimited, config)
++                .is_none() =>
++            {
++                measure_plain_sequence_fragment(measurer, fragment.delimited, style, checkpoints)?
++            }
++            None => return Ok(None),
+         };
+         width += math_metrics.width.max(0.0);
+         height = height.max(math_metrics.height.max(0.0));
+@@ -305,7 +316,7 @@
+     }
+ 
+     checkpoints.checkpoint()?;
+-    Ok(Some((width, height.max(1.0))))
++    Ok(Some((width, height.max(1.0), saw_native)))
+ }
+ 
+ fn measure_sequence_mixed_math_label(
+@@ -325,7 +336,6 @@
+         checkpoints.checkpoint()?;
+         line_count += 1;
+         let (line_width, line_height) = if let Some(parsed) = parse_delimited_math_line(line) {
+-            saw_math = true;
+             let Some(metrics) = measure_sequence_mixed_math_line(
+                 measurer,
+                 parsed,
+@@ -337,7 +347,8 @@
+             else {
+                 return Ok(None);
+             };
+-            metrics
++            saw_math |= metrics.2;
++            (metrics.0, metrics.1)
+         } else {
+             let (w, h) = measure_svg_like_with_html_br(measurer, line, style, checkpoints)?;
+             (w.max(0.0), h.max(0.0))
+--- a/src/svg/fallback/cascade.rs
++++ b/src/svg/fallback/cascade.rs
+@@ -116,6 +116,7 @@
+     pub(super) typography: ResolvedFallbackTypography,
+     pub(super) fragments: Vec<HtmlTextFragment>,
+     pub(super) paint: Vec<(String, String)>,
++    pub(super) fragment_styles: Vec<Option<Arc<ResolvedFallbackTypography>>>,
+ }
+ 
+ impl ResolvedFallbackTypography {
+@@ -741,20 +742,47 @@
+         let font_family = resolve_inherited_text_value(
+             specified
+                 .get("font-family")
+-                .map(|value| value.value.as_str()),
++                .map(|value| value.value.as_str())
++                .or_else(|| {
++                    // HTML's intrinsic code face applies before inheritance, but
++                    // every admitted author declaration (including inherit) wins.
++                    (element.namespace == Namespace::Xhtml && element.local_name == "code")
++                        .then_some("monospace")
++                }),
+             &parent.font_family,
+             DEFAULT_FONT_FAMILY,
+         );
++        let intrinsic = if element.namespace == Namespace::Xhtml
++            && matches!(element.local_name.as_str(), "b" | "strong" | "i" | "em")
++        {
++            let font = TextStyle {
++                font_weight: parent.font_weight.clone(),
++                font_style: parent.font_style.clone(),
++                ..TextStyle::default()
++            };
++            (
++                (matches!(element.local_name.as_str(), "b" | "strong")
++                    && !crate::text::style_requests_bold_font_weight(&font))
++                .then_some("700"),
++                (matches!(element.local_name.as_str(), "i" | "em")
++                    && !crate::text::style_requests_italic_font_style(&font))
++                .then_some("italic"),
++            )
++        } else {
++            (None, None)
++        };
+         let font_weight = resolve_optional_text_value(
+             specified
+                 .get("font-weight")
+-                .map(|value| value.value.as_str()),
++                .map(|value| value.value.as_str())
++                .or(intrinsic.0),
+             parent.font_weight.as_deref(),
+         );
+         let font_style = resolve_optional_text_value(
+             specified
+                 .get("font-style")
+-                .map(|value| value.value.as_str()),
++                .map(|value| value.value.as_str())
++                .or(intrinsic.1),
+             parent.font_style.as_deref(),
+         );
+         let line_height = resolve_line_height(
+@@ -842,6 +870,7 @@
+         let mut next_node_id = base_depth;
+         let mut previous_text_node_path = None;
+         let mut computed_styles = Vec::with_capacity(base_depth);
++        let mut computed_fonts = Vec::with_capacity(base_depth);
+         let mut root_font_size = DEFAULT_FONT_SIZE;
+         // Resolve each source node once. Text leaves and background ownership share this
+         // cache rather than charging selector work for the same ancestry repeatedly.
+@@ -857,6 +886,7 @@
+             if index == 0 {
+                 root_font_size = style.font_size;
+             }
++            computed_fonts.push(None);
+             computed_styles.push(style);
+             if self.budget.matching_exhausted {
+                 break;
+@@ -869,6 +899,7 @@
+         let paint = base_style.paint.clone();
+         let mut observed = TextTypographyObserver::default();
+         let mut fragments = Vec::new();
++        let mut fragment_styles = Vec::new();
+         let mut cursor = 0usize;
+         let mut iteration = 0usize;
+         while let Some(relative) = find_with_checkpoints(&html[cursor..], "<", checkpoint)? {
+@@ -877,6 +908,10 @@
+             let start = cursor + relative;
+             let text = &html[cursor..start];
+             if !text.is_empty() {
++                fragment_styles.push(cached_leaf_typography(
++                    &mut computed_fonts,
++                    &computed_styles,
++                ));
+                 fragments.push(HtmlTextFragment::Text {
+                     text: text.to_string(),
+                     boundary_white_space: text_fragment_boundary_white_space(
+@@ -914,6 +949,7 @@
+             if let Some(name) = end_tag_name(tag) {
+                 if name.eq_ignore_ascii_case("br") {
+                     fragments.push(HtmlTextFragment::HardBreak);
++                    fragment_styles.push(None);
+                     previous_text_node_path = None;
+                 }
+                 if !self.budget.matching_exhausted
+@@ -924,6 +960,7 @@
+                 {
+                     path.pop();
+                     computed_styles.pop();
++                    computed_fonts.pop();
+                     node_path.pop();
+                 }
+                 cursor = end;
+@@ -932,6 +969,7 @@
+             if let Some(name) = start_tag_name(tag) {
+                 if name.eq_ignore_ascii_case("br") {
+                     fragments.push(HtmlTextFragment::HardBreak);
++                    fragment_styles.push(None);
+                     previous_text_node_path = None;
+                 }
+                 if !self.budget.matching_exhausted {
+@@ -970,6 +1008,7 @@
+                                 checkpoint,
+                                 selector_limit,
+                             )?;
++                            computed_fonts.push(None);
+                             computed_styles.push(style);
+                         }
+                     }
+@@ -979,6 +1018,10 @@
+         }
+         let text = &html[cursor..];
+         if !text.is_empty() {
++            fragment_styles.push(cached_leaf_typography(
++                &mut computed_fonts,
++                &computed_styles,
++            ));
+             fragments.push(HtmlTextFragment::Text {
+                 text: text.to_string(),
+                 boundary_white_space: text_fragment_boundary_white_space(
+@@ -1025,6 +1068,7 @@
+                 typography: default_fallback_typography(),
+                 fragments,
+                 paint,
++                fragment_styles: Vec::new(),
+             });
+         }
+         let style = if observed.differing_styles {
+@@ -1062,9 +1106,10 @@
+         }
+         checkpoint()?;
+         Ok(ResolvedForeignObject {
+-            typography: fallback_typography(style, label_background),
++            typography: fallback_typography(&style, label_background),
+             fragments,
+             paint,
++            fragment_styles,
+         })
+     }
+ }
+@@ -1377,20 +1422,36 @@
+ }
+ 
+ fn default_fallback_typography() -> ResolvedFallbackTypography {
+-    fallback_typography(default_style(), None)
++    fallback_typography(&default_style(), None)
++}
++
++// Resolve one shared font record only for ancestors that own text leaves.
++// Deep SVG/group paths need no extra font-string copies, and sibling leaves
++// with the same owner reuse the same record through normalization/projection.
++fn cached_leaf_typography(
++    cache: &mut [Option<Arc<ResolvedFallbackTypography>>],
++    styles: &[ResolvedStyle],
++) -> Option<Arc<ResolvedFallbackTypography>> {
++    let index = styles.len().checked_sub(1)?;
++    Some(
++        cache
++            .get_mut(index)?
++            .get_or_insert_with(|| Arc::new(fallback_typography(&styles[index], None)))
++            .clone(),
++    )
+ }
+ 
+ fn fallback_typography(
+-    style: ResolvedStyle,
++    style: &ResolvedStyle,
+     label_background: Option<String>,
+ ) -> ResolvedFallbackTypography {
+     let fill = effective_html_text_paint(&style).to_string();
+     let line_height = style.line_height.pixels(style.font_size);
+     ResolvedFallbackTypography {
+         font_size: style.font_size,
+-        font_family: style.font_family,
+-        font_weight: style.font_weight,
+-        font_style: style.font_style,
++        font_family: style.font_family.clone(),
++        font_weight: style.font_weight.clone(),
++        font_style: style.font_style.clone(),
+         line_height,
+         fill,
+         label_background,
+@@ -2740,9 +2801,9 @@
+     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+         return parent.to_string();
+     };
+-    match value.to_ascii_lowercase().as_str() {
+-        "inherit" | "unset" => parent.to_string(),
+-        "initial" => initial.to_string(),
++    match crate::text::css_font_global_keyword(value) {
++        Some("inherit" | "unset") => parent.to_string(),
++        Some("initial") => initial.to_string(),
+         _ => value.to_string(),
+     }
+ }
+@@ -2751,9 +2812,9 @@
+     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+         return parent.map(str::to_owned);
+     };
+-    match value.to_ascii_lowercase().as_str() {
+-        "inherit" | "unset" => parent.map(str::to_owned),
+-        "initial" => None,
++    match crate::text::css_font_global_keyword(value) {
++        Some("inherit" | "unset") => parent.map(str::to_owned),
++        Some("initial") => None,
+         _ => Some(value.to_string()),
+     }
+ }
+--- a/src/svg/fallback/html.rs
++++ b/src/svg/fallback/html.rs
+@@ -120,8 +120,25 @@
+     fragments: &[HtmlTextFragment],
+     checkpoint: &mut impl FnMut() -> Result<(), E>,
+ ) -> Result<NormalizedHtmlText, E> {
++    Ok(normalized_foreign_object_text_impl(fragments, false, checkpoint)?.0)
++}
++
++pub(super) fn normalized_foreign_object_text_with_owners<E>(
++    fragments: &[HtmlTextFragment],
++    checkpoint: &mut impl FnMut() -> Result<(), E>,
++) -> Result<(NormalizedHtmlText, Vec<(std::ops::Range<usize>, usize)>), E> {
++    normalized_foreign_object_text_impl(fragments, true, checkpoint)
++}
++
++fn normalized_foreign_object_text_impl<E>(
++    fragments: &[HtmlTextFragment],
++    with_owners: bool,
++    checkpoint: &mut impl FnMut() -> Result<(), E>,
++) -> Result<(NormalizedHtmlText, Vec<(std::ops::Range<usize>, usize)>), E> {
+     let mut normalized = NormalizedHtmlText::default();
++    let mut owners = Vec::new();
+     for (index, fragment) in fragments.iter().enumerate() {
++        let start = normalized.len();
+         checkpoint_loop(index, checkpoint)?;
+         match fragment {
+             HtmlTextFragment::HardBreak => normalized.hard_break(),
+@@ -145,9 +162,12 @@
+                 }
+             }
+         }
+-    }
+-    checkpoint()?;
+-    Ok(normalized)
++        if with_owners && normalized.len() > start {
++            owners.push((start..normalized.len(), index));
++        }
++    }
++    checkpoint()?;
++    Ok((normalized, owners))
+ }
+ 
+ pub(super) fn wrap_html_text<E>(
+--- a/src/svg/fallback/rich_text.rs
++++ b/src/svg/fallback/rich_text.rs
+@@ -0,0 +1,161 @@
++//! Retain computed fonts through the shared whitespace/line planner.
++use super::cascade::ResolvedFallbackTypography;
++use crate::text::html_wrap::{NormalizedHtmlText, PlannedHtmlLine, plan_html_lines_with_ranges};
++use crate::text::{TextMeasurer, TextStyle};
++use std::{collections::HashMap, ops::Range, sync::Arc};
++
++pub(super) fn same_style(a: &ResolvedFallbackTypography, b: &ResolvedFallbackTypography) -> bool {
++    a.font_size.to_bits() == b.font_size.to_bits()
++        && a.font_family == b.font_family
++        && a.font_weight == b.font_weight
++        && a.font_style == b.font_style
++        && a.fill == b.fill
++}
++
++pub(super) struct StyledPart {
++    pub(super) range: Range<usize>,
++    pub(super) style: usize,
++}
++
++pub(super) struct RichText {
++    source: NormalizedHtmlText,
++    runs: Vec<(Range<usize>, usize)>,
++    pub(super) styles: Vec<Arc<ResolvedFallbackTypography>>,
++    fonts: Vec<TextStyle>,
++}
++
++impl RichText {
++    pub(super) fn new(
++        source: NormalizedHtmlText,
++        owners: Vec<(Range<usize>, usize)>,
++        fragments: &[Option<Arc<ResolvedFallbackTypography>>],
++        base: &ResolvedFallbackTypography,
++    ) -> Self {
++        let mut styles = vec![Arc::new(base.clone())];
++        let mut indices = HashMap::new();
++        let runs = owners
++            .into_iter()
++            .map(|(range, owner)| {
++                let index = fragments
++                    .get(owner)
++                    .and_then(Option::as_ref)
++                    .map_or(0, |style| {
++                        *indices.entry(Arc::as_ptr(style)).or_insert_with(|| {
++                            styles.push(style.clone());
++                            styles.len() - 1
++                        })
++                    });
++                (range, index)
++            })
++            .collect();
++        let fonts = styles.iter().map(|style| style.text_style()).collect();
++        Self {
++            source,
++            runs,
++            styles,
++            fonts,
++        }
++    }
++
++    // Ranges are in normalized source bytes. Only a selected terminal SHY may
++    // differ in the rendered string; its replacement keeps that source owner.
++    pub(super) fn parts(
++        &self,
++        text: &str,
++        source: &Range<usize>,
++        selected_hyphen: bool,
++    ) -> Vec<StyledPart> {
++        debug_assert!(selected_hyphen || text.len() == source.len());
++        let mut parts: Vec<StyledPart> = Vec::new();
++        let mut cursor = source.start;
++        let mut index = self.runs.partition_point(|(r, _)| r.end <= cursor);
++        while cursor < source.end {
++            let (end, style) = match self.runs.get(index) {
++                Some((run, _)) if cursor < run.start => (run.start.min(source.end), 0),
++                Some((run, style)) => (run.end.min(source.end), *style),
++                None => (source.end, 0),
++            };
++            let start_in_text = (cursor - source.start).min(text.len());
++            let end_in_text = if selected_hyphen && end == source.end {
++                text.len()
++            } else {
++                (end - source.start).min(text.len())
++            };
++            if start_in_text < end_in_text {
++                debug_assert!(
++                    text.is_char_boundary(start_in_text) && text.is_char_boundary(end_in_text)
++                );
++                if let Some(previous) = parts.last_mut()
++                    && same_style(&self.styles[previous.style], &self.styles[style])
++                {
++                    previous.range.end = end_in_text;
++                } else {
++                    parts.push(StyledPart {
++                        range: start_in_text..end_in_text,
++                        style,
++                    });
++                }
++            }
++            cursor = end;
++            if self
++                .runs
++                .get(index)
++                .is_some_and(|(run, _)| cursor >= run.end)
++            {
++                index += 1;
++            }
++        }
++        parts
++    }
++
++    pub(super) fn plan<E>(
++        &self,
++        width: Option<f64>,
++        measurer: &dyn TextMeasurer,
++        checkpoint: &mut impl FnMut() -> Result<(), E>,
++    ) -> Result<Vec<PlannedHtmlLine>, E> {
++        let checkpoint = std::cell::RefCell::new(checkpoint);
++        plan_html_lines_with_ranges(
++            &self.source,
++            width,
++            None,
++            &mut |text, range, hyphen| {
++                let mut width = 0.0;
++                for part in self.parts(text, &range, hyphen) {
++                    (checkpoint.borrow_mut())()?;
++                    let part_width = measurer
++                        .measure_html_line_width_px(&text[part.range], &self.fonts[part.style]);
++                    if !part_width.is_finite() || part_width < 0.0 {
++                        return Ok(f64::NAN);
++                    }
++                    width += part_width;
++                }
++                Ok(width)
++            },
++            &mut || (checkpoint.borrow_mut())(),
++        )
++    }
++
++    pub(super) fn bbox<E>(
++        &self,
++        line: &PlannedHtmlLine,
++        measurer: &dyn TextMeasurer,
++        checkpoint: &mut impl FnMut() -> Result<(), E>,
++    ) -> Result<(f64, f64), E> {
++        let mut width = 0.0;
++        let mut height: f64 = 0.0;
++        for part in self.parts(&line.text, &line.source_range, line.selected_hyphen) {
++            checkpoint()?;
++            let text = &line.text[part.range];
++            let w = measurer.measure_svg_raw_text_bbox_width_px(text, &self.fonts[part.style]);
++            checkpoint()?;
++            let h = measurer.measure_svg_raw_text_bbox_height_px(text, &self.fonts[part.style]);
++            if !w.is_finite() || !h.is_finite() || w < 0.0 || h < 0.0 {
++                return Ok((f64::NAN, f64::NAN));
++            }
++            width += w;
++            height = height.max(h);
++        }
++        Ok((width, height))
++    }
++}
+--- a/src/svg/fallback.rs
++++ b/src/svg/fallback.rs
+@@ -10,6 +10,7 @@
+ mod css;
+ mod html;
+ mod native_math;
++mod rich_text;
+ mod transform;
+ 
+ use crate::svg::pipeline::{
+@@ -282,12 +283,44 @@
+                     },
+                     invalid_geometry,
+                 )?;
+-                let normalized = if native_math.is_some() {
++                let rich = if native_math.is_none()
++                    && resolved
++                        .fragment_styles
++                        .iter()
++                        .flatten()
++                        .any(|style| !rich_text::same_style(style, &resolved.typography))
++                {
++                    let (source, owners) = html::normalized_foreign_object_text_with_owners(
++                        &resolved.fragments,
++                        checkpoint,
++                    )?;
++                    if owners.iter().any(|(_, owner)| {
++                        resolved
++                            .fragment_styles
++                            .get(*owner)
++                            .and_then(Option::as_ref)
++                            .is_some_and(|style| {
++                                !rich_text::same_style(style, &resolved.typography)
++                            })
++                    }) {
++                        Some(rich_text::RichText::new(
++                            source,
++                            owners,
++                            &resolved.fragment_styles,
++                            &resolved.typography,
++                        ))
++                    } else {
++                        None
++                    }
++                } else {
++                    None
++                };
++                let normalized = if native_math.is_some() || rich.is_some() {
+                     crate::text::html_wrap::NormalizedHtmlText::default()
+                 } else {
+                     normalized_foreign_object_text(&resolved.fragments, checkpoint)?
+                 };
+-                if native_math.is_some() || !normalized.is_empty() {
++                if native_math.is_some() || rich.is_some() || !normalized.is_empty() {
+                     let typography = resolved.typography;
+                     let source_attr = if from_switch {
+                         r#" data-merman-foreignobject-source="switch-native-fallback""#
+@@ -304,6 +337,8 @@
+                     let wrapping = foreign_object_html_wrapping(tag, inner, checkpoint)?;
+                     let lines = if native_math.is_some() {
+                         Vec::new()
++                    } else if let Some(rich) = &rich {
++                        rich.plan(wrapping, text_measurer, checkpoint)?
+                     } else {
+                         wrap_html_text(
+                             &normalized,
+@@ -313,7 +348,12 @@
+                             checkpoint,
+                         )?
+                     };
+-                    let line_height = typography.line_height;
++                    let line_height = rich.as_ref().map_or(typography.line_height, |rich| {
++                        rich.styles
++                            .iter()
++                            .map(|s| s.line_height)
++                            .fold(typography.line_height, f64::max)
++                    });
+                     let y0 = text_y - line_height * (lines.len() as f64 - 1.0) / 2.0;
+                     let mut positions = Vec::with_capacity(lines.len());
+                     let mut valid = true;
+@@ -328,14 +368,27 @@
+                         let y_line = y0 + idx as f64 * line_height;
+                         checkpoint()?;
+                         // Emitted rows are decoded SVG text, not a new HTML label.
+-                        let bbox_width = text_measurer
+-                            .measure_svg_raw_text_bbox_width_px(&line.text, &measure_style);
+-                        checkpoint()?;
+-                        let bbox_height = text_measurer
+-                            .measure_svg_raw_text_bbox_height_px(&line.text, &measure_style);
++                        let (bbox_width, bbox_height) = if let Some(rich) = &rich {
++                            rich.bbox(line, text_measurer, checkpoint)?
++                        } else {
++                            let width = text_measurer
++                                .measure_svg_raw_text_bbox_width_px(&line.text, &measure_style);
++                            checkpoint()?;
++                            (
++                                width,
++                                text_measurer.measure_svg_raw_text_bbox_height_px(
++                                    &line.text,
++                                    &measure_style,
++                                ),
++                            )
++                        };
+                         checkpoint()?;
+                         let measured_width = bbox_width.max(line.width);
+                         if !line_x.is_finite()
++                            || !line.width.is_finite()
++                            || !line.alignment_width.is_finite()
++                            || line.width < 0.0
++                            || line.alignment_width < 0.0
+                             || !y_line.is_finite()
+                             || !bbox_width.is_finite()
+                             || !bbox_height.is_finite()
+@@ -509,9 +562,61 @@
+                     }
+                     for (idx, (line, (line_x, y_line))) in lines.iter().zip(positions).enumerate() {
+                         checkpoint_loop(idx, checkpoint)?;
+-                        let text = escape_xml_text_with_checkpoints(&line.text, checkpoint)?;
+                         let line_x = line_x - x;
+                         let y_line = y_line - y;
++                        if let Some(rich) = &rich {
++                            push_generated_fmt(
++                                &mut overlays,
++                                format_args!(
++                                    r##"<text x="{line_x}" y="{y_line}" text-anchor="{anchor}" dominant-baseline="central" alignment-baseline="central" fill="{escaped_fill}"{text_attributes} xml:space="preserve" style="{escaped_style}">"##
++                                ),
++                                1,
++                                svg.len().saturating_add(instance_bytes),
++                                generated_depth,
++                                &mut generated_elements,
++                                preflight_generated,
++                            )?;
++                            for part in
++                                rich.parts(&line.text, &line.source_range, line.selected_hyphen)
++                            {
++                                checkpoint()?;
++                                let style = &rich.styles[part.style];
++                                let span_style = format!(
++                                    "font-family: {}; font-size: {}px; font-weight: {}; font-style: {}; fill: {}; fill-opacity: 1; stroke: none;",
++                                    style.font_family,
++                                    style.font_size,
++                                    style.font_weight.as_deref().unwrap_or("normal"),
++                                    style.font_style.as_deref().unwrap_or("normal"),
++                                    style.fill
++                                );
++                                let span_style =
++                                    escape_xml_attr_with_checkpoints(&span_style, checkpoint)?;
++                                let text = escape_xml_text_with_checkpoints(
++                                    &line.text[part.range],
++                                    checkpoint,
++                                )?;
++                                push_generated_fmt(
++                                    &mut overlays,
++                                    format_args!(r#"<tspan style="{span_style}">{text}</tspan>"#),
++                                    1,
++                                    svg.len().saturating_add(instance_bytes),
++                                    generated_depth.saturating_add(1),
++                                    &mut generated_elements,
++                                    preflight_generated,
++                                )?;
++                            }
++                            push_generated_fmt(
++                                &mut overlays,
++                                format_args!("</text>"),
++                                0,
++                                svg.len().saturating_add(instance_bytes),
++                                generated_depth,
++                                &mut generated_elements,
++                                preflight_generated,
++                            )?;
++                            continue;
++                        }
++                        let text = escape_xml_text_with_checkpoints(&line.text, checkpoint)?;
+                         push_generated_fmt(
+                             &mut overlays,
+                             format_args!(
+@@ -1838,7 +1943,7 @@
+     }
+ 
+     #[test]
+-    fn foreign_object_overlay_uses_common_ancestor_for_mixed_text_leaves() {
++    fn foreign_object_overlay_keeps_common_container_and_individual_text_leaf_fonts() {
+         let svg = r#"
+ <svg xmlns="http://www.w3.org/2000/svg"><g><foreignObject width="80" height="30"><div xmlns="http://www.w3.org/1999/xhtml" style="font-size:14px"><span>Alpha</span><strong style="font-size:20px">Beta</strong></div></foreignObject></g></svg>"#;
+         let out = foreign_object_label_fallback_svg_text(svg);
+@@ -1848,8 +1953,34 @@
+             "mixed text leaves should use their deepest common ancestor's fallback typography: {out}"
+         );
+         assert!(
+-            !out.contains("font-size: 20px"),
+-            "the fallback must not arbitrarily select one rich-text leaf: {out}"
++            out.contains("font-size: 20px"),
++            "each text leaf must retain its computed font: {out}"
++        );
++        let doc = roxmltree::Document::parse(&out).unwrap();
++        let spans: Vec<_> = doc
++            .descendants()
++            .filter(|n| n.has_tag_name("tspan"))
++            .collect();
++        assert_eq!(spans.len(), 2);
++        assert_eq!(spans[0].text(), Some("Alpha"));
++        assert_eq!(spans[1].text(), Some("Beta"));
++        assert!(
++            spans[0]
++                .attribute("style")
++                .unwrap()
++                .contains("font-size: 14px;")
++        );
++        assert!(
++            spans[1]
++                .attribute("style")
++                .unwrap()
++                .contains("font-size: 20px;")
++        );
++        assert!(
++            spans[1]
++                .attribute("style")
++                .unwrap()
++                .contains("font-weight: 700;")
+         );
+     }
+ 
+--- a/src/svg/parity/class/label.rs
++++ b/src/svg/parity/class/label.rs
+@@ -11,7 +11,8 @@
+     let (Some(config), Some(renderer)) = (mermaid_config, math_renderer) else {
+         return None;
+     };
+-    crate::math::render_math_html_label(text, config, Some(renderer))
++    let theme = PresentationTheme::new(config.as_value()).class_diagram();
++    crate::math::render_math_html_label_with_color(text, config, Some(renderer), &theme.class_text)
+ }
+ 
+ pub(super) struct ClassInlineStyles<'a> {
+--- a/src/svg/parity/flowchart/label.rs
++++ b/src/svg/parity/flowchart/label.rs
+@@ -8,7 +8,17 @@
+     config: &merman_core::MermaidConfig,
+     math_renderer: Option<&(dyn crate::math::MathRenderer + Send + Sync)>,
+ ) -> String {
+-    flowchart_label_html_impl(label, label_type, config, math_renderer)
++    flowchart_label_html_impl(label, label_type, config, math_renderer, None)
++}
++
++pub(in crate::svg::parity) fn flowchart_label_html_with_color(
++    label: &str,
++    label_type: &str,
++    config: &merman_core::MermaidConfig,
++    math_renderer: Option<&(dyn crate::math::MathRenderer + Send + Sync)>,
++    foreground: &str,
++) -> String {
++    flowchart_label_html_impl(label, label_type, config, math_renderer, Some(foreground))
+ }
+ 
+ fn flowchart_label_html_impl(
+@@ -16,6 +26,7 @@
+     label_type: &str,
+     config: &merman_core::MermaidConfig,
+     math_renderer: Option<&(dyn crate::math::MathRenderer + Send + Sync)>,
++    foreground: Option<&str>,
+ ) -> String {
+     if crate::flowchart::flowchart_label_text_is_empty_for_mode(label, true) {
+         return String::new();
+@@ -112,8 +123,20 @@
+         }
+     }
+ 
+-    if let Some(html) = crate::math::render_math_html_label(label, config, math_renderer) {
+-        return html;
++    if label.contains("$$") {
++        let theme = PresentationTheme::new(config.as_value()).node_diagram();
++        if let Some(html) = crate::math::render_math_html_label_with_color(
++            label,
++            config,
++            math_renderer,
++            foreground
++                .map(str::trim)
++                .map(|value| value.strip_suffix("!important").unwrap_or(value).trim())
++                .filter(|value| merman_core::theme_color::ThemeColor::parse(value).is_ok())
++                .unwrap_or(&theme.node_text_color),
++        ) {
++            return html;
++        }
+     }
+ 
+     match label_type {
+@@ -273,7 +296,7 @@
+ #[cfg(test)]
+ mod tests {
+     use super::{
+-        flowchart_label_html_impl, wrap_flowchart_svg_source_word_lines,
++        flowchart_label_html, wrap_flowchart_svg_source_word_lines,
+         write_flowchart_svg_source_word_lines,
+     };
+ 
+@@ -293,7 +316,7 @@
+                 (r"\<span style='font-size:64px'>AVAVAV\</span>", "AVAVAV"),
+                 (r"\\<span style='font-size:64px'>AVAVAV\\</span>", "AVAVAV"),
+             ] {
+-                let output = flowchart_label_html_impl(input, "markdown", &config, None);
++                let output = flowchart_label_html(input, "markdown", &config, None);
+                 let document = roxmltree::Document::parse(&output).unwrap();
+                 let span = document
+                     .descendants()
+@@ -318,7 +341,7 @@
+             "`#60;span style=#quot;font-size:64px#quot;#62;AVAVAV#60;/span#62;`\n\n",
+             "`ﬂ°°60¶ßspan style=ﬂ°quot¶ßfont-size:64pxﬂ°quot¶ßﬂ°°62¶ßAVAVAVﬂ°°60¶ß/spanﬂ°°62¶ß`\n\n",
+         ] {
+-            let output = flowchart_label_html_impl(input, "markdown", &config, None);
++            let output = flowchart_label_html(input, "markdown", &config, None);
+             assert_eq!(
+                 output,
+                 "<p>`<span style=\"font-size:64px\">AVAVAV</span>`</p>"
+@@ -333,7 +356,7 @@
+             "securityLevel": "loose"
+         }));
+         let input = "Before <span style='font-size:64px'>AVAVAV</span> after\n\n";
+-        let output = flowchart_label_html_impl(input, "markdown", &config, None);
++        let output = flowchart_label_html(input, "markdown", &config, None);
+         let document = roxmltree::Document::parse(&output).unwrap();
+         let span = document
+             .descendants()
+@@ -357,11 +380,11 @@
+             for surrounding in ["", "<span>中文😀</span>", "&lt;img&gt;", "<é>α</é>"] {
+                 for suffix in [" src='x'>", "inary src='x'>", ">", " src=x>"] {
+                     let lower = format!("{surrounding}<img{suffix}");
+-                    let expected = flowchart_label_html_impl(&lower, "string", &config, None);
++                    let expected = flowchart_label_html(&lower, "string", &config, None);
+                     for prefix in ["<IMG", "<Img", "<iMg", "<imG"] {
+                         let input = format!("{surrounding}{prefix}{suffix}");
+                         assert_eq!(
+-                            flowchart_label_html_impl(&input, "string", &config, None),
++                            flowchart_label_html(&input, "string", &config, None),
+                             expected,
+                             "security={security_level}, input={input:?}"
+                         );
+@@ -379,7 +402,7 @@
+         }));
+         let spans = "<span>中文😀</span>".repeat(1_600);
+         let input = format!("{spans}<ImG src='https://example.com/x.svg'>");
+-        let output = flowchart_label_html_impl(&input, "string", &config, None);
++        let output = flowchart_label_html(&input, "string", &config, None);
+         assert_eq!(output.matches("中文😀").count(), 1_600);
+         assert_eq!(output.matches("<img ").count(), 1);
+         assert!(output.contains("https://example.com/x.svg"), "{output}");
+@@ -394,7 +417,7 @@
+             "securityLevel": "strict"
+         }));
+         assert_eq!(
+-            flowchart_label_html_impl("<IMG src='x'", "string", &config, None),
++            flowchart_label_html("<IMG src='x'", "string", &config, None),
+             "<p><img src=\"x\" /></p>"
+         );
+     }
+@@ -418,7 +441,7 @@
+         for label_type in ["string", "markdown"] {
+             for (input, expected) in cases {
+                 assert_eq!(
+-                    flowchart_label_html_impl(input, label_type, &config, None),
++                    flowchart_label_html(input, label_type, &config, None),
+                     expected,
+                     "label_type={label_type}, input={input:?}",
+                 );
+--- a/src/svg/parity/flowchart/render/edge_label.rs
++++ b/src/svg/parity/flowchart/render/edge_label.rs
+@@ -375,6 +375,25 @@
+ 
+     let label_html = if crate::flowchart::flowchart_label_is_empty_for_render(label_text) {
+         String::new()
++    } else if label_text.contains("$$") {
++        let foreground = compiled_label_styles
++            .label_div_decls
++            .iter()
++            .find(|(key, _)| key == "color")
++            .map(|(_, value)| value.clone())
++            .unwrap_or_else(|| {
++                PresentationTheme::new(ctx.config.as_value())
++                    .node_diagram()
++                    .common
++                    .text_color
++            });
++        super::super::label::flowchart_label_html_with_color(
++            label_text,
++            label_type,
++            ctx.config,
++            ctx.math_renderer,
++            &foreground,
++        )
+     } else {
+         flowchart_label_html(label_text, label_type, ctx.config, ctx.math_renderer)
+     };
+--- a/src/svg/parity/flowchart/render/node/label.rs
++++ b/src/svg/parity/flowchart/render/node/label.rs
+@@ -197,7 +197,21 @@
+         out.push_str("</g></g>");
+     } else {
+         let label_html = super::helpers::timed_node_label_html(common.timing, details, || {
+-            flowchart_label_html(label.text, label.label_type, ctx.config, ctx.math_renderer)
++            if let Some((_, foreground)) = compiled_styles
++                .label_div_decls
++                .iter()
++                .find(|(key, _)| key == "color")
++            {
++                super::super::super::label::flowchart_label_html_with_color(
++                    label.text,
++                    label.label_type,
++                    ctx.config,
++                    ctx.math_renderer,
++                    foreground,
++                )
++            } else {
++                flowchart_label_html(label.text, label.label_type, ctx.config, ctx.math_renderer)
++            }
+         });
+         let span_style_attr = OptionalStyleXmlAttr(compiled_styles.label_style.as_str());
+         let is_math_html_label = ctx.node_wrap_mode == crate::text::WrapMode::HtmlLike
+--- a/src/svg/parity/sequence/actor_shapes.rs
++++ b/src/svg/parity/sequence/actor_shapes.rs
+@@ -418,6 +418,9 @@
+         ctx.config,
+         ctx.math_renderer,
+         SequenceMathHeightMode::Actor,
++        &PresentationTheme::new(ctx.config.as_value())
++            .sequence_diagram()
++            .actor_text,
+         ctx.checkpoints,
+     )? {
+         let x = cx - katex.width / 2.0;
+@@ -425,12 +428,13 @@
+         out.push_str("<switch>");
+         let _ = write!(
+             out,
+-            r#"<foreignObject x="{x}" y="{y}" width="{w}" height="{h}"><div class="actor {label_class}" xmlns="http://www.w3.org/1999/xhtml" style="height: 100%; width: 100%;"><div style="text-align: center; vertical-align: middle;">{html}</div></div></foreignObject>"#,
++            r#"<foreignObject x="{x}" y="{y}" width="{w}" height="{h}"><div class="actor {label_class}" xmlns="http://www.w3.org/1999/xhtml" style="height: 100%; width: 100%; fill:{foreground}; color:{foreground};"><div style="text-align: center; vertical-align: middle;">{html}</div></div></foreignObject>"#,
+             x = fmt(x),
+             y = fmt(y),
+             w = fmt(katex.width),
+             h = fmt(katex.height),
+             html = katex.html,
++            foreground = escape_attr(&katex.foreground),
+         );
+         super::text::write_centered_tspan_text(
+             out,
+--- a/src/svg/parity/sequence/block_text.rs
++++ b/src/svg/parity/sequence/block_text.rs
+@@ -51,6 +51,9 @@
+             self.config,
+             self.math_renderer,
+             SequenceMathHeightMode::Draw,
++            &PresentationTheme::new(self.config.as_value())
++                .sequence_diagram()
++                .loop_text,
+             self.checkpoints,
+         )
+     }
+--- a/src/svg/parity/sequence/math_label.rs
++++ b/src/svg/parity/sequence/math_label.rs
+@@ -4,6 +4,7 @@
+ 
+ pub(super) struct SequenceKatexLabel {
+     pub(super) html: String,
++    pub(super) foreground: String,
+     pub(super) width: f64,
+     pub(super) height: f64,
+ }
+@@ -15,6 +16,7 @@
+     config: &merman_core::MermaidConfig,
+     math_renderer: Option<&(dyn crate::math::MathRenderer + Send + Sync)>,
+     height_mode: SequenceMathHeightMode,
++    foreground: &str,
+     checkpoints: SequenceEmitCheckpoints<'_>,
+ ) -> Result<Option<SequenceKatexLabel>> {
+     checkpoints.checkpoint()?;
+@@ -37,7 +39,7 @@
+         return Ok(None);
+     };
+     checkpoints.checkpoint()?;
+-    let html = renderer.render_sequence_html_label(text, config);
++    let html = renderer.render_sequence_html_label_with_color(text, config, foreground);
+     checkpoints.checkpoint()?;
+     let Some(html) = html else {
+         return Ok(None);
+@@ -45,6 +47,7 @@
+     let html = merman_core::sanitize::sanitize_xhtml(&html, config);
+     Ok(Some(SequenceKatexLabel {
+         html,
++        foreground: foreground.to_string(),
+         width,
+         height,
+     }))
+@@ -58,12 +61,13 @@
+ ) {
+     let _ = write!(
+         out,
+-        r#"<foreignObject height="{h}" width="{w}" x="{x}" y="{y}"><div style="width: fit-content;" xmlns="http://www.w3.org/1999/xhtml">{html}</div></foreignObject>"#,
++        r#"<foreignObject height="{h}" width="{w}" x="{x}" y="{y}"><div style="width: fit-content; fill:{foreground}; color:{foreground};" xmlns="http://www.w3.org/1999/xhtml">{html}</div></foreignObject>"#,
+         h = fmt(label.height),
+         w = fmt(label.width),
+         x = fmt(x),
+         y = fmt(y),
+         html = label.html,
++        foreground = escape_attr(&label.foreground),
+     );
+ }
+ 
+@@ -130,6 +134,7 @@
+             &MermaidConfig::default(),
+             Some(&renderer),
+             SequenceMathHeightMode::Draw,
++            "#000",
+             super::SequenceEmitCheckpoints::new(&meter),
+         );
+         let error = match result {
+--- a/src/svg/parity/sequence/messages.rs
++++ b/src/svg/parity/sequence/messages.rs
+@@ -347,6 +347,9 @@
+                 ctx.sanitize_config,
+                 ctx.math_renderer,
+                 SequenceMathHeightMode::Draw,
++                &PresentationTheme::new(ctx.sanitize_config.as_value())
++                    .sequence_diagram()
++                    .signal_text,
+                 ctx.checkpoints,
+             )? {
+                 let center_x = (p0.x + p1.x) / 2.0;
+--- a/src/svg/parity/sequence/notes.rs
++++ b/src/svg/parity/sequence/notes.rs
+@@ -67,6 +67,9 @@
+         ctx.sanitize_config,
+         ctx.math_renderer,
+         SequenceMathHeightMode::Draw,
++        &PresentationTheme::new(ctx.sanitize_config.as_value())
++            .sequence_diagram()
++            .note_text,
+         ctx.checkpoints,
+     )? {
+         write_sequence_katex_foreign_object(
+--- a/src/text/css_font.rs
++++ b/src/text/css_font.rs
+@@ -4,16 +4,26 @@
+ use cssparser::{Delimiter, Parser, Token};
+ use std::collections::BTreeMap;
+ 
+-#[cfg(any(feature = "diagram-git-graph", feature = "diagram-timeline"))]
++pub(crate) fn css_font_global_keyword(value: &str) -> Option<&'static str> {
++    let mut parser = Parser::new(value);
++    let keyword = match parser.next().ok()? {
++        Token::Ident(value) => match value.to_ascii_lowercase().as_str() {
++            "inherit" => "inherit",
++            "unset" => "unset",
++            "initial" => "initial",
++            "revert" => "revert",
++            "revert-layer" => "revert-layer",
++            _ => return None,
++        },
++        _ => return None,
++    };
++    let _ = parser.try_parse(cssparser::parse_important);
++    parser.expect_exhausted().ok()?;
++    Some(keyword)
++}
++
+ pub(crate) fn css_font_value_inherits(value: &str) -> bool {
+-    let mut parser = Parser::new(value);
+-    if !matches!(parser.next(), Ok(Token::Ident(value))
+-        if value.eq_ignore_ascii_case("inherit") || value.eq_ignore_ascii_case("unset"))
+-    {
+-        return false;
+-    }
+-    let _ = parser.try_parse(cssparser::parse_important);
+-    parser.expect_exhausted().is_ok()
++    matches!(css_font_global_keyword(value), Some("inherit" | "unset"))
+ }
+ 
+ pub(crate) fn is_static_css_font_family_list(value: &str) -> bool {
+@@ -133,7 +143,7 @@
+         let Ok((property, value, important)) = declaration else {
+             continue;
+         };
+-        let inherits = matches!(value.to_ascii_lowercase().as_str(), "inherit" | "unset");
++        let inherits = css_font_value_inherits(value);
+         let valid = match property.as_str() {
+             "font-family" => inherits || is_static_css_font_family_list(value),
+             "font-size" => inherits || font_size(value).is_some(),
+--- a/src/text/html_wrap.rs
++++ b/src/text/html_wrap.rs
+@@ -79,6 +79,10 @@
+ 
+     pub(crate) fn is_empty(&self) -> bool {
+         self.text.is_empty()
++    }
++
++    pub(crate) fn len(&self) -> usize {
++        self.text.len()
+     }
+ 
+     pub(crate) fn inline_boundary(&mut self, depth: usize, mode: HtmlWhiteSpace) {
+@@ -174,6 +178,8 @@
+     pub(crate) text: String,
+     pub(crate) width: f64,
+     pub(crate) alignment_width: f64,
++    pub(crate) source_range: Range<usize>,
++    pub(crate) selected_hyphen: bool,
+ }
+ 
+ fn separator(ch: char) -> bool {
+@@ -187,6 +193,7 @@
+ /// receive the complete visible candidate, including a conditional hyphen when selected.
+ struct Candidate {
+     text: String,
++    source_start: Option<usize>,
+     width: Option<BuiltinHtmlLineWidth>,
+     trimmed: usize,
+     non_hanging: usize,
+@@ -197,6 +204,7 @@
+ 
+ struct CandidateSnapshot {
+     len: usize,
++    source_start: Option<usize>,
+     trimmed: usize,
+     non_hanging: usize,
+     width: Option<BuiltinHtmlLineWidth>,
+@@ -209,6 +217,7 @@
+     fn snapshot(&self) -> CandidateSnapshot {
+         CandidateSnapshot {
+             len: self.text.len(),
++            source_start: self.source_start,
+             trimmed: self.trimmed,
+             non_hanging: self.non_hanging,
+             width: self.width.clone(),
+@@ -220,6 +229,7 @@
+ 
+     fn restore(&mut self, snapshot: CandidateSnapshot) {
+         self.text.truncate(snapshot.len);
++        self.source_start = snapshot.source_start;
+         self.trimmed = snapshot.trimmed;
+         self.non_hanging = snapshot.non_hanging;
+         self.width = snapshot.width;
+@@ -233,6 +243,7 @@
+         }
+         Self {
+             text: String::new(),
++            source_start: None,
+             trimmed: 0,
+             non_hanging: 0,
+             trimmed_width: width.clone(),
+@@ -260,6 +271,7 @@
+             self.append_regular(
+                 &text[regular_start..relative],
+                 source.mode_at(offset + relative.saturating_sub(1)),
++                offset + regular_start,
+             );
+             regular_start = relative + ch.len_utf8();
+             let mode = source.mode_at(offset + relative);
+@@ -267,6 +279,7 @@
+                 continue;
+             }
+             self.text.push(ch);
++            self.source_start.get_or_insert(offset + relative);
+             if let Some(width) = &mut self.width {
+                 width.push_text(ch.encode_utf8(&mut [0; 4]));
+             }
+@@ -290,17 +303,19 @@
+         self.append_regular(
+             &text[regular_start..],
+             source.mode_at(offset + text.len().saturating_sub(1)),
++            offset + regular_start,
+         );
+         checkpoint()
+     }
+ 
+-    fn append_regular(&mut self, text: &str, mode: HtmlWhiteSpace) {
++    fn append_regular(&mut self, text: &str, mode: HtmlWhiteSpace, offset: usize) {
+         if text.is_empty() {
+             return;
+         }
+         // SHY has no unselected glyph, but its control boundary still participates in shaping.
+         // Removing it here would join otherwise independent combining or ZWJ sequences.
+         self.text.push_str(text);
++        self.source_start.get_or_insert(offset);
+         if let Some(width) = &mut self.width {
+             width.push_text(text);
+         }
+@@ -316,7 +331,7 @@
+         end: usize,
+         state: &Option<BuiltinHtmlLineWidth>,
+         hyphen: bool,
+-        measure: &mut impl FnMut(&str) -> Result<f64, E>,
++        measure: &mut impl FnMut(&str, Range<usize>, bool) -> Result<f64, E>,
+         checkpoint: &mut impl FnMut() -> Result<(), E>,
+     ) -> Result<f64, E> {
+         checkpoint()?;
+@@ -327,9 +342,15 @@
+             }
+             width.width_px()
+         } else if hyphen {
+-            measure(&html_line_text_with_break(&self.text[..end], true))?
++            let start = self.source_start.unwrap_or(0);
++            measure(
++                &html_line_text_with_break(&self.text[..end], true),
++                start..start + end,
++                true,
++            )?
+         } else {
+-            measure(&self.text[..end])?
++            let start = self.source_start.unwrap_or(0);
++            measure(&self.text[..end], start..start + end, false)?
+         };
+         checkpoint()?;
+         Ok(result)
+@@ -338,7 +359,7 @@
+     fn fit_width<E>(
+         &self,
+         hyphen: bool,
+-        measure: &mut impl FnMut(&str) -> Result<f64, E>,
++        measure: &mut impl FnMut(&str, Range<usize>, bool) -> Result<f64, E>,
+         checkpoint: &mut impl FnMut() -> Result<(), E>,
+     ) -> Result<f64, E> {
+         self.measured(
+@@ -355,7 +376,7 @@
+         soft: bool,
+         hyphen: bool,
+         limit: Option<f64>,
+-        measure: &mut impl FnMut(&str) -> Result<f64, E>,
++        measure: &mut impl FnMut(&str, Range<usize>, bool) -> Result<f64, E>,
+         checkpoint: &mut impl FnMut() -> Result<(), E>,
+     ) -> Result<PlannedHtmlLine, E> {
+         self.text.truncate(self.trimmed);
+@@ -367,7 +388,9 @@
+         }
+         // Final measurement uses the same backend contract as natural-width measurement.
+         checkpoint()?;
+-        let width = measure(&self.text)?;
++        let start = self.source_start.unwrap_or(0);
++        let source_range = start..start + self.trimmed;
++        let width = measure(&self.text, source_range.clone(), hyphen)?;
+         checkpoint()?;
+         let conditional = self.retained_mode == HtmlWhiteSpace::PreWrap && !soft;
+         let hangs = !hyphen
+@@ -388,6 +411,8 @@
+             text: self.text,
+             width,
+             alignment_width,
++            source_range,
++            selected_hyphen: hyphen,
+         })
+     }
+ }
+@@ -398,6 +423,24 @@
+     max_width: Option<f64>,
+     builtin: Option<BuiltinHtmlLineWidth>,
+     measure: &mut impl FnMut(&str) -> Result<f64, E>,
++    checkpoint: &mut impl FnMut() -> Result<(), E>,
++) -> Result<Vec<PlannedHtmlLine>, E> {
++    plan_html_lines_with_ranges(
++        source,
++        max_width,
++        builtin,
++        &mut |text, _, _| measure(text),
++        checkpoint,
++    )
++}
++
++/// Source ranges refer to normalized UTF-8 text, before a selected SHY becomes '-'.
++/// Callers can retain annotations without searching for repeated visible strings.
++pub(crate) fn plan_html_lines_with_ranges<E>(
++    source: &NormalizedHtmlText,
++    max_width: Option<f64>,
++    builtin: Option<BuiltinHtmlLineWidth>,
++    measure: &mut impl FnMut(&str, Range<usize>, bool) -> Result<f64, E>,
+     checkpoint: &mut impl FnMut() -> Result<(), E>,
+ ) -> Result<Vec<PlannedHtmlLine>, E> {
+     let limit = max_width.filter(|width| width.is_finite() && *width > 0.0);
+@@ -536,6 +579,89 @@
+ mod tests {
+     use super::*;
+     use std::convert::Infallible;
++
++    #[test]
++    fn repeated_wrapped_text_keeps_distinct_source_ranges() {
++        let source = NormalizedHtmlText::single_mode("  same same same", HtmlWhiteSpace::Normal);
++        let lines = plan_html_lines_with_ranges(
++            &source,
++            Some(45.0),
++            None,
++            &mut |text, _, _| Ok::<_, Infallible>(text.chars().count() as f64 * 10.0),
++            &mut || Ok(()),
++        )
++        .unwrap();
++        assert_eq!(
++            lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
++            ["same", "same", "same"]
++        );
++        assert_eq!(
++            lines
++                .iter()
++                .map(|l| l.source_range.clone())
++                .collect::<Vec<_>>(),
++            [2..6, 7..11, 12..16]
++        );
++        assert!(lines.iter().all(|l| !l.selected_hyphen));
++    }
++
++    #[test]
++    fn utf8_ranges_follow_preserved_newlines_and_trimmed_spaces() {
++        let source = NormalizedHtmlText::single_mode(" 中文 \n 中文 ", HtmlWhiteSpace::PreLine);
++        let lines = plan_html_lines_with_ranges(
++            &source,
++            None,
++            None,
++            &mut |text, range, hyphen| {
++                assert_eq!(&source.text[range], text);
++                assert!(!hyphen);
++                Ok::<_, Infallible>(text.chars().count() as f64)
++            },
++            &mut || Ok(()),
++        )
++        .unwrap();
++        assert_eq!(
++            lines
++                .iter()
++                .map(|l| l.source_range.clone())
++                .collect::<Vec<_>>(),
++            [1..7, 10..16]
++        );
++    }
++
++    #[test]
++    fn selected_discretionary_glyph_keeps_its_original_utf8_owner() {
++        let source = NormalizedHtmlText::single_mode("  ab\u{00ad}cd x", HtmlWhiteSpace::Normal);
++        let lines = plan_html_lines_with_ranges(
++            &source,
++            Some(30.0),
++            None,
++            &mut |text, range, hyphen| {
++                if hyphen {
++                    assert!(source.text[range].ends_with('\u{00ad}'));
++                    assert!(text.ends_with('-'));
++                }
++                Ok::<_, Infallible>(text.chars().filter(|c| *c != '\u{00ad}').count() as f64 * 10.0)
++            },
++            &mut || Ok(()),
++        )
++        .unwrap();
++        assert_eq!(
++            lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
++            ["ab-", "cd", "x"]
++        );
++        assert_eq!(
++            lines
++                .iter()
++                .map(|l| l.source_range.clone())
++                .collect::<Vec<_>>(),
++            [2..6, 6..8, 9..10]
++        );
++        assert_eq!(
++            lines.iter().map(|l| l.selected_hyphen).collect::<Vec<_>>(),
++            [true, false, false]
++        );
++    }
+ 
+     fn plan(parts: &[(&str, HtmlWhiteSpace)], limit: f64) -> Vec<PlannedHtmlLine> {
+         let mut source = NormalizedHtmlText::default();
+--- a/src/text/metrics/unwrapped_xhtml.rs
++++ b/src/text/metrics/unwrapped_xhtml.rs
+@@ -22,6 +22,7 @@
+     stack: Vec<(String, Arc<TextStyle>)>,
+     has_font_declarations: bool,
+     line_sizes: Vec<f64>,
++    families_only: bool,
+ }
+ 
+ impl TerminalFonts {
+@@ -32,7 +33,22 @@
+             stack: vec![(String::new(), Arc::new(style.clone()))],
+             has_font_declarations: false,
+             line_sizes: vec![style.font_size],
++            families_only: false,
+         }
++    }
++
++    pub(super) fn for_wrapped_families(style: &TextStyle) -> Self {
++        Self {
++            root_font_size: style.font_size,
++            stack: vec![(String::new(), Arc::new(style.clone()))],
++            has_font_declarations: false,
++            line_sizes: vec![style.font_size],
++            families_only: true,
++        }
++    }
++
++    pub(super) fn families_only(&self) -> bool {
++        self.families_only
+     }
+ 
+     pub(super) fn current(&self) -> &Arc<TextStyle> {
+@@ -76,15 +92,25 @@
+         {
+             let declarations =
+                 merman_core::entities::decode_html_entities_to_unicode(attribute.value.as_ref());
+-            has_font_declarations = true;
+-            initial = super::super::css_font::apply_css_font_declarations_for_terminal(
++            let applied = super::super::css_font::apply_css_font_declarations_for_terminal(
+                 parent,
+                 &initial,
+                 &declarations,
+                 self.root_font_size,
+             );
++            if self.families_only {
++                has_font_declarations = applied.font_family != initial.font_family;
++                initial.font_family = applied.font_family;
++            } else {
++                has_font_declarations = true;
++                initial = applied;
++            }
+         }
+-        let resolved = Arc::new(initial);
++        let resolved = if same_font(Some(&initial), Some(parent.as_ref())) {
++            parent.clone()
++        } else {
++            Arc::new(initial)
++        };
+         self.has_font_declarations |= has_font_declarations;
+         if !tag.trim_end().ends_with('/') {
+             self.stack.push((name.to_owned(), resolved));
+--- a/src/text/metrics.rs
++++ b/src/text/metrics.rs
+@@ -618,7 +618,44 @@
+ }
+ 
+ fn same_inline_style(left: &InlineTextRun, right: &InlineTextRun) -> bool {
++    if left.terminal_style.is_some() && right.terminal_style.is_some() {
++        return unwrapped_xhtml::same_font(
++            left.terminal_style.as_deref(),
++            right.terminal_style.as_deref(),
++        );
++    }
+     InlineStyleKey::from_run(left) == InlineStyleKey::from_run(right)
++}
++
++fn resolved_inline_style<'a>(
++    run: &'a InlineTextRun,
++    base: &TextStyle,
++) -> std::borrow::Cow<'a, TextStyle> {
++    run.terminal_style.as_deref().map_or_else(
++        || std::borrow::Cow::Owned(inline_text_style(base, run.bold, run.italic, run.code)),
++        std::borrow::Cow::Borrowed,
++    )
++}
++
++fn coalesce_terminal_font_runs(lines: &mut [Vec<InlineTextRun>]) {
++    for line in lines {
++        let mut merged: Vec<InlineTextRun> = Vec::with_capacity(line.len());
++        for run in std::mem::take(line) {
++            if let Some(previous) = merged.last_mut()
++                && previous.terminal_style.is_some()
++                && run.terminal_style.is_some()
++                && unwrapped_xhtml::same_font(
++                    previous.terminal_style.as_deref(),
++                    run.terminal_style.as_deref(),
++                )
++            {
++                previous.text.push_str(&run.text);
++            } else {
++                merged.push(run);
++            }
++        }
++        *line = merged;
++    }
+ }
+ 
+ fn measure_inline_fragments_width_px<M: TextMeasurer + ?Sized>(
+@@ -673,7 +710,7 @@
+             end == fragment_end && selected_break == HtmlBreakKind::SoftHyphen,
+         );
+         stats.record_source_slice(&text);
+-        let run_style = inline_text_style(style, first_run.bold, first_run.italic, first_run.code);
++        let run_style = resolved_inline_style(first_run, style);
+         stats.record_backend_request(text.len());
+         width += measurer.measure_html_line_width_px(&text, &run_style);
+         index = end;
+@@ -898,7 +935,7 @@
+         .iter()
+         .filter(|run| !run.text.is_empty())
+         .map(|run| {
+-            let run_style = inline_text_style(style, run.bold, run.italic, run.code);
++            let run_style = resolved_inline_style(run, style);
+             stats.record_backend_request(run.text.len());
+             measure_inline_run_width_px(measurer, &run.text, &run_style, WrapMode::HtmlLike, false)
+         })
+@@ -2912,6 +2949,7 @@
+     };
+     // Sanitizer-removed attributes and encoded angle brackets cannot affect rendered typography.
+     let html = merman_core::sanitize::sanitize_xhtml(&html, config);
++    let family_geometry = static_inline_family_geometry(&html, control)?;
+     let mut tags = Reader::from_str(&html);
+     tags.config_mut().check_end_names = false;
+     tags.config_mut().allow_unmatched_ends = true;
+@@ -2938,14 +2976,30 @@
+             let declaration = declarations.parse_until_after(Delimiter::Semicolon, |declaration| {
+                 let property = declaration.expect_ident_cloned()?.to_ascii_lowercase();
+                 declaration.expect_colon()?;
+-                let first = declaration.next().ok().cloned();
+-                let inherits = matches!(
+-                    &first,
+-                    Some(cssparser::Token::Ident(value)) if value.eq_ignore_ascii_case("inherit")
+-                ) && (declaration.is_exhausted()
+-                    || (declaration.try_parse(cssparser::parse_important).is_ok()
+-                        && declaration.is_exhausted()));
+-                while declaration.next().is_ok() {}
++                let start = declaration.position();
++                let mut end = start;
++                while !declaration.is_exhausted() {
++                    let before = declaration.position();
++                    if matches!(
++                        declaration.next_including_whitespace_and_comments()?,
++                        cssparser::Token::Delim('!')
++                    ) {
++                        declaration.expect_ident_matching("important")?;
++                        declaration.expect_exhausted()?;
++                        end = before;
++                        break;
++                    }
++                    end = declaration.position();
++                }
++                let value = declaration.slice(start..end).trim();
++                let inherits = super::css_font::css_font_global_keyword(value) == Some("inherit");
++                let supported_family = property == "font-family"
++                    && family_geometry
++                    && !value
++                        .chars()
++                        .any(|c| c.is_control() || matches!(c, '{' | '}' | ';'))
++                    && (super::css_font::css_font_value_inherits(value)
++                        || super::css_font::is_static_css_font_family_list(value));
+                 // Inheritance can override the intrinsic emphasis or code face modeled below.
+                 let overrides_element = match element.as_str() {
+                     "strong" | "b" => matches!(property.as_str(), "font-weight" | "font"),
+@@ -2955,12 +3009,13 @@
+                 };
+                 Ok::<_, cssparser::ParseError<()>>((
+                     property,
+-                    first.is_some(),
++                    !value.is_empty(),
+                     inherits && !overrides_element,
++                    supported_family,
+                 ))
+             });
+             control.checkpoint()?;
+-            if let Ok((property, true, false)) = declaration
++            if let Ok((property, true, false, false)) = declaration
+                 && (matches!(
+                     property.as_str(),
+                     "font-size" | "font-family" | "font-weight" | "font-style"
+@@ -2973,6 +3028,72 @@
+         }
+     }
+     Ok(None)
++}
++
++// Inline font families are measured as text runs. Replaced objects and compiled
++// formulas have separate geometry adapters; retain their existing guard until
++// that adapter can share the complete run measurement contract.
++#[cfg(any(
++    feature = "diagram-flowchart",
++    feature = "diagram-swimlane",
++    feature = "diagram-agentflow"
++))]
++fn static_inline_family_geometry(
++    html: &str,
++    control: &merman_core::OperationControl,
++) -> Result<bool, merman_core::OperationCancelled> {
++    use quick_xml::{Reader, events::Event};
++    if html.contains("$$") {
++        return Ok(false);
++    }
++    let mut reader = Reader::from_str(html);
++    reader.config_mut().check_end_names = false;
++    reader.config_mut().allow_unmatched_ends = true;
++    loop {
++        control.checkpoint()?;
++        let opening = match reader.read_event() {
++            Ok(Event::Start(start) | Event::Empty(start)) => start,
++            Ok(Event::Eof) => return Ok(true),
++            Err(_) => return Ok(false),
++            _ => continue,
++        };
++        let name = opening.name().as_ref().to_ascii_lowercase();
++        if matches!(
++            name.rsplit(':').next().unwrap_or(&name),
++            "svg"
++                | "img"
++                | "math"
++                | "style"
++                | "script"
++                | "object"
++                | "video"
++                | "audio"
++                | "canvas"
++                | "iframe"
++        ) {
++            return Ok(false);
++        }
++        if name == "i" {
++            for attr in opening
++                .html_attributes()
++                .with_checks(false)
++                .filter_map(Result::ok)
++            {
++                if attr.key.as_ref().eq_ignore_ascii_case("class") {
++                    let value =
++                        merman_core::entities::decode_html_entities_to_unicode(attr.value.as_ref());
++                    let tokens: Vec<_> = value.split_ascii_whitespace().collect();
++                    if tokens
++                        .iter()
++                        .any(|t| matches!(*t, "fa" | "fab" | "fak" | "fal" | "far" | "fas"))
++                        && tokens.iter().any(|t| t.starts_with("fa-"))
++                    {
++                        return Ok(false);
++                    }
++                }
++            }
++        }
++    }
+ }
+ 
+ pub fn measure_html_with_inline_styles(
+@@ -3105,7 +3226,14 @@
+     wrap_mode: WrapMode,
+ ) -> TextMetrics {
+     measure_html_with_inline_styles_and_terminal_fonts(
+-        measurer, carrier, html, style, max_width, wrap_mode, None,
++        measurer,
++        carrier,
++        html,
++        style,
++        max_width,
++        wrap_mode,
++        (wrap_mode == WrapMode::HtmlLike)
++            .then(|| unwrapped_xhtml::TerminalFonts::for_wrapped_families(style)),
+     )
+ }
+ 
+@@ -3439,43 +3567,74 @@
+ 
+     if let Some(fonts) = terminal_fonts {
+         if fonts.has_font_declarations() {
+-            debug_assert!(max_width.is_none() && wrap_mode == WrapMode::HtmlLike);
+-            let explicit_line_boxes =
+-                explicit_inline_html_line_boxes(&inline_runs_by_line, &image_on_line);
+-            let lines = normalized_preparsed_html_text_lines(&plain);
+-            inline_runs_by_line.resize_with(lines.len(), Vec::new);
+-            // Keep collapsed tails out of styled widths; empty runs mark replaced elements.
+-            for runs in &mut inline_runs_by_line {
+-                for run in runs.iter_mut().rev() {
+-                    if run.text.is_empty() {
+-                        break;
+-                    }
+-                    let end = run
+-                        .text
+-                        .trim_end_matches(is_html_collapsible_ascii_whitespace)
+-                        .len();
+-                    run.text.truncate(end);
+-                    if end > 0 {
+-                        break;
++            if fonts.families_only() && !has_inline_icons && !image_on_line.iter().any(|v| *v) {
++                coalesce_terminal_font_runs(&mut inline_runs_by_line);
++                if let Some(lines) = break_spaces_runs_by_line.as_mut() {
++                    coalesce_terminal_font_runs(lines);
++                }
++                let explicit_line_boxes =
++                    explicit_inline_html_line_boxes(&inline_runs_by_line, &image_on_line);
++                let lines = normalized_preparsed_html_text_lines(&plain);
++                inline_runs_by_line.resize_with(lines.len(), Vec::new);
++                if !carrier.is_builtin() {
++                    measurer.measure_wrapped(
++                        trim_html_collapsible_ascii_whitespace(&plain),
++                        style,
++                        max_width,
++                        wrap_mode,
++                    );
++                }
++                // Arbitrary families cannot use the intrinsic eight-face streaming table.
++                // Each complete styled probe still goes through the configured measurer.
++                return finish_inline_html_layout(
++                    measurer,
++                    InlineHtmlMeasurementCarrier::opaque(),
++                    &inline_runs_by_line,
++                    break_spaces_runs_by_line.as_deref(),
++                    style,
++                    max_width,
++                    explicit_line_boxes,
++                );
++            }
++            if !fonts.families_only() {
++                debug_assert!(max_width.is_none() && wrap_mode == WrapMode::HtmlLike);
++                let explicit_line_boxes =
++                    explicit_inline_html_line_boxes(&inline_runs_by_line, &image_on_line);
++                let lines = normalized_preparsed_html_text_lines(&plain);
++                inline_runs_by_line.resize_with(lines.len(), Vec::new);
++                // Keep collapsed tails out of styled widths; empty runs mark replaced elements.
++                for runs in &mut inline_runs_by_line {
++                    for run in runs.iter_mut().rev() {
++                        if run.text.is_empty() {
++                            break;
++                        }
++                        let end = run
++                            .text
++                            .trim_end_matches(is_html_collapsible_ascii_whitespace)
++                            .len();
++                        run.text.truncate(end);
++                        if end > 0 {
++                            break;
++                        }
+                     }
+                 }
+-            }
+-            // Preserve the opaque host's complete paragraph request before styled probes.
+-            if !carrier.is_builtin() {
+-                measurer.measure_wrapped(
+-                    trim_html_collapsible_ascii_whitespace(&plain),
++                // Preserve the opaque host's complete paragraph request before styled probes.
++                if !carrier.is_builtin() {
++                    measurer.measure_wrapped(
++                        trim_html_collapsible_ascii_whitespace(&plain),
++                        style,
++                        None,
++                        wrap_mode,
++                    );
++                }
++                return fonts.measure(
++                    measurer,
++                    &inline_runs_by_line,
++                    &icon_width_px_by_line,
+                     style,
+-                    None,
+-                    wrap_mode,
++                    explicit_line_boxes,
+                 );
+             }
+-            return fonts.measure(
+-                measurer,
+-                &inline_runs_by_line,
+-                &icon_width_px_by_line,
+-                style,
+-                explicit_line_boxes,
+-            );
+         }
+         // Unstyled Block markup retains the existing callback and primitive-font behavior.
+         for run in inline_runs_by_line.iter_mut().flatten() {
+--- a/src/text.rs
++++ b/src/text.rs
+@@ -18,7 +18,9 @@
+ pub(crate) use create_text::non_markdown_svg_words;
+ #[cfg(any(feature = "diagram-git-graph", feature = "diagram-timeline"))]
+ pub(crate) use css_font::css_font_value_inherits;
+-pub(crate) use css_font::{apply_css_font_declarations, is_static_css_font_family_list};
++pub(crate) use css_font::{
++    apply_css_font_declarations, css_font_global_keyword, is_static_css_font_family_list,
++};
+ pub use deterministic::{
+     DeterministicTextMeasurer, WrappedTextLayout, try_measure_wrapped_text,
+     try_measure_wrapped_text_with_line_metrics,
+@@ -54,7 +56,8 @@
+ pub use metrics::{measure_html_with_inline_styles, measure_markdown_with_inline_styles};
+ pub(crate) use metrics::{
+     measure_svg_markdown_word_lines, measure_wrapped_markdown_with_inline_styles,
+-    measure_xhtml_label_fragment, mermaid_markdown_to_wrapped_word_lines, svg_markdown_word_style,
++    measure_xhtml_label_fragment, mermaid_markdown_to_wrapped_word_lines,
++    style_requests_bold_font_weight, style_requests_italic_font_style, svg_markdown_word_style,
+ };
+ pub(crate) use svg_metrics::{
+     svg_text_vertical_extents_px, svg_title_bbox_vertical_extents_px,

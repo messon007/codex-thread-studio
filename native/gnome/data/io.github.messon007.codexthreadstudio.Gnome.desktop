@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Codex Thread Studio (GNOME)
+Comment=Native GNOME interface for local coding agent sessions
+Exec=codex-thread-studio-gnome %F
+Icon=io.github.messon007.codexthreadstudio.Gnome
+Terminal=false
+StartupNotify=true
+DBusActivatable=true
+X-GNOME-UsesNotifications=true
+Categories=Development;
+MimeType=text/markdown;text/x-markdown;text/csv;text/tab-separated-values;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;image/png;image/jpeg;image/webp;image/gif;image/svg+xml;application/pdf;application/epub+zip;
+Keywords=Codex;AI;Coding;Sessions;

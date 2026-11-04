@@ -22,7 +22,8 @@ test('Windows browser dependencies do not pull Linux GTK or WebKitGTK directly',
 test('Windows browser stays behind a compile-time boundary and uses published WRY', () => {
   assert.doesNotMatch(workspaceManifest, /\[patch\.crates-io\]/u)
   assert.doesNotMatch(workspaceManifest, /vendor\/wry/u)
-  assert.match(mainSource, /#\[cfg\(windows\)\]\s*mod embedded_browser_windows;/u)
+  assert.match(manifest, /^default\s*=\s*\["desktop"\]/mu)
+  assert.match(mainSource, /#\[cfg\(all\(feature = "desktop", windows\)\)\]\s*mod embedded_browser_windows;/u)
   assert.match(windowsSource, /^#!\[cfg\(windows\)\]/u)
   assert.match(windowsSource, /queue_browser_action\(window, move \|\|/u)
 })

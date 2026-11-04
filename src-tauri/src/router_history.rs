@@ -16,7 +16,7 @@ fn connection(path: &Path) -> Result<Connection, String> {
     let db = Connection::open(path).map_err(|e| e.to_string())?;
     db.busy_timeout(Duration::from_secs(5))
         .map_err(|e| e.to_string())?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS router_dispatches (controller TEXT NOT NULL, turn_key TEXT NOT NULL, dispatch TEXT NOT NULL, PRIMARY KEY(controller, turn_key));").map_err(|e| e.to_string())?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS router_dispatches (controller TEXT NOT NULL, turn_key TEXT NOT NULL, dispatch TEXT NOT NULL, PRIMARY KEY(controller, turn_key)); CREATE INDEX IF NOT EXISTS router_dispatches_page ON router_dispatches(controller);").map_err(|e| e.to_string())?;
     Ok(db)
 }
 

@@ -120,6 +120,7 @@ impl GatewaySecurity {
         self.validate_optional_origin(headers)
     }
 
+    #[cfg(any(feature = "desktop", test))]
     pub fn initialization_script(&self) -> String {
         let origin = serde_json::to_string(&self.expected_origin).expect("origin is JSON text");
         let token = serde_json::to_string(&self.token).expect("gateway token is JSON text");

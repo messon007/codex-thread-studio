@@ -61,6 +61,10 @@ for the one-command workaround.
 
 ## Run
 
+An experimental native GTK4/libadwaita frontend for Ubuntu 26.04 GNOME/Wayland is
+available on the GNOME development branch. See [native GNOME development](docs/gnome-native.md)
+for its separate build and current feature coverage.
+
 ```bash
 ./scripts/install-linux-dev-deps.sh
 codex --version

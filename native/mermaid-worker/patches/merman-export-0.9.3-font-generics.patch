@@ -1,0 +1,49 @@
+--- a/src/fonts.rs
++++ b/src/fonts.rs
+@@ -315,6 +315,46 @@
+             .lock()
+             .map(|state| state.strict_glyph_coverage)
+             .unwrap_or(true)
++    }
++
++    /// Pins generic family aliases to already admitted, host-selected family names.
++    /// The database is shared by measurement and export; no new font source is opened.
++    pub fn with_generic_families(self, sans: &str, mono: &str) -> Result<Self, NativeFontError> {
++        let mut inner = self.operation_inner(&self.0.control);
++        let mut database = (*inner.database).clone();
++        for name in [sans, mono] {
++            if name.is_empty()
++                || name.len() > 8192
++                || name.chars().any(char::is_control)
++                || !database.faces().any(|face| {
++                    face.families
++                        .iter()
++                        .any(|(family, _)| family.eq_ignore_ascii_case(name))
++                })
++            {
++                return Err(NativeFontError::Measurement(
++                    "generic family is not in the admitted font set".into(),
++                ));
++            }
++        }
++        database.set_sans_serif_family(sans);
++        database.set_monospace_family(mono);
++        inner.database = Arc::new(database);
++        inner.default_family = sans.to_owned();
++        let mut hash = Sha256::new();
++        hash.update(inner.identity.as_bytes());
++        for name in [sans, mono] {
++            hash.update((name.len() as u64).to_le_bytes());
++            hash.update(name.as_bytes());
++        }
++        inner.identity = format!(
++            "host-generics-v1/{}",
++            hash.finalize()
++                .iter()
++                .map(|b| format!("{b:02x}"))
++                .collect::<String>()
++        );
++        Ok(Self(Arc::new(inner)))
+     }
+ 
+     /// Names and collection indices selected by successful native shaping probes.

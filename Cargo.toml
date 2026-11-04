@@ -2,5 +2,27 @@
 members = [
     "src-tauri",
     "crates/marknoria",
+    "crates/markdown-native",
+    "crates/svg-resources",
 ]
 resolver = "2"
+exclude = ["native/gnome"]
+
+# Syntax engines compile large regex grammars lazily. Keep their development
+# execution representative without optimizing application/debug control flow.
+[profile.dev.package.syntect]
+opt-level = 3
+[profile.dev.package.two-face]
+opt-level = 3
+[profile.dev.package.onig]
+opt-level = 3
+[profile.dev.package.onig_sys]
+opt-level = 3
+[profile.dev.package.fancy-regex]
+opt-level = 3
+[profile.dev.package.regex]
+opt-level = 3
+[profile.dev.package.regex-syntax]
+opt-level = 3
+[profile.dev.package.regex-automata]
+opt-level = 3

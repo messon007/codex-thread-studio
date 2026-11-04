@@ -1,0 +1,18 @@
+[package]
+name = "studio-native-math-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratex-parser = "=0.1.15"
+ratex-layout = "=0.1.15"
+ratex-types = "=0.1.15"
+ratex-svg = { version = "=0.1.15", features = ["standalone", "embed-fonts"] }
+latex-rust = { version = "=2.1.1", default-features = false }
+serde_json = "1"
+resvg = { version = "0.48.1", default-features = false }
+
+[profile.dev]
+debug = 0
+
+[workspace]

@@ -4,195 +4,17 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::backend_config::valid_backend_id;
 
-pub const MAX_MAP_BODY_BYTES: usize = 512 * 1024;
-const MAX_ITEMS: usize = 1_000;
-const MAX_RELATIONS: usize = 2_000;
-const MAX_OPERATIONS: usize = 100;
-const MAX_DEPTH: usize = 16;
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMap {
-    pub id: String,
-    pub backend: String,
-    pub thread_id: String,
-    pub goal: String,
-    pub definition_of_done: String,
-    pub structure: String,
-    pub revision: u64,
-    pub current_item_id: Option<String>,
-    pub last_synced_turn_id: Option<String>,
-    pub items: Vec<MapItem>,
-    pub relations: Vec<MapRelation>,
-    pub created_at: u64,
-    pub updated_at: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MapItem {
-    pub id: String,
-    pub parent_id: Option<String>,
-    #[serde(default = "default_item_kind")]
-    pub kind: String,
-    pub title: String,
-    #[serde(default)]
-    pub summary: String,
-    #[serde(default = "default_item_state")]
-    pub state: String,
-    #[serde(default)]
-    pub position: i64,
-    #[serde(default)]
-    pub archived: bool,
-    pub created_at: u64,
-    pub updated_at: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MapRelation {
-    pub id: String,
-    pub from_item_id: String,
-    pub to_item_id: String,
-    #[serde(default = "default_relation_kind")]
-    pub kind: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateMapRequest {
-    pub backend: String,
-    pub thread_id: String,
-    pub goal: String,
-    #[serde(default)]
-    pub definition_of_done: String,
-    #[serde(default = "default_structure")]
-    pub structure: String,
-    #[serde(default)]
-    pub items: Vec<CreateMapItem>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateMapItem {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub parent_id: Option<String>,
-    #[serde(default = "default_item_kind")]
-    pub kind: String,
-    pub title: String,
-    #[serde(default)]
-    pub summary: String,
-    #[serde(default = "default_item_state")]
-    pub state: String,
-    #[serde(default)]
-    pub position: i64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplyOperationsRequest {
-    pub base_revision: u64,
-    #[serde(default = "default_actor")]
-    pub actor: String,
-    #[serde(default)]
-    pub source_turn_id: Option<String>,
-    pub operations: Vec<MapOperation>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
-pub enum MapOperation {
-    SetGoal {
-        goal: String,
-        #[serde(default)]
-        definition_of_done: Option<String>,
-    },
-    AddItem {
-        #[serde(default)]
-        item_id: Option<String>,
-        #[serde(default)]
-        parent_id: Option<String>,
-        #[serde(default)]
-        after_item_id: Option<String>,
-        title: String,
-        #[serde(default = "default_item_kind")]
-        kind: String,
-        #[serde(default)]
-        summary: String,
-        #[serde(default = "default_item_state")]
-        state: String,
-    },
-    UpdateItem {
-        item_id: String,
-        #[serde(default)]
-        title: Option<String>,
-        #[serde(default)]
-        kind: Option<String>,
-        #[serde(default)]
-        summary: Option<String>,
-    },
-    MoveItem {
-        item_id: String,
-        #[serde(default)]
-        parent_id: Option<String>,
-        #[serde(default)]
-        after_item_id: Option<String>,
-    },
-    ReorderItem {
-        item_id: String,
-        #[serde(default)]
-        after_item_id: Option<String>,
-    },
-    SetState {
-        item_id: String,
-        state: String,
-    },
-    SetCurrent {
-        #[serde(default)]
-        item_id: Option<String>,
-    },
-    ArchiveItem {
-        item_id: String,
-    },
-    AddRelation {
-        #[serde(default)]
-        relation_id: Option<String>,
-        from_item_id: String,
-        to_item_id: String,
-        #[serde(default = "default_relation_kind")]
-        kind: String,
-    },
-    RemoveRelation {
-        relation_id: String,
-    },
-}
-
-fn default_structure() -> String {
-    "hierarchy".to_string()
-}
-
-fn default_item_kind() -> String {
-    "item".to_string()
-}
-
-fn default_item_state() -> String {
-    "notStarted".to_string()
-}
-
-fn default_relation_kind() -> String {
-    "related".to_string()
-}
-
-fn default_actor() -> String {
-    "user".to_string()
-}
+#[cfg(test)]
+use crate::session_map_types::CreateMapItem;
+pub use crate::session_map_types::{
+    ApplyOperationsRequest, CreateMapRequest, MapItem, MapOperation, MapRelation, SessionMap,
+    MAX_MAP_BODY_BYTES,
+};
+use crate::session_map_types::{MAX_DEPTH, MAX_OPERATIONS};
 
 pub fn initialize(path: &Path) -> Result<(), String> {
     connection(path).map(|_| ())
@@ -251,11 +73,29 @@ pub fn find(path: &Path, backend: &str, thread_id: &str) -> Result<Option<Sessio
 }
 
 pub fn remove(path: &Path, backend: &str, thread_id: &str) -> Result<Option<SessionMap>, String> {
+    remove_at_revision(path, backend, thread_id, None)
+}
+pub fn remove_at_revision(
+    path: &Path,
+    backend: &str,
+    thread_id: &str,
+    expected: Option<u64>,
+) -> Result<Option<SessionMap>, String> {
+    remove_at_version(path, backend, thread_id, expected, None)
+}
+pub fn remove_at_version(
+    path: &Path,
+    backend: &str,
+    thread_id: &str,
+    expected: Option<u64>,
+    map_id: Option<&str>,
+) -> Result<Option<SessionMap>, String> {
     validate_anchor(backend, thread_id)?;
     let mut connection = connection(path)?;
     let transaction = connection.transaction().map_err(sql_error)?;
     let existing = find_with_connection(&transaction, backend, thread_id)?;
     if let Some(map) = &existing {
+        check_version(map, expected, map_id)?;
         transaction
             .execute("DELETE FROM session_maps WHERE id = ?1", [&map.id])
             .map_err(sql_error)?;
@@ -277,12 +117,7 @@ pub fn apply_operations(
     let Some(mut map) = find_with_connection(&transaction, backend, thread_id)? else {
         return Ok(None);
     };
-    if map.revision != request.base_revision {
-        return Err(format!(
-            "map revision conflict: expected {}, current {}",
-            request.base_revision, map.revision
-        ));
-    }
+    check_version(&map, Some(request.base_revision), request.map_id.as_deref())?;
     let before = map.clone();
     for operation in &request.operations {
         apply_operation(&mut map, operation, &request.actor)?;
@@ -306,12 +141,30 @@ pub fn apply_operations(
 }
 
 pub fn undo(path: &Path, backend: &str, thread_id: &str) -> Result<Option<SessionMap>, String> {
+    undo_at_revision(path, backend, thread_id, None)
+}
+pub fn undo_at_revision(
+    path: &Path,
+    backend: &str,
+    thread_id: &str,
+    expected: Option<u64>,
+) -> Result<Option<SessionMap>, String> {
+    undo_at_version(path, backend, thread_id, expected, None)
+}
+pub fn undo_at_version(
+    path: &Path,
+    backend: &str,
+    thread_id: &str,
+    expected: Option<u64>,
+    map_id: Option<&str>,
+) -> Result<Option<SessionMap>, String> {
     validate_anchor(backend, thread_id)?;
     let mut connection = connection(path)?;
     let transaction = connection.transaction().map_err(sql_error)?;
     let Some(current) = find_with_connection(&transaction, backend, thread_id)? else {
         return Ok(None);
     };
+    check_version(&current, expected, map_id)?;
     let change = transaction
         .query_row(
             "SELECT id, before_json FROM session_map_changes
@@ -339,6 +192,27 @@ pub fn undo(path: &Path, backend: &str, thread_id: &str) -> Result<Option<Sessio
         .map_err(sql_error)?;
     transaction.commit().map_err(sql_error)?;
     Ok(Some(restored))
+}
+
+fn check_version(
+    map: &SessionMap,
+    expected: Option<u64>,
+    map_id: Option<&str>,
+) -> Result<(), String> {
+    if map_id.is_some_and(|id| id != map.id) {
+        return Err(
+            "map identity conflict: the map was replaced; reload before changing it".into(),
+        );
+    }
+    if let Some(expected) = expected {
+        if expected != map.revision {
+            return Err(format!(
+                "map revision conflict: expected {expected}, current {}",
+                map.revision
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn apply_operation(
@@ -718,88 +592,7 @@ fn validate_anchor(backend: &str, thread_id: &str) -> Result<(), String> {
 
 fn validate_map(map: &SessionMap) -> Result<(), String> {
     validate_anchor(&map.backend, &map.thread_id)?;
-    if map.id.trim().is_empty() || map.id.len() > 128 {
-        return Err("map id is invalid".to_string());
-    }
-    if map.goal.trim().is_empty() || map.goal.len() > 4_096 {
-        return Err("map goal must contain between 1 and 4096 bytes".to_string());
-    }
-    if map.definition_of_done.len() > 8_192 {
-        return Err("map completion definition is too large".to_string());
-    }
-    if !matches!(
-        map.structure.as_str(),
-        "hierarchy" | "path" | "flow" | "blank"
-    ) {
-        return Err("map structure must be hierarchy, path, flow, or blank".to_string());
-    }
-    if map.items.len() > MAX_ITEMS || map.relations.len() > MAX_RELATIONS {
-        return Err("map contains too many items or relations".to_string());
-    }
-    let mut ids = HashSet::new();
-    for item in &map.items {
-        if item.id.trim().is_empty() || item.id.len() > 128 || !ids.insert(item.id.as_str()) {
-            return Err("map item ids must be unique and contain at most 128 bytes".to_string());
-        }
-        if item.title.trim().is_empty() || item.title.len() > 512 {
-            return Err(format!("map item {} has an invalid title", item.id));
-        }
-        if item.kind.trim().is_empty() || item.kind.len() > 64 || item.summary.len() > 4_096 {
-            return Err(format!("map item {} metadata is too large", item.id));
-        }
-        if !matches!(
-            item.state.as_str(),
-            "notStarted" | "active" | "visited" | "done" | "paused"
-        ) {
-            return Err(format!("map item {} has an invalid state", item.id));
-        }
-        if item.position < 0 {
-            return Err(format!("map item {} has an invalid position", item.id));
-        }
-    }
-    for item in &map.items {
-        if let Some(parent_id) = &item.parent_id {
-            if parent_id == &item.id || !ids.contains(parent_id.as_str()) {
-                return Err(format!("map item {} has an invalid parent", item.id));
-            }
-        }
-        let mut current = item.parent_id.as_deref();
-        let mut visited = HashSet::new();
-        for depth in 0..=MAX_DEPTH {
-            let Some(parent_id) = current else { break };
-            if depth == MAX_DEPTH || !visited.insert(parent_id) {
-                return Err("map hierarchy contains a cycle or is too deep".to_string());
-            }
-            current = map
-                .items
-                .iter()
-                .find(|candidate| candidate.id == parent_id)
-                .and_then(|candidate| candidate.parent_id.as_deref());
-        }
-    }
-    if let Some(current) = &map.current_item_id {
-        if !map
-            .items
-            .iter()
-            .any(|item| item.id == *current && !item.archived)
-        {
-            return Err("map current item does not exist".to_string());
-        }
-    }
-    let mut relation_ids = HashSet::new();
-    for relation in &map.relations {
-        if relation.id.trim().is_empty()
-            || relation.id.len() > 128
-            || !relation_ids.insert(relation.id.as_str())
-            || !ids.contains(relation.from_item_id.as_str())
-            || !ids.contains(relation.to_item_id.as_str())
-            || relation.kind.trim().is_empty()
-            || relation.kind.len() > 64
-        {
-            return Err("map contains an invalid relation".to_string());
-        }
-    }
-    Ok(())
+    crate::session_map_types::validate_snapshot(map)
 }
 
 fn connection(path: &Path) -> Result<Connection, String> {
@@ -1147,6 +940,105 @@ mod tests {
     }
 
     #[test]
+    fn conditional_undo_and_delete_never_consume_newer_changes() {
+        let path = database("conditional-map");
+        let original = create(&path, create_request("conditional")).unwrap();
+        let changed = apply_operations(
+            &path,
+            "codex",
+            "conditional",
+            ApplyOperationsRequest {
+                map_id: None,
+                base_revision: original.revision,
+                actor: "user".into(),
+                source_turn_id: None,
+                operations: vec![MapOperation::SetGoal {
+                    goal: "Newer goal 中文".into(),
+                    definition_of_done: None,
+                }],
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            undo_at_revision(&path, "codex", "conditional", Some(original.revision))
+                .unwrap_err()
+                .contains("revision conflict")
+        );
+        assert_eq!(
+            find(&path, "codex", "conditional").unwrap().unwrap(),
+            changed
+        );
+        let restored = undo_at_revision(&path, "codex", "conditional", Some(changed.revision))
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.goal, original.goal);
+        assert_eq!(restored.revision, changed.revision + 1);
+        assert!(
+            remove_at_revision(&path, "codex", "conditional", Some(changed.revision))
+                .unwrap_err()
+                .contains("revision conflict")
+        );
+        assert_eq!(
+            find(&path, "codex", "conditional").unwrap().unwrap(),
+            restored
+        );
+        assert_eq!(
+            remove_at_revision(&path, "codex", "conditional", Some(restored.revision))
+                .unwrap()
+                .unwrap(),
+            restored
+        );
+        assert!(find(&path, "codex", "conditional").unwrap().is_none());
+    }
+
+    #[test]
+    fn stale_requests_cannot_mutate_a_recreated_map_at_the_same_revision() {
+        let path = database("recreated-map");
+        let old = create(&path, create_request("recreated")).unwrap();
+        remove(&path, "codex", "recreated").unwrap();
+        let new = create(&path, create_request("recreated")).unwrap();
+        assert_eq!(new.revision, old.revision);
+        assert_ne!(new.id, old.id);
+        assert!(remove_at_version(
+            &path,
+            "codex",
+            "recreated",
+            Some(old.revision),
+            Some(&old.id)
+        )
+        .unwrap_err()
+        .contains("identity conflict"));
+        assert!(undo_at_version(
+            &path,
+            "codex",
+            "recreated",
+            Some(old.revision),
+            Some(&old.id)
+        )
+        .unwrap_err()
+        .contains("identity conflict"));
+        assert!(apply_operations(
+            &path,
+            "codex",
+            "recreated",
+            ApplyOperationsRequest {
+                base_revision: old.revision,
+                map_id: Some(old.id),
+                actor: "user".into(),
+                source_turn_id: None,
+                operations: vec![MapOperation::SetGoal {
+                    goal: "Must not replace the new goal".into(),
+                    definition_of_done: None
+                }],
+            }
+        )
+        .unwrap_err()
+        .contains("identity conflict"));
+        assert_eq!(find(&path, "codex", "recreated").unwrap().unwrap(), new);
+    }
+
+    #[test]
     fn current_node_is_exclusive_and_completion_clears_it() {
         let path = database("current-state");
         let mut request = create_request("state");
@@ -1161,6 +1053,7 @@ mod tests {
                 "codex",
                 "state",
                 ApplyOperationsRequest {
+                    map_id: None,
                     base_revision: map.revision,
                     actor: "user".into(),
                     source_turn_id: None,
@@ -1212,6 +1105,7 @@ mod tests {
             "codex",
             "state",
             ApplyOperationsRequest {
+                map_id: None,
                 base_revision: map.revision,
                 actor: "assistant".into(),
                 source_turn_id: None,
@@ -1277,6 +1171,7 @@ mod tests {
             "codex",
             "thread-1",
             ApplyOperationsRequest {
+                map_id: None,
                 base_revision: map.revision,
                 actor: "assistant".to_string(),
                 source_turn_id: Some("turn-1".to_string()),
@@ -1317,6 +1212,7 @@ mod tests {
             "codex",
             "thread-2",
             ApplyOperationsRequest {
+                map_id: None,
                 base_revision: map.revision,
                 actor: "assistant".to_string(),
                 source_turn_id: Some("turn-2".to_string()),
@@ -1333,6 +1229,7 @@ mod tests {
             "codex",
             "thread-2",
             ApplyOperationsRequest {
+                map_id: None,
                 base_revision: 0,
                 actor: "user".to_string(),
                 source_turn_id: None,

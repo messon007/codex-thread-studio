@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommentSourceRegistry, createCommentDraft } from './comment-core.mjs'
+import { normalizeAnnotationTarget } from './document-review.mjs'
 import {
   createChatCommentProvider,
   createDocumentCommentProvider,
@@ -10,6 +11,21 @@ import {
 const registry = new CommentSourceRegistry()
   .register(createChatCommentProvider())
   .register(createDocumentCommentProvider())
+
+test('native document rendering kinds survive browser draft normalization', () => {
+  for (const textKind of ['auto', 'source', 'preview', 'flow']) {
+    const source = { provider: 'document', version: 1, anchor: { filePath: '/work/report.md', root: '/work', baseHash: 'abc', startLine: 3, endLine: 9, textKind } }
+    const draft = createCommentDraft({ excerpt: '中文😀\n\nA\tB', source }, { registry, idFactory: () => 'id', now: () => 'now' })
+    assert.equal(draft.source.anchor.textKind, textKind)
+    assert.equal(draft.source.anchor.startLine, 3)
+    assert.equal(draft.source.anchor.endLine, 9)
+    assert.equal(draft.excerpt, '中文😀\n\nA\tB')
+    assert.equal(normalizeAnnotationTarget({ target: { ...source.anchor, kind: 'fileRange' } }).textKind, textKind)
+  }
+  const draft = createCommentDraft({ excerpt: 'quote', source: { provider: 'document', version: 1, anchor: { filePath: '/work/report.md', textKind: 'unrecognized' } } }, { registry, idFactory: () => 'id', now: () => 'now' })
+  assert.equal(draft.source.anchor.textKind, 'unrecognized')
+  assert.equal(Object.hasOwn(normalizeAnnotationTarget({ target: { ...draft.source.anchor, kind: 'fileRange' } }), 'textKind'), false)
+})
 
 test('legacy chat targets stay internal and do not enter the user message', () => {
   const source = legacyCommentSource({ itemId: 'item-1', turnId: 'turn-1' })

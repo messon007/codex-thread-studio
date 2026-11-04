@@ -263,6 +263,7 @@ struct Writer<'a> {
     file: BufWriter<File>,
     pages: Vec<Page>,
     offset: u64,
+    reference_bytes: u64,
     diagrams: Vec<Diagram>,
     diagram_file: BufWriter<File>,
     diagram_offset: u64,
@@ -436,7 +437,9 @@ impl Writer<'_> {
                 );
             }
         }
-        if self.offset + rendered.len() as u64 > MAX_CACHE || self.pages.len() >= MAX_PAGES {
+        if self.offset + self.reference_bytes + rendered.len() as u64 > MAX_CACHE
+            || self.pages.len() >= MAX_PAGES
+        {
             return Err(invalid("Document exceeds the prototype cache/index budget"));
         }
         let line = self.starts.partition_point(|start| *start <= span.start);
@@ -495,6 +498,7 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
         file: BufWriter::new(File::create(directory.join("pages.html"))?),
         pages: Vec::new(),
         offset: 0,
+        reference_bytes: 0,
         diagrams: Vec::new(),
         diagram_file: BufWriter::new(File::create(directory.join("diagrams.src"))?),
         diagram_offset: 0,
@@ -505,11 +509,31 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
     let (parse_source, bare) = bare_plantuml(&source, options);
-    let mut events = Parser::new_ext(&parse_source, options)
-        .into_offset_iter()
-        .peekable();
+    let parser = Parser::new_ext(&parse_source, options);
+    // Persist only label/record ranges in the small native metadata. Large
+    // destinations stay on disk and are read lazily by native worker requests.
+    let mut definitions: Vec<_> = parser.reference_definitions().iter().collect();
+    definitions.sort_by_key(|(_, definition)| definition.span.start);
+    let mut reference_data = BufWriter::new(File::create(directory.join("references.bin"))?);
+    let mut reference_ranges = Vec::new();
+    let mut reference_offset = 0usize;
+    for (label, definition) in definitions {
+        let title = definition.title.as_deref().unwrap_or("");
+        reference_ranges.push((label, reference_offset, definition.dest.len(), title.len()));
+        reference_data.write_all(definition.dest.as_bytes())?;
+        reference_data.write_all(title.as_bytes())?;
+        reference_offset += definition.dest.len() + title.len();
+    }
+    reference_data.flush()?;
+    let mut reference_metadata = BufWriter::new(File::create(directory.join("references.json"))?);
+    serde_json::to_writer(&mut reference_metadata, &reference_ranges)?;
+    reference_metadata.flush()?;
+    writer.reference_bytes = reference_offset as u64;
+    drop(reference_ranges);
+    let mut events = parser.into_offset_iter().peekable();
     let mut pending = Vec::new();
     let mut pending_span = 0..0;
+    let mut pending_image_bytes = 0usize;
     let mut depth = 0usize;
     let mut toc = Vec::<Heading>::new();
     let mut active_heading = None;
@@ -688,6 +712,7 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
             active_diagram = diagram;
             if pending.is_empty() {
                 pending_span.start = span.start;
+                pending_image_bytes = 0;
             }
         }
         if let Event::Start(Tag::Heading { level, id, .. }) = &mut event {
@@ -714,6 +739,18 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
                 _ => {}
             }
         }
+        if let Event::Start(Tag::Image { dest_url, .. }) = &event {
+            if dest_url.len() > 8192
+                && dest_url
+                    .get(..11)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("data:image/"))
+            {
+                // Images become bounded alt text in the cache. Charge their
+                // source span separately; native transport projects these URLs.
+                pending_image_bytes = pending_image_bytes
+                    .saturating_add(dest_url.len().min(span.end.saturating_sub(span.start)));
+            }
+        }
         match &event {
             Event::Start(_) => depth += 1,
             Event::End(_) => depth = depth.saturating_sub(1),
@@ -727,7 +764,12 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
             depth = depth.saturating_sub(1);
         }
         if pending.len() > MAX_EVENTS
-            || pending_span.end.saturating_sub(pending_span.start) > MAX_HTML
+            || (depth == 0
+                && pending_span
+                    .end
+                    .saturating_sub(pending_span.start)
+                    .saturating_sub(pending_image_bytes)
+                    > MAX_HTML)
         {
             return Err(invalid("An indivisible block exceeds the prototype budget"));
         }
@@ -1603,6 +1645,60 @@ mod tests {
         assert!(!directory.path().join("index.json").exists());
     }
 
+    #[test]
+    fn native_reference_records_keep_first_definitions_without_inflating_index() {
+        let text = "[Key]: <first file.png> \"First title\"\n[key]: wrong.png\n\n> [nested]: nested.png\n>   \"Nested title\"\n\n[KEY] and ![image][nested].\n\n```text\n[code]: unused.png\n```\n";
+        let (directory, index) = fixture(text);
+        let records: Vec<(String, usize, usize, usize)> =
+            serde_json::from_slice(&fs::read(directory.path().join("references.json")).unwrap())
+                .unwrap();
+        assert_eq!(records.len(), 2);
+        let bytes = fs::read(directory.path().join("references.bin")).unwrap();
+        let mut output = Vec::new();
+        for (label, offset, destination, title) in records {
+            output.push((
+                label,
+                String::from_utf8(bytes[offset..offset + destination].to_vec()).unwrap(),
+                String::from_utf8(
+                    bytes[offset + destination..offset + destination + title].to_vec(),
+                )
+                .unwrap(),
+            ));
+        }
+        assert_eq!(
+            output,
+            vec![
+                ("Key".into(), "first file.png".into(), "First title".into()),
+                ("nested".into(), "nested.png".into(), "Nested title".into())
+            ]
+        );
+        let metadata = serde_json::to_string(&index).unwrap();
+        assert!(!metadata.contains("first file.png") && !metadata.contains("Nested title"));
+        assert_eq!(
+            fs::read_to_string(directory.path().join("source.md")).unwrap(),
+            text
+        );
+    }
+    #[test]
+    fn oversized_data_images_keep_original_offsets_without_inflating_html() {
+        let uri = format!("data:image/png;base64,{}", "QUFB".repeat(200_000));
+        let text = format!("# Start\n\n![big]({uri})\n\n# After\n");
+        let (directory, index) = fixture(&text);
+        assert_eq!(index.source_bytes, text.len());
+        assert!(index.pages.iter().any(|p| p.end - p.start > 512 * 1024));
+        let html = (0..index.pages.len())
+            .map(|p| read_page(directory.path(), &index, p).unwrap())
+            .collect::<String>();
+        assert!(html.len() < 1024 && html.contains("[image: big]"));
+        assert_eq!(
+            fs::read_to_string(directory.path().join("source.md")).unwrap(),
+            text
+        );
+        assert_eq!(index.toc[1].line, 5);
+        let path = directory.path().join("code.md");
+        fs::write(&path, format!("```text\n![literal]({uri})\n```\n")).unwrap();
+        assert!(build_index(&path, &directory.path().join("code-cache")).is_err());
+    }
     #[test]
     fn syntax_highlighting_does_not_make_valid_code_exceed_fragment_budget() {
         let code = "fn main() { let x = 123; }\n".repeat(1800);

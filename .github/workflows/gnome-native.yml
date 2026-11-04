@@ -1,0 +1,407 @@
+name: Native GNOME
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'native/gnome/**'
+      - 'native/mermaid-worker/**'
+      - 'ui/i18n.mjs'
+      - 'src-tauri/**'
+      - 'crates/marknoria/**'
+      - 'crates/markdown-native/**'
+      - 'crates/svg-resources/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/*gnome*'
+      - 'scripts/test-support/**'
+      - '.github/workflows/gnome-native.yml'
+  pull_request:
+    paths:
+      - 'native/gnome/**'
+      - 'native/mermaid-worker/**'
+      - 'ui/i18n.mjs'
+      - 'src-tauri/**'
+      - 'crates/marknoria/**'
+      - 'crates/markdown-native/**'
+      - 'crates/svg-resources/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/*gnome*'
+      - 'scripts/test-support/**'
+      - '.github/workflows/gnome-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-26-04:
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - name: Install Ubuntu 26.04 native dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git nodejs python3 python3-gi gir1.2-glib-2.0 dbus-daemon build-essential patch bubblewrap fontconfig pkg-config libssl-dev libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev fonts-dejavu-core fonts-noto-cjk
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check Rust and shell formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path native/gnome/Cargo.toml -- --check
+          cargo fmt --manifest-path native/mermaid-worker/Cargo.toml -- --check
+          bash -n scripts/build-gnome.sh scripts/package-gnome.sh scripts/package-gnome-checksums.sh scripts/install-gnome.sh scripts/install-gnome-runtime-deps.sh scripts/install-gnome-dev-deps.sh scripts/install-gnome-diagrams.sh scripts/install-gnome-pdf.sh
+      - name: Verify shared interface translation snapshot
+        run: node scripts/vendor-gnome-i18n.mjs --check
+      - name: Test shared gateway without a desktop runtime
+        run: cargo test -p codex-thread-studio --no-default-features --locked
+      - name: Test reusable native Markdown model
+        run: cargo test -p studio-markdown-native --locked
+      - name: Test worker-side syntax preparation and bundled notices
+        run: |
+          cargo test -p studio-markdown-native --features syntax-highlight,structured-preview --locked
+          cargo run -p studio-markdown-native --features syntax-highlight --example syntax_notices --locked > /tmp/syntax-notices.md
+          cmp /tmp/syntax-notices.md native/gnome/vendor/two-face/ACKNOWLEDGEMENTS.md
+      - name: Test bounded SVG bitmap resources
+        run: cargo test -p studio-svg-resources --locked
+      - name: Test native models and security
+        run: cargo test --manifest-path native/gnome/Cargo.toml --locked
+      - name: Verify native Linux HTTPS transport notices
+        run: python3 scripts/vendor-gnome-tls.py --check
+      - name: Verify native structured-file reader notices
+        run: python3 scripts/vendor-gnome-structured.py --check
+      - name: Verify native HTML sanitizer/tokenizer notices
+        run: python3 scripts/vendor-gnome-html.py --check
+      - name: Test pinned native Mermaid renderer and font contract
+        run: python3 scripts/cargo-gnome-mermaid.py test --locked --bins --tests
+      - name: Test pinned renderer library with native math and sequence features
+        run: python3 scripts/test-gnome-mermaid-renderer.py --output target/gnome-mermaid-renderer-tests
+      - name: Verify private desktop mount cleanup boundaries
+        run: python3 scripts/test-support/test-private-wayland.py
+      - name: Build native application, gateway and bundled renderer
+        run: bash scripts/build-gnome.sh --debug
+      - name: Verify self-contained installation and declared runtime packages
+        run: |
+          bash scripts/install-gnome-runtime-deps.sh --simulate
+          python3 scripts/test-gnome-install.py target/gnome-native/package
+      - name: Archive native bundle with executable permissions
+        run: tar -C target/gnome-native -czf target/gnome-native-bundle.tar.gz package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gnome-native-bundle
+          path: target/gnome-native-bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify bundled Mermaid protocol, provenance and rejection boundaries
+        run: python3 scripts/test-gnome-mermaid-package.py target/gnome-native/package --output target/gnome-mermaid-package-tests
+      - name: Verify native document source, edit and row-cursor bounds without a compositor
+        run: python3 scripts/smoke-gnome-documents.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify durable Router controller setup
+        run: python3 scripts/smoke-gnome-router.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify explicit recovery of uncertain controllers
+        run: python3 scripts/smoke-gnome-router-recovery.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify Router execution and recovery
+        run: python3 scripts/smoke-gnome-router-runtime.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify supervised Router handoff and metadata-only restart ownership
+        run: |
+          python3 scripts/smoke-gnome-supervision-handoff.py target/gnome-native/package/codex-thread-studio-gateway
+          python3 scripts/smoke-gnome-supervision-scope.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify single-attempt OpenCode Router commands
+        run: python3 scripts/smoke-gnome-router-command.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify persisted Router history search
+        run: python3 scripts/smoke-gnome-router-search.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify read-only browser Router history and exact source identities
+        run: python3 scripts/smoke-gnome-router-archive.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify native table API without a compositor
+        run: python3 scripts/smoke-gnome-tables.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify shared appearance revisions without a compositor
+        run: python3 scripts/smoke-gnome-appearance.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped shared-folder policy without a compositor
+        run: python3 scripts/smoke-gnome-shared-settings.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped session visibility without a compositor
+        run: python3 scripts/smoke-gnome-session-visibility.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped notification settings without a compositor
+        run: python3 scripts/smoke-gnome-notifications.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped browser settings and address restoration without a compositor
+        run: python3 scripts/smoke-gnome-browser-settings.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped translation settings without a compositor
+        run: python3 scripts/smoke-gnome-translation.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify shared composer preferences without a compositor
+        run: python3 scripts/smoke-gnome-continuation.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify owned utility catalogs, event isolation and single-attempt cleanup
+        run: python3 scripts/smoke-gnome-utility-sessions.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify explicit backend configuration transactions without a compositor
+        run: python3 scripts/smoke-gnome-backends.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify read-only item paging without a compositor
+        run: python3 scripts/smoke-gnome-conversation-pages.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify installed desktop and D-Bus launch quoting on a private bus
+        run: /usr/bin/python3 scripts/test-support/gnome-install-activation.py
+      - name: Verify native still and opt-in animation image transport without a compositor
+        run: python3 scripts/smoke-gnome-images.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify scoped interface-language settings without a compositor
+        run: python3 scripts/smoke-gnome-language.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify inline history-image bounds without a compositor
+        run: python3 scripts/smoke-gnome-history-images.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify file-wide Markdown references and large images without a compositor
+        run: python3 scripts/smoke-gnome-embedded-images.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only --large-source --references
+      - name: Verify nested image originals and Markdown table images without a compositor
+        run: python3 scripts/smoke-gnome-table-images.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify bounded native directory pages without a compositor
+        run: python3 scripts/smoke-gnome-files.py target/gnome-native/package/codex-thread-studio-gnome target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify isolated native math without a compositor
+        run: python3 scripts/smoke-gnome-math.py target/gnome-native/package/codex-thread-studio-gnome
+      - name: Verify bundled math font notices
+        run: |
+          test -s target/gnome-native/package/licenses/ratex/LICENSE
+          test -s target/gnome-native/package/licenses/ratex/OFL.txt
+          test -s target/gnome-native/package/licenses/ratex/FONT_NOTICE.txt
+          test -s target/gnome-native/package/licenses/data-url/LICENSE
+          test -s target/gnome-native/package/licenses/data-url/UPSTREAM.md
+          test -s target/gnome-native/package/licenses/memchr/LICENSE
+          test -s target/gnome-native/package/licenses/memchr/UPSTREAM.md
+          test -s target/gnome-native/package/licenses/unicase/LICENSE
+          test -s target/gnome-native/package/licenses/unicase/UPSTREAM.md
+      - name: Verify native EPUB archive API without a compositor
+        run: python3 scripts/smoke-gnome-epub.py target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify bounded EPUB full-book search without a compositor
+        run: python3 scripts/smoke-gnome-epub-search.py target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify shared annotation revisions and exact cleanup without a compositor
+        run: python3 scripts/smoke-gnome-annotations.py target/gnome-native/package/codex-thread-studio-gateway --api-only
+      - name: Verify runtime separation
+        run: |
+          ldd target/gnome-native/package/codex-thread-studio-gnome > native-libraries.txt
+          ldd target/gnome-native/package/codex-thread-studio-gateway > gateway-libraries.txt
+          # GTK4 WebKit renders EPUB XHTML/browser pages, with GTK application UI.
+          if grep -Ei 'libwebkit2gtk|libgtk-3' native-libraries.txt; then exit 1; fi
+          grep -F 'libwebkitgtk-6.0' native-libraries.txt
+          if grep -Ei 'webkit|javascriptcore|libgtk-[34]' gateway-libraries.txt; then exit 1; fi
+          if grep -F 'not found' native-libraries.txt gateway-libraries.txt; then exit 1; fi
+      # A container cannot validate physical GNOME desktop input/focus or portals.
+      # Run scripts/smoke-gnome-native.py, scripts/smoke-gnome-router-ui.py and
+      # (native.py includes actual Mermaid/PlantUML/D2/math inspector controls,
+      # source-row recycling and Fit/zoom screenshots)
+      # (also native Mermaid flowchart/sequence math labels, literal unsupported
+      # expressions, exact source Copy, opposite-theme replay and cleanup)
+      # plus scripts/smoke-gnome-flow-preview.py DEBUG_NATIVE GATEWAY --reference LARGE_MD
+      # (owned Wayland input, real reader actor, view/dirty/epoch and column-picker checks)
+      # (also code-gutter glyphs, wrapped logical lines and stale-buffer retirement)
+      # (plus repeated-formula preparation, indexed mixed tables, full Copy and timing)
+      # (also table model admission/release, retained page/width/scroll and idle binding)
+      # (64 repeated formulas, independent Copy, cold/warm gaps and persistent budget notices)
+      # (separate shell/construction/layout timing; optional GSK_RENDERER comparisons
+      # and --graphics-cache-from an owned completed run; app/document caches stay fresh)
+      # scripts/smoke-gnome-tables.py and scripts/smoke-gnome-images.py without --api-only
+      # (GIF/APNG/WebP playback, reduced motion, controls, viewport/window suspension,
+      # current-frame Copy, limited stills and original Save after snapshot replacement)
+      # plus scripts/smoke-gnome-browser.py and scripts/smoke-gnome-annotations.py
+      # and scripts/smoke-gnome-appearance.py --headless
+      # plus scripts/smoke-gnome-language.py NATIVE GATEWAY (live locale and conflicts)
+      # plus scripts/smoke-gnome-desktop-portal.py NATIVE GATEWAY on an Ubuntu GNOME host
+      # (real GNOME/Nautilus Open/Cancel, shared-folder explicit Save and original-image
+      # Save/Cancel; owned Mutter/session bus, private files, no portal stub/app hooks)
+      # plus scripts/smoke-gnome-router-recovery-ui.py --headless
+      # plus scripts/smoke-gnome-backend-recovery.py NATIVE GATEWAY --startup-failures
+      # plus scripts/smoke-gnome-discovery.py NATIVE GATEWAY --mode automatic
+      # (also --mode permanent / close: registry HTTP recovery, independent
+      # documents, Reconnect, stale startup callbacks, retained draft and cleanup)
+      # plus --mode launch-retry / launch-replace / launch-close / launch-timeout
+      # (owned early exit/readiness wait, parent-pipe cleanup before replacement,
+      # full-request-queue close and actual restored conversation rows)
+      # plus --mode runtime-stop (real owned gateway exit, API retirement,
+      # paused queue/draft/edit retention, late callbacks and admitted exports)
+      # plus --mode runtime-recover / runtime-conflict (explicit gateway replacement,
+      # snapshot verification, retained undo and conflict protection)
+      # plus --mode runtime-paged --document PATH (private real-report source window)
+      # plus --mode runtime-viewers / runtime-viewers-conflict
+      # (CSV executed-query/draft separation, PDF view state, EPUB CFI and conflicts)
+      # plus either mode with --book-search paged / inflight (140-section book,
+      # retained result pages, real held replies, exact cursors and document IDs)
+      # plus either runtime-viewers mode with --pdf-recovery encrypted
+      # (native unlock ownership, wrong password, Cancel/retry and stale prompts)
+      # plus either mode with --table-recovery xlsx (three worksheets, separate
+      # SQL drafts, exact result page and offline chooser callbacks)
+      # plus --book-location supplement (non-spine XHTML, successive fragments,
+      # retained main-chapter CFI and actual restored content geometry)
+      # (all viewer options can be combined in either recovery mode)
+      # plus scripts/smoke-gnome-layout.py (20 real GTK allocation cases,
+      # measured divider minima, paused queue, large fonts and model popup)
+      # (initial authenticated 503s, selected/background WS/SSE recovery, no replay)
+      # plus its --process-exit case (actual owned Codex child exits, retained draft/history)
+      # and --event-gap (owned socket backpressure, real gateway broadcast lag/revalidation)
+      # and scripts/smoke-gnome-input.py --headless (private provider and URI portal)
+      # plus its --language zh-CN case (live open-form/policy/subset translation)
+      # plus scripts/smoke-gnome-opencode-input.py --headless (scoped recovery/replies)
+      # and scripts/smoke-gnome-shared-settings.py
+      # and scripts/smoke-gnome-session-visibility.py, optionally with --large-catalog
+      # plus its --recovery two-launch case
+      # and scripts/smoke-gnome-notifications.py (private notification bus)
+      # plus scripts/smoke-gnome-browser-settings.py --headless
+      # (two actual launches, address restore/forget, failed-save Cancel and shutdown flush)
+      # and scripts/smoke-gnome-backends.py NATIVE GATEWAY
+      # (explicit file editing, conflict retention, restart and lazy activation)
+      # and scripts/smoke-gnome-session-map.py NATIVE GATEWAY
+      # (native controls, isolated fake AI tasks, cancellation and persisted restart)
+      # plus scripts/smoke-gnome-map-sync.py NATIVE GATEWAY
+      # (same-turn tools/fallback, offscreen/queued turns, conflict recovery and owned clipboard)
+      # and scripts/smoke-gnome-router-map.py NATIVE GATEWAY
+      # (--api-only for routed scopes/recovery; default also checks native live updates/records)
+      # and scripts/smoke-gnome-epub-search.py --headless
+      # plus scripts/smoke-gnome-epub.py --headless and
+      # scripts/smoke-gnome-epub-clipboard.py (owned compositor clipboard/input)
+      # plus scripts/smoke-gnome-pdf-links.py --headless (private URI portal)
+      # and scripts/smoke-gnome-inline-shapes.py INLINE_SHAPE_EXAMPLE_BINARY
+      # (standalone Pango math experiment; owned compositor/clipboard)
+      # plus scripts/smoke-gnome-inline-labels.py NATIVE GATEWAY
+      # (production queue, source comments, themes, copy and label reuse)
+      # --paged-math also checks atomic formula pages, search/quotes, failed
+      # large-expression source, bounded style tags and English/Chinese controls.
+      # plus scripts/smoke-gnome-release.py RELEASE_PACKAGE_DIRECTORY
+      # plus scripts/smoke-gnome-release-large.py RELEASE_PACKAGE_DIRECTORY --reference LARGE_MD
+      # (actual report, LF/CRLF 32 MiB tables, EOF Source/Edit/undo, exact row cursors;
+      # installed launcher and owned GNOME controls, no application test hooks)
+      # optionally with --all-diagrams --language --backends --git --viewers for installed controls
+      # plus scripts/smoke-gnome-release-map.py RELEASE_PACKAGE_DIRECTORY
+      # (named shell actions, keyboard/menu-dialog focus, Map current/Done/Undo
+      # controls and persistence; zero model turns)
+      # plus scripts/smoke-gnome-release-supervision.py RELEASE_PACKAGE_DIRECTORY
+      # (installed opt-in, authoritative evaluator output, bounded continuation,
+      # queue release/Stop, preserved drafts and cold Router handoff; private
+      # providers, AT-SPI/owned Wayland input, no application test hooks)
+      # plus scripts/smoke-gnome-router-archive.py NATIVE GATEWAY --installed
+      # (old browser records, native source selection/search, Codex/OpenCode
+      # paging and exact reply origins; no application hooks/gateway override)
+      # add --language for live Router caption/sidebar translations, preserving
+      # literal names, queries, draft and source-record identities.
+      # plus scripts/smoke-gnome-html-menu.py NATIVE GATEWAY --installed --translate
+      # (named Copy/Select all/Translate actions through AT-SPI, Menu/Shift+F10,
+      # independent clipboard, exact private utility cleanup and Source return;
+      # no application hooks or gateway override)
+      # scripts/smoke-gnome-translation.py also verifies the actual right-click
+      # popup anchor in WebView-local coordinates, independently of keyboard menus.
+      # plus scripts/smoke-gnome-continuation.py NATIVE GATEWAY --installed
+      # (real settings/conflict/dirty-close controls, retained over-limit queues,
+      # session/Ollama drafts, Cancel, composer-only shortcut and explicit quick
+      # send; private provider/HTTP fixtures, no application control hooks)
+      # plus scripts/smoke-gnome-turn-navigation.py NATIVE GATEWAY --installed
+      # (virtualized named prompt buttons, current-turn geometry, distant and
+      # keyboard jumps, literal previews and draft/source preservation;
+      # private providers/Wayland input, no application control hooks)
+      # plus scripts/smoke-gnome-turn-navigation-scope.py NATIVE GATEWAY
+      # --backend codex|opencode --installed (three history pages, Newer/Live,
+      # source/draft restoration; Codex live reading and late reply rejection)
+      # Separate debug --capture --narrow [--large-type] navigation runs inspect
+      # actual mapped popup typography, not just the parent-window snapshot.
+      # plus scripts/smoke-gnome-release-favorites.py RELEASE_PACKAGE_DIRECTORY
+      # (English/Chinese metadata, dirty guards, Copy and native export portals;
+      # no application hooks, gateway override or model turns)
+      # plus scripts/smoke-gnome-release-comments.py RELEASE_PACKAGE_DIRECTORY
+      # (English/Chinese comment controls, dirty guards, insertion/source/removal;
+      # no application hooks, gateway override or model turns)
+      # (installed pair, AT-SPI/Wayland input, no application test hooks;
+      # requires python3-gi and gir1.2-atspi-2.0 with the owned Mutter)
+      # plus scripts/smoke-gnome-workspace-navigation.py NATIVE GATEWAY
+      # (private Wayland viewer dispatch, nested return and stale/deferred events)
+      # plus scripts/smoke-gnome-comment-location.py NATIVE GATEWAY [--reference REPORT]
+      # (private quote lookup/relocation, actual Source actions and dirty save guards)
+      # plus scripts/smoke-gnome-source-comments.py NATIVE GATEWAY
+      # plus scripts/smoke-gnome-source-search.py NATIVE GATEWAY
+      # plus scripts/smoke-gnome-source-edit.py NATIVE GATEWAY
+      # plus scripts/smoke-gnome-edit-find.py NATIVE GATEWAY
+      # (two-launch code/text selection, explicit save, quote relocation and bounds)
+      # plus scripts/smoke-gnome-conversation-pages.py --headless, with and without
+      # --items, using the optional Mutter compositor test dependency
+      # and scripts/smoke-gnome-hydration.py --headless for bounded initial loading
+      # plus scripts/smoke-gnome-outputs.py NATIVE GATEWAY REAL_MARKDOWN --headless
+      # (also search/follow-tail ordering and scoped live-provider navigation)
+      # and scripts/smoke-gnome-rich-text.py NATIVE GATEWAY --headless [--unbroken]
+      # plus scripts/smoke-gnome-embedded-images.py NATIVE GATEWAY
+      # optionally --large-source (14 MiB line; compact original-coordinate
+      # transport, exact original after reader close, comments and no fetches)
+      # and --references (off-page definitions, native link navigation, large
+      # data-image references, continued table headers and cache isolation)
+      # plus scripts/smoke-gnome-table-images.py NATIVE GATEWAY
+      # (header/full-cell images, modal handoff, viewport/paging/source anchors,
+      # original bytes after reader closure, hidden action and cleanup guards)
+      # plus scripts/smoke-gnome-table-cells.py NATIVE GATEWAY --headless
+      # (excerpt/full-cell/code comments, literal quotes, SQLite, verified source
+      # reopen, document generations and stale/recycled widget rejection)
+      # and scripts/smoke-gnome-streaming.py NATIVE GATEWAY --headless
+      # plus scripts/smoke-gnome-fallback.py NATIVE GATEWAY --headless
+      # (private compositor keyboard input; test-only python3-gi dependency)
+      # and scripts/smoke-gnome-files.py
+      #   NATIVE GATEWAY --shared --headless (owned keyboard/pointer/clipboard)
+      # plus scripts/smoke-gnome-browser-files.py NATIVE GATEWAY
+      # (16 real page/portal operations, repeated Cancel, exact HTTP bytes,
+      # no-overwrite publication and the confirmed-cleanup close guard)
+      # plus scripts/smoke-gnome-file-portal.py NATIVE GATEWAY
+      # (18 private FileChooser/OpenURI calls, 7 cancellations and late Open replies)
+      # plus scripts/smoke-gnome-save-portal.py NATIVE GATEWAY
+      # (output/Favorites SaveFile late replies and confirmed-write close guard)
+      # plus scripts/smoke-gnome-write-failures.py NATIVE GATEWAY
+      # (real disk failures, closed/replaced viewer context, queued alerts,
+      # and admitted GFile writes during a simulated gateway-loss callback)
+      # plus scripts/smoke-gnome-image-save.py NATIVE GATEWAY
+      # (exact original PNG/SVG/GIF saves, changed-source rejection, sixteen
+      # Open/Save choices, late replies, cache eviction and confirmed-write guards)
+      # plus scripts/smoke-gnome-layout.py (requires a debug native executable)
+      # Optional architectural probe: build --example text_flow_selection, then
+      # scripts/smoke-gnome-text-flow.py EXAMPLE --reference REAL_MARKDOWN
+      # (owned Wayland cross-block selection/copy and native table paging;
+      # requires actual PlantUML/D2 runtimes; not the application renderer).
+      # and scripts/smoke-gnome-history-images.py, optionally with --large-source
+      # separately in a Wayland desktop session.
+
+  # A new container has runtime packages only: no checkout or Rust toolchain.
+  ubuntu-26-04-runtime:
+    needs: ubuntu-26-04
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gnome-native-bundle
+      - name: Extract and install system runtime dependencies
+        run: |
+          tar -xzf gnome-native-bundle.tar.gz
+          bash package/install-runtime-deps.sh
+      - name: Install bundle independently of the source checkout
+        run: |
+          bash package/install.sh package /opt/studio
+          test -L /opt/studio/bin/codex-thread-studio-gnome
+          test ! -e /opt/studio/bin/d2
+          ! command -v cargo
+          ! command -v rustc
+      - name: Verify native dependency loading without a display or backend
+        env:
+          GDK_BACKEND: wayland
+        run: /opt/studio/bin/codex-thread-studio-gnome --help
+
+  # Bubblewrap needs real user namespaces, which an unprivileged job container
+  # does not reliably expose. Exercise the PDF engine on the runner host.
+  pdf-runtime:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install worker dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap libssl-dev pkg-config fonts-dejavu-core
+      - name: Build gateway and package checked PDF runtime
+        run: |
+          cargo build -p codex-thread-studio --no-default-features --locked
+          bash scripts/install-gnome-pdf.sh target/native-pdf-runtime
+      - name: Verify isolated PDF API without a compositor or model calls
+        env:
+          STUDIO_GNOME_PDFIUM_LIBRARY: ${{ github.workspace }}/target/native-pdf-runtime/libpdfium.so
+        run: python3 scripts/smoke-gnome-pdf.py target/debug/codex-thread-studio --api-only
+      - name: Verify bounded PDF links without a compositor or URI launches
+        env:
+          STUDIO_GNOME_PDFIUM_LIBRARY: ${{ github.workspace }}/target/native-pdf-runtime/libpdfium.so
+        run: python3 scripts/smoke-gnome-pdf-links.py target/debug/codex-thread-studio --api-only

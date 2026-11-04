@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,6 +17,19 @@ use crate::backend_runtime::RuntimeFile;
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
 const MAX_CLIENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 static INTERNAL_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+const PRIVATE_REQUEST_PREFIX: &str = "studio-native-read-";
+type PrivateRequests = Arc<std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>;
+struct PrivateRequestGuard {
+    requests: PrivateRequests,
+    id: String,
+}
+impl Drop for PrivateRequestGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.requests.lock() {
+            pending.remove(&self.id);
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct CodexAppServer {
@@ -26,6 +40,8 @@ pub struct CodexAppServer {
     events: broadcast::Sender<String>,
     lifecycle_events: broadcast::Sender<String>,
     generation: Arc<AtomicU64>,
+    private_requests: PrivateRequests,
+    pub(crate) router_maps: crate::native_router_map::Registry,
 }
 
 #[derive(Clone)]
@@ -52,6 +68,8 @@ impl CodexAppServer {
             events,
             lifecycle_events,
             generation: Arc::new(AtomicU64::new(0)),
+            private_requests: Arc::default(),
+            router_maps: Default::default(),
         }
     }
 
@@ -61,6 +79,15 @@ impl CodexAppServer {
 
     pub fn execution_environment(&self) -> &'static str {
         self.runtime.environment()
+    }
+    pub(crate) fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+    pub(crate) fn generation_source(&self) -> Arc<AtomicU64> {
+        self.generation.clone()
+    }
+    pub(crate) fn map_events(&self) -> broadcast::Sender<String> {
+        self.events.clone()
     }
 
     pub fn wsl_distribution(&self) -> Option<&str> {
@@ -192,6 +219,14 @@ impl CodexAppServer {
                         .await;
                     continue;
                 }
+                if reader_server.router_maps.intercept(
+                    &value,
+                    generation,
+                    reader_input.clone(),
+                    reader_server.events.clone(),
+                ) {
+                    continue;
+                }
                 reader_server.emit(value);
             }
         });
@@ -275,6 +310,9 @@ impl CodexAppServer {
             .is_some_and(|connection| connection.generation == generation)
         {
             *process = None;
+            if let Ok(mut pending) = self.private_requests.lock() {
+                pending.clear();
+            }
         } else {
             return;
         }
@@ -322,6 +360,7 @@ impl CodexAppServer {
             .as_ref()
             .map(|connection| connection.input.clone())
             .ok_or("codex app-server is not running")?;
+        self.router_maps.observe_request(&value);
         input
             .send(value.to_string())
             .await
@@ -370,6 +409,26 @@ impl CodexAppServer {
     }
 
     fn emit(&self, value: Value) {
+        self.router_maps.observe_reply(&value);
+        // Large native reads are correlated directly to their HTTP operation.
+        // Never rebroadcast them into every live conversation's WebSocket.
+        if value.get("method").is_none() {
+            if let Some(id) = value
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| id.starts_with(PRIVATE_REQUEST_PREFIX))
+            {
+                let sender = self
+                    .private_requests
+                    .lock()
+                    .ok()
+                    .and_then(|mut pending| pending.remove(id));
+                if let Some(sender) = sender {
+                    let _ = sender.send(value);
+                }
+                return;
+            }
+        }
         let lifecycle = is_lifecycle_message(&value);
         let payload = value.to_string();
         let _ = self.events.send(payload.clone());
@@ -380,6 +439,103 @@ impl CodexAppServer {
 
     pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<String> {
         self.lifecycle_events.subscribe()
+    }
+
+    pub async fn request_private_read(&self, method: &str, params: Value) -> Result<Value, String> {
+        if !matches!(
+            method,
+            "thread/searchOccurrences"
+                | "thread/turns/list"
+                | "thread/items/list"
+                | "thread/read"
+                | "thread/list"
+        ) {
+            return Err("Native operation is not read-only".into());
+        }
+        self.request_private(method, params).await
+    }
+
+    /// The server-owned Router uses this allowlist for provisioning, scoped
+    /// delivery, and read-only target metadata; clients cannot supply methods.
+    pub(crate) async fn request_router(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        if !matches!(
+            method,
+            "thread/start"
+                | "thread/name/set"
+                | "thread/read"
+                | "thread/list"
+                | "thread/resume"
+                | "thread/turns/list"
+                | "turn/start"
+                | "turn/interrupt"
+                | "skills/list"
+                | "plugin/list"
+        ) {
+            return Err("Unsupported Router setup operation".into());
+        }
+        self.request_private(method, params).await
+    }
+
+    async fn request_private(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.ensure_started().await?;
+        if !self
+            .process
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|connection| connection.ready)
+        {
+            return Err("codex app-server is still initializing".into());
+        }
+        let id = format!(
+            "{PRIVATE_REQUEST_PREFIX}{}",
+            INTERNAL_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let (sender, response) = tokio::sync::oneshot::channel();
+        {
+            let mut pending = self
+                .private_requests
+                .lock()
+                .map_err(|_| "Native read registry is unavailable")?;
+            if pending.len() >= 16 {
+                return Err("Too many pending native reads".into());
+            }
+            pending.insert(id.clone(), sender);
+        }
+        let _guard = PrivateRequestGuard {
+            requests: self.private_requests.clone(),
+            id: id.clone(),
+        };
+        self.send(json!({"id":id,"method":method,"params":params}))
+            .await?;
+        let mut value = tokio::time::timeout(std::time::Duration::from_secs(30), response)
+            .await
+            .map_err(|_| "Native conversation read timed out")?
+            .map_err(|_| "Native conversation read was interrupted")?;
+        if let Some(error) = value.get("error") {
+            if error.get("code").and_then(Value::as_i64) == Some(-32601) {
+                return Err(format!(
+                    "method not found: {}",
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("native read")
+                ));
+            }
+            return Err(error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("App Server rejected the native read")
+                .into());
+        }
+        Ok(value
+            .get_mut("result")
+            .map(Value::take)
+            .unwrap_or(Value::Null))
     }
 
     pub async fn bridge(&self, socket: WebSocket) {
@@ -420,6 +576,10 @@ impl CodexAppServer {
                     }
                     match serde_json::from_str::<Value>(&text) {
                         Ok(value) => {
+                            if value.get("id").and_then(Value::as_str).is_some_and(|id| id.starts_with(PRIVATE_REQUEST_PREFIX)) {
+                                let _ = output.send(Message::Text(client_error("request id uses a reserved native namespace").into())).await;
+                                continue;
+                            }
                             if let Err(error) = self.send(value).await {
                                 let _ = output.send(Message::Text(client_error(&error).into())).await;
                             }
@@ -607,5 +767,47 @@ mod tests {
             lifecycle.try_recv(),
             Err(broadcast::error::TryRecvError::Empty)
         ));
+    }
+    #[tokio::test]
+    async fn private_history_replies_never_enter_desktop_streams() {
+        let server = CodexAppServer::new(
+            "codex".into(),
+            BackendRuntime::new(std::ffi::OsString::new(), Default::default()),
+        );
+        let mut public = server.events.subscribe();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        server
+            .private_requests
+            .lock()
+            .unwrap()
+            .insert("studio-native-read-test".into(), sender);
+        server.emit(json!({"id":"studio-native-read-test","result":{"thread":{"id":"private"}}}));
+        assert_eq!(receiver.await.unwrap()["result"]["thread"]["id"], "private");
+        assert!(matches!(
+            public.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        server
+            .emit(json!({"id":"studio-native-read-cancelled","result":{"data":["not broadcast"]}}));
+        assert!(matches!(
+            public.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        server.emit(json!({"id":42,"result":{"data":["normal reply"]}}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&public.try_recv().unwrap()).unwrap()["id"],
+            42
+        );
+        let (sender, _) = tokio::sync::oneshot::channel();
+        server
+            .private_requests
+            .lock()
+            .unwrap()
+            .insert("guard".into(), sender);
+        drop(PrivateRequestGuard {
+            requests: server.private_requests.clone(),
+            id: "guard".into(),
+        });
+        assert!(server.private_requests.lock().unwrap().is_empty());
     }
 }

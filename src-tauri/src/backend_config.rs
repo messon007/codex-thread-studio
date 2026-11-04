@@ -1,11 +1,12 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const MAX_CONFIG_BYTES: u64 = 256 * 1024;
+pub const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 const MAX_CONFIGURED_BACKENDS: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -102,9 +103,37 @@ fn load_inner(path: &Path) -> Result<Vec<ConfiguredCodexBackend>, String> {
             MAX_CONFIG_BYTES
         ));
     }
-    let source = fs::read_to_string(path)
+    let mut source = String::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(MAX_CONFIG_BYTES + 1).read_to_string(&mut source))
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let config: BackendConfigurationFile = serde_json::from_str(&source)
+    parse_source(&source, path)
+}
+
+/// The startup loader and native editor must accept exactly the same schema.
+pub fn parse_source(source: &str, path: &Path) -> Result<Vec<ConfiguredCodexBackend>, String> {
+    parse_source_inner(source, path).map_err(|mut error| {
+        if error.len() > 4096 {
+            let mut end = 4093;
+            while !error.is_char_boundary(end) {
+                end -= 1;
+            }
+            error.truncate(end);
+            error.push('…');
+            error.shrink_to_fit();
+        }
+        error
+    })
+}
+fn parse_source_inner(source: &str, path: &Path) -> Result<Vec<ConfiguredCodexBackend>, String> {
+    if source.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(format!(
+            "{} exceeds the {} byte limit",
+            path.display(),
+            MAX_CONFIG_BYTES
+        ));
+    }
+    let config: BackendConfigurationFile = serde_json::from_str(source)
         .map_err(|error| format!("invalid {}: {error}", path.display()))?;
     if config.version != 1 {
         return Err(format!(
@@ -297,5 +326,13 @@ mod tests {
         assert!(!valid_backend_id("EPT"));
         assert!(!valid_backend_id("2codex"));
         assert!(!valid_backend_id("codex:other"));
+    }
+    #[test]
+    fn malformed_field_diagnostics_are_bounded_before_presentation() {
+        let mut value = serde_json::Map::new();
+        value.insert("x".repeat(200_000), serde_json::Value::Bool(true));
+        let source = serde_json::to_string(&value).unwrap();
+        let error = parse_source(&source, Path::new("backends.json")).unwrap_err();
+        assert!(error.contains("unknown field") && error.len() <= 4096 && error.ends_with('…'));
     }
 }

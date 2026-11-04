@@ -11,11 +11,25 @@ The application reads `backends.json` beside its `settings.json` file. Open
 **Connections** in Studio to see the exact path for the current machine.
 
 Set `CODEX_THREAD_STUDIO_BACKENDS_CONFIG` before starting Studio to use a
-different absolute path. Studio reads this file only at startup.
+different absolute path. Studio loads the active backend registry from this file
+only at startup.
 
 No file is created automatically. When the file is absent, Studio exposes only
 the built-in Codex and OpenCode backends. A malformed file is reported in
 Connections and does not prevent the built-in backends from loading.
+
+The native GNOME frontend also provides **Settings → Backends → Edit backend
+configuration**. This opens a syntax-highlighted JSON editor for that same file.
+Validate checks the startup schema without writing; Save explicitly writes the
+original file. Reload discards edits only after confirmation. Concurrent external
+changes reject a stale save and retain the editor contents. An invalid JSON file
+can be opened and repaired there. No file is created until Save succeeds.
+
+Saving does not change the running registry or start a provider. Restart Studio
+to apply the saved configuration; a configured process starts when that backend
+is selected. The editor has a 256 KiB UTF-8 file budget and keeps unsaved edits
+only in memory. See [native backend configuration](gnome-native.md#native-backend-configuration)
+for validation details.
 
 ## File format
 

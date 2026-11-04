@@ -28,9 +28,10 @@ export class CommentSourceRegistry {
         const source = commentRecord(value);
         const providerId = String(source?.provider || '').trim().slice(0, MAX_PROVIDER_LENGTH);
         const provider = this.#providers.get(providerId);
+        const originalAnchor = cloneSerializable(source?.anchor);
         const anchor = provider?.normalizeAnchor
-            ? provider.normalizeAnchor(source?.anchor)
-            : cloneSerializable(source?.anchor);
+            ? { ...originalAnchor, ...provider.normalizeAnchor(source?.anchor) }
+            : originalAnchor;
         return {
             provider: providerId || 'unknown',
             version: positiveInteger(source?.version) || 1,

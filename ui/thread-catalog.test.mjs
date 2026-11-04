@@ -33,6 +33,13 @@ const catalogs = {
   ],
 }
 
+test('browser, native list and Router share the directory rule conformance cases', () => {
+  const cases = JSON.parse(readFileSync(new URL('../src-tauri/tests/fixtures/session-directory-rules.json', import.meta.url), 'utf8'))
+  for (const { hidden, rules, path, expected } of cases) {
+    assert.equal(isSessionDirectoryHidden(path, hidden, rules), expected, JSON.stringify({ hidden, rules, path }))
+  }
+})
+
 test.beforeEach(() => installBackendRegistry([
   { id: 'codex', name: 'Codex', tag: 'CX', kind: 'codex' },
   { id: 'company-codex', name: 'Company Codex', tag: 'WK', kind: 'codex' },

@@ -7,6 +7,14 @@ import {
   normalizeCommentDrafts,
 } from './comment-core.mjs'
 
+test('known providers retain serialized extension fields without bypassing normalized fields', () => {
+  const registry = new CommentSourceRegistry().register({ id: 'pdf', normalizeAnchor: (anchor) => ({ page: Math.max(1, Number(anchor.page) || 1) }) })
+  const original = { provider: 'pdf', version: 1, anchor: { page: 0, charRange: [4, 9], future: { edition: 'native' } } }
+  const source = registry.normalizeSource(original)
+  original.anchor.future.edition = 'changed'
+  assert.deepEqual(source.anchor, { page: 1, charRange: [4, 9], future: { edition: 'native' } })
+})
+
 test('comment normalization safely rejects absent drafts and preserves opaque anchors', () => {
   assert.equal(createCommentDraft(null), null)
   assert.deepEqual(normalizeCommentDrafts({ t: [null, false, { excerpt: 'saved', source: { provider: 'future', anchor: { nested: [1, 2] } } }] }, { idFactory: () => 'id' })['codex:t'][0].source.anchor, { nested: [1, 2] })

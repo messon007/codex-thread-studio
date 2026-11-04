@@ -1,5 +1,6 @@
 fn main() {
     verify_typescript_assets();
+    #[cfg(feature = "desktop")]
     tauri_build::build()
 }
 

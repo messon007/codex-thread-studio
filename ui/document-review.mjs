@@ -157,11 +157,13 @@ export function normalizeAnnotationTarget(value = {}) {
         const startLine = finiteLine(target.startLine);
         const endLine = finiteLine(target.endLine);
         const validLines = startLine != null && endLine != null && endLine >= startLine;
+        const textKind = target.textKind;
         return {
             kind: 'fileRange',
             filePath: String(target.filePath).slice(0, 4096),
             root: String(target.root || '').slice(0, 4096),
             baseHash: String(target.baseHash || '').slice(0, 128),
+            ...(textKind === 'auto' || textKind === 'source' || textKind === 'preview' || textKind === 'flow' ? { textKind } : {}),
             startOffset: validRange ? startOffset : null,
             endOffset: validRange ? endOffset : null,
             startLine: validLines ? startLine : null,

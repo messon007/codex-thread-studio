@@ -152,15 +152,123 @@ pub(crate) fn set_pinned(
     set_pinned_at(path, session_key, pinned, now_ms()?)
 }
 
+pub(crate) fn load_pins(path: &Path) -> Result<Vec<String>, String> {
+    load_pins_with_connection(&connection(path)?)
+}
+
+pub(crate) fn load_turn_options(path: &Path, key: &str) -> Result<SessionTurnOptions, String> {
+    connection(path)?
+        .query_row(
+            "SELECT model,effort,service_tier FROM session_turn_options WHERE session_key=?1",
+            [key],
+            |row| {
+                Ok(SessionTurnOptions {
+                    model: row.get(0)?,
+                    effort: row.get(1)?,
+                    service_tier: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map(|options| options.unwrap_or_default())
+        .map_err(sql_error)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AnnotationSnapshot {
+    pub(crate) drafts: Vec<AnnotationDraft>,
+    pub(crate) additional: String,
+    pub(crate) revision: String,
+}
+fn annotation_snapshot(connection: &Connection, key: &str) -> Result<AnnotationSnapshot, String> {
+    use sha2::{Digest, Sha256};
+    let drafts_json: String = connection.query_row(
+        "SELECT CASE WHEN length(CAST(drafts_json AS BLOB)) <= 2097152 THEN drafts_json ELSE NULL END FROM session_annotation_drafts WHERE session_key=?1",[key],|row|row.get(0)
+    ).optional().map_err(sql_error)?.unwrap_or_else(||"[]".into());
+    let additional: String = connection.query_row(
+        "SELECT CASE WHEN length(CAST(content AS BLOB)) <= 32768 THEN content ELSE NULL END FROM session_annotation_additional WHERE session_key=?1",[key],|row|row.get(0)
+    ).optional().map_err(sql_error)?.unwrap_or_default();
+    let drafts: Vec<AnnotationDraft> =
+        serde_json::from_str(&drafts_json).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&(&drafts, &additional)).map_err(|e| e.to_string())?;
+    Ok(AnnotationSnapshot {
+        drafts,
+        additional,
+        revision: Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    })
+}
+pub(crate) fn annotations(path: &Path, key: &str) -> Result<AnnotationSnapshot, String> {
+    let mut connection = connection(path)?;
+    let transaction = connection.transaction().map_err(sql_error)?;
+    annotation_snapshot(&transaction, key)
+}
+pub(crate) fn replace_annotations_checked(
+    path: &Path,
+    key: &str,
+    drafts: &[AnnotationDraft],
+    additional: &str,
+    expected: &str,
+) -> Result<Option<AnnotationSnapshot>, String> {
+    let mut connection = connection(path)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql_error)?;
+    if annotation_snapshot(&transaction, key)?.revision != expected {
+        return Ok(None);
+    }
+    write_annotations(&transaction, key, drafts, additional)?;
+    let saved = annotation_snapshot(&transaction, key)?;
+    transaction.commit().map_err(sql_error)?;
+    Ok(Some(saved))
+}
+
+/// Remove only the exact records included in an acknowledged submission.
+/// Current records and additional text may have changed while the model ran.
+pub(crate) fn consume_annotations(
+    path: &Path,
+    key: &str,
+    submitted: &[AnnotationDraft],
+    additional: &str,
+) -> Result<AnnotationSnapshot, String> {
+    let mut connection = connection(path)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql_error)?;
+    let mut current = annotation_snapshot(&transaction, key)?;
+    current
+        .drafts
+        .retain(|draft| !submitted.iter().any(|sent| sent == draft));
+    if current.additional == additional {
+        current.additional.clear();
+    }
+    write_annotations(&transaction, key, &current.drafts, &current.additional)?;
+    let saved = annotation_snapshot(&transaction, key)?;
+    transaction.commit().map_err(sql_error)?;
+    Ok(saved)
+}
+
 pub(crate) fn replace_annotations(
     path: &Path,
     session_key: &str,
     drafts: &[AnnotationDraft],
     additional: &str,
 ) -> Result<(), String> {
-    let drafts_json = serde_json::to_string(drafts).map_err(|error| error.to_string())?;
     let mut connection = connection(path)?;
     let transaction = connection.transaction().map_err(sql_error)?;
+    write_annotations(&transaction, session_key, drafts, additional)?;
+    transaction.commit().map_err(sql_error)
+}
+fn write_annotations(
+    transaction: &Connection,
+    session_key: &str,
+    drafts: &[AnnotationDraft],
+    additional: &str,
+) -> Result<(), String> {
+    let drafts_json = serde_json::to_string(drafts).map_err(|error| error.to_string())?;
     if drafts.is_empty() {
         transaction
             .execute(
@@ -193,7 +301,7 @@ pub(crate) fn replace_annotations(
             )
             .map_err(sql_error)?;
     }
-    transaction.commit().map_err(sql_error)
+    Ok(())
 }
 
 pub(crate) fn put_opening_message(
@@ -218,6 +326,64 @@ pub(crate) fn put_opening_message(
                 [session_key],
             )
             .map_err(sql_error)?;
+    }
+    Ok(())
+}
+
+/// Narrow Router metadata read: avoid loading annotations, queues and turn options.
+pub(crate) fn opening_messages(path: &Path) -> Result<BTreeMap<String, OpeningMessage>, String> {
+    let connection = connection(path)?;
+    let mut query=connection.prepare("SELECT session_key,message_json FROM session_opening_messages ORDER BY session_key LIMIT 2049").map_err(sql_error)?;
+    let rows = query
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(sql_error)?;
+    let mut messages = BTreeMap::new();
+    for row in rows {
+        let (key, raw) = row.map_err(sql_error)?;
+        messages.insert(
+            key,
+            serde_json::from_str(&raw)
+                .map_err(|error| format!("Invalid opening message: {error}"))?,
+        );
+    }
+    if messages.len() > 2048 {
+        return Err("Router metadata exceeds 2,048 sessions".into());
+    }
+    Ok(messages)
+}
+#[cfg(test)]
+pub(crate) fn opening_message(path: &Path, key: &str) -> Result<Option<OpeningMessage>, String> {
+    opening_message_raw(path, key)?
+        .map(|raw| {
+            serde_json::from_str(&raw).map_err(|error| format!("Invalid opening message: {error}"))
+        })
+        .transpose()
+}
+pub(crate) fn opening_message_raw(path: &Path, key: &str) -> Result<Option<String>, String> {
+    let connection = connection(path)?;
+    let raw: Option<String> = connection
+        .query_row(
+            "SELECT message_json FROM session_opening_messages WHERE session_key=?1",
+            [key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    Ok(raw)
+}
+/// Compare-and-swap this row so a concurrent metadata writer is not overwritten.
+pub(crate) fn replace_opening_message(
+    path: &Path,
+    key: &str,
+    expected: Option<&str>,
+    replacement: &str,
+) -> Result<(), String> {
+    let connection = connection(path)?;
+    let changed=if let Some(expected)=expected{connection.execute("UPDATE session_opening_messages SET message_json=?3 WHERE session_key=?1 AND message_json=?2",params![key,expected,replacement])}else{connection.execute("INSERT OR IGNORE INTO session_opening_messages(session_key,message_json) VALUES (?1,?2)",params![key,replacement])}.map_err(sql_error)?;
+    if changed != 1 {
+        return Err("The opening message changed; reload before saving".into());
     }
     Ok(())
 }
@@ -273,6 +439,24 @@ pub(crate) fn replace_message_queue(
             .map_err(sql_error)?;
     }
     Ok(())
+}
+pub(crate) fn load_message_queue(
+    path: &Path,
+    session_key: &str,
+) -> Result<Vec<QueuedMessage>, String> {
+    let raw: Option<String> = connection(path)?
+        .query_row(
+            "SELECT queue_json FROM session_message_queues WHERE session_key = ?1",
+            [session_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    raw.map(|raw| {
+        serde_json::from_str(&raw).map_err(|error| format!("invalid message queue: {error}"))
+    })
+    .transpose()
+    .map(Option::unwrap_or_default)
 }
 
 pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), String> {
@@ -476,6 +660,87 @@ mod tests {
             source: "history".to_string(),
             ..OpeningMessage::default()
         }
+    }
+
+    #[test]
+    fn accepted_comment_cleanup_is_idempotent_and_preserves_newer_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let original = vec![draft("a"), draft("b")];
+        replace_annotations(&path, "codex:one", &original, "sent instructions").unwrap();
+        let mut newer = original[1].clone();
+        newer.note = "changed while sending".into();
+        replace_annotations(
+            &path,
+            "codex:one",
+            &[original[0].clone(), newer.clone(), draft("c")],
+            "newer instructions",
+        )
+        .unwrap();
+        let first =
+            consume_annotations(&path, "codex:one", &original, "sent instructions").unwrap();
+        assert_eq!(first.drafts, vec![newer.clone(), draft("c")]);
+        assert_eq!(first.additional, "newer instructions");
+        let retry =
+            consume_annotations(&path, "codex:one", &original, "sent instructions").unwrap();
+        assert_eq!(retry.revision, first.revision);
+        let last = consume_annotations(
+            &path,
+            "codex:one",
+            &[newer, draft("c")],
+            "newer instructions",
+        )
+        .unwrap();
+        assert!(last.drafts.is_empty());
+        assert!(last.additional.is_empty());
+    }
+
+    #[test]
+    fn comment_revisions_are_atomic_scoped_and_observe_legacy_writers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let empty = annotations(&path, "codex:one").unwrap();
+        let mut record = draft("same-id");
+        record.source = Some(crate::AnnotationSourceReference {
+            provider: "future".into(),
+            version: 7,
+            anchor: serde_json::json!({"opaque":["中文",42]}),
+        });
+        let saved = replace_annotations_checked(
+            &path,
+            "codex:one",
+            &[record.clone()],
+            "overall",
+            &empty.revision,
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(empty.revision, saved.revision);
+        assert!(
+            replace_annotations_checked(&path, "codex:one", &[], "", &empty.revision)
+                .unwrap()
+                .is_none()
+        );
+        replace_annotations(&path, "codex:two", &[draft("unrelated")], "").unwrap();
+        assert_eq!(
+            annotations(&path, "codex:one").unwrap().revision,
+            saved.revision
+        );
+        record.note = "newer browser edit".into();
+        replace_annotations(&path, "codex:one", &[record.clone()], "changed").unwrap();
+        assert!(
+            replace_annotations_checked(&path, "codex:one", &[], "", &saved.revision)
+                .unwrap()
+                .is_none()
+        );
+        let reopened = annotations(&path, "codex:one").unwrap();
+        assert_eq!(reopened.drafts[0], record);
+        assert_eq!(reopened.additional, "changed");
+        let cleared = replace_annotations_checked(&path, "codex:one", &[], "", &reopened.revision)
+            .unwrap()
+            .unwrap();
+        assert!(cleared.drafts.is_empty());
+        assert_eq!(cleared.revision, empty.revision);
     }
 
     #[test]

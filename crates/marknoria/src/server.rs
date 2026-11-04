@@ -244,6 +244,121 @@ struct PageQuery {
     target: usize,
 }
 
+// Native clients reuse the index/source cache without mounting generated HTML.
+async fn native_document(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let document = app.documents.select(&headers)?;
+    let permit = app
+        .work
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "Reader is busy".into()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let progress = document.progress.lock().map_err(failure)?;
+        if let Some(error) = &progress.error { return Ok(Json(json!({"state":"error","error":error,"documentId":document.id,"editable":app.editable}))); }
+        let Some(index) = &progress.index else { return Ok(Json(json!({"state":"indexing","documentId":document.id,"editable":app.editable}))); };
+        Ok(Json(json!({"state":"ready","documentId":document.id,"index":index.as_ref(),"editable":app.editable})))
+    }).await.map_err(failure)?
+}
+
+fn native_fragment(
+    document: &files::Document,
+    index: &Index,
+    target: usize,
+) -> Result<Value, ApiError> {
+    let metadata = index
+        .pages
+        .get(target)
+        .ok_or((StatusCode::BAD_REQUEST, "Page out of range".into()))?;
+    let source =
+        crate::source::read_range(&document.directory, index, metadata.start, metadata.end)
+            .map_err(failure)?;
+    let header = if let Some(table) = metadata.table.filter(|_| metadata.row_start > 0) {
+        let first = &index.pages[index.tables[table].first_page];
+        let original =
+            crate::source::read_range(&document.directory, index, first.start, first.end)
+                .map_err(failure)?;
+        let text = original
+            .text
+            .split_inclusive('\n')
+            .take(2)
+            .collect::<String>();
+        Some(
+            json!({"start":original.start,"end":original.start+text.len(),"line":original.line,"text":text}),
+        )
+    } else {
+        None
+    };
+    Ok(
+        json!({"documentId":document.id,"revision":index.revision,"page":target,"metadata":metadata,"source":source,"header":header}),
+    )
+}
+
+async fn fragment_source(
+    State(app): State<App>,
+    Query(query): Query<PageQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let document = app.documents.select(&headers)?;
+    let permit = app
+        .work
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "Reader is busy".into()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let index = index(&document)?;
+        native_fragment(&document, &index, query.target).map(Json)
+    })
+    .await
+    .map_err(failure)?
+}
+
+async fn table_source(
+    State(app): State<App>,
+    Query(query): Query<TableQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let document = app.documents.select(&headers)?;
+    let permit = app
+        .work
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "Reader is busy".into()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let index = index(&document)?;
+        let table = index.tables.get(query.id).ok_or((StatusCode::BAD_REQUEST,"Table out of range".into()))?;
+        let columns = match query.columns {
+            Some(value) if value.len() <= 2048 => value.split(',').map(str::parse::<usize>).collect::<Result<Vec<_>,_>>().map_err(|_|(StatusCode::BAD_REQUEST,"Invalid columns".into()))?,
+            Some(_) => return Err((StatusCode::BAD_REQUEST,"Column selection exceeds budget".into())),
+            None => (0..table.columns.len()).collect(),
+        };
+        if columns.is_empty() || columns.len()>table.columns.len() || columns.windows(2).any(|pair|pair[0]>=pair[1])
+            || columns.last().is_some_and(|column|*column>=table.columns.len()) || query.row>=table.rows.max(1) {
+            return Err((StatusCode::BAD_REQUEST,"Invalid table row or columns".into()));
+        }
+        let byte_limit = crate::MAX_HTML.saturating_sub(table.header_bytes+1024)/table.max_row_bytes.max(1);
+        let page_size = 50.min(512/columns.len()).min(byte_limit).max(1);
+        let row_start = query.row/page_size*page_size;
+        let row_end = (row_start+page_size).min(table.rows);
+        let pages = &index.pages[table.first_page..table.end_page];
+        let first = pages.partition_point(|page|page.row_start+page.rows<=row_start);
+        let mut fragments = Vec::new();
+        for (position,page) in pages.iter().enumerate().skip(first) {
+            if page.row_start>=row_end {break;}
+            fragments.push(native_fragment(&document,&index,table.first_page+position)?);
+        }
+        if fragments.is_empty() {
+            fragments.push(native_fragment(&document,&index,table.first_page)?);
+        }
+        Ok(Json(json!({"documentId":document.id,"revision":index.revision,"table":query.id,"columns":columns,"rowStart":row_start,"rowEnd":row_end,"pageSize":page_size,"totalRows":table.rows,"fragments":fragments})))
+    }).await.map_err(failure)?
+}
+
 async fn window(
     State(app): State<App>,
     Query(query): Query<PageQuery>,
@@ -805,6 +920,9 @@ fn reader_routes() -> Router<App> {
     assets()
         .route("/api/document", get(document))
         .route("/api/window", get(window))
+        .route("/api/native-document", get(native_document))
+        .route("/api/fragment-source", get(fragment_source))
+        .route("/api/table-source", get(table_source))
         .route("/api/table", get(table_window))
         .route("/api/search", get(find))
         .route("/api/source", get(source_window))
@@ -833,7 +951,20 @@ pub fn index_worker() -> Option<std::io::Result<()>> {
     })())
 }
 
+pub struct ReaderSnapshot {
+    pub document_id: String,
+    pub source: std::path::PathBuf,
+    pub revision: String,
+    pub index: Arc<crate::Index>,
+    _document: Arc<files::Document>,
+}
+
+pub fn native_temporary_directory(prefix: &str) -> std::io::Result<tempfile::TempDir> {
+    files::temporary_directory(prefix)
+}
+
 pub struct Service {
+    documents: Arc<files::Documents>,
     pub address: std::net::SocketAddr,
     pub token: String,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -848,6 +979,31 @@ impl Drop for Service {
 }
 
 impl Service {
+    pub fn native_snapshot(&self) -> std::io::Result<ReaderSnapshot> {
+        let document = self
+            .documents
+            .peek()
+            .ok_or_else(|| std::io::Error::other("Document closed"))?;
+        let index = {
+            let progress = document
+                .progress
+                .lock()
+                .map_err(|_| std::io::Error::other("Document lock failed"))?;
+            progress
+                .index
+                .as_ref()
+                .ok_or_else(|| std::io::Error::other("Wait for document indexing"))?
+                .clone()
+        };
+        Ok(ReaderSnapshot {
+            document_id: document.id.clone(),
+            source: document.directory.join("source.md"),
+            revision: index.revision.clone(),
+            index,
+            _document: document,
+        })
+    }
+
     pub async fn start(source: std::path::PathBuf) -> std::io::Result<Self> {
         Self::start_with_editing(source, false).await
     }
@@ -884,6 +1040,9 @@ impl Service {
         let router = assets()
             .route("/api/document", get(document))
             .route("/api/window", get(window))
+            .route("/api/native-document", get(native_document))
+            .route("/api/fragment-source", get(fragment_source))
+            .route("/api/table-source", get(table_source))
             .route("/api/table", get(table_window))
             .route("/api/search", get(find))
             .route("/api/source", get(source_window))
@@ -901,6 +1060,7 @@ impl Service {
         let router = router
             .layer(middleware::from_fn_with_state(app.clone(), guard))
             .with_state(app);
+        let service_documents = documents.clone();
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let maintenance_documents = documents.clone();
         let maintenance = tokio::spawn(async move {
@@ -929,6 +1089,7 @@ impl Service {
             address,
             token,
             stop: Some(stop),
+            documents: service_documents,
         })
     }
 }

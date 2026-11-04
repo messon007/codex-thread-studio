@@ -25,6 +25,7 @@ export interface FileRangeTarget {
   filePath: string
   root: string
   baseHash: string
+  textKind?: 'auto' | 'source' | 'preview' | 'flow'
   startOffset: number | null
   endOffset: number | null
   startLine: number | null
@@ -41,4 +42,7 @@ export interface EpubAnchor extends CommentRecord {
 }
 export interface TableAnchor extends CommentRecord {
   root: string; filePath: string; documentHash: string; sheet: string; range: string
+  header?: string
+  sql?: string | null
+  delimiter?: string | null
 }

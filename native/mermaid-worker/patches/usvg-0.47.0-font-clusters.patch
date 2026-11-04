@@ -1,0 +1,165 @@
+--- a/src/text/layout.rs
++++ b/src/text/layout.rs
+@@ -1354,20 +1354,7 @@
+                 break 'outer;
+             }
+ 
+-            // We assume, that shaping with an any font will produce the same amount of glyphs.
+-            // This is incorrect, but good enough for now.
+-            if glyphs.len() != fallback_glyphs.len() {
+-                break 'outer;
+-            }
+-
+-            // TODO: Replace clusters and not glyphs. This should be more accurate.
+-
+-            // Copy new glyphs.
+-            for i in 0..glyphs.len() {
+-                if glyphs[i].is_missing() && !fallback_glyphs[i].is_missing() {
+-                    glyphs[i] = fallback_glyphs[i].clone();
+-                }
+-            }
++            glyphs = replace_missing_clusters(&glyphs, &fallback_glyphs);
+ 
+             // Remember this font.
+             used_fonts.push(fallback_font.id);
+@@ -1390,6 +1377,35 @@
+     }
+ 
+     glyphs
++}
++
++/// Substitute complete, resolved clusters with exactly matching UTF-8 source ranges.
++/// Fonts may form different ligatures, so glyph counts and array positions are
++/// not interchangeable. Keep valid base clusters and their visual (bidi) order.
++fn replace_missing_clusters(glyphs: &[Glyph], fallback_glyphs: &[Glyph]) -> Vec<Glyph> {
++    let replacements: HashMap<_, _> = GlyphClusters::new(fallback_glyphs)
++        .filter_map(|(range, index)| {
++            let cluster = &fallback_glyphs[range.clone()];
++            if cluster.iter().any(Glyph::is_missing) {
++                return None;
++            }
++            let len = cluster.iter().map(|g| g.cluster_len).max().unwrap_or(0);
++            Some(((index.value(), len), range))
++        })
++        .collect();
++    let mut merged = Vec::with_capacity(glyphs.len());
++    for (range, index) in GlyphClusters::new(glyphs) {
++        let cluster = &glyphs[range.clone()];
++        let len = cluster.iter().map(|g| g.cluster_len).max().unwrap_or(0);
++        if cluster.iter().any(Glyph::is_missing) {
++            if let Some(replacement) = replacements.get(&(index.value(), len)) {
++                merged.extend_from_slice(&fallback_glyphs[replacement.clone()]);
++                continue;
++            }
++        }
++        merged.extend_from_slice(cluster);
++    }
++    merged
+ }
+ 
+ /// Converts a text into a list of glyph IDs.
+@@ -1812,3 +1828,104 @@
+         text[self.0..].chars().next().unwrap()
+     }
+ }
++
++#[cfg(test)]
++mod fallback_cluster_tests {
++    use super::*;
++
++    fn glyph(index: usize, len: usize, id: u16) -> Glyph {
++        Glyph {
++            byte_idx: ByteIndex::new(index),
++            cluster_len: len,
++            text: String::new(),
++            id: GlyphId(id),
++            dx: 7,
++            dy: -3,
++            width: 123,
++            font: Arc::new(ResolvedFont {
++                id: ID::dummy(),
++                units_per_em: NonZeroU16::new(1000).unwrap(),
++                ascent: 800,
++                descent: -200,
++                x_height: NonZeroU16::new(500).unwrap(),
++                underline_position: -100,
++                underline_thickness: NonZeroU16::new(50).unwrap(),
++                line_through_position: 250,
++                subscript_offset: -200,
++                superscript_offset: 400,
++            }),
++        }
++    }
++
++    fn ids(glyphs: &[Glyph]) -> Vec<u16> {
++        glyphs.iter().map(|g| g.id.0).collect()
++    }
++
++    #[test]
++    fn unrelated_ligature_count_does_not_prevent_cjk_fallback() {
++        // The base has an ffi ligature; fallback expands it and lacks another script.
++        let base = vec![glyph(0, 3, 10), glyph(3, 3, 0), glyph(6, 2, 11)];
++        let fallback = vec![
++            glyph(0, 1, 20),
++            glyph(1, 1, 21),
++            glyph(2, 1, 22),
++            glyph(3, 3, 23),
++            glyph(6, 2, 0),
++        ];
++        let merged = replace_missing_clusters(&base, &fallback);
++        assert_eq!(ids(&merged), [10, 23, 11]);
++        assert!(Arc::ptr_eq(&merged[0].font, &base[0].font));
++        assert!(Arc::ptr_eq(&merged[1].font, &fallback[3].font));
++        assert_eq!((merged[1].dx, merged[1].dy, merged[1].width), (7, -3, 123));
++    }
++
++    #[test]
++    fn complete_combining_cluster_replaces_all_of_its_glyphs() {
++        // A zero-length glyph shares the same source cluster with its base/mark.
++        let base = vec![glyph(0, 0, 5), glyph(0, 3, 0), glyph(3, 1, 6)];
++        let fallback = vec![glyph(0, 3, 8), glyph(3, 1, 0)];
++        assert_eq!(ids(&replace_missing_clusters(&base, &fallback)), [8, 6]);
++    }
++
++    #[test]
++    fn one_missing_cluster_can_expand_to_multiple_positioned_glyphs() {
++        let base = vec![glyph(0, 3, 0), glyph(3, 1, 6)];
++        let fallback = vec![glyph(0, 0, 8), glyph(0, 3, 9), glyph(3, 1, 0)];
++        assert_eq!(ids(&replace_missing_clusters(&base, &fallback)), [8, 9, 6]);
++    }
++
++    #[test]
++    fn rtl_visual_order_is_preserved_when_clusters_have_different_counts() {
++        let base = vec![glyph(5, 2, 5), glyph(2, 3, 0), glyph(0, 2, 6)];
++        let fallback = vec![
++            glyph(5, 2, 0),
++            glyph(2, 3, 8),
++            glyph(0, 0, 9),
++            glyph(0, 2, 10),
++        ];
++        let merged = replace_missing_clusters(&base, &fallback);
++        assert_eq!(ids(&merged), [5, 8, 6]);
++        assert_eq!(
++            merged
++                .iter()
++                .map(|g| g.byte_idx.value())
++                .collect::<Vec<_>>(),
++            [5, 2, 0]
++        );
++    }
++
++    #[test]
++    fn partially_missing_fallback_cluster_does_not_replace_good_base_glyphs() {
++        let base = vec![glyph(0, 0, 5), glyph(0, 3, 0)];
++        let fallback = vec![glyph(0, 0, 0), glyph(0, 3, 8)];
++        assert_eq!(ids(&replace_missing_clusters(&base, &fallback)), [5, 0]);
++    }
++
++    #[test]
++    fn overlapping_but_different_source_ranges_are_not_spliced() {
++        // A fallback ligature must not consume a valid adjacent base cluster.
++        let base = vec![glyph(0, 1, 0), glyph(1, 1, 5)];
++        let fallback = vec![glyph(0, 2, 8)];
++        assert_eq!(ids(&replace_missing_clusters(&base, &fallback)), [0, 5]);
++    }
++}

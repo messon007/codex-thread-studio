@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::{to_bytes, Body};
 use axum::http::{header, HeaderMap, Method, Response, StatusCode, Uri};
+use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -14,10 +15,46 @@ use tokio::sync::Mutex;
 
 use crate::backend_runtime::{BackendRuntime, RuntimeChild};
 
+/// Bounded server-owned transport; callers cannot supply arbitrary routes.
+#[derive(Clone, Copy)]
+pub(crate) enum RouterOperation<'a> {
+    Probe,
+    Create,
+    UtilityCreate(&'a serde_json::Value),
+    UtilityRead(&'a str),
+    UtilityDelete(&'a str),
+    Read(&'a str),
+    Restrict(&'a str),
+    Catalog(&'a str),
+    Messages(&'a str, usize),
+    History(&'a str, usize, Option<&'a str>),
+    Prompt(&'a str, &'a serde_json::Value),
+    Commands,
+    Command(&'a str, &'a serde_json::Value),
+    Status,
+    Abort(&'a str),
+}
+
+pub(crate) fn router_permissions() -> serde_json::Value {
+    json!([{"permission":"*","pattern":"*","action":"deny"}])
+}
+
 const MAX_PROXY_BODY_BYTES: usize = 32 * 1024 * 1024;
 const START_ATTEMPTS: usize = 50;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
+
+fn proxy_target(base_url: &str, uri: &Uri) -> Result<reqwest::Url, String> {
+    // Axum's Path extractor has already decoded parameter escapes. Forward the
+    // original encoded URI so IDs containing '/', '?' or '#' stay one segment.
+    let path = uri
+        .path()
+        .strip_prefix("/opencode/")
+        .ok_or("Invalid OpenCode proxy path")?;
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    reqwest::Url::parse(&format!("{base_url}/{path}{query}"))
+        .map_err(|_| "Invalid OpenCode proxy address".into())
+}
 
 #[derive(Clone)]
 pub struct OpenCodeServer {
@@ -64,9 +101,236 @@ impl OpenCodeServer {
             generation: Arc::new(AtomicU64::new(0)),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("failed to build OpenCode HTTP client"),
         }
+    }
+
+    pub(crate) fn execution_environment(&self) -> &'static str {
+        self.runtime.environment()
+    }
+
+    pub(crate) async fn router_request(
+        &self,
+        operation: RouterOperation<'_>,
+        workspace: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.router_page(operation, workspace)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    pub(crate) async fn router_page(
+        &self,
+        operation: RouterOperation<'_>,
+        workspace: &str,
+    ) -> Result<(serde_json::Value, Option<String>), String> {
+        let connection = self.ensure_started().await?;
+        let mut url =
+            reqwest::Url::parse(&connection.base_url).map_err(|_| "Invalid OpenCode address")?;
+        let (method, body) = match operation {
+            RouterOperation::Commands => {
+                url.set_path("/command");
+                (Method::GET, None)
+            }
+            RouterOperation::Catalog(cursor) => {
+                url.set_path("/experimental/session");
+                url.query_pairs_mut()
+                    .append_pair("limit", "100")
+                    .append_pair("roots", "true")
+                    .append_pair("archived", "false");
+                if !cursor.is_empty() {
+                    url.query_pairs_mut().append_pair("cursor", cursor);
+                }
+                (Method::GET, None)
+            }
+            RouterOperation::Status => {
+                url.set_path("/session/status");
+                (Method::GET, None)
+            }
+            RouterOperation::Probe => {
+                url.set_path("/global/health");
+                (Method::GET, None)
+            }
+            RouterOperation::Create => {
+                url.set_path("/session");
+                (
+                    Method::POST,
+                    Some(json!({"title":"Thread Router","permission":router_permissions()})),
+                )
+            }
+            RouterOperation::UtilityCreate(body) => {
+                url.set_path("/session");
+                (Method::POST, Some(body.clone()))
+            }
+            RouterOperation::Read(id)
+            | RouterOperation::UtilityRead(id)
+            | RouterOperation::UtilityDelete(id)
+            | RouterOperation::Restrict(id)
+            | RouterOperation::Messages(id, _)
+            | RouterOperation::History(id, _, _)
+            | RouterOperation::Prompt(id, _)
+            | RouterOperation::Command(id, _)
+            | RouterOperation::Abort(id) => {
+                if id.is_empty()
+                    || matches!(id, "." | "..")
+                    || id.len() > 256
+                    || id.chars().any(char::is_control)
+                {
+                    return Err("Invalid Router session ID".into());
+                }
+                url.path_segments_mut()
+                    .map_err(|_| "Invalid OpenCode address")?
+                    .clear()
+                    .push("session")
+                    .push(id);
+                match operation {
+                    RouterOperation::Read(_) | RouterOperation::UtilityRead(_) => {
+                        (Method::GET, None)
+                    }
+                    RouterOperation::UtilityDelete(_) => (Method::DELETE, None),
+                    RouterOperation::Messages(_, limit) | RouterOperation::History(_, limit, _) => {
+                        url.path_segments_mut().unwrap().push("message");
+                        if !(2..=100).contains(&limit) {
+                            return Err("Invalid Router message window".into());
+                        }
+                        url.query_pairs_mut()
+                            .append_pair("limit", &limit.to_string());
+                        if let RouterOperation::History(_, _, Some(cursor)) = operation {
+                            if cursor.is_empty()
+                                || cursor.len() > 4096
+                                || cursor.chars().any(char::is_control)
+                            {
+                                return Err("Invalid OpenCode history cursor".into());
+                            }
+                            url.query_pairs_mut().append_pair("before", cursor);
+                        }
+                        (Method::GET, None)
+                    }
+                    RouterOperation::Prompt(_, body) => {
+                        url.path_segments_mut().unwrap().push("prompt_async");
+                        (Method::POST, Some(body.clone()))
+                    }
+                    RouterOperation::Command(_, body) => {
+                        url.path_segments_mut().unwrap().push("command");
+                        (Method::POST, Some(body.clone()))
+                    }
+                    RouterOperation::Abort(_) => {
+                        url.path_segments_mut().unwrap().push("abort");
+                        (Method::POST, Some(json!({})))
+                    }
+                    _ => (
+                        Method::PATCH,
+                        Some(json!({"permission":router_permissions()})),
+                    ),
+                }
+            }
+        };
+        if !matches!(
+            operation,
+            RouterOperation::Probe | RouterOperation::Catalog(_)
+        ) {
+            url.query_pairs_mut().append_pair("directory", workspace);
+        }
+        let mut request = self
+            .client
+            .request(method, url)
+            .basic_auth("opencode", Some(&connection.password))
+            .timeout(Duration::from_secs(
+                if matches!(operation, RouterOperation::Command(_, _)) {
+                    300
+                } else {
+                    30
+                },
+            ));
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        // Bounded server-owned operations; callers never supply arbitrary paths.
+        let response = request
+            .send()
+            .await
+            .map_err(|error| format!("OpenCode Router request failed: {}", error.without_url()))?;
+        let status = response.status();
+        let limit = if matches!(
+            operation,
+            RouterOperation::Messages(_, _)
+                | RouterOperation::History(_, _, _)
+                | RouterOperation::Command(_, _)
+                | RouterOperation::Catalog(_)
+                | RouterOperation::UtilityRead(_)
+        ) {
+            MAX_PROXY_BODY_BYTES
+        } else if matches!(operation, RouterOperation::Commands) {
+            16 * 1024 * 1024
+        } else {
+            1024 * 1024
+        };
+        if response
+            .content_length()
+            .is_some_and(|length| length > limit as u64)
+        {
+            return Err("OpenCode Router response exceeds its byte budget".into());
+        }
+        let cursor = if matches!(operation, RouterOperation::History(_, _, _)) {
+            response
+                .headers()
+                .get("x-next-cursor")
+                .map(|v| {
+                    v.to_str()
+                        .ok()
+                        .filter(|s| s.len() <= 4096 && !s.chars().any(char::is_control))
+                        .map(str::to_owned)
+                        .ok_or("Invalid OpenCode history cursor")
+                })
+                .transpose()?
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| "OpenCode Router metadata was interrupted")?;
+            if bytes.len().saturating_add(chunk.len()) > limit {
+                return Err("OpenCode Router response exceeds its byte budget".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if status == StatusCode::NO_CONTENT && bytes.is_empty() {
+            return Ok((serde_json::Value::Null, cursor));
+        }
+        let commands = matches!(operation, RouterOperation::Commands);
+        let command = matches!(operation, RouterOperation::Command(_, _));
+        let value: serde_json::Value = tokio::task::spawn_blocking(move || {
+            if status.is_success() {
+                if commands {
+                    return crate::native_router_backend::command::inventory(&bytes);
+                }
+                if command {
+                    return crate::native_router_backend::command::acknowledgement(&bytes);
+                }
+            }
+            serde_json::from_slice(&bytes)
+                .map_err(|_| "OpenCode Router returned invalid JSON".to_owned())
+        })
+        .await
+        .map_err(|_| "OpenCode Router metadata worker stopped")??;
+        if !status.is_success() {
+            let message = value
+                .get("message")
+                .or_else(|| value.pointer("/error/message"))
+                .or_else(|| value.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("OpenCode rejected Router setup");
+            return Err(format!(
+                "OpenCode HTTP {status}: {}",
+                message.chars().take(512).collect::<String>()
+            ));
+        }
+        Ok((value, cursor))
     }
 
     pub async fn info(&self) -> OpenCodeInfo {
@@ -280,7 +544,6 @@ impl OpenCodeServer {
 
     pub async fn proxy(
         &self,
-        path: String,
         method: Method,
         headers: HeaderMap,
         uri: Uri,
@@ -290,11 +553,10 @@ impl OpenCodeServer {
             Ok(connection) => connection,
             Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error),
         };
-        let query = uri
-            .query()
-            .map(|value| format!("?{value}"))
-            .unwrap_or_default();
-        let target = format!("{}/{path}{query}", connection.base_url);
+        let target = match proxy_target(&connection.base_url, &uri) {
+            Ok(url) => url,
+            Err(error) => return json_error(StatusCode::BAD_REQUEST, &error),
+        };
         let body = match to_bytes(body, MAX_PROXY_BODY_BYTES).await {
             Ok(body) => body,
             Err(error) => return json_error(StatusCode::PAYLOAD_TOO_LARGE, &error.to_string()),
@@ -401,6 +663,21 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proxy_preserves_encoded_identity_segments_and_query_scope() {
+        let uri:Uri="/opencode/permission/per_a%2Fb%3Fc%23d%25/reply?directory=%2Fproject+%E4%B8%AD%E6%96%87&extra=1".parse().unwrap();
+        let target = proxy_target("http://127.0.0.1:12345", &uri).unwrap();
+        assert_eq!(target.path(), "/permission/per_a%2Fb%3Fc%23d%25/reply");
+        assert_eq!(
+            target.query_pairs().collect::<Vec<_>>(),
+            vec![
+                ("directory".into(), "/project 中文".into()),
+                ("extra".into(), "1".into())
+            ]
+        );
+        assert_eq!(target.host_str(), Some("127.0.0.1"));
+        assert!(proxy_target("http://127.0.0.1:12345", &"/other/path".parse().unwrap()).is_err());
+    }
 
     #[cfg(unix)]
     #[tokio::test]

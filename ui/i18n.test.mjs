@@ -132,6 +132,7 @@ test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
   const runtimeFiles = readdirSync(new URL('.', import.meta.url), { withFileTypes: true })
     .filter((entry) => entry.isFile()
       && /\.(?:js|mjs|html)$/u.test(entry.name)
+      && !entry.name.endsWith('.test.mjs')
       && entry.name !== 'i18n.mjs'
       && !entry.name.startsWith('vendor'))
     .map((entry) => entry.name)
@@ -139,6 +140,44 @@ test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
     readFileSync(new URL(name, import.meta.url), 'utf8'),
   ))
   assert.deepEqual(violations, [])
+})
+
+// Rustfmt aligns a function/module's closing brace with its declaration. Exclude
+// explicitly test-only items without excluding runtime code following a helper.
+function rustRuntimeSource(source) {
+  // An inner file attribute gates every item, including shared fixture helpers.
+  if (source.startsWith('#![cfg(test)]\n')) return ''
+  const lines = source.split('\n')
+  let excluded = null
+  let declaration = false
+  return lines.map((line, index) => {
+    if (excluded !== null) {
+      if (!declaration && line.trim() && !line.trim().startsWith('#[')) {
+        assert.match(line.trim(), /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|mod)\s/u, 'Unsupported test-only Rust item in runtime text audit')
+        declaration = true
+        // Conservatively retain single-line items; an empty fixture must not
+        // make the following production function disappear from this audit.
+        if (line.includes('{') && /\}\s*(?:\/\/.*)?$/u.test(line.trim())) { excluded = null; return line }
+      }
+      if (declaration && line.startsWith(excluded + '}') && /^\}\s*(?:\/\/.*)?$/u.test(line.slice(excluded.length))) excluded = null
+      return ''
+    }
+    const test = line.match(/^([ \t]*)#\[cfg\(test\)\]\s*$/u)
+    if (test) {
+      const next = lines.slice(index + 1).find((value) => value.trim() && !value.trim().startsWith('#[')) || ''
+      if (/^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|mod)\s/u.test(next.trim())) { excluded = test[1]; declaration = false; return '' }
+    }
+    return line
+  }).join('\n')
+}
+
+test('runtime text audit excludes only test items and retains subsequent runtime code', () => {
+  const han = String.fromCodePoint(0x4e2d)
+  const source = `#[cfg(test)]\nfn fixture() {\n    let text = "${han}";\n}\n#[cfg(test)]\nfn empty() {}\nfn runtime() {\n    let text = "${han}";\n}\n`
+  const runtime = rustRuntimeSource(source)
+  assert.ok(!runtime.includes('fixture'))
+  assert.ok(runtime.includes(`let text = "${han}"`))
+  assert.equal(rustRuntimeSource(`#![cfg(test)]\n${source}`), '')
 })
 
 test('native and prototype runtime source contains no embedded Chinese UI text', () => {
@@ -155,7 +194,10 @@ test('native and prototype runtime source contains no embedded Chinese UI text',
     }
   }
   sourceRoots.forEach(visit)
-  const violations = files.filter((file) => /\p{Script=Han}/u.test(readFileSync(file, 'utf8')))
+  const violations = files.filter((file) => {
+    const source = readFileSync(file, 'utf8')
+    return /\p{Script=Han}/u.test(file.pathname.endsWith('.rs') ? rustRuntimeSource(source) : source)
+  })
     .map((file) => file.pathname)
   assert.deepEqual(violations, [])
 })

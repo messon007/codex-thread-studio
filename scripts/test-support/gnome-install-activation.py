@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from private_wayland import isolated_environment
 
 APP_ID = 'io.github.messon007.codexthreadstudio.Gnome'
 
@@ -77,7 +78,7 @@ def main():
         private_bus(Path(sys.argv[2]), Path(sys.argv[3]))
         return
     project = Path(__file__).resolve().parents[2]
-    base = project / 'target/gnome-native-smoke'
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or project / 'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='notification-install-', dir=base))
     bundle = root / 'bundle'
@@ -103,20 +104,27 @@ app.connect("open",lambda *_:None)
 app.run(sys.argv)
 ''')
     executable.chmod(0o755)
-    shutil.copyfile(executable, bundle / 'codex-thread-studio-gateway')
+    for name in ['codex-thread-studio-gateway', 'codex-thread-studio-mermaid']:
+        shutil.copy2(executable, bundle / name)
     for suffix in ['desktop', 'service']:
         shutil.copyfile(project / f'native/gnome/data/{APP_ID}.{suffix}', bundle / f'{APP_ID}.{suffix}')
     # The installer copies the icon; image decoding is outside this fixture.
     (bundle / f'{APP_ID}.png').write_bytes(b'private installer fixture')
+    (bundle / 'licenses').mkdir()
+    shutil.copyfile(project / 'LICENSE', bundle / 'licenses/LICENSE')
+    (bundle / 'MERMAID-WORKER.json').write_text(json.dumps({'privateActivationFixture': True}))
+    subprocess.run(['bash', str(project / 'scripts/package-gnome-checksums.sh'), str(bundle)], check=True)
     subprocess.run(['bash', str(project / 'scripts/install-gnome.sh'), str(bundle), str(prefix)], check=True)
     desktop = (prefix / f'share/applications/{APP_ID}.desktop').read_text()
     assert 'DBusActivatable=true' in desktop and 'X-GNOME-UsesNotifications=true' in desktop
     marker = root / 'activation.json'
     env = dict(os.environ, XDG_DATA_HOME=str(prefix / 'share'),
                XDG_CONFIG_HOME=str(root / 'config'), XDG_CACHE_HOME=str(root / 'cache'),
+               HOME=str(root / 'home'), GIO_USE_VFS='local',
                STUDIO_INSTALL_ACTIVATION_MARKER=str(marker))
-    subprocess.run(['dbus-run-session', '--', '/usr/bin/python3', str(Path(__file__).resolve()),
-                    '--private', str(prefix), str(marker)], env=env, check=True, timeout=25)
+    with isolated_environment(env, headless=True) as private:
+        subprocess.run(['dbus-run-session', '--', '/usr/bin/python3', str(Path(__file__).resolve()),
+                        '--private', str(prefix), str(marker)], env=private, check=True, timeout=25)
     print(json.dumps({'ok': True, 'installedDbusActivation': True,
                       'desktopExecFallback': True, 'literalSpecialCharacters': True, 'artifacts': str(root)}))
 

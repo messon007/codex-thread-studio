@@ -407,6 +407,13 @@ jobs:
         env:
           GDK_BACKEND: wayland
         run: /opt/studio/bin/codex-thread-studio-gnome --help
+      - name: Verify embedded math fonts without build sources or compiler caches
+        run: |
+          printf '%s\n' '{"source":"\\frac{1}{2}","dark":false}' |
+            /opt/studio/bin/codex-thread-studio-gnome --native-math-worker > /tmp/native-math.svg
+          test -s /tmp/native-math.svg
+          grep -q '<path' /tmp/native-math.svg
+          ! grep -q '<text' /tmp/native-math.svg
 
   # Bubblewrap needs real user namespaces, which an unprivileged job container
   # does not reliably expose. Exercise the PDF engine on the runner host.

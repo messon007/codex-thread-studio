@@ -23,6 +23,9 @@ ratex-parser = "=0.1.15"
 ratex-layout = "=0.1.15"
 ratex-types = "=0.1.15"
 ratex-svg = { version = "=0.1.15", features = ["embed-fonts"] }
+# Unify the transitive KaTeX asset loader's standard embedding feature: debug
+# packages must not read fonts from the build machine's Cargo source cache.
+rust-embed = { version = "=8.13.0", default-features = false, features = ["debug-embed"] }
 async-channel = "2.5"
 futures-util = "0.3.31"
 studio-markdown-native = { path = "../../crates/markdown-native", features = ["syntax-highlight", "structured-preview"] }

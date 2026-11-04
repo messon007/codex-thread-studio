@@ -20,19 +20,20 @@ notification activation and IME composition fixes:
 ./target/gnome-native-candidate-20261105-main/codex-thread-studio-gnome
 ```
 
-The shared gateway is built at `6b540c0`. The native frontend and diagram engines
-reuse the qualified `ab21d4c` package byte for byte; its actual GNOME Shell,
-IBus pinyin, Orca and mixed-scale virtual-display evidence remains scoped to
-that frontend. The new pair passes installed reading/editing, Git, settings,
-viewers, recovery, actual large reports and 32 MiB LF/CRLF editing. Actual Codex
-0.166.0 and OpenCode 1.18.31 also pass the new installed workflow with private
-local models. See the
+The shared gateway is reused from `6b540c0`, with unchanged verified diagram
+engines. The frontend is rebuilt with portable math-font embedding in both
+debug and release profiles. Both packages pass installation and full math-worker
+checks with original build sources and Cargo caches hidden; the optimized pair
+also passes installed reading/editing, Git, settings, viewers and recovery.
+Earlier actual-report/32 MiB LF/CRLF, real Codex/OpenCode, GNOME Shell, IBus,
+Orca and mixed-scale checks retain their documented source and binary scope.
+See the [font portability checkpoint](gnome-native-status.md#portable-math-fonts-and-current-installer-fixture),
 [current inventory](gnome-native-status.md) and
 [requirement review](gnome-native-acceptance.md) for exact scope and remaining
 physical/remote gates.
 
 A portable copy of this package and its archive checksum are available under
-`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz` and the
+`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz` and the
 matching `.sha256` path. Follow the
 [physical desktop check](gnome-native-desktop-check.md) to install it on Ubuntu
 26.04 or review the existing candidate. That checklist records manual results;

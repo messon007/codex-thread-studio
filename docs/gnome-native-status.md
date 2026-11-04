@@ -221,6 +221,60 @@ Safe extraction checks every one of its 495 manifest files. Its record is
 `native-ci-e874766-20261105/DOWNLOADED.json`. Complete corrected remote and
 physical desktop acceptance remain pending.
 
+## Portable math fonts and current installer fixture
+
+The downloaded `e874766` CI package passes standalone installation, isolated
+Ubuntu library loading via `--help`, installed Wayland UI/recovery, the actual
+8.4 MiB report and 32 MiB LF/CRLF documents, and both real Codex/OpenCode CLIs
+with local models. Those records live under `native-ci-e874766-20261105`.
+They do not qualify its debug math-font relocation: the worker returns text
+instead of outlines outside the build machine's Cargo sources. `ratex-katex-fonts`
+uses `rust-embed`, whose default debug mode reads its asset directory. Unit tests
+in the source cache therefore missed this distribution defect.
+
+The native graph now enables the existing locked `rust-embed` 8.13.0
+`debug-embed` feature. Cargo changes only the root dependency entry; no package
+versions change and no font loader is forked. Both debug and optimized packages
+pass the complete existing math-worker checks with the original checkout/home
+and Cargo cache hidden: outlines, resource limits, theme colors, inline metrics,
+text/display styles, malformed/oversized inputs and unsafe-link rejection.
+All 408 native tests pass (four opt-in ignored), and Rust 1.92 checks every
+release target. CI gains a real installed math check in its separate runtime
+job, where no compiler cache or build sources exist.
+
+The local workflow-derived API run passes its preceding Router/policy/item
+groups, and the remaining font-notice, EPUB and annotation groups pass
+separately. The math relocation failure is retained in the first run rather
+than reported as a passing full matrix. Records are
+`native-ci-e874766-20261105/api-matrix-0uf168lm/RESULT.json` and
+`api-matrix-19j2y9oj/RESULT.json`; the new hermetic math checks close that exception.
+The stale D-Bus activation fixture is also corrected: it now creates all three
+executable siblings, notices and worker metadata, and reuses the checksum tool
+before calling the real installer. It reuses the private-runtime helper and
+local Gio file handling. Installed private-bus activation and literal-special-
+character Desktop Exec fallback pass in `DBUS-ACTIVATION-ISOLATED.log`.
+
+The current optimized candidate passes the full installed UI workflow again,
+including language/backend saves, Git, viewer returns and process/event-gap
+recovery. Only the frontend and manifest change in each package; matching
+gateway and engine bytes are reused. Each installer passes independently and
+all 495 package files verify. The optimized manifest is
+`88a9cc9fcddcafe2ac50c3fb56b7558c01b9741607afcbe8648e4993b7ff5a7b`;
+the debug manifest is
+`806aabb6fb6a7d61b486ddbf92e147c758a8178c6338e8d0cdf0a442cf12afb3`.
+Exact records, input hashes and retained logs are in
+`native-debug-embed-20261105/PORTABILITY-EVALUATION.json`.
+
+The optimized archive is 102,753,327 bytes, named
+`codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz` after its package
+manifest prefix. Its SHA-256 is
+`e8616d3d29a38d9ed7fdbee20394f0274262d72317c0684f36432072af7b0b49`.
+Extraction verifies all 495 files and their modes. The existing candidate alias
+and [desktop guide](gnome-native-desktop-check.md) select this package; earlier
+packages remain intact. Fresh corrected remote checks and physical desktop
+feedback remain pending. Older optimized evidence is inherited only for its
+stated scope, not claimed rerun for this font-only feature change.
+
 ## Real installed Codex shared-daemon workflow
 
 The installed optimized native pair now has actual Codex 0.166.0 Wayland

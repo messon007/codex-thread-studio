@@ -1,9 +1,10 @@
 # Native GNOME desktop check
 
 Development branch: `feat/ubuntu-26-04-gnome-native`. The current optimized
-gateway source is `6b540c0`, with the verified frontend/engines reused from
-`ab21d4c`. Its package manifest SHA-256 is
-`482bf8bd71d14bcd53f93b25ad8bc0652e046abb1ce6bf50161bd962a6f13125`.
+gateway source is `6b540c0`, with unchanged verified engines and a rebuilt
+frontend enabling portable math-font embedding in both profiles. Its package
+manifest SHA-256 is
+`88a9cc9fcddcafe2ac50c3fb56b7558c01b9741607afcbe8648e4993b7ff5a7b`.
 Automated evidence is listed in the
 [acceptance review](gnome-native-acceptance.md) and
 [current inventory](gnome-native-status.md).
@@ -25,8 +26,10 @@ The native executable and gateway remain siblings in the qualified package.
 Copy these two files from the build machine's `target/` into an empty working
 directory on the Ubuntu 26.04 x86_64 machine:
 
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz`
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz.sha256`
+- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz`
+- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz.sha256`
+
+The archive name uses the package manifest prefix, not a Git commit ID.
 
 The build-machine `target/` entries are symlinks to the external disk. Use
 `cp -L` locally or `scp` to copy the archive bytes and checksum.
@@ -34,8 +37,8 @@ The build-machine `target/` entries are symlinks to the external disk. Use
 From that directory:
 
 ```sh
-sha256sum -c codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz.sha256
-tar -xzf codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz
+sha256sum -c codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz.sha256
+tar -xzf codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz
 cd release-package
 bash ./install-runtime-deps.sh
 bash ./install.sh

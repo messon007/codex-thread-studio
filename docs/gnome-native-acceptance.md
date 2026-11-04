@@ -129,6 +129,13 @@ passes its installed workflow, actual/32 MiB LF/CRLF documents and both real
 Codex/OpenCode CLIs with private local models. It reuses the verified native
 frontend and engines and changes only the main-integrated gateway and manifest.
 
+The [font-portability follow-up](gnome-native-status.md#portable-math-fonts-and-current-installer-fixture)
+then rebuilds the frontend with the existing embedding library's debug feature,
+checks both packaged profiles without original build paths/caches, and repeats
+the optimized installed workflow. Its new runtime CI gate verifies actual
+outlined math after independent installation. Earlier large-document/provider
+evidence keeps its original scope.
+
 The real Shell [launcher/notification workflow](gnome-native-status.md#gnome-shell-launcher-and-notification-activation)
 also passes ordinary keyboard activation, actual banner delivery, notification
 withdrawal, duplicate suppression and notification-driven startup after exit. It

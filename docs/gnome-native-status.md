@@ -34,7 +34,8 @@ in the validation record.
 
 ## Current review and remaining validation
 
-The integration baseline is main `38e27e0`. Session release, Markdown-table SQL,
+The branch now integrates main `c73fdf4`; existing optimized packages retain
+their recorded source identities. Session release, Markdown-table SQL,
 JSON jq and all application areas above have native controls over the existing
 shared Rust services. The [requirement review](gnome-native-acceptance.md) maps
 all 16 functional requirements and every product acceptance passage, including
@@ -56,10 +57,11 @@ Remaining validation is explicit:
    as corrections close. The final width package and default continuous-reader
    workflow now pass their installed checks below; prior optimized checkpoints
    remain preserved.
-2. Remote GNOME CI has not run. Publishing the new workflow was rejected because
-   the available GitHub token lacks `workflow` scope. Earlier SSH publication
-   also failed. Local implementation/testing does not establish remote CI or
-   macOS/Windows runtime acceptance.
+2. SSH publication now succeeds and [draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50)
+   is open. The initial remote checks exposed a Windows CRLF audit error and
+   missing cross-platform license sources in the fresh GNOME build cache.
+   Both corrections pass focused local checks. The integrated remote matrix
+   and physical desktop acceptance still need passing evidence.
 3. Physical GNOME pointer interaction, input-method/device combinations beyond
    the real IBus pinyin check below, physical Orca use beyond the automated
    composer/menu checks below, physical display/GPU behavior beyond the virtual
@@ -76,6 +78,31 @@ the current image workspace explicitly does not support comments, and the
 existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
+
+## Main integration and initial remote checks
+
+The branch merges main `c73fdf4`, preserving its dependency updates and Web
+reader maintenance policy, the optional desktop graph, native SQL functions
+and the real gateway-based Codex fixture. Root tests pass with the new lock:
+273 gateway tests (two opt-in ignored), 40 MarkNoria, 100 Markdown and five SVG
+tests. The updated npm tree independently passes typechecking, all 753 web
+tests, and online/offline dependency audits. The prior dependency tree remains.
+
+The initial remote push qualified the old head's Linux desktop and PDF jobs.
+Windows found that the Rust text audit recognized only LF in a file-wide
+`#![cfg(test)]` attribute. It now splits LF/CRLF consistently and tests both
+while retaining production text. The GNOME job reached and passed native model
+tests, then failed the HTML license check because Linux compilation had not
+fetched `redox_syscall`. CI now fetches the locked native graph before notices.
+An empty temporary Cargo cache fetched that graph and passed all three native
+TLS/structured/HTML notice checks; the temporary cache was then removed.
+
+The first runs were CI `41901661923` and Native GNOME `41901662382`; their failed
+and cancelled jobs do not qualify the integrated head. PR #50 initially had
+main conflicts, so pull-request runs were absent. The merge resolves those
+conflicts. New remote checks and matched optimized-gateway qualification are
+pending. Previously qualified binaries and the physical desktop check remain
+available with their original identities.
 
 ## Real installed Codex shared-daemon workflow
 

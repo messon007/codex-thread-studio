@@ -76,6 +76,8 @@ jobs:
         run: cargo test -p studio-svg-resources --locked
       - name: Test native models and security
         run: cargo test --manifest-path native/gnome/Cargo.toml --locked
+      - name: Fetch locked native sources for platform notices
+        run: cargo fetch --manifest-path native/gnome/Cargo.toml --locked
       - name: Verify native Linux HTTPS transport notices
         run: python3 scripts/vendor-gnome-tls.py --check
       - name: Verify native structured-file reader notices

@@ -117,9 +117,12 @@ the current inventory. No additional missing implementation was confirmed by
 this review. The grouped rows do not establish untested physical interactions
 or guarantee freedom from defects.
 
-Remote GNOME CI has not run: the available GitHub credential lacks permission to
-publish the new workflow, and the earlier push was rejected. Local tests do not
-substitute for remote macOS/Windows builds or an actual fresh GNOME login.
+The feature branch is now published through SSH and
+[draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50) is open.
+Initial remote checks exposed two corrected CI issues; the
+[main integration follow-up](gnome-native-status.md#main-integration-and-initial-remote-checks)
+records their scope. Passing integrated remote jobs and physical desktop results
+remain required; local tests do not substitute for them.
 
 The real Shell [launcher/notification workflow](gnome-native-status.md#gnome-shell-launcher-and-notification-activation)
 also passes ordinary keyboard activation, actual banner delivery, notification

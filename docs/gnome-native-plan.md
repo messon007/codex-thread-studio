@@ -39,7 +39,10 @@ indexed ownership metadata before evaluation; it does not load hidden replies
 or start a provider. Current-turn menu status and Stop remain scoped to their
 actual source and generation.
 
-The current integration baseline is main `38e27e0` (2026-11-04). Its shared
+The current integration baseline is main `c73fdf4` (integrated 2026-11-05).
+Its updated-source qualification is tracked in the
+[current integration follow-up](gnome-native-status.md#main-integration-and-initial-remote-checks).
+The earlier main `38e27e0` checkpoint's shared
 Codex-daemon transport and SQL/jq services are integrated and validated against
 the native client. Explicit session release now has native controls and guards.
 JSON jq now uses GTK controls and the shared supervised Rust evaluator.

@@ -92,7 +92,12 @@ try {
   console.log('OpenCode: authenticated server, Studio adapter create/rename/send, live SSE, local-model completion, history/resume/fork/delete passed')
 } finally {
   eventAbort.abort(); await readerTask
-  if (child?.exitCode === null) { child.kill(); await new Promise(resolve => child.once('exit', resolve)) }
+  if (child?.pid && child.exitCode === null) {
+    const stopped = new Promise(resolve => child.once('exit', resolve))
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
+    child.kill()
+    try { await stopped } finally { clearTimeout(timeout) }
+  }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   await rm(temporary, { recursive: true, force: true })
 }

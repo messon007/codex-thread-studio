@@ -134,6 +134,11 @@ mod pdf;
 mod pdf_navigation;
 #[cfg(target_os = "linux")]
 mod pdf_ui;
+mod reader_query;
+#[cfg(target_os = "linux")]
+mod reader_query_source;
+#[cfg(target_os = "linux")]
+mod reader_query_ui;
 mod remote_images;
 #[cfg(target_os = "linux")]
 mod rich_paragraph;

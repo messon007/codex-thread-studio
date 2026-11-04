@@ -52,7 +52,7 @@ class Client:
         assert node.get_application().get_process_id()==self.process.pid
         interface=node.get_action_iface()
         names=[self.api.Action.get_action_name(interface,i) for i in range(self.api.Action.get_n_actions(interface))] if interface else []
-        for name in ['click','activate']:
+        for name in ['click','activate','toggle']:
             if name in names:
                 assert self.api.Action.do_action(interface,names.index(name));return
         raise RuntimeError(('Owned native control has no activation action',node.get_name(),names))
@@ -60,12 +60,42 @@ class Client:
         def actionable(node):
             if node.get_name()!=name or not self.showing(node) or not self.sensitive(node):return False
             interface=node.get_action_iface()
-            return interface and any(self.api.Action.get_action_name(interface,i) in ('click','activate') for i in range(self.api.Action.get_n_actions(interface)))
+            return interface and any(self.api.Action.get_action_name(interface,i) in ('click','activate','toggle') for i in range(self.api.Action.get_n_actions(interface)))
         # GtkMenuButton exports a named wrapper and a named toggle child. Only
         # the child has an action; labels can likewise duplicate button names.
         node=self.wait(name,lambda:self.find(actionable))
         self.activate(node);return node
     def text(self,value):return self.find(lambda n:self.showing(n) and value in n.get_name())
+    def toggle(self,name,keys):
+        """Use a native check button, including GTK nodes without AT-SPI Action.
+
+        `keys` must send input through the caller's owned private compositor.
+        The fallback follows real Tab stops and observes the checked state.
+        """
+        node=self.wait(name,lambda:self.find(lambda n:n.get_name()==name and n.get_role_name() in ('check box','radio button') and self.showing(n) and self.sensitive(n)))
+        def checked():
+            node.clear_cache()
+            return node.get_state_set().contains(self.api.StateType.CHECKED)
+        before=checked()
+        interface=node.get_action_iface()
+        actions=[self.api.Action.get_action_name(interface,i) for i in range(self.api.Action.get_n_actions(interface))] if interface else []
+        if any(action in actions for action in ('toggle','click','activate')):
+            self.activate(node)
+        else:
+            # GTK 4.22 also omits Action from some radio/check nodes. This is
+            # the same ordinary keyboard path used by installed agent-input QA.
+            for _ in range(40):
+                node.clear_cache()
+                if node.get_state_set().contains(self.api.StateType.FOCUSED):
+                    keys([0x20])
+                    break
+                focused=self.find(lambda n:n.get_state_set().contains(self.api.StateType.FOCUSED))
+                # Code editors consume Tab as indentation. Ctrl+Tab is GTK's
+                # native focus escape and leaves the user's expression intact.
+                keys([0xffe3,0xff09] if focused and focused.get_role_name()=='text' else [0xff09])
+            else:raise RuntimeError(('Owned check button was not in native Tab traversal',name))
+        self.wait('checked state changed: '+name,lambda:checked()!=before)
+        return node
     def within(self,node,parent):
         for _ in range(40):
             if node==parent:return True

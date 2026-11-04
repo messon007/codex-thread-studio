@@ -588,6 +588,7 @@ fn build(
     let terminal = crate::terminal::Terminal::new(sender.clone(), &toast);
     let files = crate::workspace_ui::Files::new(&window, sender.clone(), &toast);
     let source = crate::workspace_ui::Source::new(sender.clone(), &toast);
+    source.enable_queries(&window, documents.clone());
     let git = crate::git_ui::Git::new(sender.clone(), &toast);
     reader.widget.set_visible(false);
     let sessions = gio::ListStore::new::<glib::BoxedAnyObject>();

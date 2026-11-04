@@ -185,6 +185,8 @@ struct TrackedSelection {
 }
 
 pub struct Reader {
+    query_button: gtk::Button,
+    query: RefCell<Option<Rc<crate::reader_query_ui::Jq>>>,
     gateway_available: Cell<bool>,
     session_valid: Cell<bool>,
     pub image_renderer: RefCell<Option<Rc<crate::images_ui::Renderer>>>,
@@ -881,6 +883,9 @@ impl Reader {
             mode_group.append(mode);
         }
         header.append(&mode_group);
+        let query_button = icon("system-search-symbolic", "Query JSON with jq");
+        query_button.set_visible(false);
+        header.append(&query_button);
         let comment = icon("insert-text-symbolic", "Comment on selected text");
         comment.set_widget_name("studio-reader-comment");
         comment.set_focus_on_click(false);
@@ -1021,6 +1026,8 @@ impl Reader {
         widget.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         widget.append(&footer);
         let reader = Rc::new(Self {
+            query_button: query_button.clone(),
+            query: RefCell::default(),
             gateway_available: Cell::new(true),
             session_valid: Cell::new(true),
             flow_diagrams: crate::chat_diagrams::Renderer::new_viewport_bounded(
@@ -1078,6 +1085,12 @@ impl Reader {
             comments: RefCell::new(None),
             selection: RefCell::new(Vec::new()),
             selection_clock: Rc::new(Cell::new(0)),
+        });
+        let weak = Rc::downgrade(&reader);
+        query_button.connect_clicked(move |_| {
+            if let Some(reader) = weak.upgrade() {
+                reader.open_query();
+            }
         });
         let weak = Rc::downgrade(&reader);
         comment.connect_clicked(move |_| {
@@ -2516,6 +2529,9 @@ impl Reader {
     }
 
     fn finish_close(&self) {
+        if let Some(query) = self.query.borrow_mut().take() {
+            query.close();
+        }
         self.clear_flow_preview();
         self.cancel_picker();
         self.request("close", Request::Close);
@@ -2640,9 +2656,66 @@ impl Reader {
             button.set_active(mode == value);
         }
     }
+    fn open_query(&self) {
+        let state = self.state.borrow();
+        let Some(index) = state
+            .index
+            .as_ref()
+            .filter(|index| crate::reader_query::jq_supported(&index.name))
+        else {
+            return;
+        };
+        if !self.gateway_available.get() || !self.session_valid.get() || state.busy || state.dirty {
+            return;
+        }
+        let context = crate::reader_query::Context {
+            key: self.key,
+            generation: state.generation,
+            revision: index.revision.clone(),
+        };
+        if let Some(query) = self
+            .query
+            .borrow()
+            .as_ref()
+            .filter(|query| query.context == context && !query.is_closed())
+        {
+            query.present();
+            return;
+        }
+        let name = index.name.clone();
+        drop(state);
+        if let Some(old) = self.query.borrow_mut().take() {
+            old.close();
+        }
+        let query =
+            crate::reader_query_ui::Jq::new(&self.window, self.sender.clone(), context, &name);
+        self.query.replace(Some(query));
+    }
+
     fn update(&self) {
         let state = self.state.borrow();
         let available = self.gateway_available.get() && self.session_valid.get();
+        let query_supported = state
+            .index
+            .as_ref()
+            .is_some_and(|index| crate::reader_query::jq_supported(&index.name));
+        self.query_button.set_visible(query_supported);
+        self.query_button
+            .set_sensitive(available && query_supported && !state.busy && !state.dirty);
+        let close_query = self.query.borrow().as_ref().is_some_and(|query| {
+            !available
+                || state.dirty
+                || query.context.generation != state.generation
+                || state
+                    .index
+                    .as_ref()
+                    .is_none_or(|index| query.context.revision != index.revision)
+        });
+        if close_query {
+            if let Some(query) = self.query.borrow_mut().take() {
+                query.close();
+            }
+        }
         self.open.set_sensitive(
             self.gateway_available.get() && !state.busy && !self.picker.is_pending(),
         );

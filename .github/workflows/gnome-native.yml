@@ -59,6 +59,8 @@ jobs:
         run: node scripts/vendor-gnome-i18n.mjs --check
       - name: Test shared gateway without a desktop runtime
         run: cargo test -p codex-thread-studio --no-default-features --locked
+      - name: Test shared reader indexing and query engine
+        run: cargo test -p marknoria --lib --locked
       - name: Test reusable native Markdown model
         run: cargo test -p studio-markdown-native --locked
       - name: Test worker-side syntax preparation and bundled notices
@@ -100,6 +102,8 @@ jobs:
         run: python3 scripts/test-gnome-mermaid-package.py target/gnome-native/package --output target/gnome-mermaid-package-tests
       - name: Verify native document source, edit and row-cursor bounds without a compositor
         run: python3 scripts/smoke-gnome-documents.py target/gnome-native/package/codex-thread-studio-gateway
+      - name: Verify native JSON queries and source responsiveness without a compositor
+        run: python3 scripts/smoke-gnome-reader-queries.py target/gnome-native/package/codex-thread-studio-gateway
       - name: Verify durable Router controller setup
         run: python3 scripts/smoke-gnome-router.py target/gnome-native/package/codex-thread-studio-gateway
       - name: Verify explicit recovery of uncertain controllers

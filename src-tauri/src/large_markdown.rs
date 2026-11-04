@@ -362,11 +362,16 @@ pub async fn native_data(
         "table-source" => "api/table-source",
         "search" => "api/search",
         "diagram-source" => "api/diagram-source",
+        "jq-query" => "api/jq-query",
         "heartbeat" => "heartbeat",
         _ => return json_error(StatusCode::NOT_FOUND, "Unknown native reader operation"),
     };
-    if request.method() != Method::GET && !(path == "api/edit" && request.method() == Method::POST)
-    {
+    let allowed_method = if path == "api/jq-query" {
+        request.method() == Method::POST
+    } else {
+        request.method() == Method::GET || (path == "api/edit" && request.method() == Method::POST)
+    };
+    if !allowed_method {
         return json_error(
             StatusCode::METHOD_NOT_ALLOWED,
             "Native reader method rejected",

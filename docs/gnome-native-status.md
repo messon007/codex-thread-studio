@@ -15,7 +15,7 @@ its feature is still absent.
 | Providers and session tools | Codex-compatible instances and OpenCode, models/effort/Fast, permissions/agent input, commands/skills/MCP/subagents, attachments, queues, Router, Session Map and latest-turn Resources with filters, source occurrences and shared favorites. Fake providers verify request identities and mutation/cleanup behavior without touching real sessions. |
 | Markdown | Default continuous native text Preview, Rust indexing, bounded Preview/Source/Edit, outline/search, tables with column controls and paging, explicit/page-change saves, conflicts and undo/redo; independent read-only comparison. Real report copies and generated 32 MiB tables exercise source/context preservation. |
 | Rich content | Native images and bounded animation, Mermaid/PlantUML/D2 and math, original-image Save, PDF, tabular SQL/charts. EPUB XHTML, passive local HTML and website content use isolated, lazily created GTK4 WebKit surfaces with native application controls. Rendering limits remain documented. |
-| Structured files | Rust token formatting for JSON variants, XML and assignment files; YAML indentation is preserved. Native paged Preview/Source/Edit, display search, original-source comment mapping, explicit/page-change save and native syntax admission. |
+| Structured files | Rust token formatting for JSON variants, XML and assignment files; YAML indentation is preserved. Native paged Preview/Source/Edit, display search, original-source comment mapping, explicit/page-change save and native syntax admission. JSON jq filters, slurp and paged read-only output reuse the shared Rust query service. |
 | Workspace | Native Files, watches/shared roots, VTE terminal, Git status/staging/history and line-numbered diffs, exclusive panels and parent-view navigation. Private repositories/files/PTYs and installed controls have acceptance coverage. |
 | Saved user data | Existing Favorites, comments, pins, session options, queues and settings retain their shared stores. Native capture/source verification, conflict guards, explicit save, exports and restart behavior have focused fixtures. |
 | Settings | Native appearance, language, environment/secrets/network/cache, connections/backend configuration, Router, shared folders, session visibility, notifications, browser and translation settings. Exact editable/model values remain literal. |
@@ -28,9 +28,9 @@ in the validation record.
 ## Confirmed implementation gaps and next order
 
 1. **Port the newer main workflows to native controls.** The current integration
-   baseline is `38e27e0`. Its JSON jq queries and Markdown-table SQL queries
-   are present in the browser client but do not yet have native controls.
-   Explicit Codex session release now has native controls and safeguards.
+   baseline is `38e27e0`. Its Markdown-table SQL queries are present in the
+   browser client but do not yet have native controls. JSON jq queries and
+   explicit Codex session release now have native controls and safeguards.
    Existing native CSV/XLSX SQL is separate.
    Reuse the bounded Rust query services and keep the application interface GTK;
    do not embed the browser reader as a substitute.
@@ -59,7 +59,10 @@ in the validation record.
 3. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
-   continue using private profiles and document/repository copies.
+   continue using private profiles and document/repository copies. Recheck
+   fresh-profile startup with the final optimized pair: one debug jq-QA launch
+   timed out in the existing 15-second gateway-readiness wait, while subsequent
+   English and Chinese installed runs passed. Its cause is not established.
 
 Image-region comments and advanced review comments are not assumed parity gaps:
 the current image workspace explicitly does not support comments, and the
@@ -112,6 +115,59 @@ and Rust 1.92 checks all release targets. The local candidate is
 `SESSION-RELEASE-EVALUATION.json` lives beside the package in the external QA
 directory. These are native checkpoint checks; the final optimized distribution
 and complete migration acceptance remain outstanding.
+
+## Native JSON queries
+
+The existing structured-file viewer exposes **Query JSON with jq** for JSON,
+JSONL and NDJSON. Its formatted Preview, Source and Edit behavior stays in that
+viewer. Queries open a read-only saved-file snapshot using the existing native
+document actor's open/index/close operations. The jq filter, slurp checkbox,
+read-only output, Copy and result pager are GTK controls; each output page is
+bounded to 48 KiB. Unsaved edits disable the entry and retire an existing query.
+Changing the source retires the old query context. A disconnected query can be
+closed and reopened; queries are not silently replayed.
+
+The evaluator, JSON parsing, supervised worker, limits, revision validation and
+result cleanup come from the shared MarkNoria Rust service. Its native API alias
+preserves authentication, origin and document checks. No system jq executable,
+Python process or embedded browser reader is used by this feature. The native
+query shell reuses the existing source widgets, highlight admission, theme,
+adaptive controls and language bindings, and is reusable for Markdown-table SQL.
+
+Actual JSONL testing also found a shared indexer failure: continuous JSONL or a
+large minified value was treated as one indivisible Markdown block. The shared
+source-index path now pages JSON without Markdown parsing while preserving exact
+bytes, UTF-8 boundaries and line metadata. Markdown continues using its existing
+parser and page writer. Both clients benefit, and all 43 vendored reader files
+reproduce from the pinned source and combined adapter patch.
+
+Validation commands:
+
+```sh
+python3 scripts/smoke-gnome-reader-queries.py /path/to/gateway
+python3 scripts/smoke-gnome-reader-query-ui.py /path/to/native-bundle
+python3 scripts/smoke-gnome-reader-query-ui.py /path/to/native-bundle --language zh-CN
+```
+
+The final debug pair passes installed English (`reader-query-ui-ct_4n_ua`) and
+Chinese (`reader-query-ui-7cqbefi9`) workflows, using real controls and an
+independent clipboard reader in private Wayland sessions. These cover 1,200-row
+JSON projection and paging, query replacement, error retention, source changes,
+JSONL slurp, unchanged original files and the exact chat draft. No model turn
+is started. GTK 4.22 check nodes without AT-SPI Action use ordinary keyboard
+focus traversal; Ctrl+Tab exits the source editor without inserting indentation.
+
+The API check covers permissions, method/origin rejection, stale/cross-document
+identities, Unicode result pages, close, slurp, disabled environment access and
+termination of an infinite filter. During that filter, an independent source
+read completed in about 5 ms in the first successful local run. This is a
+focused local service observation, not a UI latency or hardware guarantee.
+All 399 native tests, 39 shared reader tests, 272 gateway tests and Rust 1.92
+release-target checks pass. The local debug candidate is
+`target/gnome-native-candidate-20261104-reader-jq`; its
+`READER-JQ-EVALUATION.json` is beside the package in the external QA directory
+and retains the startup-timeout observation. The final optimized distribution, fresh-profile
+startup qualification and the broader migration audit remain outstanding.
 
 ## Current main integration
 

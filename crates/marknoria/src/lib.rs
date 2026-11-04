@@ -508,6 +508,46 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
         nested_row_spans: VecDeque::new(),
         tables: Vec::new(),
     };
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(jq_query::supported)
+    {
+        // JSON and JSONL are source documents, not Markdown paragraphs. Reuse
+        // the bounded page writer without parsing JSON or treating literal
+        // fences, links and HTML as document markup. The jq worker validates
+        // JSON only when a query is actually requested.
+        let mut start = 0;
+        while start < source.len() {
+            let mut end = (start + PAGE_BYTES).min(source.len());
+            while !source.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end < source.len() {
+                if let Some(newline) = source[start..end].rfind('\n') {
+                    end = start + newline + 1;
+                }
+            }
+            writer.page(
+                vec![
+                    Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)),
+                    Event::Text(source[start..end].into()),
+                    Event::End(TagEnd::CodeBlock),
+                ],
+                start..end,
+                0,
+                0,
+                None,
+                &[],
+                None,
+            )?;
+            start = end;
+        }
+        // Reference metadata is part of the shared reader cache contract.
+        fs::write(directory.join("references.bin"), [])?;
+        fs::write(directory.join("references.json"), b"[]")?;
+        return finish_index(path, directory, started, writer, Vec::new());
+    }
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
     let (parse_source, bare) = bare_plantuml(&source, options);
@@ -791,14 +831,24 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
     if !pending.is_empty() {
         writer.page(pending, pending_span, 0, 0, None, &[], None)?;
     }
-    writer.file.flush()?;
-    writer.diagram_file.flush()?;
     for (heading, offset) in toc.iter_mut().zip(heading_offsets) {
         heading.page = writer
             .pages
             .partition_point(|page| page.start <= offset)
             .saturating_sub(1);
     }
+    finish_index(path, directory, started, writer, toc)
+}
+
+fn finish_index(
+    path: &Path,
+    directory: &Path,
+    started: Instant,
+    mut writer: Writer<'_>,
+    toc: Vec<Heading>,
+) -> io::Result<Index> {
+    writer.file.flush()?;
+    writer.diagram_file.flush()?;
     let index = Index {
         version: 5,
         name: path
@@ -808,11 +858,11 @@ pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
             .chars()
             .take(240)
             .collect(),
-        revision: Sha256::digest(source.as_bytes())
+        revision: Sha256::digest(writer.source.as_bytes())
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
-        source_bytes: source.len(),
+        source_bytes: writer.source.len(),
         source_lines: writer.starts.len(),
         pages: writer.pages,
         toc,
@@ -1253,6 +1303,46 @@ pub fn search(directory: &Path, index: &Index, query: &str) -> io::Result<Vec<Ma
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_source_pages_do_not_parse_markdown_or_reject_large_records() {
+        for (name, source) in [
+            (
+                "records.ndjson",
+                "{\"name\":\"中文😀 <script>alert(1)</script> ```mermaid\"}\r\n".repeat(5000),
+            ),
+            (
+                "minified.JSON",
+                format!("{{\"value\":\"{}\"}}", "中文😀<&>".repeat(30000)),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(name);
+            fs::write(&path, &source).unwrap();
+            let index = build_index(&path, directory.path()).unwrap();
+            assert!(index.pages.len() > 1);
+            assert!(index.toc.is_empty() && index.tables.is_empty() && index.diagrams.is_empty());
+            assert_eq!(index.source_bytes, source.len());
+            assert_eq!(
+                index.source_lines,
+                source.bytes().filter(|byte| *byte == b'\n').count() + 1
+            );
+            assert_eq!(
+                fs::read_to_string(directory.path().join("source.md")).unwrap(),
+                source
+            );
+            let mut end = 0;
+            for (number, page) in index.pages.iter().enumerate() {
+                assert_eq!(page.start, end);
+                assert!(page.end > page.start && page.end - page.start <= PAGE_BYTES);
+                assert!(source.is_char_boundary(page.start) && source.is_char_boundary(page.end));
+                let html = read_page(directory.path(), &index, number).unwrap();
+                assert!(html.len() <= MAX_HTML && !html.contains("<script>"));
+                end = page.end;
+            }
+            assert_eq!(end, source.len());
+        }
+    }
 
     fn fixture(source: &str) -> (tempfile::TempDir, Index) {
         let directory = tempfile::tempdir().unwrap();

@@ -1,4 +1,13 @@
 {
+  "JSON query": "JSON 查询",
+  "jq filter": "jq 筛选表达式",
+  "Query output": "查询输出",
+  "Read-only query results": "只读查询结果",
+  "Slurp input into an array": "将输入值汇集为数组",
+  "Previous result page": "上一页查询结果",
+  "Next result page": "下一页查询结果",
+  "Query JSON with jq": "使用 jq 查询 JSON",
+  "Copy result page": "复制当前页查询结果",
   "Release session to CLI": "释放会话到命令行",
   "Releasing session…": "正在释放会话…",
   "Session released · Reload to send messages again": "会话已释放 · 重新加载后可继续发送消息",

@@ -39,6 +39,21 @@ and termination of an infinite jq filter. The browser check exercises SQL/jq
 forms and the host iframe selection bridge. These are correctness checks, not
 end-to-end performance measurements.
 
+JSON, JSONL and NDJSON indexing now uses bounded inert source pages instead of
+the Markdown parser. Continuous JSONL records and long minified JSON strings
+therefore do not hit the indivisible-Markdown-block budget. This path preserves
+UTF-8 boundaries, original bytes and source lines and does not interpret literal
+HTML, diagram fences or headings as Markdown. The page writer and index
+finalization are shared with Markdown. The fix is included in the reproducible
+query adapter patch; both browser and native consumers use it.
+
+GTK clients reuse the same jq evaluator, supervised worker, snapshot/revision
+checks, result cache and cleanup through the authenticated native
+`/studio/native/markdown/{reader}/jq-query` POST alias. They do not require a
+separate MarkNoria installation, a system `jq` executable or Python at runtime.
+`scripts/smoke-gnome-reader-queries.py` checks that API with private files and
+also reads the source while an infinite filter is being supervised.
+
 The document table controller and column resizing styles were also ported from
 that local working tree for Studio issues #39 and #43. Ordinary Markdown uses
 the same layout module through a gateway asset route. Widths belong to the open

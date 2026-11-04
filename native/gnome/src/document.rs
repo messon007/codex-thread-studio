@@ -14,7 +14,23 @@ use crate::{gateway::Api, protocol::Event};
 mod resume;
 
 #[derive(Debug)]
+pub enum Background {
+    Open { root: String, path: String },
+    Index,
+    Close,
+}
+
+#[derive(Debug)]
 pub enum Request {
+    Background {
+        operation: Background,
+        reply: tokio::sync::oneshot::Sender<Result<Reply, String>>,
+    },
+    Query {
+        revision: String,
+        operation: crate::reader_query::Operation,
+        reply: tokio::sync::oneshot::Sender<Result<crate::reader_query::Reply, String>>,
+    },
     Open {
         root: String,
         path: String,
@@ -291,6 +307,8 @@ impl Request {
     }
     fn kind(&self) -> &'static str {
         match self {
+            Self::Background { .. } => "background",
+            Self::Query { .. } => "query",
             Self::Open { .. } => "open",
             Self::Resume { .. } => "resume",
             Self::Index => "index",
@@ -346,6 +364,7 @@ async fn run_actor(
     let mut controls_open = true;
     let mut sessions: HashMap<u64, Session> = HashMap::new();
     let selections = Arc::new(tokio::sync::Semaphore::new(2));
+    let queries = Arc::new(tokio::sync::Semaphore::new(2));
     let mut carry = None;
     loop {
         let mut message = match carry.take() {
@@ -366,6 +385,22 @@ async fn run_actor(
                 message = input.recv() => match message {Some(message) => message, None => break},
             },
         };
+        // Background query documents use the same open/index/close state
+        // machine as visible readers. Only their response channel differs.
+        let background = if let Request::Background { operation, reply } = message.request {
+            message.request = match operation {
+                Background::Open { root, path } => Request::Open {
+                    root,
+                    path,
+                    read_only: true,
+                },
+                Background::Index => Request::Index,
+                Background::Close => Request::Close,
+            };
+            Some(reply)
+        } else {
+            None
+        };
         if let Some(key) = message.request.coalescing_key() {
             while let Ok(next) = input.try_recv() {
                 if next.key == message.key
@@ -378,6 +413,42 @@ async fn run_actor(
                     break;
                 }
             }
+        }
+        if let Request::Query {
+            revision,
+            operation,
+            mut reply,
+        } = message.request
+        {
+            let source = sessions
+                .get(&message.key)
+                .filter(|session| session.valid && session.generation == message.generation)
+                .filter(|session| {
+                    session
+                        .index
+                        .as_ref()
+                        .is_some_and(|index| index.revision == revision)
+                })
+                .map(|session| (session.reader.clone(), session.document.clone()));
+            let (Some(api), Some((reader, document))) = (api.clone(), source) else {
+                let _ = reply.send(Err(
+                    "Query document changed or disconnected; reopen the query".into(),
+                ));
+                continue;
+            };
+            let Ok(permit) = queries.clone().try_acquire_owned() else {
+                let _ = reply.send(Err("Reader query workers are busy; try again".into()));
+                continue;
+            };
+            tokio::spawn(async move {
+                let _permit = permit;
+                let result = tokio::select! {
+                    result=crate::reader_query::execute(&api, &reader, &document, &revision, operation)=>result,
+                    _=reply.closed()=>return,
+                };
+                let _ = reply.send(result);
+            });
+            continue;
         }
         if let Request::SelectionPrefix {
             reader,
@@ -546,6 +617,10 @@ async fn run_actor(
                     session.poisoned = Some(error.clone());
                 }
             }
+        }
+        if let Some(reply) = background {
+            let _ = reply.send(result);
+            continue;
         }
         if output
             .send(Event::Document(Response {
@@ -938,6 +1013,8 @@ async fn handle(
             Ok(Reply::Ack)
         }
         Request::Open { .. }
+        | Request::Background { .. }
+        | Request::Query { .. }
         | Request::Resume { .. }
         | Request::Diagram { .. }
         | Request::CancelDiagram { .. }
@@ -1124,13 +1201,17 @@ mod tests {
     use super::*;
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn selection_reads_leave_controls_free_and_cancel_when_the_offer_closes() {
-        selection_read_case(false).await;
+        selection_read_case(0).await;
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn prefix_reads_leave_controls_free_and_cancel_when_the_offer_closes() {
-        selection_read_case(true).await;
+        selection_read_case(1).await;
     }
-    async fn selection_read_case(prefix: bool) {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reader_queries_leave_navigation_free_and_cancel_on_receiver_close() {
+        selection_read_case(2).await;
+    }
+    async fn selection_read_case(kind: u8) {
         use std::time::Duration;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1186,7 +1267,10 @@ mod tests {
                         }
                         bytes.extend_from_slice(&part[..n]);
                     }
-                    if path.contains("/table-text?") || path.contains("/table-prefix?") {
+                    if path.contains("/table-text?")
+                        || path.contains("/table-prefix?")
+                        || path.ends_with("/jq-query")
+                    {
                         if let Some(seen) = seen.lock().await.take() {
                             let _ = seen.send(());
                         }
@@ -1257,7 +1341,20 @@ mod tests {
                 ..
             })
         ));
-        let (request, receive): (Request, Box<dyn std::any::Any + Send>) = if prefix {
+        let (request, receive): (Request, Box<dyn std::any::Any + Send>) = if kind == 2 {
+            let (reply, receive) = tokio::sync::oneshot::channel();
+            (
+                Request::Query {
+                    revision,
+                    operation: crate::reader_query::Operation::Jq {
+                        filter: ".".into(),
+                        slurp: false,
+                    },
+                    reply,
+                },
+                Box::new(receive),
+            )
+        } else if kind == 1 {
             let (reply, receive) = tokio::sync::oneshot::channel();
             (
                 Request::SelectionPrefix {

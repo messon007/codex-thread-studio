@@ -25,6 +25,8 @@ use tokio::sync::mpsc;
 pub use crate::files_ui::Files;
 
 pub struct Source {
+    query_button: gtk::Button,
+    query: RefCell<Option<Rc<crate::reader_query_source::Launcher>>>,
     pub widget: gtk::Box,
     title: gtk::Label,
     status: gtk::Label,
@@ -144,6 +146,9 @@ impl Source {
             .build();
         crate::i18n_ui::bind(&title, "label", "markdown-mode\u{4}Source");
         toolbar.append(&title);
+        let query_button = button("system-search-symbolic", "Query JSON with jq");
+        crate::i18n_ui::bind(&query_button, "tooltip-text", "Query JSON with jq");
+        query_button.set_visible(false);
         let close = button("window-close-symbolic", "Close source");
         let comment = button("insert-text-symbolic", "Comment on selected text");
         comment.set_focus_on_click(false);
@@ -183,6 +188,7 @@ impl Source {
         );
         let new_lines = sourceview::GutterRendererText::new();
         let editor = source_edit_ui::Editor::new(&toolbar, &view);
+        toolbar.append(&query_button);
         let search =
             source_search_ui::Find::new(&toolbar, &view, editor.find_view(), &editor.preview.view);
         toolbar.append(&comment);
@@ -220,6 +226,8 @@ impl Source {
         navigation.set_margin_end(12);
         widget.append(&navigation);
         let source = Rc::new(Self {
+            query_button,
+            query: RefCell::default(),
             widget,
             title,
             status,
@@ -538,6 +546,9 @@ impl Source {
         self.source_action(source_edit_ui::Action::Clear);
     }
     fn clear_now(&self) {
+        if let Some(query) = self.query.borrow().as_ref() {
+            query.sync(None, false, false);
+        }
         self.reading.set(false);
         self.reload_target.borrow_mut().take();
         self.reset_editor();
@@ -641,7 +652,36 @@ impl Source {
                 - usize::from(end.starts_line() && end.line() > start.line()),
         ))
     }
+    pub fn enable_queries(
+        &self,
+        parent: &adw::ApplicationWindow,
+        documents: mpsc::Sender<crate::document::Message>,
+    ) {
+        self.query
+            .replace(Some(crate::reader_query_source::Launcher::new(
+                parent,
+                &self.toast,
+                documents,
+                &self.query_button,
+            )));
+        self.update_comment();
+    }
+
     fn update_comment(&self) {
+        if let Some(query) = self.query.borrow().as_ref() {
+            let target = self
+                .text
+                .borrow()
+                .as_ref()
+                .and_then(|text| text.file.as_ref())
+                .filter(|file| crate::reader_query::jq_supported(&file.path))
+                .map(|file| crate::reader_query_source::Target {
+                    root: file.root.clone(),
+                    path: file.path.clone(),
+                    hash: file.hash.clone(),
+                });
+            query.sync(target, self.editor.dirty.get(), self.reading.get());
+        }
         self.comment.set_sensitive(if self.html_active() {
             !self.editor.dirty.get() && self.editor.html.comment_selection().is_some()
         } else {

@@ -40,8 +40,9 @@ actual source and generation.
 The current integration baseline is main `38e27e0` (2026-11-04). Its shared
 Codex-daemon transport and SQL/jq services are integrated and validated against
 the native client. Explicit session release now has native controls and guards.
-Port JSON jq controls and Markdown-table SQL controls next; native CSV/XLSX SQL
-already exists. Keep
+JSON jq now uses GTK controls and the shared supervised Rust evaluator. Port
+Markdown-table SQL controls next, reusing that query shell and the existing
+bounded SQLite service; native CSV/XLSX SQL already exists. Keep
 source/result identities, read-only query output and explicit reload/save
 semantics distinct, with the computation in the existing bounded Rust services.
 

@@ -10,21 +10,38 @@ import time
 from urllib.error import URLError
 
 sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path(__file__).with_name('test-support')))
+from native_accessibility import ProcessPeer
 spec=importlib.util.spec_from_file_location('setup_fixture',Path(__file__).with_name('smoke-gnome-router.py'))
 fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
 INSPECT='/studio/native/router/controller/recovery'
 ADOPT='/studio/native/router/controller/adopt'
 
 def close(gateway,root):
-    gateway.close()
-    for name in ['backend.pid','opencode.pid']:
-        path=root/name
-        if not path.exists():continue
-        identity=path.read_text().strip()
+    peers=[]
+    try:
+        for name,script in [('backend.pid','backend.py'),('opencode.pid','opencode.py')]:
+            path=root/name
+            if not path.exists():continue
+            identity=int(path.read_text())
+            proc=Path('/proc',str(identity))
+            try:
+                fields=(proc/'stat').read_text().rsplit(')',1)[1].split()
+            except FileNotFoundError:
+                continue
+            if fields[0]=='Z':continue
+            assert int(fields[1])==gateway.process.pid, f'Unexpected recovery backend parent: {name}'
+            assert str(root/script).encode() in (proc/'cmdline').read_bytes().split(b'\0'), f'Unexpected recovery backend command: {name}'
+            peers.append((name,ProcessPeer(identity,(proc/'exe').resolve(strict=True))))
+    finally:
+        gateway.close()
+    # An unreaping container PID 1 can retain dead children in /proc. Observe
+    # the original process identity, as the installed desktop fixtures do.
+    for name,peer in peers:
         for _ in range(100):
-            if not Path('/proc',identity).exists():break
+            if peer.poll() is not None:break
             time.sleep(.05)
-        assert not Path('/proc',identity).exists(),f'Owned recovery backend survived: {name}'
+        assert peer.poll() is not None,f'Owned recovery backend survived: {name}'
 
 def exercise(binary,root,kind):
     fixture.initial(root)

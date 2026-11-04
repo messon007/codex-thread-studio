@@ -37,7 +37,10 @@ permissions:
 jobs:
   ubuntu-26-04:
     runs-on: ubuntu-latest
-    container: ubuntu:26.04
+    container:
+      image: ubuntu:26.04
+      # Desktop PID 1 reaps orphans; give CI the same process-lifecycle contract.
+      options: --init
     env:
       CARGO_BUILD_JOBS: 2
     steps:
@@ -382,7 +385,9 @@ jobs:
   ubuntu-26-04-runtime:
     needs: ubuntu-26-04
     runs-on: ubuntu-latest
-    container: ubuntu:26.04
+    container:
+      image: ubuntu:26.04
+      options: --init
     steps:
       - uses: actions/download-artifact@v8
         with:

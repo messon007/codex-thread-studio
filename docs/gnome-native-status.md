@@ -182,8 +182,44 @@ Its record is the external QA root's
 The `gnome-native-candidate-20261105-main` alias and
 [desktop check](gnome-native-desktop-check.md) select this package. The prior
 packages are preserved. The runtime installer dry run passes without modifying
-host packages. Remote font-corrected CI and physical desktop feedback remain
-pending.
+host packages. The remote checkpoint below now qualifies the font correction;
+complete remote and physical desktop acceptance remain pending.
+
+## CI process identity and container reaping
+
+At `e874766`, the existing Linux/macOS/Windows PR matrix (`41910748399`) is green.
+Native run `41910748394` passes the corrected renderer's 1,029 library tests,
+builds and archives the complete package, checks standalone installation and
+its Mermaid/document/query APIs, then fails the uncertain-controller recovery
+fixture's final `/proc`-presence assertion.
+
+A private PID-1/network namespace reproduces that exact failure with the
+qualified gateway: the backend has exited and is state `Z`, adopted by PID 1,
+but that minimal init does not reap it. The revised fixture reuses the existing
+`ProcessPeer` observer, capturing the live process's parent, exact private script,
+executable and start time before closing the gateway. It continues to fail for
+a running original process while accepting an exited zombie or a changed PID
+identity. Both complete Codex/OpenCode recovery flows pass in the same unreaping
+namespace, including one creation, explicit adoption, stale/metadata guards,
+restart and OpenCode restriction-failure identity retention. Only six exited
+zombie records remain before the fixture explicitly reaps its private children.
+
+The desktop/process boundary suite now has 21 passing tests, including a real
+owned child observed alive and then exited while its zombie is deliberately
+unreaped. Both Ubuntu CI job containers request Docker's standard
+[`--init` process](https://docs.docker.com/reference/cli/docker/container/run/),
+so all existing cleanup checks have an orphan reaper as on a GNOME host.
+The workflow parses and the modified Python sources pass syntax checks.
+Application inputs and the current optimized package are unchanged.
+
+Reproduction/verification records are in the external QA root's
+`native-main-c73fdf4-20261105/recovery-pid1-_1kz_4at/REPRODUCED.json` and
+`recovery-pid1-yw99_psl/VERIFIED.json`. The actual CI package is also downloaded
+through the GitHub connector: artifact `13363322217`, ZIP SHA-256
+`f6e24529aae2b75fa200d83af57d6cbeb91abc0d0405c270ea0ff3ac5770f05d`.
+Safe extraction checks every one of its 495 manifest files. Its record is
+`native-ci-e874766-20261105/DOWNLOADED.json`. Complete corrected remote and
+physical desktop acceptance remain pending.
 
 ## Real installed Codex shared-daemon workflow
 

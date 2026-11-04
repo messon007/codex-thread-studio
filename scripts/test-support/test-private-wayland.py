@@ -5,12 +5,14 @@ import unittest
 import sys
 import os
 import tempfile
+import time
 from unittest.mock import patch
 from types import SimpleNamespace
 import private_wayland
 import private_orca
 import private_displays
 import local_codex_provider
+from native_accessibility import ProcessPeer
 
 ROOT='/tmp/studio-wayland-private-test'
 def mount(path,kind):return f'1 0 0:1 / {path} rw - {kind} private rw\n'
@@ -32,6 +34,25 @@ class InputOwnership(unittest.TestCase):
         with patch.object(private_wayland.os, 'getppid', return_value=os.getpid()):
             with self.assertRaisesRegex(RuntimeError, 'Mutter parent'):
                 private_wayland.OwnedMutterInput()
+
+class ProcessObservation(unittest.TestCase):
+    def test_exited_child_is_observed_before_its_zombie_is_reaped(self):
+        child=subprocess.Popen([sys.executable,'-c','import sys; sys.stdin.read()'],stdin=subprocess.PIPE)
+        try:
+            peer=ProcessPeer(child.pid,sys.executable)
+            self.assertIsNone(peer.poll())
+            child.stdin.close()
+            deadline=time.monotonic()+5
+            while peer.poll() is None and time.monotonic()<deadline:
+                time.sleep(.01)
+            self.assertIsNotNone(peer.poll())
+            fields=Path('/proc',str(child.pid),'stat').read_text().rsplit(')',1)[1].split()
+            self.assertEqual(fields[0],'Z')
+            child.wait(timeout=5)
+        finally:
+            if child.returncode is None:
+                child.kill()
+                child.wait(timeout=5)
 
 class ShellOwnership(unittest.TestCase):
     def test_login_bus_cannot_start_private_shell(self):

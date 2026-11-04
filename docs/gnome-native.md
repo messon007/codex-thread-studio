@@ -11,6 +11,28 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
+## Integrated optimized candidate
+
+The [optimized release checkpoint](gnome-native-status.md#optimized-integrated-release-checkpoint)
+supersedes the earlier pending optimized-integration notes. It packages matching
+native/gateway release builds at `3cf1427` and passes ten sequential installed
+checks on Ubuntu 26.04.1 Wayland, including shared Markdown SQL/jq controls,
+the native core workflow, actual/generated large files and session release in
+English and Chinese. Logs, runtime versions and source/executable hashes are in
+`NATIVE-INTEGRATED-RELEASE-EVALUATION.json` beside the package. Run the candidate
+without replacing the existing installation:
+
+```sh
+./target/gnome-native-candidate-20261104-integrated-release/codex-thread-studio-gnome
+```
+
+The query window, column picker, source widgets, cell styles, SQL formatter,
+query evaluators and caches reuse existing components. GTK owns interaction and
+layout; computation stays in the shared Rust services. Test artifacts and
+dependency/build directories remain under `/media/rui`; the standalone installer
+does not require Python or a sibling MarkNoria project. Final parity/compatibility
+review, physical desktop and fresh-machine/remote CI acceptance remain separate.
+
 ## Current-main transport and reader integration
 
 The feature branch integrates current main through `38e27e0`, including shared

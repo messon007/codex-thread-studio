@@ -47,6 +47,14 @@ native CSV/XLSX SQL retains its existing importer. Keep
 source/result identities, read-only query output and explicit reload/save
 semantics distinct, with the computation in the existing bounded Rust services.
 
+The integrated optimized pair at `3cf1427` now passes ten sequential installed
+checks on Ubuntu 26.04.1 Wayland, including shared SQL/jq controls, the native
+core workflow, an actual 8.4 MiB report, 32 MiB LF/CRLF editing and session release
+in both languages. The candidate and exact scope are in the
+[current release checkpoint](gnome-native-status.md#optimized-integrated-release-checkpoint).
+Finish the feature/compatibility review against the inventory; physical desktop,
+fresh-machine and remote CI validation remain explicitly separate.
+
 At the supervision checkpoint, 392 native tests and 257 headless gateway tests
 passed (four and one opt-in
 ignored respectively), with Rust 1.92 and the existing GTK3/Tauri Linux check.

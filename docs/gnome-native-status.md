@@ -57,10 +57,11 @@ retains its separate source importer and shares formatting and table controls.
 2. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
-   continue using private profiles and document/repository copies. Recheck
-   fresh-profile startup with the final optimized pair: one debug jq-QA launch
-   timed out in the existing 15-second gateway-readiness wait, while subsequent
-   English and Chinese installed runs passed. Its cause is not established.
+   continue using private profiles and document/repository copies. The matched
+   optimized pair now passes the installed checks below. Four new private
+   profiles reached conversation readiness in 2.6–4.1 seconds without the
+   earlier debug startup timeout; its original cause is still not established.
+   Fresh-machine/remote CI and physical desktop checks remain separate gates.
 
 Image-region comments and advanced review comments are not assumed parity gaps:
 the current image workspace explicitly does not support comments, and the
@@ -209,7 +210,57 @@ All 400 native tests, 40 shared reader tests, 272 gateway tests and Rust 1.92
 release-target checks pass. The debug candidate is
 `target/gnome-native-candidate-20261104-reader-sql`, with source/package hashes
 and retained failure records in `READER-SQL-EVALUATION.json` beside the package.
-The final optimized pair and startup qualification remain separate gates.
+The following optimized checkpoint now covers the integrated pair as well.
+
+## Optimized integrated release checkpoint
+
+The local candidate is `target/gnome-native-candidate-20261104-integrated-release`.
+Its native client and gateway are both optimized builds of the integrated
+sources at `3cf1427`, including session release, jq and Markdown-table SQL.
+Application UI remains GTK4/libadwaita; both query evaluators and result stores
+are the existing shared Rust services. No separate MarkNoria checkout is needed.
+
+Ten sequential checks pass on Ubuntu 26.04.1, GTK 4.22.4, libadwaita 1.9.1 and
+Mutter 50.1, using owned headless Wayland desktops without X11:
+
+- Standalone installation, immutable update/reinstall, executable/notices and
+  checksum validation, corruption rejection and unrelated-tool preservation.
+- Authenticated jq/SQL APIs and source responsiveness; installed SQL and jq in
+  English and Chinese, retaining original files and the exact chat draft.
+- Installed native core workflows with live language/backend settings, Git
+  Review, file portals, Preview/Source/Edit, undo/redo/save, viewer returns,
+  images, PDF, EPUB, passive HTML and all four diagram/math inspectors at 400%.
+- The actual 8.4 MiB report plus generated 32 MiB LF/CRLF tables: bounded source
+  windows, exact outline lines, distant context, table paging/column filtering,
+  explicit/page-change editing saves and original-report preservation.
+- English and Chinese session release, including real acknowledgment expiry,
+  late acknowledgments/notifications and explicit reload without model turns
+  or interrupts.
+
+These installed checks use fake providers and no application test hooks or
+gateway override. Earlier real-CLI/mock-provider transport acceptance remains
+separately recorded. The four fresh-profile query launches reach conversation
+readiness in 4.07, 2.88, 2.62 and 2.87 seconds. OS disk caches were not flushed;
+these observations do not explain the preceding debug timeout or guarantee
+startup latency on another machine.
+
+The large-reader run observes no WebKit content process. Its peak native RSS is
+about 370 MiB and gateway RSS about 31 MiB over all three documents. Source
+windows stay below 128 KiB. The report opens in about 3.5 seconds and generated
+files in 0.6–0.7 seconds in this fixture. Outline measurements include keyboard
+focus/traversal, AT-SPI polls and opening/closing the pane; they are not isolated
+single-click or parser timings.
+
+`NATIVE-INTEGRATED-RELEASE-EVALUATION.json` beside the external package records
+the exact installed executable/source hashes, runtime versions, ten check
+results and retained logs. This checkpoint also retains 400 passing native
+tests, 272 gateway tests, 40 shared reader tests, Rust 1.92 release-target
+checking and the reproducible 43-file vendoring check. It does not claim a
+fresh-machine install, physical IME/Orca/fractional-scaling acceptance or remote
+CI. GitHub credentials still lack `workflow` permission, so the new workflow
+and feature branch have not been published. The default user installation is
+unchanged, and the full migration goal remains active for the final parity and
+compatibility review.
 
 ## Current main integration
 
@@ -237,10 +288,10 @@ and query patches without modifying the separate MarkNoria checkout. Exact
 current JavaScript dependencies were installed under `/media`; the previous
 dependency tree is preserved.
 
-Optimized acceptance must be refreshed for this integration; the preceding
-optimized status/inspector package is not this merged version. The native query
-and session-release controls above now have their focused debug acceptance. Remote publishing
-still requires suitable workflow permission; no remote branch or CI is claimed.
+The optimized integrated checkpoint above now refreshes acceptance for this
+integration, including native query and session-release controls. Older
+status/inspector packages predate this merge. Remote publishing still requires
+suitable workflow permission; no remote branch or CI is claimed.
 
 ## Navigation timing follow-up
 

@@ -329,7 +329,7 @@ def main():
         parser.error('--reference is required for an actual large Markdown report')
     reference = args.reference.resolve(strict=True)
     assert reference.is_file() and 4 * 1024 * 1024 < reference.stat().st_size < 128 * 1024 * 1024
-    base = REPO / 'target/gnome-native-smoke'
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or REPO / 'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='release-large-', dir=base))
     runtime.create_profile(root)

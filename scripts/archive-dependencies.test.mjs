@@ -42,8 +42,16 @@ test('ExcelJS retains XLSX writing, ordinary reading and streamed reading', asyn
   await workbook.xlsx.writeFile(path)
   const copy = new ExcelJS.Workbook(); await copy.xlsx.readFile(path)
   assert.equal(copy.getWorksheet('Values').getCell('B3').value, 3)
+  // Use the streaming writer's inline-string format for its reader round trip.
+  // The ordinary writer's ZIP entry ordering can vary by filesystem; ExcelJS's
+  // streaming reader assumes workbook metadata precedes shared-string sheets.
+  const streamPath = join(directory, 'streamed.xlsx')
+  const streamed = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: streamPath, useSharedStrings: false })
+  const streamedSheet = streamed.addWorksheet('Values')
+  for (const row of [['Name', 'Value'], ['first', 2], ['second', 3]]) streamedSheet.addRow(row).commit()
+  await streamed.commit()
   const values = []
-  const reader = new ExcelJS.stream.xlsx.WorkbookReader(path, { sharedStrings: 'cache', worksheets: 'emit' })
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(streamPath, { sharedStrings: 'cache', worksheets: 'emit' })
   for await (const worksheet of reader) for await (const row of worksheet) values.push(row.getCell(2).value)
   assert.deepEqual(values, ['Value', 2, 3])
 })

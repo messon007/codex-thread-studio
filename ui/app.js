@@ -7470,6 +7470,7 @@ function toast(message, kind = 'info') {
 function showError(error) { console.error(error); reportClientError(error); toast(error?.message || String(error), 'error') }
 
 async function releaseSessionWriteAccess() {
+  const model = state.model
   const ref = { backend: state.backend, id: state.selectedId }
   if (!ref.id || !isCodexBackend(ref.backend) || state.model.activeTurnId || state.model.status === 'running' || state.runningMessageQueues.has(selectedStateKey()) || turnSupervision.activeFor(ref)) return
   closeActionMenus()
@@ -7477,7 +7478,7 @@ async function releaseSessionWriteAccess() {
   const result = await dispatchBackendRpc(ref.backend, 'thread/unsubscribe', { threadId: ref.id })
   if (!['unsubscribed', 'notSubscribed', 'notLoaded'].includes(result?.status)) throw new Error('The backend did not confirm session release')
   sessionDispatch.clearPreparedSession(ref)
-  markCachedModelUnvalidated(ref.backend, state.model)
+  markCachedModelUnvalidated(ref.backend, model)
   toast(t('Session released. Resume it in another client; reload here to write again.'))
   renderComposerState()
 }

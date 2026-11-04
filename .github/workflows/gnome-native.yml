@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Check Rust and shell formatting
         run: |
           cargo fmt --all -- --check
@@ -57,6 +57,10 @@ jobs:
           bash -n scripts/build-gnome.sh scripts/package-gnome.sh scripts/package-gnome-checksums.sh scripts/install-gnome.sh scripts/install-gnome-runtime-deps.sh scripts/install-gnome-dev-deps.sh scripts/install-gnome-diagrams.sh scripts/install-gnome-pdf.sh
       - name: Verify shared interface translation snapshot
         run: node scripts/vendor-gnome-i18n.mjs --check
+      - name: Check shared Rust services with Clippy
+        run: cargo clippy -p codex-thread-studio -p marknoria -p studio-markdown-native -p studio-svg-resources --all-targets --no-default-features --locked --no-deps
+      - name: Check native Rust targets with Clippy
+        run: cargo clippy --manifest-path native/gnome/Cargo.toml --all-targets --locked --no-deps
       - name: Test shared gateway without a desktop runtime
         run: cargo test -p codex-thread-studio --no-default-features --locked
       - name: Test shared reader indexing and query engine

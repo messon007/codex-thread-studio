@@ -100,6 +100,15 @@ Only test inputs and documentation changed; the qualified optimized package was
 not rebuilt. All 495 package checksums were reverified. Earlier application,
 browser and desktop evidence retains its original scope.
 
+The GNOME workflow now installs Clippy and runs both all-target checks above
+(without the local `--offline` flag) before its existing tests. Both exact steps
+also pass locally with cached dependencies; the workflow parses and all 54 run
+blocks pass shell syntax checks. The external `native-ci-clippy-20261105`
+directory retains their command/log records. This is local qualification,
+not a remote GitHub Actions result. The GitHub account's current scopes still
+omit `workflow`, and the connected repository's permissions still report
+`push: false`.
+
 ## Remaining release gates
 
 The reading-width follow-up now passes actual GTK allocation/restart checks

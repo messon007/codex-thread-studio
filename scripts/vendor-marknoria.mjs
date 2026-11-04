@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFile, mkdir, writeFile } from 'node:fs/promises'
+import { readFile, mkdir, writeFile, rm } from 'node:fs/promises'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -34,6 +34,13 @@ for (const path of paths.filter(path => path === 'EMBEDDING.md' || path === 'Car
   await mkdir(dirname(destination), { recursive: true })
   await writeFile(destination, source)
 }
+// Query ports are kept separately from the pinned base snapshot. Format the
+// base before applying the patch, whose context uses rustfmt output.
+execFileSync('cargo', ['fmt', '--manifest-path', resolve(root, 'Cargo.toml'), '--package', 'marknoria'], { stdio: 'inherit' })
+for (const path of ['src/jq_query.rs', 'src/jq_runtime.rs', 'src/table_query.rs', 'src/table_query_runtime.rs', 'web/jq-query.mjs', 'web/table-query.mjs', 'web/table-layout.mjs', 'web/table-controls.mjs']) {
+  await rm(resolve(root, 'crates/marknoria', path), { force: true })
+}
+execFileSync('git', ['apply', resolve(root, 'scripts/marknoria-queries.patch')], { cwd: root, stdio: 'inherit' })
 const virtual = await readFile(resolve(checkout, 'web/vendor/virtual-core.mjs'))
 await writeFile(resolve(root, 'ui/vendor/marknoria-virtual-core.mjs'), virtual)
 const editor = await transform(await readFile(resolve(checkout, 'web/vendor/editor.mjs'), 'utf8'), { format: 'esm', target: 'es2022', minify: true, supported: { 'template-literal': false }, legalComments: 'inline' })
@@ -42,7 +49,7 @@ await writeFile(resolve(root, 'ui/vendor/licenses/marknoria-virtual-MIT.txt'), a
 const checkbox = await readFile(resolve(checkout, 'web/checkbox.css'))
 await writeFile(resolve(root, 'ui/vendor/marknoria-checkbox.css'), checkbox)
 const checkboxHash = createHash('sha256').update(checkbox).digest('hex')
-await writeFile(resolve(root, 'crates/marknoria/UPSTREAM.md'), `# MarkNoria source snapshot\n\nRepository: https://github.com/messon007/marknoria\nRevision: ${commit}\n\nRefresh with \x60node scripts/vendor-marknoria.mjs /path/to/marknoria\x60 after building that checkout's assets with \x60npm run build\x60.\nOnly library and reader sources are imported. The manifest omits standalone binaries and desktop dependencies; diagram/sanitizer assets reuse Studio's pinned runtime assets. Editor/virtualizer bundles are copied into \x60ui/vendor\x60. No network or sibling checkout is needed at build/runtime.\n\nStudio-specific embedding changes are applied reproducibly by \x60scripts/marknoria-embedding.mjs\x60 (SHA-256: ${createHash('sha256').update(embedding).digest('hex')}). They add an explicitly editable single-document service, enable its embedded UI, and expose a bounded host state/control bridge. The default service and comparison remain read only. Parsing and source offsets are unchanged. The adapter also normalizes cross-platform test paths and releases validated Windows target handles before atomic replacement; revision and identity checks still run before replacement.\n`)
+await writeFile(resolve(root, 'crates/marknoria/UPSTREAM.md'), `# MarkNoria source snapshot\n\nRepository: https://github.com/messon007/marknoria\nRevision: ${commit}\n\nRefresh with \x60node scripts/vendor-marknoria.mjs /path/to/marknoria\x60 after building that checkout's assets with \x60npm run build\x60.\nOnly library and reader sources are imported. The manifest omits standalone binaries and desktop dependencies; diagram/sanitizer assets reuse Studio's pinned runtime assets. Editor/virtualizer bundles are copied into \x60ui/vendor\x60. No network or sibling checkout is needed at build/runtime.\n\nStudio-specific embedding changes are applied reproducibly by \x60scripts/marknoria-embedding.mjs\x60 (SHA-256: ${createHash('sha256').update(embedding).digest('hex')}). They add an explicitly editable single-document service, enable its embedded UI, and expose a bounded host state/control bridge. The default service and comparison remain read only. Parsing and source offsets are unchanged. The adapter also normalizes cross-platform test paths and releases validated Windows target handles before atomic replacement; revision and identity checks still run before replacement.\n\nSQL/jq additions are applied by \x60scripts/marknoria-queries.patch\x60; see [QUERIES.md](QUERIES.md) for provenance and validation.\n`)
 execFileSync('cargo', ['fmt', '--manifest-path', resolve(root, 'Cargo.toml'), '--package', 'marknoria'], { stdio: 'inherit' })
 console.log(`Vendored MarkNoria ${commit}`)
 await writeFile(resolve(root, 'crates/marknoria/CONTROLS.md'), `# Reader controls\n\nThe host injects \x60ui/vendor/marknoria-checkbox.css\x60, copied from the pinned MarkNoria \x60web/checkbox.css\x60.\n\nSHA-256: \x60${checkboxHash}\x60\n\nThe vendoring command refreshes this stylesheet alongside the source snapshot and built assets. No sibling checkout is required to build or run Studio.\n`)

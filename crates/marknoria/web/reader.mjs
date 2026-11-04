@@ -1,3 +1,4 @@
+import { jqController } from './jq-query.mjs'
 import { Virtualizer, observeElementRect, observeElementOffset, elementScroll, defaultRangeExtractor } from './vendor/virtual-core.mjs'
 import DOMPurify from './vendor/purify.mjs'
 import { diagramController, diagramMetrics } from './diagrams.mjs'
@@ -95,9 +96,9 @@ const heartbeat = setInterval(() => {
   heartbeatAt = now
 }, 10)
 
-async function api(path, signal) {
+async function api(path, signal, options = {}) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await fetch(new URL(`.${path}`, import.meta.url), { headers: { 'x-reader-token': token, ...(documentId ? { 'x-reader-document': documentId } : {}) }, signal })
+    const response = await fetch(new URL(`.${path}`, import.meta.url), { ...options, headers: { 'Content-Type': 'application/json', 'x-reader-token': token, ...(documentId ? { 'x-reader-document': documentId } : {}) }, signal })
     if (response.status === 429 && attempt < 3) {
       await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt))
       continue
@@ -385,6 +386,10 @@ function setup() {
   document.querySelector('#wrap').addEventListener('change', event => {
     changeLayout(() => shell.classList.toggle('no-wrap', !event.target.checked))
   }, { signal: readerAbort.signal })
+  const jqTools = document.createElement('div'); jqTools.className = 'reader-document-tools'; document.querySelector('.reader-header').append(jqTools)
+  const jq = jqController(index, api)
+  readerAbort.signal.addEventListener('abort', () => { jq.dispose(); jqTools.remove() }, { once: true })
+  if (/\.(json|jsonl|ndjson)$/i.test(index.name)) source.show()
   window.readerExperiment = { index, documentId, metrics, jump, virtualizer, cache, readingAnchor, position, diagrams, diagramMetrics, tables, source, editor, get pendingNavigation() { return forcedPage } }
 }
 

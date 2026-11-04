@@ -64,3 +64,33 @@ test('host reuses paged reading controls without rebuilding an outline or render
   assert.equal(disconnected, true)
   assert.equal(left, true)
 })
+
+test('iframe selections publish translated screen coordinates and detach listeners', context => {
+  const previous = globalThis.MutationObserver
+  globalThis.MutationObserver = class { observe() {} disconnect() {} }
+  context.after(() => { globalThis.MutationObserver = previous })
+  const listeners = new Map(), selections = []
+  const article = { dataset: { page: '0' } }
+  const element = { nodeType: 1, closest(selector) {
+    if (selector === '#viewport, #source-view') return this
+    if (selector === '[data-page]') return article
+    return null
+  } }
+  const range = { startContainer: element, endContainer: element,
+    getBoundingClientRect: () => ({ left: 5, right: 45, top: 10, bottom: 30, width: 40, height: 20 }) }
+  const selection = { rangeCount: 1, isCollapsed: false, toString: () => 'Selected \u4e2d\u6587', getRangeAt: () => range }
+  const frame = { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 100, top: 200 }),
+    contentDocument: { querySelector: () => null, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener: type => listeners.delete(type) },
+    contentWindow: { marknoriaHost: { state: { ready: true }, leave() {} }, getSelection: () => selection,
+      readerExperiment: { index: { pages: [{ line: 10 }, { line: 25 }], sourceLines: 100, revision: 'revision' } } } }
+  const host = createLargeMarkdownHost(frame, () => {}, value => selections.push(value))
+  context.after(() => host.dispose())
+  listeners.get('mouseup')()
+  assert.equal(selections[0].quote, 'Selected \u4e2d\u6587')
+  assert.equal(selections[0].startLine, 10)
+  assert.equal(selections[0].endLine, 25)
+  assert.equal(selections[0].rect.left, 105)
+  assert.equal(selections[0].rect.top, 210)
+  host.dispose()
+  assert.equal(listeners.size, 0)
+})

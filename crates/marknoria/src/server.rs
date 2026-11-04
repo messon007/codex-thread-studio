@@ -18,6 +18,11 @@ mod panes;
 mod renderer;
 #[path = "worker.rs"]
 mod worker;
+pub(crate) use worker::supervise_budget;
+#[path = "jq_runtime.rs"]
+mod jq_runtime;
+#[path = "table_query_runtime.rs"]
+mod table_query_runtime;
 use crate::source::read_source;
 use crate::{Index, audit_tables, build_index, read_diagram, read_page, read_table, search};
 use serde::Deserialize;
@@ -543,6 +548,49 @@ fn assets() -> Router<App> {
             }),
         )
         .route(
+            "/table-query.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    include_str!("../web/table-query.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/table-layout.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    include_str!("../web/table-layout.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/table-controls.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    include_str!("../web/table-controls.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/jq-query.mjs",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    include_str!("../web/jq-query.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/api/table-query",
+            get(table_query_runtime::page).post(table_query_runtime::run),
+        )
+        .route("/api/table-query/schema", get(table_query_runtime::schema))
+        .route("/api/table-query/close", post(table_query_runtime::close))
+        .route("/api/jq-query", post(jq_runtime::run))
+        .route(
             "/tables.mjs",
             get(|| async {
                 (
@@ -814,6 +862,9 @@ fn reader_routes() -> Router<App> {
 }
 
 pub fn index_worker() -> Option<std::io::Result<()>> {
+    if let Some(result) = crate::jq_query::worker_entry() {
+        return Some(result);
+    }
     let arguments: Vec<_> = env::args_os().collect();
     if arguments
         .get(1)

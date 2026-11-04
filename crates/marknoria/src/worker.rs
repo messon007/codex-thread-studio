@@ -10,6 +10,15 @@ pub(super) fn supervise(
     child: &mut std::process::Child,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
+    supervise_budget(child, cancelled, Duration::from_secs(60), 1024 * 1024)
+}
+
+pub(crate) fn supervise_budget(
+    child: &mut std::process::Child,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    rss_kib: usize,
+) -> Result<(), String> {
     let stderr = child.stderr.take();
     let diagnostic = thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -33,9 +42,7 @@ pub(super) fn supervise(
             });
         let error = if cancelled.load(Ordering::Relaxed) {
             Some("Document closed")
-        } else if started.elapsed() > Duration::from_secs(60)
-            || resident.is_some_and(|kib| kib > 1024 * 1024)
-        {
+        } else if started.elapsed() > timeout || resident.is_some_and(|kib| kib > rss_kib) {
             Some("Indexer exceeded 60 seconds or the Linux 1 GiB RSS budget")
         } else {
             None

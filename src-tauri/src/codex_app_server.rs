@@ -103,7 +103,7 @@ impl CodexAppServer {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        arguments.extend(["app-server", "--stdio"]);
+        arguments.extend(["app-server", "--stdio", "-c", "thread_unload_delay_secs=0"]);
         let mut command =
             self.runtime
                 .command(self.binary.as_ref(), &arguments, &[("LOG_FORMAT", "json")]);

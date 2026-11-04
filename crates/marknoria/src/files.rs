@@ -28,6 +28,8 @@ pub struct Document {
     pub progress: Mutex<Progress>,
     pub renderer: Mutex<renderer::Renderer>,
     pub cancelled: Arc<AtomicBool>,
+    pub queries: Mutex<crate::table_query::Queries>,
+    pub jq: Mutex<crate::jq_query::Queries>,
     cache: Mutex<Option<tempfile::TempDir>>,
 }
 
@@ -122,6 +124,8 @@ impl Documents {
             }),
             renderer: Mutex::new(renderer::Renderer::new()),
             cancelled: Arc::new(AtomicBool::new(false)),
+            queries: Mutex::new(Default::default()),
+            jq: Mutex::new(Default::default()),
             cache: Mutex::new(Some(cache)),
         });
         let worker = document.clone();

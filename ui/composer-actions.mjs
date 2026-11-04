@@ -2,6 +2,7 @@
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs';
 import { randomContinuePrompt } from './composer-tools.mjs';
 import { CONTINUATION_DRAFT_INSTRUCTIONS, CONTINUATION_DRAFT_SCHEMA, continuationDraftInput, continuationDraftTurnState } from './continuation-draft.mjs';
+import { composerImageInputs } from './composer-images.mjs';
 import { isMissingActiveTurnError } from './codex-native.mjs';
 export function createComposerActions(state, services) {
     const { $, selectedStateKey, composerDrafts, setCurrentComposerValue, hideComposerMenu, latestAgentResponseText, showError, t, currentBackend, renderComposerState, toast, setComposerDraftValue, gatewayFetch, truncateCharacters, selectedThread, currentTurnOptions, isCodexBackend, randomId, rpc, dispatchBackendRpc, sessionRefKey, routerRuntimeKey, persistMessageQueue, runNextQueuedMessage, sessionRefFromKey, pauseMessageQueue } = services;
@@ -141,18 +142,15 @@ export function createComposerActions(state, services) {
             return;
         }
         const pendingImages = state.pendingImages[key] || [];
-        if (pendingImages.length) {
-            showError(new Error(t('Image messages cannot be queued. Send or steer them directly.')));
-            return;
-        }
+        const imageInputs = composerImageInputs(pendingImages);
         const skillInputs = [...(state.pendingSkills[key] || [])];
         const fileInputs = [...(state.pendingFiles[key] || [])];
-        if (!text && !skillInputs.length && !fileInputs.length)
+        if (!text && !skillInputs.length && !fileInputs.length && !imageInputs.length)
             return;
         const message = {
             id: randomId(),
             text,
-            input: [...skillInputs, ...fileInputs],
+            input: [...skillInputs, ...fileInputs, ...imageInputs],
             createdAt: Date.now(),
         };
         state.messageQueues[key] = [...queue, message];
@@ -180,6 +178,7 @@ export function createComposerActions(state, services) {
         setComposerDraftValue(key, '');
         state.pendingSkills[key] = [];
         state.pendingFiles[key] = [];
+        state.pendingImages[key] = [];
         hideComposerMenu();
         renderComposerState();
         toast(t('Message queued'));
@@ -192,7 +191,7 @@ export function createComposerActions(state, services) {
         editingQueuedMessage = { key, id };
         $('#edit-queued-message-text').value = message.text;
         const attachmentCount = message.input.filter((entry) => entry.type !== 'text').length;
-        $('#edit-queued-message-note').textContent = attachmentCount ? t('{count} file or skill references will be kept.', { count: attachmentCount }) : '';
+        $('#edit-queued-message-note').textContent = attachmentCount ? t('{count} attachments will be kept.', { count: attachmentCount }) : '';
         $('#edit-queued-message-note').classList.toggle('hidden', !attachmentCount);
         $('#edit-queued-message-dialog').showModal();
         setTimeout(() => $('#edit-queued-message-text').focus(), 30);

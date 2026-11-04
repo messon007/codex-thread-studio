@@ -1,3 +1,4 @@
+import { tableQuery } from './table-query.mjs'
 import DOMPurify from './vendor/purify.mjs'
 import { pagerIcon } from './icons.mjs'
 
@@ -134,6 +135,8 @@ export function tableController(index, api, changed) {
     panel.append(panelTitle, search, shortcuts, choices, footer)
     picker.append(summary, panel)
     actions.append(previous, pageLabel, next, picker)
+    const sql = document.createElement('button'); sql.textContent = 'SQL'; sql.type = 'button'; sql.addEventListener('click', () => tableQuery(id, index, api))
+    actions.append(sql)
     controls.append(caption, actions)
     const content = document.createElement('div')
     content.className = 'table-content'

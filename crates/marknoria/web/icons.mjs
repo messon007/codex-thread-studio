@@ -10,3 +10,14 @@ export function pagerIcon(direction) {
   icon.append(path)
   return icon
 }
+
+export function dialogClose(close) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'reader-icon-button dialog-close'
+  button.textContent = '×'
+  button.setAttribute('aria-label', 'Close')
+  button.title = 'Close'
+  button.addEventListener('click', close)
+  return button
+}

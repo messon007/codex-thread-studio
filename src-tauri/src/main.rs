@@ -903,7 +903,8 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route(
             "/studio/session-state/message-queue",
-            axum::routing::put(put_message_queue_state),
+            axum::routing::put(put_message_queue_state)
+                .layer(DefaultBodyLimit::max(96 * 1024 * 1024)),
         )
         .route(
             "/studio/session-state/session",
@@ -3492,9 +3493,15 @@ async fn put_message_queue_state(
     body: String,
 ) -> Response<Body> {
     run_studio_database(move || {
-        let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
+        if body.len() > 96 * 1024 * 1024 {
+            return json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "message queue payload is too large",
+            );
+        }
+        let request = match serde_json::from_str::<MessageQueueStateRequest>(&body) {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(_) => return json_error(StatusCode::BAD_REQUEST, "invalid message queue"),
         };
         let invalid_message = request.messages.len() > 3
             || request.messages.iter().any(|message| {
@@ -3502,6 +3509,19 @@ async fn put_message_queue_state(
                     || !valid_runtime_value(&message.id, 128)
                     || message.text.len() > 256 * 1024
                     || message.input.len() > 32
+                    || message
+                        .input
+                        .iter()
+                        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("image"))
+                        .count()
+                        > 4
+                    || message
+                        .input
+                        .iter()
+                        .filter_map(|item| item.get("url").and_then(|v| v.as_str()))
+                        .map(str::len)
+                        .sum::<usize>()
+                        > 28 * 1024 * 1024
                     || message.input.iter().any(|item| {
                         item.get("type").and_then(|value| value.as_str()) == Some("text")
                     })

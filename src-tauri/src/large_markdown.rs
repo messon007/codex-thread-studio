@@ -119,7 +119,8 @@ pub async fn try_open(
     state: &GatewayState,
     request: &ReviewFileRequest,
 ) -> Result<Option<serde_json::Value>, (StatusCode, String)> {
-    if review_language(std::path::Path::new(&request.path)) != "markdown" {
+    let json = marknoria::jq_query::supported(&request.path);
+    if !json && review_language(std::path::Path::new(&request.path)) != "markdown" {
         return Ok(None);
     }
     let shared = shared_document_directories(state)?;
@@ -132,7 +133,7 @@ pub async fn try_open(
     })
     .await
     .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))??;
-    if metadata.len() < THRESHOLD {
+    if !json && metadata.len() < THRESHOLD {
         return Ok(None);
     }
     let read_only = !path.starts_with(&root);
@@ -177,6 +178,14 @@ fn allowed_path(path: &str) -> bool {
             | "syntax-light.css"
             | "syntax-dark.css"
             | "tables.mjs"
+            | "table-query.mjs"
+            | "table-layout.mjs"
+            | "table-controls.mjs"
+            | "jq-query.mjs"
+            | "api/table-query"
+            | "api/table-query/schema"
+            | "api/table-query/close"
+            | "api/jq-query"
             | "icons.mjs"
             | "files.mjs"
             | "diagrams.mjs"
@@ -232,7 +241,11 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
     if !allowed_path(&path) {
         return json_error(StatusCode::NOT_FOUND, "Unknown reader route");
     }
-    if request.method() != Method::GET && !(path == "api/edit" && request.method() == Method::POST)
+    if request.method() != Method::GET
+        && !(matches!(
+            path.as_str(),
+            "api/edit" | "api/table-query" | "api/table-query/close" | "api/jq-query"
+        ) && request.method() == Method::POST)
     {
         return json_error(StatusCode::METHOD_NOT_ALLOWED, "Reader method rejected");
     }

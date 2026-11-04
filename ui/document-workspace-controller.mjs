@@ -20,6 +20,7 @@ import {
 } from './document-outline.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { pdfCommentSource } from './pdf-comment-provider.mjs'
+import { documentCommentSource } from './comment-source-providers.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { getLocale, t } from './i18n.mjs'
@@ -799,6 +800,11 @@ function renderArtifact() {
         if (snapshot.outlineOpen != null) state.artifactOutlineOpen = snapshot.outlineOpen
         if (snapshot.error && !snapshot.editable) file.error = snapshot.error
         renderArtifact()
+      }, selection => {
+        if (state.artifact !== file) return
+        setSelection({ quote: selection.quote, itemId: null, turnId: null,
+          source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
+            baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine }) }, selection.rect)
       })
     }
     syncLargeMarkdownTheme()
@@ -918,6 +924,7 @@ function renderMarkdownArtifact(file, content, source) {
     content.classList.remove('hidden')
     $('#artifact-loading').classList.add('hidden')
     hydrateMarkdownImages(file, content)
+    attachMarkdownTableQueries(file, content)
     scheduleTextArtifactOutline(file, content, source, { markdown: true, html: false, view: 'preview', items: rendered.outline })
     if (state.artifactSearch) applyArtifactSearchHighlights()
     else renderArtifactSearchStatus()
@@ -990,6 +997,39 @@ async function mountPdfReader(file, parent) {
   setArtifactOutline(file, outline, { navigate: (item) => reader.goToPage(item.target?.page) })
   const active = outlineItemForLocation(outline, { page: file.page || 1 })
   if (active) setArtifactOutlineActive(active.id)
+}
+
+function attachMarkdownTableQueries(file, content) {
+  for (const table of content.querySelectorAll('table')) {
+    const button = document.createElement('button')
+    button.type = 'button'; button.className = 'subtle-button compact'; button.textContent = 'SQL'
+    button.setAttribute('aria-label', t('Query table with SQL'))
+    table.before(button)
+    button.addEventListener('click', async () => {
+      try {
+        tableReaderModule ||= import('./table-reader.mjs')
+        const { renderTableArtifact } = await tableReaderModule
+        if (state.artifact !== file || !table.isConnected) return
+        const rows = [...table.rows].map(row => [...row.cells].map(cell => cell.textContent || ''))
+        const dialog = document.createElement('dialog')
+        dialog.style.cssText = 'width:min(1100px,94vw);height:85vh;max-width:94vw'
+        dialog.setAttribute('aria-label', t('Query table with SQL'))
+        const close = document.createElement('button'); close.textContent = t('Close'); close.type = 'button'
+        const host = document.createElement('div'); host.setAttribute('data-no-i18n', ''); host.style.cssText = 'height:calc(100% - 40px);min-height:0'
+        dialog.append(close, host); document.body.append(dialog)
+        const reader = renderTableArtifact({ container: host, workbook: { sheets: [{ name: fileDisplayName(file.path), rows }] }, translate: t,
+          executeQuery: async request => {
+            const response = await gatewayFetch('/studio/table/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) })
+            const result = await response.json()
+            if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+            return result
+          } })
+        close.addEventListener('click', () => dialog.close())
+        dialog.addEventListener('close', () => { reader.destroy(); dialog.remove() }, { once: true })
+        dialog.showModal()
+      } catch (error) { showError(error) }
+    })
+  }
 }
 
 async function mountTableReader(file, parent) {

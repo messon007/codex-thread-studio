@@ -106,3 +106,24 @@ project file.
 
 See [Add a DeepSeek Codex backend](deepseek-backend.md) for a worked example that runs an
 independent provider alongside the built-in backend.
+
+## Hand a Codex session to another client
+
+When the session is idle, choose **More session actions → Release session write
+access**. Studio pauses its local queue and unsubscribes from that thread. Its
+Codex app server uses `thread_unload_delay_secs=0`, so an idle thread without
+subscribers is unloaded and releases its writer lock. Another CLI can then run
+`codex resume <thread-id>` against the same Codex home on the backend machine.
+Allow a brief moment for shutdown before resuming in the other client.
+
+The saved conversation, draft and queued messages remain intact. Use **Reload
+session** to resume in Studio after the other writer has released the session.
+Running turns, queue submissions and supervised sessions cannot be released with
+this action. Other browser clients of the same Studio gateway share its app
+server: releasing a session releases that gateway's subscription, rather than
+creating independent writers. This is a single-writer handoff, not concurrent
+writing to the rollout file.
+
+`python3 scripts/smoke-codex-handoff.py` verifies the lock with two real Codex app
+servers using a temporary Codex home and a saved fixture. It does not request
+model inference. Verified with Codex CLI 0.166.0.

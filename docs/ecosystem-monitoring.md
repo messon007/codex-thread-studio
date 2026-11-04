@@ -38,6 +38,11 @@ remove that ID from the file; adding a new ignore requires an explicit applicabi
 run compares the latest official CLIs with that state and uploads `report.json`, `report.md`, and the
 two projected contracts as a workflow artifact.
 
+Shared document-engine updates follow the [MarkNoria-led maintenance plan](marknoria-maintenance.md)
+and [Studio #48](https://github.com/messon007/codex-thread-studio/issues/48). The public
+weekly workflow does not access the private MarkNoria repository; upstream issue
+resolution triggers a maintainer review and a separate, tested synchronization PR.
+
 The Issue distinguishes these cases:
 
 - Version changed but the used contract did not: consider the runtime update and run a smoke test.
@@ -55,7 +60,8 @@ git diff -- .github/upstream-watch.json
 ```
 
 Commit the accepted baseline together with any required adapter, fixture, or documentation changes.
-The next healthy scheduled run closes the existing review Issue.
+The next healthy scheduled run closes the existing review Issue. Do not edit a
+hash by hand unless it was generated and compared from the exact accepted binaries.
 
 Deterministic session smoke tests are available without live provider credentials:
 
@@ -69,8 +75,6 @@ Studio's production Rust connector plus the actual CLI; the OpenCode check tests
 Studio's protocol adapter, SSE and session lifecycle. Neither upgrades the user's
 installed runtime. See [the 2026-11-04 review](ecosystem-review-2026-11-04.md) for
 the reviewed contract differences, audit fixes and maintenance risk assessment.
- Do not edit a hash by hand unless
-it was generated and compared from the exact accepted binaries.
 
 To inspect without accepting anything:
 

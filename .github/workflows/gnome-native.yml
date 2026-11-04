@@ -88,6 +88,16 @@ jobs:
         run: python3 scripts/cargo-gnome-mermaid.py test --locked --bins --tests
       - name: Test pinned renderer library with native math and sequence features
         run: python3 scripts/test-gnome-mermaid-renderer.py --output target/gnome-mermaid-renderer-tests
+      - name: Preserve renderer library failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gnome-renderer-test-diagnostics
+          path: |
+            target/gnome-mermaid-renderer-tests/tests.log
+            target/gnome-mermaid-renderer-tests/VALIDATED.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify private desktop mount cleanup boundaries
         run: python3 scripts/test-support/test-private-wayland.py
       - name: Build native application, gateway and bundled renderer

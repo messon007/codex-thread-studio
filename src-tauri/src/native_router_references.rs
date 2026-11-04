@@ -193,7 +193,12 @@ mod tests {
         let resolved = resolve(refs).unwrap();
         let mut text = "Read the file".into();
         assert!(resolved.target_inputs(true, &mut text).unwrap().is_empty());
-        assert!(text.contains(file.to_str().unwrap()));
+        let quoted = text
+            .lines()
+            .find_map(|line| line.strip_prefix('@'))
+            .unwrap();
+        let decoded: String = serde_json::from_str(quoted).unwrap();
+        assert_eq!(Path::new(&decoded), std::fs::canonicalize(&file).unwrap());
         let parts = resolved.target_inputs(false, &mut String::new()).unwrap();
         assert!(parts[0]["url"].as_str().unwrap().contains("%20"));
         assert!(resolve(vec![Reference::File {

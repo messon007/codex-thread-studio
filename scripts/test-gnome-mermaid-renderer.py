@@ -107,6 +107,9 @@ def main():
     (out / 'VALIDATED.json').write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record))
     if not ok:
+        # Keep the full log as an artifact, but expose a bounded diagnostic in
+        # CI too: an early build failure otherwise reports only zero tests.
+        print('\n'.join(log.splitlines()[-100:]))
         raise SystemExit(f'Inspect renderer library tests: {out / "tests.log"}')
 
 

@@ -95,9 +95,10 @@ fn target(path: &Path, depth: usize) -> Result<PathBuf, Error> {
             }
             let absolute = std::path::absolute(path).map_err(bad)?;
             if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name()) {
-                if let Ok(parent) = std::fs::canonicalize(parent) {
-                    return Ok(parent.join(name));
-                }
+                // Resolve the existing ancestor even when several directories
+                // are missing. Windows canonical paths use a verbatim prefix;
+                // creating a parent must not change the document's identity.
+                return Ok(target(parent, depth)?.join(name));
             }
             Ok(absolute)
         }
@@ -263,6 +264,12 @@ mod tests {
         let path = folder.path().join("nested/backends.json");
         let missing = load(&path).unwrap().snapshot;
         assert!(!missing.exists && !path.parent().unwrap().exists());
+        let missing_target = load(&path).unwrap().target;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let after_mkdir = load(&path).unwrap();
+        assert_eq!(after_mkdir.target, missing_target);
+        assert_eq!(after_mkdir.snapshot.revision, missing.revision);
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
         let original = "{\r\n  \"version\":1, \"backends\": []\r\n}\r\n";
         let base = save(
             &path,

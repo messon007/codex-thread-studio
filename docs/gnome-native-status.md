@@ -104,6 +104,18 @@ conflicts. New remote checks and matched optimized-gateway qualification are
 pending. Previously qualified binaries and the physical desktop check remain
 available with their original identities.
 
+The next PR matrix (`41905837725` / `41905837728`) passes Linux desktop,
+PDF runtime and all three native notice checks. Windows then exposed two path
+cases: creating a missing backend directory changed its verbatim canonical
+prefix and falsely conflicted with the editor revision; the Router assertion
+compared a JSON-quoted path with its unescaped spelling. Missing destinations
+now resolve through their existing ancestor before computing identity; the
+reference assertion decodes the exact JSON value and compares canonical paths.
+All five focused backend/reference tests pass locally. The pinned renderer's
+library test also fails remotely, but its original CI output hid the detailed
+log. Failure diagnostics now retain that log and print a bounded tail; the
+cause and passing remote validation are still pending.
+
 ## Real installed Codex shared-daemon workflow
 
 The installed optimized native pair now has actual Codex 0.166.0 Wayland

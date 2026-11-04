@@ -1206,6 +1206,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
+            "/markdown-table-layout.mjs",
+            get(|| async {
+                javascript(include_str!("../../crates/marknoria/web/table-layout.mjs"))
+            }),
+        )
+        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
         )
@@ -5213,6 +5219,7 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
+                "/markdown-table-layout.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",

@@ -193,6 +193,7 @@ function reconcile() {
       schedule()
     })
   }
+  tables.position()
   if (missing != null && !loadError) requestWindow(missing)
   virtualizer._willUpdate()
   report()

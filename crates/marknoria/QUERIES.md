@@ -1,4 +1,4 @@
-# Embedded SQL and jq query port
+# Embedded queries and table interactions
 
 The base reader remains pinned to the revision in UPSTREAM.md. The SQL query
 engine and dialogs and the jq engine/dialog were copied from the local MarkNoria
@@ -38,3 +38,18 @@ SQL write/file-access rejection, jq filters/slurp, disabled environment access,
 and termination of an infinite jq filter. The browser check exercises SQL/jq
 forms and the host iframe selection bridge. These are correctness checks, not
 end-to-end performance measurements.
+
+The document table controller and column resizing styles were also ported from
+that local working tree for Studio issues #39 and #43. Ordinary Markdown uses
+the same layout module through a gateway asset route. Widths belong to the open
+document/revision, survive table paging and offscreen remounts, and do not edit
+the source file. Complex HTML tables with spans or explicit colgroups retain
+their original layout. Small-document layouts mount near the viewport; width
+measurement samples at most 200 rows and 16,384 characters per cell. DOM geometry
+and pointer/keyboard input stay in the frontend; backend table projections and
+source anchors are unchanged. Vertical wheel chaining uses browser overflow
+behavior; Shift-wheel keeps horizontal table scrolling.
+
+The browser smoke check additionally covers pointer/keyboard resizing, widths
+across paged rows, native wheel chaining in both directions, small-document
+mount/unmount persistence, and disposal of table controls.

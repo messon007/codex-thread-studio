@@ -28,12 +28,12 @@ def check(path):
         revision = document['index']['revision']
         if path.suffix == '.md':
             schema = call('/api/table-query/schema?table=0')
-            assert schema['sourceRows'] == 120
+            assert schema['sourceRows'] == 1200
             result = call('/api/table-query', {'table': 0, 'revision': revision, 'sql': 'SELECT count(*) AS n, sum(CAST("Value" AS INTEGER)) AS total FROM data'})
-            assert result['rows'] == [['120', '7140']], result
+            assert result['rows'] == [['1200', '719400']], result
             result = call('/api/table-query', {'table': 0, 'revision': revision, 'sql': 'SELECT _line, "Name" FROM data ORDER BY _row'})
             assert result['rows'][0] == ['3', 'row-0'], result
-            assert result['totalRows'] == 120
+            assert result['totalRows'] == 1200
             page = call('/api/table-query?id=' + result['id'] + '&row=' + str(result['rowEnd']))
             assert page['rowStart'] > 0
             for sql in ["ATTACH DATABASE '/tmp/unsafe.db' AS unsafe", 'DELETE FROM data', 'SELECT load_extension(\'x\')', 'PRAGMA database_list']:
@@ -58,7 +58,7 @@ def check(path):
 with tempfile.TemporaryDirectory(prefix='studio-query-smoke-') as directory:
     directory = pathlib.Path(directory)
     markdown = directory / 'table.md'
-    markdown.write_text('| Name | Value |\n|---|---|\n' + ''.join(f'| row-{n} | {n} |\n' for n in range(120)))
+    markdown.write_text('| Name | Value |\n|---|---|\n' + ''.join(f'| row-{n} | {n} |\n' for n in range(1200)))
     check(markdown)
     data = directory / 'data.jsonl'
     data.write_text('{"name":"中文","active":true,"value":2}\n{"name":"other","active":false,"value":3}\n')

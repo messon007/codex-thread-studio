@@ -88,7 +88,11 @@ also checks a real Shell candidate popup, composition/command-menu interaction,
 Enter/Ctrl+Enter, exact committed delivery and cancellation. It reproduced and
 corrected partial-draft sending during preedit. Physical GNOME pointer/input-device
 interaction, other input engines/layouts, fractional scaling/multiple monitors,
-actual Orca use and voice quality still require manual desktop acceptance. Real installed cold D-Bus activation/Open now also passes in an
+physical Orca interaction and voice quality still require manual desktop acceptance.
+Actual [Orca generated-speech/keyboard checks](gnome-native-status.md#actual-orca-composer-and-menu-validation)
+now cover the composer and native Settings menu using the installed screen
+reader with a private silent speech sink; broader document/menu coverage remains
+explicitly outside that passing scope. Real installed cold D-Bus activation/Open now also passes in an
 [owned actual GNOME Shell session](gnome-native-status.md#real-gnome-shell-session-validation).
 Private Wayland/AT-SPI, actual GNOME portals and isolated Ubuntu runtime checks
 establish only their documented automated scope. Cold D-Bus startup is now checked on the native executable,

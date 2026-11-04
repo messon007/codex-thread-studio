@@ -143,3 +143,21 @@ class Client:
         assert node.get_application().get_process_id()==self.process.pid
         interface=node.get_editable_text_iface()
         assert interface and self.api.EditableText.set_text_contents(interface,value),'Owned control rejected native text editing'
+    def open_context_menu(self,keys,labels,shortcut):
+        """Reach a named context menu through the owned keyboard focus chain.
+
+        GTK/WebKit can report a focused containing pane rather than document
+        focus. Require the actual menu result, not arbitrary ancestor membership.
+        Escape unrelated popups and leave text views with Ctrl+Tab to keep drafts.
+        """
+        self.context_focus_trace=[]
+        for _ in range(100):
+            current=self.find(lambda n:self.showing(n) and n.get_state_set().contains(self.api.StateType.FOCUSED))
+            self.context_focus_trace.append(dict(name=current.get_name(),role=current.get_role_name()) if current else None)
+            keys(shortcut)
+            time.sleep(.12)
+            rows={n.get_name():n for n in self.tree() if self.showing(n) and n.get_role_name()=='menu item'}
+            if all(name in rows for name in labels):return {name:rows[name] for name in labels}
+            keys([0xff1b])
+            keys([0xffe3,0xff09] if current and current.get_role_name()=='text' else [0xff09])
+        raise RuntimeError('Named context menu is not keyboard reachable')

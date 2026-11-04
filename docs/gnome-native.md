@@ -11773,3 +11773,61 @@ unchanged from the previously qualified pair; the 430 default-workspace and
 753 web tests are inherited, not presented as newly rerun here. Other engines,
 physical input devices, actual Orca, mixed/fractional-scale monitors, real
 providers, and remote CI/publication remain explicit acceptance work.
+
+
+## Actual Orca and HTML keyboard context menus
+
+The installed optimized `ab21d4c` pair remains unchanged. Actual Orca 50.2 runs
+against the private GNOME Shell 50.1/AT-SPI session, with Speech Dispatcher 0.12.1.
+`desktop-activation-0bdrc3lb` verifies generated speech for the full composer
+instruction and Settings menu item, native keyboard Home/Down/Enter activation,
+Escape dismissal, exact retained draft/source, live file forwarding, and cold
+D-Bus Activate/Open. No model inference is sent. The matching combined
+`desktop-activation-br_ov1d4` adds the actual Shell launcher and completion-banner/
+notification-center workflow, including minimized-window activation and cold
+startup from the retained notice. Exactly two notices are added; duplicate and
+initial-history notices remain suppressed.
+
+Use the existing installed workflow with `--gnome-shell --orca`; add
+`--shell-interactions` for the combined check. The shared private-Orca context
+uses actual installed screen-reader/SSIP code, private profile/socket/dconf and
+PID/network/mount namespaces, and no `--replace` or login-process control. Speech
+Dispatcher's standard generic module executes only `/usr/bin/true`; its audio
+initializer uses the ALSA null device. Both processes have a private `/dev` with
+no audio hardware. Module initialization is checked through the real private
+SSIP connection before starting Orca. This proves generated speech and focus,
+not acoustic voice quality or every document/widget. It adds no runtime Python,
+Orca or test-speech dependency to Studio's distribution.
+
+The first prototype used `sd_dummy`, whose [upstream implementation](https://github.com/brailcom/speechd/blob/0.12.1/src/modules/dummy.c)
+can try to play error sounds. It is not used as the final silent sink. A subsequent
+isolated generic-module setup correctly refused qualification when mandatory
+audio initialization failed. The final null-device configuration initializes
+successfully and the selected `silent` synthesizer is recorded by actual Orca.
+These harness diagnostics remain separate from application acceptance.
+
+The independent installed HTML-menu workflow `html-menu-uvzo382y` passes Menu,
+Shift+F10, named menu rows, enabled-state changes, Select all, exact independent
+Wayland Copy, Translate, Home/Down/Escape, Source/Preview retirement, original
+file bytes and draft retention. Its one utility translation is ephemeral and
+removed; normal conversation inference is not used. This is assistive action
+activation of HTML menu items, not a claim that Orca read arbitrary HTML.
+
+This followed a fixture focus defect. Its old helper accepted any focused
+ancestor containing a web document, so it could send a menu key to a distant
+application pane. Passive tracing confirmed delivered keys with no popup. A
+minimal GTK/WebKit experiment exposed named public menu buttons with both WebKit
+and GTK-container parents; a second keyboard experiment worked with and without
+an added body tab stop. Neither justified an application reparenting or content
+change. The shared AT-SPI helper now follows the owned keyboard focus chain and
+requires the actual named menu outcome, dismissing unrelated popups and escaping
+text editors with Ctrl+Tab. All clipboard/source/translation/draft assertions
+remain. Failed focus criteria/probes are retained outside the repository.
+
+All ten ownership/mount tests pass, including refusal of a login-bus or arbitrary
+compositor before Orca settings/process startup. No native/shared/browser source
+or dependency was changed; existing 408-native, 430-root and 753-web test results
+retain their prior scope. Exact fixture/result/runtime hashes and retained
+negative evidence are in external `native-assistive-20261105/ASSISTIVE-EVALUATION.json`.
+Physical input and broader Orca/voice checks, fractional/multiple-monitor testing,
+real providers and remote workflow publication/CI remain explicit acceptance work.

@@ -7,6 +7,7 @@ import os
 import tempfile
 from unittest.mock import patch
 import private_wayland
+import private_orca
 
 ROOT='/tmp/studio-wayland-private-test'
 def mount(path,kind):return f'1 0 0:1 / {path} rw - {kind} private rw\n'
@@ -44,6 +45,22 @@ class ImeOwnership(unittest.TestCase):
             result=subprocess.run([sys.executable,str(script),'/nonexistent-bundle','--private-root',directory],capture_output=True,text=True,timeout=10)
             self.assertNotEqual(result.returncode,0)
             self.assertIn('owned session bus and private profile',result.stderr)
+            self.assertEqual(list(Path(directory).iterdir()),[])
+
+class OrcaOwnership(unittest.TestCase):
+    def test_arbitrary_compositor_cannot_start_screen_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError,'live owned compositor'):
+                with private_orca.private_orca(directory,object()):
+                    self.fail('Unexpected screen reader startup')
+            self.assertEqual(list(Path(directory).iterdir()),[])
+
+    def test_login_bus_is_rejected_before_settings_or_processes(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(private_orca,'_input_compositor_pid',return_value=1), patch.object(private_orca.subprocess,'Popen') as spawn:
+            with self.assertRaisesRegex(RuntimeError,'owned session bus and private profile'):
+                with private_orca.private_orca(directory,object()):
+                    self.fail('Unexpected screen reader startup')
+            spawn.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()),[])
 
 class Teardown(unittest.TestCase):

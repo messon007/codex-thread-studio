@@ -54,7 +54,8 @@ Remaining validation is explicit:
    also failed. Local implementation/testing does not establish remote CI or
    macOS/Windows runtime acceptance.
 3. Physical GNOME pointer interaction, input-method/device combinations beyond
-   the real IBus pinyin check below, Orca, fractional scaling, multiple monitors,
+   the real IBus pinyin check below, physical Orca use beyond the automated
+   composer/menu checks below, fractional scaling, multiple monitors,
    voice quality and real-provider compatibility remain
    manual checks. Real Shell launcher/notification keyboard flows now pass the
    qualification below. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
@@ -1432,3 +1433,63 @@ qualification. The real Shell also retains its earlier signal-disconnect
 host diagnostic, separately from all completed workflow assertions.
 Physical input devices, other engines/layouts, Orca, fractional scaling, real
 providers and remote CI remain outside this fixture's evidence.
+
+
+## Actual Orca composer and menu validation
+
+The optimized installed pair passes `desktop-activation-0bdrc3lb` with Ubuntu
+26.04's actual Orca 50.2, GNOME Shell 50.1 and Speech Dispatcher 0.12.1. Real
+keyboard focus produces Orca `SPEECH OUTPUT` entries for the composer's complete
+instruction and the native Settings menu item. Home/Down/Enter opens Settings;
+Escape dismisses it. The existing cold D-Bus Activate/Open, same-process file
+handoff, exact Source/Preview, original document and draft retention, and
+provider-cleanup checks pass in that same workflow with no model inference.
+
+```sh
+python3 scripts/smoke-gnome-desktop-activation.py /path/to/native-bundle --gnome-shell --orca
+```
+
+This reuses the installed desktop workflow, private Shell/input ownership and
+bounded AT-SPI client. The new `private_orca` helper uses the installed Orca and
+standard Speech Dispatcher generic module. Only `/usr/bin/true` synthesizes the
+test output; the required audio initialization uses the ALSA null device.
+The helper checks that the silent module actually initialized before starting
+Orca. Both processes run in private PID/network/mount namespaces with no audio
+devices, private home/config/cache/runtime and a private session/a11y bus. No
+`--replace` or login-process lookup/control is used. These are QA prerequisites,
+not Python/Orca dependencies of the native application itself.
+
+All ten private input/desktop/IME/Orca ownership and mount-cleanup tests pass.
+The application, gateway, dependencies and optimized package remain byte-for-byte
+the qualified `ab21d4c` candidate; no native source or browser/shared-service
+change was needed for these composer/menu checks. This proves generated speech
+for the named controls and real keyboard actions, not audible voice quality,
+physical Orca input, all document widgets or the entire accessibility surface.
+The separate installed HTML context-menu fixture `html-menu-uvzo382y` also passes:
+Menu and Shift+F10 expose named actions; Select all/Copy produce the exact HTML
+content through an independent Wayland clipboard reader; Translate uses only
+that HTML selection in one private ephemeral utility task, which is deleted.
+Empty-selection disablement, Home/Down/Escape, Source retirement, original bytes
+and composer-draft retention pass. This is AT-SPI action activation plus real
+menu keys, not a claim that Orca read the entire HTML document.
+
+The old fixture mistook any focused ancestor containing a web document for the
+WebView itself. Passive Wayland tracing showed keys without a popup; a minimal
+GTK/WebKit probe exposed correct menu names with either popup parent. The common
+accessibility client now advances the owned keyboard focus chain until the
+actual required named menu appears, closing unrelated menus and using Ctrl+Tab
+to leave text editors without inserting tabs into drafts. Content/clipboard,
+translation identity, source and draft assertions remain required. No speculative
+popup reparenting or HTML content change was applied. Fractional/multiple-monitor and real-provider
+checks, plus remote workflow publication/CI, remain separate acceptance work.
+
+
+The combined actual-Orca/Shell run `desktop-activation-br_ov1d4` also passes
+launcher search/Enter, real completion banners, notification-center Tab/Enter,
+foreground restoration/removal, duplicate suppression, a fresh subsequent notice,
+notification-driven cold startup, and final cold file Open. It records exactly
+two AddNotification calls and no model inference. Orca composer/Settings output
+and keyboard operations pass within that same workflow. The preceding
+`desktop-activation-0bdrc3lb` isolates the screen-reader checks. External
+`ASSISTIVE-EVALUATION.json` records exact runtime, fixture and result identities;
+remaining physical/scaling/provider/CI scopes are not inferred from these checks.

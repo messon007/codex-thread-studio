@@ -35,7 +35,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(prefix, root, controlled=None, shell_peer=None, interactions=False):
+def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca_debug=None):
     import gi
     gi.require_version('GioUnix', '2.0')
     from gi.repository import Gio, GioUnix, GLib
@@ -148,6 +148,37 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False):
             raise RuntimeError('Notification center entry was not keyboard reachable')
         keys([0xff0d])
 
+    def assistive_controls(client, composer):
+        # Ordinary GTK focus and keyboard actions, observed by actual Orca.
+        def announced(value):
+            return any('SPEECH OUTPUT:' in line and value in line for line in orca_debug.read_text().splitlines())
+        leave_overview();owned.focus_only_window()
+        for _ in range(100):
+            composer.clear_cache()
+            if composer.get_state_set().contains(client.api.StateType.FOCUSED):break
+            current=client.find(lambda n:n.get_state_set().contains(client.api.StateType.FOCUSED))
+            keys([0xffe3,0xff09] if current and current.get_role_name()=='text' else [0xff09])
+        else:raise RuntimeError('Composer is not keyboard reachable with Orca')
+        until('Orca announces native composer',lambda:announced('Write a message'))
+        assert client.contents(composer)==DRAFT
+        client.click('Main menu')
+        target=client.wait('named Settings action',lambda:client.find(lambda n:n.get_name()=='Settings…' and n.get_role_name()=='menu item' and client.showing(n)))
+        assert not client.find(lambda n:n.get_role_name()=='menu item' and client.showing(n) and not n.get_name())
+        keys([0xff50])
+        for _ in range(40):
+            target.clear_cache()
+            if target.get_state_set().contains(client.api.StateType.FOCUSED):break
+            keys([0xff54])
+        else:raise RuntimeError('Settings action is not keyboard reachable with Orca')
+        until('Orca announces Settings menu item',lambda:announced('Settings'))
+        keys([0xff0d])
+        client.wait('Settings opened through keyboard',lambda:client.contains_text('Appearance'))
+        keys([0xff1b])
+        client.wait('Settings closed through keyboard',lambda:client.text('Launcher response'))
+        assert client.contents(composer)==DRAFT
+        shell_results.update(realOrca=True,silentSpeechModule=True,orcaComposerAnnouncement=True,
+            orcaNamedMenuAnnouncement=True,keyboardSettingsActivation=True,keyboardSettingsDismissal=True)
+
     def notification_controls(client, composer):
         def active():
             return client.find(lambda n:n.get_role_name()=='frame' and n.get_state_set().contains(client.api.StateType.ACTIVE))
@@ -235,6 +266,8 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False):
         client.click('Close document')
         client.wait('conversation restored', lambda: client.text('Launcher response'))
         assert client.contents(composer) == DRAFT
+        if orca_debug is not None:
+            assistive_controls(client,composer)
         if interactions:
             notification_controls(client,composer)
         phases.append(dict(coldActivate=True, serviceMode=True, readyMs=ready_ms, liveOpenSameProcess=True,
@@ -309,7 +342,7 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False):
             owned.close()
 
 
-def run_with_shell(prefix, root, interactions=False):
+def run_with_shell(prefix, root, interactions=False, orca=False):
     from gi.repository import Gio
     with owned_gnome_shell(root) as (shell, controlled):
         if interactions:
@@ -317,7 +350,12 @@ def run_with_shell(prefix, root, interactions=False):
             assert providers.set_boolean('disable-external',True)
             Gio.Settings.sync()
             assert providers.get_boolean('disable-external')
-        run(prefix, root, controlled, ProcessPeer(shell.pid, '/usr/bin/gnome-shell'), interactions)
+        if orca:
+            from private_orca import private_orca
+            with private_orca(root,shell) as debug:
+                run(prefix,root,controlled,ProcessPeer(shell.pid,'/usr/bin/gnome-shell'),interactions,debug)
+        else:
+            run(prefix, root, controlled, ProcessPeer(shell.pid, '/usr/bin/gnome-shell'), interactions)
 
 
 def main():
@@ -326,12 +364,15 @@ def main():
     parser.add_argument('--private-root', type=Path)
     parser.add_argument('--gnome-shell', action='store_true', help='use an owned headless GNOME Shell rather than standalone Mutter')
     parser.add_argument('--shell-interactions', action='store_true', help='verify real Shell launcher search and notification controls; requires --gnome-shell')
+    parser.add_argument('--orca',action='store_true',help='check actual Orca announcements with a private silent speech module; requires --gnome-shell')
     args = parser.parse_args()
+    if args.orca and not args.gnome_shell:
+        parser.error('--orca requires --gnome-shell')
     if args.shell_interactions and not args.gnome_shell:
         parser.error('--shell-interactions requires --gnome-shell')
     resource.setrlimit(resource.RLIMIT_CORE, (0,0))
     if args.private_root:
-        return run_with_shell(args.bundle, args.private_root, args.shell_interactions) if args.gnome_shell else run(args.bundle, args.private_root)
+        return run_with_shell(args.bundle, args.private_root, args.shell_interactions, args.orca) if args.gnome_shell else run(args.bundle, args.private_root)
     base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or REPO/'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='desktop-activation-', dir=base))
@@ -363,7 +404,7 @@ def main():
     if args.gnome_shell:
         env.update(XDG_CURRENT_DESKTOP='GNOME', XDG_SESSION_TYPE='wayland',
             GSETTINGS_BACKEND='memory', GNOME_SHELL_SESSION_MODE='user', LC_ALL='C.UTF-8')
-        if args.shell_interactions:
+        if args.shell_interactions or args.orca:
             env['GSETTINGS_BACKEND']='dconf'
         for name in ['XDG_SESSION_ID', 'XDG_SEAT', 'XDG_VTNR', 'GNOME_SESSION_ID', 'SESSION_MANAGER', 'DESKTOP_SESSION']:
             env.pop(name, None)
@@ -377,6 +418,8 @@ def main():
             command += ['--gnome-shell']
         if args.shell_interactions:
             command += ['--shell-interactions']
+        if args.orca:
+            command += ['--orca']
         subprocess.run(command, cwd=root, env=private, check=True, timeout=180)
 
 

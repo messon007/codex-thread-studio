@@ -25,23 +25,11 @@ def run(native,gateway,root):
         for k in reversed(values):owned.call('NotifyKeyboardKeysym',owned.GLib.Variant('(ub)',(k,False)))
     def menu_item(name):
         return desktop.find(lambda n:n.get_role_name()=='menu item' and n.get_name()==name and desktop.showing(n))
-    def focus_html():
-        def in_document(node):
-            for _ in range(30):
-                if node.get_role_name() in ['document web','document frame']:return True
-                node=node.get_parent()
-                if node is None:return False
-            return False
-        for _ in range(100):
-            current=desktop.find(lambda n:n.get_state_set().contains(desktop.api.StateType.FOCUSED))
-            if current and (in_document(current) or desktop.find(lambda n:n.get_role_name() in ['document web','document frame'] and desktop.within(n,current))):return
-            keys([0xff09])
-        (root/'focus-states.json').write_text(json.dumps([dict(name=n.get_name(),role=n.get_role_name()) for n in desktop.tree()
-            if n.get_state_set().contains(desktop.api.StateType.FOCUSED)],indent=2))
-        raise RuntimeError('HTML content is not keyboard reachable')
+    mode=os.environ.get('STUDIO_HTML_MENU_KEY','both')
     def open_menu(shift=False):
-        focus_html();keys([0xffe1,0xffc7] if shift else [0xff67])
-        desktop.wait('named HTML menu',lambda:menu_item('Copy') and menu_item('Select all') and menu_item('Translate selected text'))
+        if mode!='both':shift=mode=='shift-f10'
+        desktop.open_context_menu(keys,['Copy','Select all','Translate selected text'],[0xffe1,0xffc7] if shift else [0xff67])
+        (root/'context-focus-trace.json').write_text(json.dumps(desktop.context_focus_trace,indent=2,ensure_ascii=False))
         assert not desktop.find(lambda n:n.get_role_name()=='menu item' and desktop.showing(n) and not n.get_name()),'Unnamed native menu item'
     def capture(name):
         if os.environ.get('STUDIO_GNOME_SMOKE_CAPTURE_ONLY')=='1':
@@ -90,7 +78,10 @@ def run(native,gateway,root):
         assert (root/'project/menu.html').read_bytes()==SOURCE.encode() and desktop.contents(composer)==DRAFT
         owned.focus_only_window();keys([0xffe9,0xffc1]);child.wait(timeout=25);assert child.returncode==0
     except BaseException:
-        (root/'accessibility.json').write_text(json.dumps(desktop.describe(),indent=2,ensure_ascii=False));raise
+        (root/'accessibility.json').write_text(json.dumps(desktop.describe(),indent=2,ensure_ascii=False))
+        (root/'context-focus-trace.json').write_text(json.dumps(getattr(desktop,'context_focus_trace',[]),indent=2,ensure_ascii=False))
+        (root/'focus-diagnostic.json').write_text(json.dumps([dict(name=n.get_name(),role=n.get_role_name(),focused=n.get_state_set().contains(desktop.api.StateType.FOCUSED),active=n.get_state_set().contains(desktop.api.StateType.ACTIVE),showing=desktop.showing(n)) for n in desktop.tree() if n.get_state_set().contains(desktop.api.StateType.FOCUSED) or n.get_role_name() in ['menu item','menu','document web','frame']],indent=2,ensure_ascii=False))
+        raise
     finally:
         if child.poll() is None:child.terminate();child.wait(timeout=10)
         measured=memory.close();owned.close();log.close()
@@ -105,7 +96,7 @@ def run(native,gateway,root):
         assert 'Native HTML menu' in evidence and 'Rendered menu text 中文😀' in evidence and DRAFT not in evidence and 'UNTRUSTED_SCRIPT_CANARY' not in evidence
     else:assert not turns,'HTML controls sent inference'
     assert not any(t in (root/'app.log').read_text() for t in ['CRITICAL','Gtk-WARNING','panicked'])
-    result=dict(ok=True,namedMenuActions=True,menuKey=True,shiftF10=True,selectAll=True,
+    result=dict(ok=True,namedMenuActions=True,menuKey=mode!='shift-f10',shiftF10=mode!='menu',selectAll=True,
         independentCopy=True,scopedEmptySelection=True,translationEnabledAfterSelection=True,
         keyboardDismissal=True,sourceRetirement=True,originalFileUnchanged=True,draftPreserved=True,
         noInference=not bool(turns),accessibleTranslation=bool(turns),privateUtilityOnly=bool(turns),
@@ -115,11 +106,11 @@ def run(native,gateway,root):
     (root/'html-menu-result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('native');p.add_argument('gateway');p.add_argument('--private-root');p.add_argument('--capture',action='store_true');p.add_argument('--installed',action='store_true');p.add_argument('--translate',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('native');p.add_argument('gateway');p.add_argument('--private-root');p.add_argument('--capture',action='store_true');p.add_argument('--installed',action='store_true');p.add_argument('--translate',action='store_true');p.add_argument('--menu-key',choices=['both','menu','shift-f10'],default='both');a=p.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE,(0,0));native,gateway=str(Path(a.native).absolute()),str(Path(a.gateway).absolute())
     if a.private_root:return run(native,gateway,Path(a.private_root))
     if a.capture and a.installed:p.error('Screenshot hooks are debug-only')
-    base=Path(__file__).resolve().parents[1]/'target/gnome-native-smoke';base.mkdir(parents=True,exist_ok=True)
+    base=Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or Path(__file__).resolve().parents[1]/'target/gnome-native-smoke');base.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='html-menu-',dir=base));fixture.create(root)
     if a.installed:
         bundle=Path(native).parent;prefix=root/'installed native 中文 % html'
@@ -140,6 +131,8 @@ def main():
     (root/'project/menu.html').write_bytes(SOURCE.encode())
     (root/'config/codex-thread-studio/gnome.json').write_text(json.dumps(dict(selectedBackend='codex',selectedSession='target')))
     env=dict(os.environ,CODEX_THREAD_STUDIO_GATEWAY_BIN=gateway,CODEX_THREAD_STUDIO_CODEX_BIN=str(root/'fake-codex.py'),CODEX_THREAD_STUDIO_OPENCODE_BIN=str(root/'fake-opencode.py'),CODEX_THREAD_STUDIO_BACKENDS_CONFIG=str(root/'config/codex-thread-studio/backends.json'),CODEX_HOME=str(root/'codex'),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_CACHE_HOME=str(root/'cache'),READER_CACHE_DIR=str(root/'reader-cache'),GDK_BACKEND='wayland',GIO_USE_VFS='local',GIO_USE_VOLUME_MONITOR='unix',GTK_A11Y='atspi')
+    env['STUDIO_HTML_MENU_KEY']=a.menu_key
+    if os.environ.get('STUDIO_TEST_WAYLAND_TRACE')=='1':env['WAYLAND_DEBUG']='client'
     for key in list(env):
         if key.startswith('STUDIO_GNOME_SMOKE'):env.pop(key)
     if a.capture:env.update(STUDIO_GNOME_SMOKE_DIR=str(root),STUDIO_GNOME_SMOKE_CAPTURE_ONLY='1')

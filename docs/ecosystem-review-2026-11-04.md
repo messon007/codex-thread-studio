@@ -79,7 +79,7 @@ patch, reader browser selection/query/table interactions, the four archive tests
 and both actual CLI session checks. Full platform Rust checks run in CI because
 the local system lacks GTK development packages.
 
-### Remaining bincode maintenance warning — approval pending
+### Remaining bincode maintenance warning — upstream investigation
 
 [RUSTSEC-2025-0141](https://rustsec.org/advisories/RUSTSEC-2025-0141) classifies
 bincode 1.3.3 as unmaintained, with no patched release. Syntect 5.3.0 requires this
@@ -93,10 +93,14 @@ It never deserializes document bytes as syntax/theme data. The optional external
 YAML/plist grammar loaders are disabled. Documents supply source text to the
 bounded HTML highlighter, not bincode-encoded grammar objects.
 
-This is a maintenance risk, not a disclosed bincode vulnerability. A proposed
-single-advisory exception would retain highlighting and leave all other new
-warnings/vulnerabilities denied. It should be removed when Syntect drops bincode
-or a reviewed maintained highlighter replaces it. Automatic approval rejected
-adding this audit exception without explicit user authorization. The audit
-configuration remains unchanged until that decision is given; consequently
-`cargo audit` currently fails only on this remaining warning.
+This is a maintenance risk, not a disclosed bincode vulnerability. The current
+maintenance decision is tracked by [MarkNoria #1](https://github.com/messon007/marknoria/issues/1):
+benchmark alternative highlighters fairly and adopt the best verified implementation;
+waiting for Syntect's upstream dependency strategy is conditional on Syntect winning
+that evaluation. Studio follows the tested upstream result through issue #25.
+
+No audit exception was added. The existing audit configuration continues to deny
+this warning until a reviewed upstream solution is adopted. This is an upstream
+follow-up decision, not a pending request to approve an ignore. Broader shared
+reader maintenance follows [the MarkNoria-led sync plan](marknoria-maintenance.md)
+and [Studio #48](https://github.com/messon007/codex-thread-studio/issues/48).

@@ -60,6 +60,30 @@ existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
 
+## Navigation timing follow-up
+
+Actual private Wayland wheel input now has a component-level regression fixture
+that imports the production coordinator. Three gestures stop its pending work
+after one probe and do not snap back when a delayed target becomes available.
+The positive control exposed a separate stale-allocation bug: tick callbacks
+run before layout, so a changed adjustment could be combined with old bounds.
+Waiting one layout cycle after an offset change fixes the reproduced 457 px
+misalignment; the target now settles at 16 px. The twelve-frame limit, reset,
+source-generation and wheel cancellation guards are preserved.
+
+All 395 native tests, Rust 1.92 release-target checks and the debug build pass.
+Installed `turn-navigation-n4ft2ro2` verifies real turn controls, keyboard jumps,
+literal prompts and source/draft retention. Installed Codex and OpenCode scope
+checks each cover three history pages, context switches and retained data;
+Codex additionally covers live/historical streaming and late-reply rejection.
+These tests use fake providers and no application hooks. The wheel fixture is
+component scope, not a replacement for installed application acceptance.
+
+The previous optimized status/inspector candidate predates this small fix.
+Optimized acceptance must be refreshed after integrating the thirteen newer
+commits found on remote `main` (`38e27e0`), including shared Codex-daemon support
+and reader/dependency fixes. The remote fetch changed no worktree files.
+
 ## Status, permissions and inspector follow-up
 
 The latest native tests pass: **395 passed, four opt-in ignored**. The debug

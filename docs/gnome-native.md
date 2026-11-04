@@ -11,6 +11,40 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
+## Native pending navigation and layout timing
+
+The standalone `navigation_wheel` example imports the actual native list
+coordinator. Its stdin only controls fixture setup; actual wheel input comes
+from the verified private Mutter process. An uncancelled target-unavailable
+baseline exercises the bounded frame observer. Three down/up/down gestures
+cancel pending work after one probe, move the actual view and prevent snap-back
+when the delayed target is armed. No gateway, user profile or inference starts.
+
+Its positive alignment control reproduced a second problem: changing the
+adjustment just before a tick could combine that value with a row's old bounds.
+[GTK tick callbacks run before the frame's layout](https://docs.gtk.org/gtk4/method.Widget.add_tick_callback.html).
+The coordinator now waits for an offset to remain stable across a layout cycle
+before measuring again. The original twelve-frame cap and explicit/source/wheel
+cancellation remain intact. The failed positive control ended at 457 px; the
+fixed run settles at the intended 16 px. Both artifacts remain in private
+`native-status-inspector-20261104/wheel-ui` (`navigation-wheel-cdiwxsub` and
+`navigation-wheel-vczmo4tv`). This is component integration scope.
+
+All **395 native tests** pass (four opt-in ignored), including Rust 1.92 checks
+for all release targets and the new example. The debug installed pair passes
+actual turn navigation (`turn-navigation-n4ft2ro2`) plus source-isolation checks
+for Codex (`navigation-scope-codex-dcwhuh1i`) and OpenCode
+(`navigation-scope-opencode-asd4zlbp`). Both providers cover three history pages,
+newer/live navigation, context switches and preserved source/draft. Codex also
+covers streaming while reading history and rejecting a late old-source reply.
+No application hooks, gateway override or inference is used by those checks.
+
+The preceding optimized candidate remains available and predates this fix.
+The refreshed optimized gate follows integration of the newer remote `main`
+commits, discovered by a read-only fetch during the compatibility audit. Shared
+daemon/reader changes must be tested together rather than inheriting the old
+gateway/web results across those changed inputs.
+
 ## Native status, permissions and inspector controls
 
 The native command palette, session status, message-permission choices and

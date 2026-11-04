@@ -105,6 +105,7 @@ impl Navigation {
         let viewport = scroll.downgrade();
         let frames = Cell::new(0u8);
         let settled = Cell::new(0u8);
+        let previous_offset = Cell::new(scroll.vadjustment().value());
         let callback = view.add_tick_callback(move |_, _| {
             let Some(owner) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
@@ -113,14 +114,20 @@ impl Navigation {
                 return glib::ControlFlow::Break;
             }
             frames.set(frames.get() + 1);
-            if frames.get() >= 2 {
-                if let Some(viewport) = viewport.upgrade() {
+            if let Some(viewport) = viewport.upgrade() {
+                let adjustment = viewport.vadjustment();
+                let current_offset = adjustment.value();
+                // Tick callbacks run before layout. An offset changed since
+                // the previous frame can still have the old row allocation;
+                // allow a layout before combining its bounds with this offset.
+                let stable_offset =
+                    (previous_offset.replace(current_offset) - current_offset).abs() <= 1.0;
+                if frames.get() >= 2 && stable_offset {
                     if let Some(bounds) = anchor()
                         .filter(|w| w.is_mapped())
                         .and_then(|w| w.compute_bounds(&viewport))
                     {
                         if bounds.height() > 0.0 {
-                            let adjustment = viewport.vadjustment();
                             let value = (adjustment.value() + bounds.y() as f64 - 16.0)
                                 .clamp(0.0, (adjustment.upper() - adjustment.page_size()).max(0.0));
                             if (value - adjustment.value()).abs() <= 1.0 {

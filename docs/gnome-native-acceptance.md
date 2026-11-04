@@ -144,8 +144,11 @@ explicitly outside that passing scope. Real installed cold D-Bus activation/Open
 [owned actual GNOME Shell session](gnome-native-status.md#real-gnome-shell-session-validation).
 Private Wayland/AT-SPI, actual GNOME portals and isolated Ubuntu runtime checks
 establish only their documented automated scope. Cold D-Bus startup is now checked on the native executable,
-including service-mode proof, independently of the older fake installer probe. Real-provider
-compatibility also remains separate from deterministic fake-provider coverage.
+including service-mode proof, independently of the older fake installer probe.
+Real Codex broker/CLI integration and the
+[installed native OpenCode workflow](gnome-native-status.md#real-opencode-with-the-installed-native-frontend)
+now have private local-model checks. Those scopes are separate from deterministic
+fake-provider coverage and external-provider configuration acceptance.
 
 The native migration adds no requirement to implement product-deferred features,
 new roadmap ideas, image-region comments or richer Git review comments absent

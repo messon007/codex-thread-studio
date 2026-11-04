@@ -64,6 +64,18 @@ class OrcaOwnership(unittest.TestCase):
             spawn.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()),[])
 
+class ProviderOwnership(unittest.TestCase):
+    def test_real_provider_entries_reject_login_profile_before_writes(self):
+        script=Path(__file__).resolve().parents[1]/'smoke-gnome-real-opencode.py'
+        for entry in ['--private-root','--sandbox-root']:
+            with self.subTest(entry=entry),tempfile.TemporaryDirectory() as directory:
+                env=dict(os.environ)
+                env.pop('STUDIO_REAL_OPENCODE_NAMESPACE',None)
+                result=subprocess.run([sys.executable,str(script),directory,entry,directory],env=env,capture_output=True,text=True,timeout=10)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('requires its private desktop/profile',result.stderr)
+                self.assertEqual(list(Path(directory).iterdir()),[])
+
 class DisplayOwnership(unittest.TestCase):
     def test_display_configuration_rejects_an_arbitrary_compositor(self):
         with tempfile.TemporaryDirectory() as directory:

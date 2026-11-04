@@ -64,7 +64,7 @@ Remaining validation is explicit:
    the real IBus pinyin check below, physical Orca use beyond the automated
    composer/menu checks below, physical display/GPU behavior beyond the virtual
    mixed-scale checks below,
-   voice quality and real-provider compatibility remain
+   voice quality and external-provider configurations remain
    manual checks. Real Shell launcher/notification keyboard flows now pass the
    qualification below. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
    runtime startup have their narrower documented scope. Four new private
@@ -76,6 +76,48 @@ the current image workspace explicitly does not support comments, and the
 existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
+
+## Real OpenCode with the installed native frontend
+
+The optimized native package now has an opt-in real OpenCode 1.18.31 workflow
+on Ubuntu 26.04 Wayland, reusing `smoke-opencode-session.mjs` and its loopback
+model. That fixture first exercises the existing web protocol adapter, then
+hands its private persisted session to the native client's own gateway/OpenCode
+process. Native controls load that history, send two consecutive turns without
+manual Stop, display SSE replies, preserve a draft across Refresh sessions,
+close normally, restart without replay and send another turn. The expected four
+local model requests preserve the exact prompts and model identity.
+
+```sh
+python3 scripts/smoke-gnome-real-opencode.py /path/to/native-bundle
+```
+
+This requires Node, Python/GI, Mutter, Bubblewrap and a standalone Linux OpenCode
+executable in PATH (or `--opencode /path/to/opencode`). These are test tools;
+they do not become native application runtime dependencies.
+
+The fixture installs the checksummed bundle under its own prefix and uses the
+gateway sibling, not an override or application hooks. It reuses the private
+Wayland/input and process-scoped accessibility helpers. Real Node/OpenCode
+executables are mounted read-only into its private directory; network/PID
+namespaces, a hidden login home and a cleared environment keep real credentials,
+profiles and external models out of the test. Only its own D-Bus/AT-SPI configs
+disable AppArmor mediation, because the host security control filesystem remains
+read-only; no host security policy or session bus is changed.
+
+Original harness failures are retained: private bus and accessibility-bus policy
+queries failed on the read-only security filesystem, and the first widget query
+incorrectly expected a `push button` rather than GTK4's actual `button` role.
+They did not establish an application defect. Both private entry paths now
+reject a login profile before writes; all 14 shared ownership/cleanup tests pass.
+The existing default OpenCode adapter test also passes after the fixture changes.
+The final `real-opencode-ykw6r0f0` run observes both real executable/PID pairs
+before each close, then verifies that neither survives it. Exact package,
+fixture, default-adapter and negative-trace identities are recorded in external
+`native-real-opencode-20261105/OPENCODE-EVALUATION.json`. Application binaries
+and the qualified package are unchanged; external-provider configuration, newer
+OpenCode versions and physical input behavior are outside this passing scope.
+Three ordinary native turns do not prove that every upstream lifecycle bug is fixed.
 
 ## Release a Codex session to the CLI
 

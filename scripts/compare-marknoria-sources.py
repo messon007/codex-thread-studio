@@ -49,11 +49,20 @@ def compare(args):
     web = []
     for path in paths:
         target = 'web/' + Path(path).name
-        if not path.endswith('.mjs') or target not in upstream:
+        if (Path(path).parent.as_posix() != 'crates/marknoria/web'
+                or not path.endswith('.mjs') or target not in upstream):
             continue
         left, a = source(studio, refs['studioMain'], path)
         right, b = source(mark, refs['marknoriaMain'], target)
         web.append({'studio': left, 'marknoria': right, 'identical': a == b})
+    matched_studio = {row['studio']['path'] for row in web}
+    matched_mark = {row['marknoria']['path'] for row in web}
+    studio_only = [source(studio, refs['studioMain'], path)[0] for path in paths
+                   if Path(path).parent.as_posix() == 'crates/marknoria/web'
+                   and path.endswith('.mjs') and path not in matched_studio]
+    upstream_only = [source(mark, refs['marknoriaMain'], path)[0] for path in sorted(upstream)
+                     if Path(path).parent.as_posix() == 'web'
+                     and path.endswith('.mjs') and path not in matched_mark]
     samples = []
     native = {'status': 'Not scanned; native parity is unknown.'}
     if args.native_checkout:
@@ -77,7 +86,11 @@ def compare(args):
             'snapshots': refs, 'nativeReference': native,
             'webSummary': {'commonModules': len(web),
                            'identicalModules': sum(row['identical'] for row in web)},
-            'webModules': web, 'nativeSourceSamples': samples, 'currentPatchFiles': patches,
+            'webModules': web, 'studioOnlyWebModules': studio_only,
+            'upstreamOnlyWebModules': upstream_only,
+            'webScope': 'Top-level reader .mjs source presence only; excludes bundled assets/CSS. '
+                        'An upstream-only module is not automatically a required downstream feature.',
+            'nativeSourceSamples': samples, 'currentPatchFiles': patches,
             'method': 'git show <recorded commit>:<path>; SHA-256 over exact file bytes; '
                       'line counts from splitlines; sampled line similarity from Python '
                       'difflib.SequenceMatcher. Similarity does not establish behavior, '

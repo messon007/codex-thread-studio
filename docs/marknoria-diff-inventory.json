@@ -226,6 +226,26 @@
       "identical": true
     }
   ],
+  "studioOnlyWebModules": [
+    {
+      "path": "crates/marknoria/web/engine.mjs",
+      "sha256": "a32bb19abe615aaf3ba31cac00504f1acf6851b56c6bb5c874c3a1c4bbcb895b",
+      "lines": 62
+    }
+  ],
+  "upstreamOnlyWebModules": [
+    {
+      "path": "web/assets.mjs",
+      "sha256": "b20d4510bd36ef2bd4aa65fe3a7f3bc1f848ce2af140d876329a77302ac5d59e",
+      "lines": 26
+    },
+    {
+      "path": "web/notes.mjs",
+      "sha256": "26b13f543185486b867ac9818eacc2575b6946a7e8c6d0fb200324d99ba4835e",
+      "lines": 112
+    }
+  ],
+  "webScope": "Top-level reader .mjs source presence only; excludes bundled assets/CSS. An upstream-only module is not automatically a required downstream feature.",
   "nativeSourceSamples": [
     {
       "studioNative": {

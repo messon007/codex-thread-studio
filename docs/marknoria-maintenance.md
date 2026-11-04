@@ -21,6 +21,7 @@ Studio 负责 AI 工作台、宿主授权和集成；MarkNoria 负责可复用�
 
 逐文件 SHA-256、行数和抽样相似度见 [分析清单](marknoria-diff-inventory.json)。
 它是冻结的证据快照，不是实时同步配置，也不代表功能、安全或性能等价。
+清单同时列出只在一边存在的顶层 Web 模块；上游 standalone 的文件浏览/笔记等模块不能因此被自动导入宿主。
 
 - 16 个同名 Web `.mjs` 模块中 8 个字节完全一致，包括表格控制、SQL/jq 对话框和图表模块。
 - 原生分支与上游的 structured、SVG resources、image animation 样本按行相似度约为 98.2%、99.7%、97.0%；

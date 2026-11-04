@@ -38,7 +38,7 @@ pub fn execute(request: TableQueryRequest) -> Result<TableQueryResponse, String>
     let mut connection = Connection::open_in_memory().map_err(sql_error)?;
     configure_limits(&connection)?;
     create_source_table(&mut connection, &columns, &request.rows)?;
-    query_source(&connection, &request.sql)
+    query_source(&mut connection, &request.sql)
 }
 
 fn configure_limits(connection: &Connection) -> Result<(), String> {
@@ -144,7 +144,7 @@ fn create_source_table(
     transaction.commit().map_err(sql_error)
 }
 
-fn query_source(connection: &Connection, sql: &str) -> Result<TableQueryResponse, String> {
+fn query_source(connection: &mut Connection, sql: &str) -> Result<TableQueryResponse, String> {
     connection
         .authorizer(Some(|context: AuthContext<'_>| match context.action {
             AuthAction::Select | AuthAction::Function { .. } | AuthAction::Recursive => {
@@ -173,8 +173,7 @@ fn query_source(connection: &Connection, sql: &str) -> Result<TableQueryResponse
     }
     let columns = statement
         .column_names()
-        .iter()
-        .map(|value| (*value).to_string())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     let mut output = Vec::new();
     let mut output_bytes = 0_usize;

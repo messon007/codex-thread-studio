@@ -1,35 +1,43 @@
 # MarkNoria 主维护与 Studio 同步计划
 
 共享文档/阅读能力以 MarkNoria 为主维护源，Studio 按经过验证的固定版本同步。
-Studio 负责 AI 工作台、宿主授权和集成；MarkNoria 负责可复用文档能力及独立阅读器。
-现有实现逐模块择优收敛，不以项目归属推断性能或功能等价，也不整体覆盖另一个产品。
+**同步范围仅为 Web desktop 阅读器：`web/`、`src/web/` 及该路径实际使用的 Rust core/runtime、资源和构建依赖。**
+MarkNoria 的 browser/WebView 使用同一阅读器；Studio 复用该阅读组件，保留自己的 Tauri/网关和 AI 工作台。
+platform-native desktop 的 GTK/AppKit/WinUI、原生布局/FFI 和 Studio 正在开发的原生分支不在跟踪、对比或验收范围。
+MarkNoria 的 WebView 外壳由其自己维护；不要求 Studio 改用 Tao/Wry 外壳或采用另一种原生控件。
+
+目标是两边通用阅读能力的并集，而非只保留当前上游已有能力。Studio 独有的通用功能先补到 MarkNoria；
+共同功能在相同文档、版本、设置和授权下，使用同一组件、契约、默认行为和回归用例，逐项消除细微差异。
+宿主专有的 AI、文件授权、项目/工作区和外壳通过正式扩展点接线；不能用“产品差异”豁免通用阅读体验。
 
 本轮交付是差异分析、维护约定和上下游任务建立。**运行时尚未迁移到新版 MarkNoria**。
-下游总跟踪：[Studio #48](https://github.com/messon007/codex-thread-studio/issues/48)；
-上游总任务：[MarkNoria #2](https://github.com/messon007/marknoria/issues/2)。
+下游：[Studio #48](https://github.com/messon007/codex-thread-studio/issues/48)；
+上游：[MarkNoria #2](https://github.com/messon007/marknoria/issues/2)；
+功能补齐/一致性：[MarkNoria #7](https://github.com/messon007/marknoria/issues/7)。
 
 ## 分析基线与证据
 
-2026-11-04 的分析使用已提交内容，通过 `git show <commit>:<path>` 读取，未包含两个活动工作目录的未提交修改。
+2026-11-04 通过 `git show <commit>:<path>` 读取已提交文件，不包含活动工作目录的未提交修改。
 
 | 快照 | 提交 | 用途 |
 | --- | --- | --- |
-| Studio main | `a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a` | 当前正式下游 |
-| MarkNoria main | `c607b78689f0339351aa6a1a4c8b893bfbf09670` | 拟作为主维护源的当前上游 |
-| Studio 原生开发分支 | `1e4e4a459e7959192e607e1ac66693ffb383517c` | 仅作差异参考，尚未合入 main，本轮不修改 |
+| Studio main | `a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a` | 当前正式下游 Web 阅读路径 |
+| MarkNoria main | `c607b78689f0339351aa6a1a4c8b893bfbf09670` | 当前上游 Web desktop 路径 |
 | Studio 内嵌 MarkNoria 基线 | `42a9b8deb7c0068f52d4e22f11b444d1a2a0c586` | 另叠加本地移植与嵌入适配 |
 
-逐文件 SHA-256、行数和抽样相似度见 [分析清单](marknoria-diff-inventory.json)。
-它是冻结的证据快照，不是实时同步配置，也不代表功能、安全或性能等价。
-清单同时列出只在一边存在的顶层 Web 模块；上游 standalone 的文件浏览/笔记等模块不能因此被自动导入宿主。
+逐文件 SHA-256、行数见 [源码差异清单](marknoria-diff-inventory.json)；
+逐项能力、证据和收敛要求见 [Web 阅读器功能与行为清单](marknoria-web-parity.md)。
+清单是冻结的源码证据，不是实时同步配置或双端运行通过的证明。
 
 - 16 个同名 Web `.mjs` 模块中 8 个字节完全一致，包括表格控制、SQL/jq 对话框和图表模块。
-- 原生分支与上游的 structured、SVG resources、image animation 样本按行相似度约为 98.2%、99.7%、97.0%；
-  上游 third-party 记录也明确了 Studio 来源。相似度只用于发现共用候选。
-- Studio 当前 `marknoria-queries.patch` 为 2,356 行，另有 89 行 embedding adapter。
-  补丁含新增功能、上下文和格式适配，不能当作 2,356 行净业务差异；但其中一些功能上游已拥有，长期保留会增加同步成本。
+- 同时列出单边存在的模块及共同 HTML/CSS/theme 源码，避免只比较同名 JS 而漏掉功能/外观差异。
+- Studio 的 `marknoria-queries.patch` 为 2,356 行，另有 89 行 embedding adapter。
+  补丁含上下文和格式适配，不能当作净业务差异；部分功能上游已拥有，应择优收敛和删除相应补丁。
+- 已确认 Studio 的嵌入编辑/控制、普通表格懒挂载与布局修复；还需补齐表格绘图/单元格操作、PDF 文本/区域选择、
+  EPUB 阅读位置与显示设置等通用能力。上游较完整的语言高亮、多格式/资源、笔记也应反馈到 Studio。
+  “未见等价入口”的范围和需验证之处在功能清单中明确标注，不能当作全项目缺失的证明。
 
-维护者可以重新生成源码对比（不读取未提交文件，也不改变任何 Git 引用）：
+维护者可用只读命令重新生成对比；只检查 Web desktop 及其实际依赖，不扫描 native desktop：
 
 ```bash
 python3 scripts/compare-marknoria-sources.py \
@@ -38,78 +46,62 @@ python3 scripts/compare-marknoria-sources.py \
   --output /tmp/marknoria-source-review.json
 ```
 
-原生样本需另外明确传入 `--native-checkout`、`--native-ref`，可用 `--native-label` 标注来源；
-不提供时报告明确标记“未扫描”，不推断已经兼容。退出成功只代表读取/对比完成，不能代替后续语义、性能和平台验证。
+读取失败报告未知且不覆盖已有报告；退出成功只代表读取/对比完成，不代表行为、性能、安全或视觉一致。
 
-## 职责与差异矩阵
+## 职责与收敛方式
 
-| 能力 | 当前差异 | 维护与接入方向 |
-| --- | --- | --- |
-| 整文档解析、索引、source/search、编辑、表格投影 | Studio 使用旧平铺模块；上游已拆 core/runtime/web/native | MarkNoria 提供稳定公共入口；Studio 用适配层，不随内部路径逐处修补 |
-| structured / SVG / animation | 存在高度同源副本及宿主存储、错误和传输适配 | 先收敛工具包无关的计算/数据模块，保留来源和许可 |
-| SQL/jq | 普通表格内存查询与整文档磁盘分页不同，限额/输入也不同 | 共享引擎、授权和预算机制，保留明确输入与宿主策略；不静默统一默认限额 |
-| 小 Markdown / 聊天流 / 原生投影 | 主线小文件 Comrak/WASM、大文件 MarkNoria；原生分支另有片段模型 | 先用 corpus 比较 GFM、原文映射和端到端成本，再逐项迁移；流式增量不强制创建整文档会话 |
-| PDF / 图表 / EPUB 等格式 | 上游 PDF 使用 Poppler 子进程，下游存在其他后端；图表和原生/浏览器表现不同 | 先明确能力和后端边界，验证现有操作及依赖预算，不能只按扩展名或功能名替换 |
-| Web 表格、目录、查询、分页与选区 | 多个文件一致，但宿主桥接依赖私有 DOM/调试全局 | 上游维护组件和正式宿主协议，Studio 保留主题与 AI 动作接线 |
-| AI 会话、模型、Router、工具、评论发送 | Studio 产品行为 | 留在 Studio；共享选区/源位置，不迁移 AI 业务 |
-| standalone 窗口、文件打开、独立笔记 | MarkNoria 产品行为 | 留在 MarkNoria；不把 standalone 会话偏好强加给 Studio |
-| GTK / WebView / AppKit / WinUI 控件 | 平台与产品容器不同 | 先共享 Rust 数据、计算和契约，UI 仅在边界稳定后复用；保留两边现有受维护目标 |
+| 能力 | 目标 |
+| --- | --- |
+| 解析、索引、source/search、分页编辑、SQL/jq | MarkNoria 维护供 Web 阅读器/嵌入宿主共同消费的公共 Rust 入口；Studio 不随内部目录做字符串替换 |
+| 大/小 Markdown、CSV/TSV/XLSX、JSON/text/code、PDF、EPUB、HTML、图片/图表 | 用双方能力并集逐格式验收；上游补齐 Studio 通用功能，下游跟进上游优势，不能只按扩展名整体替换 |
+| 表格、目录、搜索、选区、笔记、主题/字体、文案/locale、快捷键和状态 | 同一组件/契约和默认交互；普通 DOM 与虚拟分页使用同一机制，共同 fixtures 验证 |
+| 不同输入规模、查询预算、后端/格式能力 | 明确能力/profile；统一共同场景默认值，差异可见且分别验证，禁止静默截断数据或功能 |
+| AI 会话、模型、Router、工具、引用发送 | Studio 维护；上游提供通用选区/源位置及动作扩展点，不接收 AI 凭据 |
+| 文件打开、项目授权、网关、应用外壳 | 两产品通过适配接入；宿主权限策略不能因组件复用而扩大 |
 
-原生参考快照尚未进入远端 main，不能假定它已可公开下载。MarkNoria 可以先公共化自己已有的同源实现；
-Studio 原生替换/逐字兼容验证，等该分支合入或有经授权的可访问快照后再执行，不阻塞当前接口设计或要求另一工作目录。
+笔记/评论不能笼统归为 standalone 功能：MarkNoria 已有本地笔记，Studio 有选区引用及宿主工作流。
+共享锚点、状态和阅读交互，存储/附加 AI 动作经正式接口注入，避免两套重叠工具栏。
 
 宿主继续拥有 canonical-path grants、网关 token、路由白名单、缓存命名空间、生命周期和资源限额。
-共享内核不能扩大宿主文件权限或取得 AI 凭据。字节偏移、Unicode 字符偏移、行列、选区精度和 revision 的含义必须显式约定。
+字节/Unicode/行列、选区精度、revision 和文档位置的含义必须显式约定；底层后端不同不能伪装为定位等价。
+计算优先评估 Rust，DOM/布局留前端；端到端延迟、响应、内存及传输/序列化成本按项目性能原则实测。
 
-## 已确认的接入阻碍
+## 接入阻碍与任务顺序
 
-1. Studio 适配仍针对 `src/server.rs` 等旧布局做源码替换；上游已移动到 `src/web/mod.rs` 等目录。
-2. 上游嵌入 Service 仅有只读启动，router 没有 standalone 已拥有的完整编辑和 SQL/jq 嵌入入口；
-   embedded reader 仍跳过编辑初始化。Studio 的 `start_editable` 和 `marknoriaHost` 是本地补丁。
-3. Studio host 从 `readerExperiment`、DOM 选择器和 MutationObserver 获取状态/选区；这些不应继续作为公共接口。
-4. 现有 vendor 工具对源码使用固定提交，却从活动工作目录读取部分构建资源；源码提交与资产来源可能不一致。
-5. Studio 已验证的 Windows 保存句柄处理、表格测量预算/卸载清理和部分依赖修复尚需核对回流。
-   上游 rusqlite 0.41 接口已经适配，不重复照搬旧实现。
+当前 Studio 适配针对旧平铺源码布局做替换；上游已拆 core/runtime/web。上游 standalone 的编辑、SQL/jq 等
+尚未完整暴露给单文档嵌入 Service；Studio 仍用 `marknoriaHost`、`readerExperiment` 和 DOM 观察适配。
+现有 vendor 工具又混合固定提交源码与活动工作目录资源，尚不能直接升级 SHA。
 
-## 任务顺序与阶段验收
-
-| 阶段 | 上游任务 | Studio 接入前需要看到的结果 |
+| 阶段 | 上游任务 | Studio 接入前的验收 |
 | --- | --- | --- |
-| 1 | [MarkNoria #3：通用修复与回归基线](https://github.com/messon007/marknoria/issues/3) | 逐项已接收/已存在/不适用的证据；保存、表格和依赖修复对应提交与用例 |
-| 2A | [MarkNoria #4：共享内核接口与模块收敛](https://github.com/messon007/marknoria/issues/4) | 无 GUI 的最小宿主、明确能力/单位/预算、同源模块单一维护位置和迁移说明 |
-| 2B | [MarkNoria #5：嵌入协议与 Web 组件](https://github.com/messon007/marknoria/issues/5) | 显式编辑/查询能力、版本化状态/命令/选区协议、无私有 DOM/调试全局依赖的宿主示例 |
-| 3 | [MarkNoria #6：可复现交付与兼容验证](https://github.com/messon007/marknoria/issues/6) | 固定源码/资源包、manifest/哈希/许可、干净导出、共享 fixtures 和下游组合验证 |
-| 独立选型 | [MarkNoria #1：高亮性能与 bincode](https://github.com/messon007/marknoria/issues/1) | 公平实测后采用性能最好的合格实现；只有 syntect 实测最优才等待其上游方案 |
+| 1 | [#3：通用修复与回归基线](https://github.com/messon007/marknoria/issues/3) | Windows 保存、表格测量/重挂和依赖修复，不重复已有 rusqlite 适配 |
+| 1～2 | [#7：Web 功能补齐与行为一致](https://github.com/messon007/marknoria/issues/7) | 双向能力表、Studio 通用功能无损补齐、共同设置下行为/视觉/位置一致的共享用例 |
+| 2A | [#4：Web 阅读器公共内核接口](https://github.com/messon007/marknoria/issues/4) | 无 GUI 的公共 Rust 入口、能力/单位/预算与 source 映射，无 platform-native UI 交付要求 |
+| 2B | [#5：嵌入协议与 Web 组件](https://github.com/messon007/marknoria/issues/5) | 编辑/查询/资源/笔记的显式能力，版本化状态/命令/选区，普通与虚拟容器共享组件 |
+| 3 | [#6：可复现交付与兼容验证](https://github.com/messon007/marknoria/issues/6) | 固定源码/资源包、manifest/哈希/许可、共享 Web fixtures 和下游组合验证 |
+| 独立选型 | [#1：高亮性能与 bincode](https://github.com/messon007/marknoria/issues/1) | 实测采用性能最好的合格实现；仅 syntect 最优才等待其上游方案 |
 
-实现基线按阶段 1 → 2A/2B → 3 推进，接口讨论可以并行。高亮由既有任务负责，不额外建立竞争实现。
-两产品都继续独立构建；本计划不要求新建第三个仓库或立即合仓。
+阶段 1 建立修复/功能基线，2A/2B 实现公共接口和组件，#7 的功能/行为验收随之完成，再进入阶段 3。
+两产品独立构建，本计划不要求新建第三个仓库或合仓，不改动 MarkNoria 自身 native desktop 的维护安排。
 
-## Studio 的同步流程
+## Studio 同步与验收
 
-1. 上游任务提供可采用的提交/版本与交付说明后，复查其契约、依赖、实际测试范围和仍存在的差异。
-   issue 关闭是复查触发点，不是已经兼容或可以直接上线的证明。
-2. 在独立工作区从明确提交/干净资源包生成同步 PR，核对源码与资产同源、hash 和许可。
-   不导入 MarkNoria 活动工作树或未提交生成物，不写入其他会话的原生分支。
-3. PR 列出采用的接口/模块、仍保留的差异、移除的临时补丁及宿主适配。
-   已被上游吸收的修复应删除对应补丁，而不是再保留一套长期实现。
-4. 运行共享语义 fixtures 与受影响的 Studio 验证：Markdown/GFM、Unicode/CRLF/source anchors、
-   SQL/jq 授权和预算、编辑冲突、选区/目录/表格重挂、渲染与传输成本及 Linux/macOS/Windows CI。
-   原生分支的 GTK/布局/后端回归由该分支接入时执行，不能用当前主线 CI 冒充已经验证。
-5. 验证通过后合入；在 Studio #48 更新实际采用版本、已完成模块和剩余任务。
-   只有目标能力实际进入 Studio 并完成对应回归，才勾选迁移完成。
+1. 上游提供固定提交/版本、契约/能力、功能差异与实际测试范围后复查；issue 关闭只触发复查，不等于兼容。
+2. 从明确提交/干净资源包生成独立同步 PR，核对源码/资源/锁文件同源、hash 和许可；不读活动工作树或其生成物。
+3. PR 逐项列出采用功能、行为差异清除、仍待验证项和宿主适配；上游吸收的功能删除对应本地补丁/重复实现。
+4. 同一 Web fixtures 同时覆盖 MarkNoria browser/WebView、Studio 嵌入及小文档普通 DOM：格式/锚点、编辑冲突、
+   SQL/jq、PDF/EPUB/表格操作、主题/快捷键、选区/笔记、卸载重挂、权限、视觉和性能；保留 Studio Linux/macOS/Windows CI。
+   不要求跟踪或验证上游 platform-native desktop，也不引用未合并的 Studio 原生分支作为验收证据。
+5. 下游验证并合入后，在 Studio #48 更新实际采用版本、功能一致性结果、删除的补丁和剩余工作，才勾选同步完成。
 
-Studio 发现通用缺陷时可先做有测试的紧急修复，但应关联上游 issue、记录窄范围补丁和移除条件，随后回流 MarkNoria。
-AI 业务、授权和宿主策略仍在 Studio 维护，不强行上移。
+Studio 通用紧急修复可先落地，需有测试、上游 issue、窄范围补丁和移除条件，随后回流；长期行为以共享上游为准。
 
 ## 发布与跟踪边界
 
-MarkNoria 当前是私有仓库，Studio 是公开仓库。短期继续使用审核过、固定来源的 vendoring，
-转为消费上游正式导出的库/组件；不能使普通构建或外部 PR CI 依赖私有令牌、兄弟 checkout、其 build/assets 或运行时服务。
-发布包只包含允许公开分发的源码/资源与许可，不包含用户文件、私有 fixtures、截图、缓存或凭据。
+MarkNoria 当前私有、Studio 公开。短期采用审核过、固定来源的 vendoring，逐步消费正式库/组件；
+普通构建和外部 PR CI 不依赖私有令牌、兄弟 checkout、其 build/assets 或运行时服务。
+交付只包含允许公开分发的源码/资源和许可，不包含用户文档、私有 fixtures、截图、缓存或凭据。
 
-本轮建立的是 GitHub 上下游任务/依赖和维护者复查流程。现有 weekly ecosystem watch 仍监控 Codex/OpenCode 与项目健康，
-**没有自动读取私有 MarkNoria 的定时同步**。待上游交付 manifest 后，再按可访问的版本元数据评估只读监控；
-无法访问/未运行验证必须记为未知，不能当作已经同步。
-
-bincode 的原有维护告警继续由 MarkNoria #1 / Studio #25 跟踪；本计划不添加审计忽略项，
-也不承诺未完成高亮评估前的引擎选择。
+本轮建立 GitHub 任务/依赖和维护者复查流程。weekly ecosystem watch 仍监控 Codex/OpenCode 与项目健康，
+**尚未自动读取私有 MarkNoria 定时同步**；交付 manifest 可用后再评估可访问的只读版本监控。
+不可访问/未验证记为未知，不当作同步成功。bincode 告警仍由 #1 / Studio #25 跟踪，不添加审计忽略项。

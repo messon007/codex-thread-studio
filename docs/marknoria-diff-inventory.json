@@ -1,17 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "analysedOn": "2026-11-04",
   "purpose": "Immutable source comparison evidence; not a live sync manifest, compatibility guarantee, or feature-parity score.",
   "snapshots": {
     "studioMain": "a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a",
     "marknoriaMain": "c607b78689f0339351aa6a1a4c8b893bfbf09670",
-    "vendoredBase": "42a9b8deb7c0068f52d4e22f11b444d1a2a0c586",
-    "studioNative": "1e4e4a459e7959192e607e1ac66693ffb383517c"
+    "vendoredBase": "42a9b8deb7c0068f52d4e22f11b444d1a2a0c586"
   },
-  "nativeReference": {
-    "label": "feat/ubuntu-26-04-gnome-native",
-    "status": "Reference only; no main-branch integration or publication is implied. Only committed files were read; working-tree modifications were excluded."
-  },
+  "scope": "Web desktop reader and Rust dependencies used by that reader only; platform-native desktop and unpublished Studio native branches are excluded.",
   "webSummary": {
     "commonModules": 16,
     "identicalModules": 8
@@ -246,50 +242,192 @@
     }
   ],
   "webScope": "Top-level reader .mjs source presence only; excludes bundled assets/CSS. An upstream-only module is not automatically a required downstream feature.",
-  "nativeSourceSamples": [
+  "webPresentationFiles": [
     {
-      "studioNative": {
-        "path": "crates/markdown-native/src/structured.rs",
-        "sha256": "e86c443de706f34877088bf3e53f204049d27ea70020b4f8a9ed93af98130af6",
-        "lines": 616
+      "studio": {
+        "path": "crates/marknoria/web/checkbox.css",
+        "sha256": "065916170c66e6866aeea759cbeabd06f9efedf817db7d8b72a52c60976b79e6",
+        "lines": 31
       },
       "marknoria": {
-        "path": "src/core/documents/structured.rs",
-        "sha256": "8611c5f724101a38dd0b85ed6d42c6511b148f51b703fec4daca3f386a9c27b5",
-        "lines": 626
+        "path": "web/checkbox.css",
+        "sha256": "065916170c66e6866aeea759cbeabd06f9efedf817db7d8b72a52c60976b79e6",
+        "lines": 31
       },
-      "identical": false,
-      "lineSimilarity": 0.982
+      "identical": true
     },
     {
-      "studioNative": {
-        "path": "crates/svg-resources/src/lib.rs",
-        "sha256": "f253f531e63570724dd78ce902e4409aba5502f96afbc4c0ed19c0fe0b3f51bc",
-        "lines": 311
+      "studio": {
+        "path": "crates/marknoria/web/compare.css",
+        "sha256": "18413653ab782c61581114b4f47b6abc39f67819fe65e46cfd9b0c278a1e8005",
+        "lines": 59
       },
       "marknoria": {
-        "path": "src/core/documents/svg_resources.rs",
-        "sha256": "4d83eea67d7e31e9dd68238dadfa43cf0e3d8bf3538086f9428f7abd65358c8b",
-        "lines": 313
+        "path": "web/compare.css",
+        "sha256": "18413653ab782c61581114b4f47b6abc39f67819fe65e46cfd9b0c278a1e8005",
+        "lines": 59
       },
-      "identical": false,
-      "lineSimilarity": 0.997
+      "identical": true
     },
     {
-      "studioNative": {
-        "path": "src-tauri/src/native_image_animation.rs",
-        "sha256": "7eb546a89272ede155bd2f35071203093c86db7ff27bff9825b9ded74c59ae30",
-        "lines": 367
+      "studio": {
+        "path": "crates/marknoria/web/compare.html",
+        "sha256": "d23bc5d87f669652bcd082d7446e607ec618b7b5ee35da35121c8a02ead791b8",
+        "lines": 36
       },
       "marknoria": {
-        "path": "src/core/documents/image_animation.rs",
-        "sha256": "b745c87e487503100c3536a2e27def151d15077dea328b95d48e191f2fd1c26e",
-        "lines": 369
+        "path": "web/compare.html",
+        "sha256": "e5de5e643313815c724bc56ddcf69d3d006c2ced208e0dc2c0ee4f6587d8407f",
+        "lines": 36
       },
-      "identical": false,
-      "lineSimilarity": 0.97
+      "identical": false
+    },
+    {
+      "studio": {
+        "path": "crates/marknoria/web/index.html",
+        "sha256": "ee78916fe80473600b95c59eebfb7c04b5edc5874730966560c61a418e36221a",
+        "lines": 47
+      },
+      "marknoria": {
+        "path": "web/index.html",
+        "sha256": "f722cfd5ba0012c4e0780849d4bf738ee04e4dad3526a574a98cdd1356b8eaae",
+        "lines": 48
+      },
+      "identical": false
+    },
+    {
+      "studio": {
+        "path": "crates/marknoria/web/styles.css",
+        "sha256": "e7b3f98b3e94b9d395241000dc2abbbf2bd76df59e2d24bc25e4fd9a61051d7f",
+        "lines": 384
+      },
+      "marknoria": {
+        "path": "web/styles.css",
+        "sha256": "f38ae39d5e4305a1dcebf28aa8248ff6aa61fa843b74b65edb0fba5fa7d8edad",
+        "lines": 368
+      },
+      "identical": false
+    },
+    {
+      "studio": {
+        "path": "crates/marknoria/web/theme.js",
+        "sha256": "55477f507545dbfbc2ed3e3428fe93dece3395dbffe35ed1e6b997dc4e7c04f3",
+        "lines": 40
+      },
+      "marknoria": {
+        "path": "web/theme.js",
+        "sha256": "55477f507545dbfbc2ed3e3428fe93dece3395dbffe35ed1e6b997dc4e7c04f3",
+        "lines": 40
+      },
+      "identical": true
     }
   ],
+  "featureSourceEvidence": {
+    "studio": [
+      {
+        "path": "scripts/marknoria-embedding.mjs",
+        "sha256": "b0eb50be23351f7c5ba0777624846162a7889490af7e98d8b524fadb0c3e9c91",
+        "lines": 89
+      },
+      {
+        "path": "ui/large-markdown-host.mjs",
+        "sha256": "269652799517d3deb04de78a5ba4880da4140ae1830abfe9b9fb0ac18084ad20",
+        "lines": 102
+      },
+      {
+        "path": "ui/document-workspace-controller.mjs",
+        "sha256": "793ec1723cd664cc00611b238c17130f4b70485edb699b0d8bf2d28b176a144d",
+        "lines": 1597
+      },
+      {
+        "path": "ui/table-reader.mjs",
+        "sha256": "213ad5293c825c88bfdce291b74ef25f3a6d0401f4cf45d7d5afec48c1ef03f9",
+        "lines": 354
+      },
+      {
+        "path": "ui/table-data.mjs",
+        "sha256": "19df0f9d94351f4941bac09b29043611fbf4bda471c444e81bb49d5a65f58617",
+        "lines": 278
+      },
+      {
+        "path": "ui/pdf-reader.mjs",
+        "sha256": "14f170f407d9c4f056b02180ca68283f07f113603c0c08fdeb7ed0601797b014",
+        "lines": 128
+      },
+      {
+        "path": "ui/epub-reader.mjs",
+        "sha256": "f54e83d8ed5e644daf98b81b88c6959a1a671cb9057fe2d3a7febebe63cc7034",
+        "lines": 368
+      },
+      {
+        "path": "src-tauri/src/large_markdown.rs",
+        "sha256": "dfc2a55dbc7ae071d69a0c5cb09dc06dd6a451002dcbb173bd83d3f979bff2ed",
+        "lines": 406
+      }
+    ],
+    "marknoria": [
+      {
+        "path": "src/web/mod.rs",
+        "sha256": "f5213a150cc4f50c97b14d4f0eb8d1deb2034600c173d805c495b0752b3554d2",
+        "lines": 741
+      },
+      {
+        "path": "src/web/document_runtime.rs",
+        "sha256": "e15366c6f0e7a107ee2e08b3a538da4e8d90f946f5ed6c6f7b012fb91164306b",
+        "lines": 88
+      },
+      {
+        "path": "src/core/documents/pdf.rs",
+        "sha256": "3ebbf4cc6e0f042c08c177c21bb364023e9fc2f8b976f2e338211f55151b356f",
+        "lines": 195
+      },
+      {
+        "path": "src/core/documents/archive.rs",
+        "sha256": "bc7d69fb45888f513c117dd5048722a1a81f98d0218e15f9007a90b9962909c9",
+        "lines": 352
+      },
+      {
+        "path": "src/core/edit.rs",
+        "sha256": "7583fa1a6b9b2249cf7ddf6ed5b13cb0e0fe876ffbd96ada3df7dbd185f775ed",
+        "lines": 632
+      },
+      {
+        "path": "src/core/notes.rs",
+        "sha256": "6c6405b4c570e3a7c0dcf820bbe02ba4345ec7c0de5ea1c5db768e981f1293ca",
+        "lines": 595
+      },
+      {
+        "path": "web/reader.mjs",
+        "sha256": "01011afd1cb6a88c6e8190f12f6c217e4cf509fba5264835bcc7a071c34c5333",
+        "lines": 650
+      },
+      {
+        "path": "web/table-layout.mjs",
+        "sha256": "2d48bf9c3f54e8d5c7f97be3b2fc3e2d4863bf4f316fb8890e6d67709cace201",
+        "lines": 262
+      },
+      {
+        "path": "web/tables.mjs",
+        "sha256": "a9ef55511c3f67335283100e4831866d534b31a660b9ae03d765c854752f41b1",
+        "lines": 179
+      },
+      {
+        "path": "web/code-view.mjs",
+        "sha256": "9085462bdcd75cbc17282a36cf0fa6469fda26af20f3b50a368ca9a9a20695b6",
+        "lines": 97
+      },
+      {
+        "path": "web/notes.mjs",
+        "sha256": "26b13f543185486b867ac9818eacc2575b6946a7e8c6d0fb200324d99ba4835e",
+        "lines": 112
+      },
+      {
+        "path": "web/assets.mjs",
+        "sha256": "b20d4510bd36ef2bd4aa65fe3a7f3bc1f848ce2af140d876329a77302ac5d59e",
+        "lines": 26
+      }
+    ]
+  },
   "currentPatchFiles": {
     "scripts/marknoria-queries.patch": {
       "path": "scripts/marknoria-queries.patch",
@@ -302,5 +440,5 @@
       "lines": 89
     }
   },
-  "method": "git show <recorded commit>:<path>; SHA-256 over exact file bytes; line counts from splitlines; sampled line similarity from Python difflib.SequenceMatcher. Similarity does not establish behavior, performance, source-anchor, or security equivalence."
+  "method": "git show <recorded commit>:<path>; SHA-256 over exact file bytes; line counts from splitlines. Source equality or presence does not establish behavior, performance, source-anchor, or security equivalence."
 }

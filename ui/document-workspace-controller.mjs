@@ -20,6 +20,7 @@ import {
 } from './document-outline.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { pdfCommentSource } from './pdf-comment-provider.mjs'
+import { documentCommentSource } from './comment-source-providers.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { getLocale, t } from './i18n.mjs'
@@ -88,6 +89,10 @@ export function createDocumentWorkspaceController({
   let richArtifactReader = null
   let pdfReaderModule = null
   let tableReaderModule = null
+  let markdownTableLayoutModule = null
+  const markdownTableLayouts = new Map()
+  let markdownTableObserver = null
+  let markdownTableGeneration = 0
   let workspaceEditorModule = null
   let largeMarkdownFrame = null
   let largeMarkdownFile = null
@@ -799,6 +804,11 @@ function renderArtifact() {
         if (snapshot.outlineOpen != null) state.artifactOutlineOpen = snapshot.outlineOpen
         if (snapshot.error && !snapshot.editable) file.error = snapshot.error
         renderArtifact()
+      }, selection => {
+        if (state.artifact !== file) return
+        setSelection({ quote: selection.quote, itemId: null, turnId: null,
+          source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
+            baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine }) }, selection.rect)
       })
     }
     syncLargeMarkdownTheme()
@@ -918,6 +928,8 @@ function renderMarkdownArtifact(file, content, source) {
     content.classList.remove('hidden')
     $('#artifact-loading').classList.add('hidden')
     hydrateMarkdownImages(file, content)
+    attachMarkdownTableQueries(file, content)
+    mountMarkdownTableLayouts(file, content).catch(showError)
     scheduleTextArtifactOutline(file, content, source, { markdown: true, html: false, view: 'preview', items: rendered.outline })
     if (state.artifactSearch) applyArtifactSearchHighlights()
     else renderArtifactSearchStatus()
@@ -933,6 +945,11 @@ function renderMarkdownArtifact(file, content, source) {
 }
 
 function disposeArtifactEditor() {
+  markdownTableGeneration += 1
+  markdownTableObserver?.disconnect()
+  markdownTableObserver = null
+  for (const layout of markdownTableLayouts.values()) layout.dispose()
+  markdownTableLayouts.clear()
   artifactEditor?.destroy()
   artifactEditor = null
 }
@@ -990,6 +1007,93 @@ async function mountPdfReader(file, parent) {
   setArtifactOutline(file, outline, { navigate: (item) => reader.goToPage(item.target?.page) })
   const active = outlineItemForLocation(outline, { page: file.page || 1 })
   if (active) setArtifactOutlineActive(active.id)
+}
+
+async function mountMarkdownTableLayouts(file, content) {
+  const generation = markdownTableGeneration
+  const tables = [...content.querySelectorAll('table')].filter(table => {
+    const columns = table.rows[0]?.cells.length
+    return columns && !table.querySelector('colgroup') && [...table.rows].every(row =>
+      row.cells.length === columns && [...row.cells].every(cell => cell.colSpan === 1 && cell.rowSpan === 1))
+  })
+  if (!tables.length) return
+  markdownTableLayoutModule ||= import('./markdown-table-layout.mjs')
+  const { tableLayout } = await markdownTableLayoutModule
+  const current = () => generation === markdownTableGeneration && state.artifact === file && state.artifactView === 'preview' && content.isConnected
+  if (!current() || !tables[0].isConnected) return
+  const source = file.editContent ?? file.content
+  if (file.markdownTableWidthSource !== source) {
+    file.markdownTableWidthSource = source
+    file.markdownTableWidths = new Map()
+  }
+  const saved = file.markdownTableWidths
+  const workspace = content.closest('.artifact-reader-shell') || content.parentElement
+  const records = new Map()
+  const mount = container => {
+    if (!current() || markdownTableLayouts.has(container)) return
+    const { table, index } = records.get(container)
+    const columns = [...table.rows[0].cells].map((_, column) => column)
+    const presentation = { columns, horizontal: container.scrollLeft }
+    const layout = tableLayout(container, container, presentation, () => new Map(saved.get(index)), widths => {
+      saved.delete(index)
+      if (widths.size) saved.set(index, widths)
+      while (saved.size > 256) saved.delete(saved.keys().next().value)
+    }, () => {}, { viewport: content, workspace, shell: content, fillWidth: true })
+    markdownTableLayouts.set(container, layout)
+    layout.update()
+  }
+  if (typeof IntersectionObserver === 'function') markdownTableObserver = new IntersectionObserver(entries => {
+    if (!current()) return
+    for (const entry of entries) {
+      if (entry.isIntersecting) mount(entry.target)
+      else {
+        markdownTableLayouts.get(entry.target)?.dispose()
+        markdownTableLayouts.delete(entry.target)
+      }
+    }
+  }, { root: content, rootMargin: '400px' })
+  for (const [index, table] of tables.entries()) {
+    const container = table.parentElement.classList.contains('markdown-table-wrap') ? table.parentElement : document.createElement('div')
+    if (container !== table.parentElement) { table.before(container); container.append(table) }
+    container.classList.add('markdown-table-wrap', 'markdown-resizable-table', 'table-content')
+    container.dataset.table = `document-${index}`
+    records.set(container, { table, index })
+    if (markdownTableObserver) markdownTableObserver.observe(container)
+    else mount(container)
+  }
+}
+
+function attachMarkdownTableQueries(file, content) {
+  for (const table of content.querySelectorAll('table')) {
+    const button = document.createElement('button')
+    button.type = 'button'; button.className = 'subtle-button compact'; button.textContent = 'SQL'
+    button.setAttribute('aria-label', t('Query table with SQL'))
+    table.before(button)
+    button.addEventListener('click', async () => {
+      try {
+        tableReaderModule ||= import('./table-reader.mjs')
+        const { renderTableArtifact } = await tableReaderModule
+        if (state.artifact !== file || !table.isConnected) return
+        const rows = [...table.rows].map(row => [...row.cells].map(cell => cell.textContent || ''))
+        const dialog = document.createElement('dialog')
+        dialog.style.cssText = 'width:min(1100px,94vw);height:85vh;max-width:94vw'
+        dialog.setAttribute('aria-label', t('Query table with SQL'))
+        const close = document.createElement('button'); close.textContent = t('Close'); close.type = 'button'
+        const host = document.createElement('div'); host.setAttribute('data-no-i18n', ''); host.style.cssText = 'height:calc(100% - 40px);min-height:0'
+        dialog.append(close, host); document.body.append(dialog)
+        const reader = renderTableArtifact({ container: host, workbook: { sheets: [{ name: fileDisplayName(file.path), rows }] }, translate: t,
+          executeQuery: async request => {
+            const response = await gatewayFetch('/studio/table/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) })
+            const result = await response.json()
+            if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`)
+            return result
+          } })
+        close.addEventListener('click', () => dialog.close())
+        dialog.addEventListener('close', () => { reader.destroy(); dialog.remove() }, { once: true })
+        dialog.showModal()
+      } catch (error) { showError(error) }
+    })
+  }
 }
 
 async function mountTableReader(file, parent) {

@@ -11,6 +11,52 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
+## Current-main transport and reader integration
+
+The feature branch integrates current main through `38e27e0`, including shared
+Codex-daemon connections, SQL/jq services, reader interactions and dependency
+updates. The native workspace keeps raw text replies through a separate
+authenticated `/studio/native/review-file` endpoint. The browser endpoint can
+select its JSON reader while native JSON Preview/Source/Edit keeps original
+text, opaque file revisions and explicit-save behavior. A new gateway regression
+checks exact CRLF/Unicode JSON and absence of an embedded-reader URL.
+
+The native spreadsheet reader uses published Calamine 0.38 with ZIP 9 support;
+native EPUB filename decoding propagates ZIP 9 errors. Both native Markdown
+users require parser 0.13.6. The separate frontend lock retains Tokio 1.54.1,
+while the shared gateway uses main's 1.53.3. The old parser and ZIP versions are
+not retained in the combined gateway graph. No audit exceptions were added.
+
+Fresh workspace checks pass: **272 gateway**, **38 MarkNoria**, **100 native
+Markdown model** and **five SVG-resource** tests, plus **110 Markdown tests**
+with syntax/structured features and **395 native application tests**. The
+gateway's normal run now ignores two explicitly opt-in cases; the newly
+registered shared-daemon case is separately exercised. All **753 web tests**
+pass against the exact updated npm lockfile. The previous dependency tree is
+preserved; the new one is in `/media/rui/studio-gnome-deps/npm-native-main-38e27e0`.
+
+The real Codex 0.166.0 check now builds the actual gateway test crate, including
+native routing hooks. Two clients resume and rename the same private thread;
+a native private history read preserves identity without broadcast; Studio and
+the actual CLI submit turns to a loopback mock provider and both clients receive
+completion; reconnect works after private-daemon restart. No real user profile,
+session or external model is used. This test is opt-in via
+`python3 scripts/smoke-codex-shared.py`; the fixture guards its temporary
+`CODEX_HOME`. It is broker/CLI integration, not a physical GUI/provider test.
+
+Rust 1.92 all-release-target checks and the existing default Tauri/GTK3 Linux
+check pass. Installed debug language/viewer/backend and both-provider navigation
+workflows pass with the new source endpoint and updated libraries. The pinned
+library/reader source plus provenance reproduces exactly in an isolated
+directory: **43 files, no differences**. The separate MarkNoria checkout remains
+unchanged. Existing optimized candidates are preserved and predate this merge.
+
+Current main also adds JSON jq, Markdown-table SQL and an explicit session-release
+action. Their services are integrated, but native controls are still missing.
+These are the next parity tasks; browser reader embedding cannot replace the
+requested native interface. The optimized merged release, remaining renderer
+audit, remote CI and separately documented physical checks remain outstanding.
+
 ## Native pending navigation and layout timing
 
 The standalone `navigation_wheel` example imports the actual native list

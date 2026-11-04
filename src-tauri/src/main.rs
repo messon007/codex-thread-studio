@@ -28,6 +28,7 @@ mod backend_runtime;
 mod browser_policy;
 mod browser_runtime;
 mod codex_app_server;
+mod codex_connection;
 mod continuation_text;
 #[cfg(all(feature = "desktop", target_os = "linux", debug_assertions))]
 mod dev_capture;
@@ -86,6 +87,10 @@ mod translation_text;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
 mod workspace_watch;
+
+#[cfg(test)]
+#[path = "../../scripts/test-support/codex-shared-smoke.rs"]
+mod codex_shared_smoke;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
 use backend_runtime::{BackendRuntime, WslSettings};
@@ -1142,7 +1147,9 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route(
             "/studio/session-state/message-queue",
-            get(get_message_queue_state).put(put_message_queue_state),
+            get(get_message_queue_state)
+                .put(put_message_queue_state)
+                .layer(DefaultBodyLimit::max(96 * 1024 * 1024)),
         )
         .route(
             "/studio/session-state/session",
@@ -1203,6 +1210,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/stage", axum::routing::post(git_stage))
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
+        .route(
+            "/studio/native/review-file",
+            axum::routing::post(read_native_review_file),
+        )
         .route(
             "/studio/native/markdown/open",
             axum::routing::post(large_markdown::native_open),
@@ -1509,6 +1520,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
+            "/markdown-table-layout.mjs",
+            get(|| async {
+                javascript(include_str!("../../crates/marknoria/web/table-layout.mjs"))
+            }),
+        )
+        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
         )
@@ -1583,6 +1600,23 @@ async fn read_review_file(
     State(state): State<GatewayState>,
     Json(request): Json<ReviewFileRequest>,
 ) -> Response<Body> {
+    read_review_file_impl(state, request, true).await
+}
+
+async fn read_native_review_file(
+    State(state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    // The native client owns text paging and structured rendering. Returning
+    // a browser reader URL here would discard its source/edit contract.
+    read_review_file_impl(state, request, false).await
+}
+
+async fn read_review_file_impl(
+    state: GatewayState,
+    request: ReviewFileRequest,
+    embedded_reader: bool,
+) -> Response<Body> {
     #[cfg(windows)]
     if state.codex.execution_environment() == "wsl" {
         let shared_directories = match configured_shared_document_directories(&state) {
@@ -1636,10 +1670,12 @@ async fn read_review_file(
         Ok(value) => value,
         Err((status, message)) => return json_error(status, &message),
     };
-    match large_markdown::try_open(&state, &request).await {
-        Ok(Some(file)) => return json_response(StatusCode::OK, &file),
-        Ok(None) => {}
-        Err((status, message)) => return json_error(status, &message),
+    if embedded_reader {
+        match large_markdown::try_open(&state, &request).await {
+            Ok(Some(file)) => return json_response(StatusCode::OK, &file),
+            Ok(None) => {}
+            Err((status, message)) => return json_error(status, &message),
+        }
     }
     run_workspace_file(
         move || match load_review_file_with_shared(&request, &shared_directories) {
@@ -1827,7 +1863,10 @@ fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
         if total > MAX_UNCOMPRESSED_BYTES {
             return Err("XLSX expanded content exceeds 200 MiB".into());
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| format!("invalid XLSX entry name: {error}"))?
+            .replace('\\', "/");
         if name == "[Content_Types].xml" {
             content_types = true;
         }
@@ -4012,9 +4051,15 @@ async fn put_message_queue_state(
     body: String,
 ) -> Response<Body> {
     run_studio_database(move || {
-        let request = match parse_session_state_body::<MessageQueueStateRequest>(&body) {
+        if body.len() > 96 * 1024 * 1024 {
+            return json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "message queue payload is too large",
+            );
+        }
+        let request = match serde_json::from_str::<MessageQueueStateRequest>(&body) {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(_) => return json_error(StatusCode::BAD_REQUEST, "invalid message queue"),
         };
         let invalid_message = request.messages.len() > 3
             || request.messages.iter().any(|message| {
@@ -4022,6 +4067,19 @@ async fn put_message_queue_state(
                     || !valid_runtime_value(&message.id, 128)
                     || message.text.len() > 256 * 1024
                     || message.input.len() > 32
+                    || message
+                        .input
+                        .iter()
+                        .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("image"))
+                        .count()
+                        > 4
+                    || message
+                        .input
+                        .iter()
+                        .filter_map(|item| item.get("url").and_then(|v| v.as_str()))
+                        .map(str::len)
+                        .sum::<usize>()
+                        > 28 * 1024 * 1024
                     || message.input.iter().any(|item| {
                         item.get("type").and_then(|value| value.as_str()) == Some("text")
                     })
@@ -4992,7 +5050,8 @@ fn build_backend_registry(
     let mut descriptors = vec![codex_descriptor];
     for backend in configured {
         let command_line = display_command(&backend.command, &backend.args);
-        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone());
+        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone())
+            .with_connection_mode(backend.connection_mode);
         descriptors.push(backend.descriptor.clone());
         instances.insert(
             backend.descriptor.id.clone(),
@@ -5126,6 +5185,12 @@ fn gateway_error(message: &str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires smoke-codex-shared.py's private daemon and local model fixture"]
+    async fn codex_shared_daemon_with_real_cli() {
+        crate::codex_shared_smoke::run().await;
+    }
     use axum::http::Request;
     use tower::ServiceExt;
 
@@ -5395,6 +5460,7 @@ mod tests {
             },
             command: "company-launcher".to_string(),
             args: vec!["codex".to_string()],
+            connection_mode: codex_connection::ConnectionMode::Embedded,
         };
         let codex = CodexAppServer::new("codex".to_string(), runtime.clone());
         let (instances, descriptors) =
@@ -6016,6 +6082,7 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
+                "/markdown-table-layout.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",
@@ -6750,6 +6817,37 @@ mod tests {
             invalid_target.end_line = Some(2);
         }
         assert!(validate_preferences(&invalid).is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn native_review_keeps_json_source_instead_of_a_browser_reader_url() {
+        let directory = tempfile::tempdir().unwrap();
+        let content = "{\"literal\":\"中文 {count}\"}\r\n";
+        fs::write(directory.path().join("sample.json"), content).unwrap();
+        let router = gateway_router(secured_test_gateway(GatewaySecurity::disabled_for_tests()));
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/studio/native/review-file")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"root":directory.path(),"path":"sample.json"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["content"], content);
+        assert_eq!(value["language"], "json");
+        assert!(value.get("largeMarkdown").is_none());
+        assert!(!value["hash"].as_str().unwrap().is_empty());
     }
 
     #[test]

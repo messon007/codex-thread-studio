@@ -3,3 +3,4 @@ native/gnome/vendor/**/LICENSE -whitespace
 native/gnome/vendor/**/OFL.txt -whitespace
 native/gnome/vendor/two-face/ACKNOWLEDGEMENTS.md -whitespace
 native/mermaid-worker/patches/*.patch -whitespace
+scripts/marknoria-queries.patch -whitespace

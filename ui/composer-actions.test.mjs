@@ -101,3 +101,19 @@ test('Stop repairs a stale turn after the backend reports no active turn', async
   assert.ok(f.calls.includes('recover'))
   assert.equal(f.calls.some(call => call === 'no active turn to interrupt'), false)
 })
+
+test('image-only queue messages persist images and retain them when saving fails', async () => {
+  for (const fail of [false, true]) {
+    const f = fixture(), image = { id: 'image', url: 'data:image/png;base64,iVBORw0KGgo=', size: 8 }
+    f.state.pendingImages['codex:a'] = [image]
+    if (fail) f.services.persistMessageQueue = async () => { throw new Error('disk full') }
+    await f.controller().queueComposerMessage()
+    if (fail) {
+      assert.equal(f.state.pendingImages['codex:a'][0], image)
+      assert.deepEqual(f.state.messageQueues['codex:a'], [])
+    } else {
+      assert.deepEqual(f.state.messageQueues['codex:a'][0].input, [{ type: 'image', url: image.url }])
+      assert.deepEqual(f.state.pendingImages['codex:a'], [])
+    }
+  }
+})

@@ -1,4 +1,4 @@
-export function createLargeMarkdownHost(frame, onState) {
+export function createLargeMarkdownHost(frame, onState, onSelection = () => {}) {
   let disposed = false
   let timer = null
   let signature = ''
@@ -6,6 +6,41 @@ export function createLargeMarkdownHost(frame, onState) {
   let searchGeneration = 0
   let observer = null
   const document = () => frame.contentDocument
+  let selectionDocument = null
+  const captureSelection = () => {
+    const selection = frame.contentWindow?.getSelection()
+    if (!selection?.rangeCount || selection.isCollapsed) return
+    const quote = String(selection).trim().slice(0, 16000)
+    if (!quote) return
+    const range = selection.getRangeAt(0)
+    const element = node => node?.nodeType === 1 ? node : node?.parentElement
+    const start = element(range.startContainer)
+    const end = element(range.endContainer)
+    if (!start?.closest('#viewport, #source-view') || start.closest('dialog')) return
+    const index = frame.contentWindow?.readerExperiment?.index
+    const line = node => Number(node?.closest('[data-source-line]')?.dataset.sourceLine)
+      || index?.pages[Number(node?.closest('[data-page]')?.dataset.page)]?.line
+      || null
+    const startLine = line(start)
+    const endPage = end?.closest('[data-page]')
+    const endLine = Number(end?.closest('[data-source-end-line]')?.dataset.sourceEndLine)
+      || (endPage ? (index?.pages[Number(endPage.dataset.page) + 1]?.line || index?.sourceLines) : line(end))
+    const rect = range.getBoundingClientRect(), outer = frame.getBoundingClientRect()
+    onSelection({ quote, startLine, endLine: startLine ? Math.max(startLine, endLine || startLine) : null,
+      revision: index?.revision || '', rect: { left: outer.left + rect.left, right: outer.left + rect.right,
+        top: outer.top + rect.top, bottom: outer.top + rect.bottom, width: rect.width, height: rect.height } })
+  }
+  const bindSelection = () => {
+    const next = document()
+    if (!next || next === selectionDocument) return
+    selectionDocument?.removeEventListener?.('mouseup', captureSelection)
+    selectionDocument?.removeEventListener?.('keyup', captureSelection)
+    selectionDocument = next
+    next.addEventListener?.('mouseup', captureSelection)
+    next.addEventListener?.('keyup', captureSelection)
+  }
+  frame.addEventListener?.('load', bindSelection)
+  bindSelection()
   const bridge = () => frame.contentWindow?.marknoriaHost
   const snapshot = () => bridge()?.state || { ready: false }
   const endpoint = path => new URL(`./api/${path}`, new URL(frame.src))
@@ -62,6 +97,6 @@ export function createLargeMarkdownHost(frame, onState) {
       if (!bridge() || disposed) return
       return bridge().navigate(match)
     },
-    dispose() { disposed = true; bridge()?.leave(); clearTimeout(timer); clearInterval(heartbeat); observer?.disconnect(); request?.abort() },
+    dispose() { frame.removeEventListener?.('load', bindSelection); selectionDocument?.removeEventListener?.('mouseup', captureSelection); selectionDocument?.removeEventListener?.('keyup', captureSelection); disposed = true; bridge()?.leave(); clearTimeout(timer); clearInterval(heartbeat); observer?.disconnect(); request?.abort() },
   }
 }

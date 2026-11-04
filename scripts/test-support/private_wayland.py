@@ -138,6 +138,9 @@ class OwnedMutterInput:
 @contextmanager
 def isolated_environment(environment, headless=False):
     private = dict(environment)
+    # GUI fixtures use JSONL fake CLIs, not the shared-daemon WebSocket proxy.
+    # Do not inherit a user's live daemon mode into an isolated fake profile.
+    private['CODEX_THREAD_STUDIO_CODEX_CONNECTION'] = 'embedded'
     display = None
     if not headless:
         display = Path(private.get('WAYLAND_DISPLAY', 'wayland-0'))

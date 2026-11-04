@@ -27,7 +27,15 @@ in the validation record.
 
 ## Confirmed implementation gaps and next order
 
-1. **Finish the control/translation and compatibility audit.** Session Resources,
+1. **Port the newer main workflows to native controls.** The current integration
+   baseline is `38e27e0`. Its JSON jq queries, Markdown-table SQL queries and
+   explicit Codex session-release action are present in the browser client but
+   do not yet have native controls. Existing native CSV/XLSX SQL is separate.
+   Reuse the bounded Rust query services and keep the application interface GTK;
+   do not embed the browser reader as a substitute. Release must pause queued
+   work and retain a readable conversation until explicit reload without
+   interrupting another client's work.
+2. **Finish the control/translation and compatibility audit.** Session Resources,
    information, connections and activity inspection now have native controls and
    focused acceptance. History paging and shared transcript actions now follow
    live language changes, with retained data/selection/draft checks. The composer's
@@ -49,7 +57,7 @@ in the validation record.
    Assess renderer limits against actual supported documents. Historical missing
    Router execution, images, animation, recovery, EPUB search and output-paging
    notes are superseded by later implementations.
-2. **Release acceptance.** Keep installed workflows and existing clients' checks
+3. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
    continue using private profiles and document/repository copies.
@@ -59,6 +67,37 @@ the current image workspace explicitly does not support comments, and the
 existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
+
+## Current main integration
+
+The native branch integrates main through `38e27e0`, retaining shared
+Codex-daemon transport, reader query services and the upstream dependency fixes.
+Native text reads now use an authenticated raw-source endpoint, so the browser's
+new JSON reader selection cannot replace the native Preview/Source/Edit reply
+with an embedded-reader URL. Native EPUB decoding handles fallible ZIP names;
+Calamine 0.38 supplies ZIP 9 support for XLSX without the older ZIP dependency.
+The native parser minimum is 0.13.6 and its newer Tokio remains retained.
+
+Fresh checks pass: 272 normal gateway tests (two opt-in tests now ignored by
+default), 38 MarkNoria tests, 100 shared Markdown model tests, 110 tests with
+syntax/structured features, five SVG-resource tests, 395 native tests and 753
+web tests. The separate real CLI opt-in also passes against Codex 0.166.0 with
+two clients, native private history reads, local mock model replies, CLI turns
+and private-daemon restart. Its harness now compiles inside the actual gateway
+test crate rather than omitting native routing dependencies. No real user
+session or external model is used.
+
+Rust 1.92 checks, the default Tauri Linux check and installed debug language,
+viewer/backend and both-provider navigation workflows pass. All 43 pinned
+MarkNoria library/reader/provenance files reproduce from the combined embedding
+and query patches without modifying the separate MarkNoria checkout. Exact
+current JavaScript dependencies were installed under `/media`; the previous
+dependency tree is preserved.
+
+Optimized acceptance must be refreshed for this integration; the preceding
+optimized status/inspector package is not this merged version. The native query
+and session-release controls above remain actual parity gaps. Remote publishing
+still requires suitable workflow permission; no remote branch or CI is claimed.
 
 ## Navigation timing follow-up
 

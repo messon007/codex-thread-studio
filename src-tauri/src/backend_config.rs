@@ -28,6 +28,7 @@ pub struct ConfiguredCodexBackend {
     pub descriptor: BackendDescriptor,
     pub command: String,
     pub args: Vec<String>,
+    pub connection_mode: crate::codex_connection::ConnectionMode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -55,6 +56,8 @@ struct BackendEntry {
     command: String,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    connection_mode: crate::codex_connection::ConnectionMode,
     #[serde(default = "enabled_by_default")]
     enabled: bool,
 }
@@ -174,6 +177,7 @@ fn parse_source_inner(source: &str, path: &Path) -> Result<Vec<ConfiguredCodexBa
             },
             command: entry.command.trim().to_string(),
             args: entry.args,
+            connection_mode: entry.connection_mode,
         });
     }
     Ok(backends)
@@ -303,6 +307,29 @@ mod tests {
         assert_eq!(loaded.backends[0].descriptor.id, "work-codex");
         assert_eq!(loaded.backends[0].command, "ept");
         assert_eq!(loaded.backends[0].args, ["codex"]);
+        assert_eq!(
+            loaded.backends[0].connection_mode,
+            crate::codex_connection::ConnectionMode::Embedded
+        );
+    }
+
+    #[test]
+    fn sharing_is_explicit_and_invalid_modes_are_rejected() {
+        for mode in ["shared", "auto", "embedded", "invalid"] {
+            let path = temporary_path("connection-mode");
+            fs::write(&path, serde_json::json!({"backends":[{"id":"shared-codex","name":"Shared","tag":"SH","adapter":"codex-app-server","command":"codex","connectionMode":mode}]}).to_string()).unwrap();
+            let loaded = load(&path);
+            fs::remove_file(path).unwrap();
+            if mode == "invalid" {
+                assert!(loaded.error.is_some());
+            } else {
+                assert_eq!(loaded.error, None);
+                assert_eq!(
+                    loaded.backends[0].connection_mode,
+                    crate::codex_connection::ConnectionMode::parse(mode).unwrap()
+                );
+            }
+        }
     }
 
     #[test]

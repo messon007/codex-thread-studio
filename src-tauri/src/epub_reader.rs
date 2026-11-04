@@ -175,9 +175,12 @@ fn validate_archive(path: &Path) -> Result<(), String> {
         if expanded > MAX_EPUB_EXPANDED_BYTES {
             return Err("EPUB expanded data exceeds 512 MiB".to_owned());
         }
-        let normalized = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| format!("invalid EPUB entry name: {error}"))?;
+        let normalized = name.replace('\\', "/");
         if normalized.eq_ignore_ascii_case("META-INF/container.xml") {
-            container_name = Some(entry.name().to_owned());
+            container_name = Some(name.into_owned());
         }
         has_encryption |= normalized.eq_ignore_ascii_case("META-INF/encryption.xml");
     }

@@ -153,6 +153,7 @@ class Gateway:
             opencode.chmod(0o700)
         environment = dict(os.environ)
         environment.update({
+            'CODEX_THREAD_STUDIO_CODEX_CONNECTION': 'embedded',
             'CODEX_THREAD_STUDIO_CODEX_BIN': str(backend),
             'CODEX_THREAD_STUDIO_OPENCODE_BIN': str(opencode_binary or (opencode if kind=='opencode' else directory / 'never-start-opencode')),
             'XDG_CONFIG_HOME': str(directory / 'config'),

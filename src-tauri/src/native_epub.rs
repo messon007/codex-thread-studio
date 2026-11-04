@@ -279,7 +279,7 @@ fn parse_book(bytes: Arc<[u8]>, id: String, root: String, path: String) -> Resul
     let mut expanded = 0u64;
     for index in 0..archive.len() {
         let file = archive.by_index_raw(index).map_err(bad)?;
-        let raw = file.name();
+        let raw = file.name().map_err(bad)?;
         if file.encrypted() || raw.eq_ignore_ascii_case("META-INF/encryption.xml") {
             return Err(bad("Encrypted/DRM EPUB files are not supported"));
         }

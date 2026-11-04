@@ -427,9 +427,10 @@ pub async fn execute(api: &Api, request: Request) -> Result<Reply, String> {
             "/studio/native/files",
             json!({"root":root,"path":path,"query":query,"showHidden":show_hidden,"showIgnored":show_ignored,"cursor":cursor}),
         ),
-        Request::Read { root, path } | Request::ReadComment { root, path, .. } => {
-            ("/studio/review-file", json!({"root":root,"path":path}))
-        }
+        Request::Read { root, path } | Request::ReadComment { root, path, .. } => (
+            "/studio/native/review-file",
+            json!({"root":root,"path":path}),
+        ),
         Request::Status { root } => ("/studio/git/status", json!({"root":root})),
         Request::History { root, offset, .. } => (
             "/studio/git/history",

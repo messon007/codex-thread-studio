@@ -37,6 +37,13 @@ indexed ownership metadata before evaluation; it does not load hidden replies
 or start a provider. Current-turn menu status and Stop remain scoped to their
 actual source and generation.
 
+The current integration baseline is main `38e27e0` (2026-11-04). Its shared
+Codex-daemon transport and SQL/jq services are integrated and validated against
+the native client. Port its explicit session-release action, JSON jq controls
+and Markdown-table SQL controls next; native CSV/XLSX SQL already exists. Keep
+source/result identities, read-only query output and explicit reload/save
+semantics distinct, with the computation in the existing bounded Rust services.
+
 At the supervision checkpoint, 392 native tests and 257 headless gateway tests
 passed (four and one opt-in
 ignored respectively), with Rust 1.92 and the existing GTK3/Tauri Linux check.

@@ -2,8 +2,10 @@ use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagE
 pub mod compare;
 pub mod edit;
 pub mod highlight;
+pub mod jq_query;
 pub mod server;
 pub mod source;
+pub mod table_query;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

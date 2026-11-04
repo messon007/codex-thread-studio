@@ -65,6 +65,41 @@ These suffixes identify the existing passages without renumbering that document.
 | 37: bounded/signature-checked image inputs | Shared transport limits and native attachment models; picker/clipboard/drop/history/Router fixtures and failed-send retention tests. |
 | 38: Codex Agent hierarchy | Existing ancestry metadata with bounded native preparation and standard source selection; OpenCode's unsupported status is explicit. |
 
+## Reuse and static-analysis review
+
+The native client reuses the existing gateway for provider ownership, persisted
+data, Git, indexing and SQL/jq services. Native Markdown/SVG code uses the shared
+`studio-markdown-native` and `studio-svg-resources` crates. Browser policy,
+notification identities, PDF navigation, session-directory policy, continuation
+text and Session Map protocol are imported from the existing Rust source, rather
+than independently maintained copies. GTK rendering and interaction remain
+native frontend responsibilities.
+
+Session Map's design package explicitly distinguishes proposals from its
+experimental implementation. The shipped web controller renders the same item
+tree and four structure choices; additional Board/Checklist views and custom
+template building are not implemented web features omitted by this migration.
+See its [implementation boundary](session-map/implementation.md).
+
+At the `6f3b963` audit, native Clippy passed for all targets. The shared gateway,
+MarkNoria, Markdown and SVG all-target check initially rejected three deliberate
+reversed selection ranges in Markdown tests. Explicit `Range { start, end }`
+inputs preserve those rejection cases; the repeated shared check and all 110
+Markdown tests, including syntax/structured-preview features, pass. Commands:
+
+```sh
+cargo clippy --manifest-path native/gnome/Cargo.toml --all-targets --locked --offline --no-deps
+cargo clippy -p codex-thread-studio -p marknoria -p studio-markdown-native -p studio-svg-resources --all-targets --no-default-features --locked --offline --no-deps
+cargo test -p studio-markdown-native --features syntax-highlight,structured-preview --locked --offline
+```
+
+These checks return success with warnings; they are not a `-D warnings` gate.
+Logs and exact identities are recorded in external
+`native-displays-20261105/FINAL-AUDIT.json`, including the original failure.
+Only test inputs and documentation changed; the qualified optimized package was
+not rebuilt. All 495 package checksums were reverified. Earlier application,
+browser and desktop evidence retains its original scope.
+
 ## Remaining release gates
 
 The reading-width follow-up now passes actual GTK allocation/restart checks

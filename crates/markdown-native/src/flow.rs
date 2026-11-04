@@ -1236,7 +1236,9 @@ mod tests {
     #[test]
     fn explicit_selection_limits_do_not_silently_discard_content() {
         let flow = project(&fragment("plain")).unwrap();
-        assert!(flow.select(2..1, 10).is_err());
+        // Invalid selection bounds are data, not a range to iterate.
+        let reversed = std::ops::Range { start: 2, end: 1 };
+        assert!(flow.select(reversed, 10).is_err());
         assert!(flow.select(0..100, 10).is_err());
         assert!(flow.select(0..0, 0).unwrap().text.is_empty());
     }
@@ -1447,7 +1449,8 @@ mod tests {
         let link = &projected.links[0];
         assert_eq!(quick.select(link.characters.clone(), 8192), Some("after"));
         assert!(quick.select(0..projected.characters, 1).is_none());
-        assert!(quick.select(2..1, 8192).is_none());
+        let reversed = std::ops::Range { start: 2, end: 1 };
+        assert!(quick.select(reversed, 8192).is_none());
         assert!(quick.projected_range(usize::MAX..usize::MAX).is_none());
         assert!(quick.source_range(usize::MAX..usize::MAX).is_none());
     }

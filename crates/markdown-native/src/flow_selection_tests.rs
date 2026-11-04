@@ -83,7 +83,9 @@ fn resolved_selection_never_accepts_missing_foreign_or_partial_tables_or_truncat
     let mut long = table();
     long.text = "x".repeat(1025);
     assert!(p.select_resolved(range, 1024, &[long]).is_err());
-    assert!(p.selection_request(2..1, 1024).is_err());
+    // Invalid selection bounds are data, not a range to iterate.
+    let reversed = std::ops::Range { start: 2, end: 1 };
+    assert!(p.selection_request(reversed, 1024).is_err());
 }
 #[test]
 fn full_table_quotes_are_atomic_and_large_skips_do_not_bridge_neighbors() {

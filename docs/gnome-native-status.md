@@ -7,6 +7,13 @@ The [plan](gnome-native-plan.md) and [validation record](gnome-native.md) also
 contain chronological notes; an old “remaining” paragraph is not evidence that
 its feature is still absent.
 
+Reuse is a migration requirement: existing gateway APIs, profile and SQLite
+stores, root/security policies, document/query engines and Rust models remain
+authoritative. GTK4/libadwaita owns native controls and interaction. Reusable
+fixes belong in shared components; UI-specific behavior stays in the native
+frontend. The [closing audit](gnome-native-acceptance.md#reuse-and-static-analysis-review)
+records the checked implementation boundary and static-analysis results.
+
 ## Implemented application areas
 
 | Area | Native implementation and existing evidence |

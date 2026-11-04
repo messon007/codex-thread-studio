@@ -77,6 +77,27 @@ try {
     }
     return results
   })
+  await page.addScriptTag({url:'/ui/vendor/plantuml-viz-global.js'})
+  const plantuml = await page.evaluate(async () => {
+    const {renderToString} = await import('/ui/vendor/plantuml.js')
+    const {plantumlLines, hasUnsafePlantumlDirective} = await import('/ui/diagram-source.mjs')
+    const {default:DOMPurify} = await import('/ui/vendor/purify.es.mjs')
+    const results = []
+    for (const [name, source] of [
+      ['sequence', 'Alice -> Bob: 中文消息'],
+      ['class', 'class Reader\nclass Document\nReader --> Document'],
+    ]) {
+      const svg = await new Promise((resolve, reject) => renderToString(plantumlLines(source), resolve, reject))
+      const card = document.createElement('section')
+      card.innerHTML = DOMPurify.sanitize(svg, {USE_PROFILES:{html:true,svg:true,svgFilters:true},FORBID_TAGS:['script','iframe','object','embed','form','foreignObject','image']})
+      if (!card.querySelector('svg') || card.querySelector('script,foreignObject,image')) throw Error(`PlantUML ${name} did not produce safe SVG`)
+      if (!card.textContent.includes(name === 'sequence' ? '中文消息' : 'Document')) throw Error(`PlantUML ${name} labels changed`)
+      document.getElementById('diagrams').append(card)
+      results.push(name)
+    }
+    if (!hasUnsafePlantumlDirective('!include https://example.com/private.puml')) throw Error('External PlantUML includes were not rejected')
+    return results
+  })
   await page.screenshot({path:process.env.STUDIO_UI_SCREENSHOT || '/tmp/studio-ui-dependencies.png',fullPage:true})
   const pdf = await page.evaluate(async bytes => {
     const {createPdfReader} = await import('/ui/pdf-reader.mjs')
@@ -92,5 +113,5 @@ try {
     reader.destroy()
     return 'PASS: render, text layer, navigation, destroy'
   },pdfFixture())
-  console.log(JSON.stringify({markdown:'PASS: structure and sanitization',diagrams,pdf},null,2))
+  console.log(JSON.stringify({markdown:'PASS: structure and sanitization',diagrams,plantuml,pdf},null,2))
 } finally { await browser.close() }

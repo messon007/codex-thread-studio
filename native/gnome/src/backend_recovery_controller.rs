@@ -59,6 +59,7 @@ impl Ui {
         self.mcp_disconnected(&backend, generation);
         self.agents_disconnected(&backend, generation);
         self.state.borrow_mut().backend_ready.remove(&backend);
+        self.state.borrow_mut().releases.lost(Some(&backend));
         self.state.borrow_mut().shells.disconnected(Some(&backend));
         self.state.borrow_mut().images.disconnected(Some(&backend));
         self.state.borrow_mut().queues.pause_backend(

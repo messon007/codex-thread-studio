@@ -1,4 +1,9 @@
 {
+  "Release session to CLI": "释放会话到命令行",
+  "Releasing session…": "正在释放会话…",
+  "Session released · Reload to send messages again": "会话已释放 · 重新加载后可继续发送消息",
+  "Release unconfirmed · Reload to reconnect this session": "未确认会话释放 · 重新加载以连接此会话",
+  "Session released. Reload before resuming queued messages.": "会话已释放。请重新加载后再恢复队列消息。",
   "Loading history…": "正在加载历史…",
   "Search not applied": "搜索尚未应用",
   "Search results": "搜索结果",

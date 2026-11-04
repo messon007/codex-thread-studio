@@ -2,6 +2,9 @@ use super::*;
 use crate::message_queue::{self as q, Context, Entry, Flight, Reply, Request};
 impl Ui {
     pub(super) fn history_ready(state: &State, key: &str) -> bool {
+        if state.releases.blocked(key) {
+            return false;
+        }
         if state.pending.values().any(|request| matches!(&request.action,Pending::Select(thread,_) if format!("{}:{thread}",request.backend)==key)) {return false;}
         if state
             .selected

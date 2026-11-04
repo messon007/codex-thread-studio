@@ -20,6 +20,9 @@ impl Ui {
         let state = self.state.borrow();
         let thread = state.selected.as_ref()?;
         let key = format!("{}:{}", state.backend, thread.id);
+        if state.releases.blocked(&key) {
+            return None;
+        }
         let queue = state.queues.entries.get(&key)?;
         if !state.ready
             || !state.history_verified

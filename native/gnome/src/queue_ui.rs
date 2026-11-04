@@ -184,7 +184,11 @@ impl Panel {
         );
         self.toggle.set_sensitive(entry.saving.is_none());
         if let Some(error) = &entry.error {
-            crate::i18n_ui::literal(&self.status, "label", error);
+            if error == crate::session_release::QUEUE_PAUSE {
+                crate::i18n_ui::bind(&self.status, "label", crate::session_release::QUEUE_PAUSE);
+            } else {
+                crate::i18n_ui::literal(&self.status, "label", error);
+            }
         } else {
             crate::i18n_ui::bind(
                 &self.status,

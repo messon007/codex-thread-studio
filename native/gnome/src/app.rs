@@ -141,6 +141,8 @@ mod session_map_controller;
 #[cfg(debug_assertions)]
 #[path = "session_map_sync_acceptance.rs"]
 mod session_map_sync_acceptance;
+#[path = "session_release_controller.rs"]
+mod session_release_controller;
 #[path = "session_resources_controller.rs"]
 mod session_resources_controller;
 #[cfg(debug_assertions)]
@@ -171,6 +173,10 @@ mod translation_acceptance;
 
 #[derive(Clone)]
 enum Pending {
+    Release {
+        thread: String,
+        ticket: u64,
+    },
     Agents {
         dialog: u64,
         revision: u64,
@@ -222,7 +228,9 @@ struct PendingRequest {
 impl Pending {
     fn thread(&self) -> Option<&str> {
         match self {
-            Self::Select(thread, _) | Self::Stop(thread) => Some(thread),
+            Self::Select(thread, _) | Self::Stop(thread) | Self::Release { thread, .. } => {
+                Some(thread)
+            }
             Self::Operation { thread, .. } => Some(thread),
             Self::Queue { thread, .. } => Some(thread),
             Self::Send { thread, .. } | Self::SessionMutation { thread, .. } => Some(thread),
@@ -233,6 +241,7 @@ impl Pending {
 
 #[derive(Default)]
 struct State {
+    releases: crate::session_release::Book,
     startup_generation: u64,
     startup_ready: bool,
     command_data: crate::command_data::Book,
@@ -1275,6 +1284,7 @@ fn update_menu(menu: &gio::Menu) {
     for (label, action) in [
         ("Rename session…", "rename-session"),
         ("Fork session", "fork-session"),
+        ("Release session to CLI", "release-session"),
         ("Archive session", "archive-session"),
         ("Restore archived session", "restore-session"),
         ("Delete session…", "delete-session"),
@@ -1708,6 +1718,7 @@ fn connect(ui: &Rc<Ui>) {
         ("compare", Ui::open_compare),
         ("rename-session", Ui::rename_session),
         ("fork-session", Ui::fork_session),
+        ("release-session", Ui::release_session),
         ("archive-session", Ui::archive_session),
         ("restore-session", Ui::restore_session),
         ("delete-session", Ui::delete_session),
@@ -3490,6 +3501,13 @@ impl Ui {
             if matches!(action, Pending::Select(..)) {
                 self.state.borrow_mut().loading = false;
             }
+            if let Pending::Release { thread, ticket } = &action {
+                let (backend, generation) = {
+                    let state = self.state.borrow();
+                    (state.backend.clone(), state.socket_generation)
+                };
+                self.release_result(&backend, generation, thread, *ticket, &json!({"error":{"message":"Session release could not be sent; reload before sending"}}));
+            }
             self.update_composer();
         }
     }
@@ -3615,6 +3633,7 @@ impl Ui {
                 state.connection_sequence += 1;
                 state.socket_generation = state.connection_sequence;
                 state.backend_ready.remove(&backend.id);
+                state.releases.lost(Some(&backend.id));
                 state.shells.disconnected(Some(&backend.id));
                 state.images.disconnected(Some(&backend.id));
                 state.queues.pause_backend(
@@ -3773,10 +3792,16 @@ impl Ui {
     }
 
     fn refresh(self: &Rc<Self>) {
+        let key = self.composer_key().unwrap_or_default();
+        if self.state.borrow().releases.phase(&key) == Some(crate::session_release::Phase::Pending)
+        {
+            return;
+        }
+        let resume = self.state.borrow_mut().releases.reload(&key);
         self.catalog(false);
         let selected = self.state.borrow().selected.clone();
         if let Some(thread) = selected {
-            self.read_session(&thread.id, false);
+            self.read_session(&thread.id, resume);
         }
     }
 
@@ -3967,6 +3992,19 @@ impl Ui {
     }
 
     fn read_session(&self, thread: &str, resume: bool) {
+        {
+            let mut state = self.state.borrow_mut();
+            if state
+                .releases
+                .blocked(&format!("{}:{thread}", state.backend))
+            {
+                state.loading = false;
+                state.history_verified = false;
+                drop(state);
+                self.update_composer();
+                return;
+            }
+        }
         if self.router.borrow().registry.is_none() {
             self.state.borrow_mut().loading = true;
             self.update_composer();
@@ -4023,6 +4061,7 @@ impl Ui {
     }
 
     fn update_composer(&self) {
+        self.render_release();
         self.render_continuation();
         self.render_supervision();
         self.sync_session_info();
@@ -4081,7 +4120,11 @@ impl Ui {
                 .and_downcast::<gio::SimpleAction>()
             {
                 action.set_enabled(
-                    !state.session_mutation && (!self.gateway_stopped.get() || name == "reconnect"),
+                    !state.session_mutation
+                        && (!self.gateway_stopped.get() || name == "reconnect")
+                        && (name != "refresh"
+                            || state.releases.phase(&key)
+                                != Some(crate::session_release::Phase::Pending)),
                 );
             }
         }
@@ -4273,6 +4316,13 @@ impl Ui {
         }
         if self.router.borrow().registry.is_none() {
             self.error("Wait for Thread Router settings to load before sending");
+            return;
+        }
+        if self
+            .composer_key()
+            .is_some_and(|key| self.state.borrow().releases.blocked(&key))
+        {
+            self.error("Session released. Reload before sending messages.");
             return;
         }
         let message = self.composer_text();
@@ -4813,6 +4863,20 @@ impl Ui {
                     return;
                 }
                 self.record_activity(&backend, &payload);
+                let thread = payload
+                    .pointer("/params/threadId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !thread.is_empty()
+                    && payload.get("method").is_some()
+                    && self
+                        .state
+                        .borrow()
+                        .releases
+                        .blocked(&format!("{backend}:{thread}"))
+                {
+                    return;
+                }
                 self.observe_cached_history(&backend, generation, &payload, &prepared);
                 if let Some(update) = prepared.command_data.as_ref() {
                     self.state
@@ -4829,6 +4893,7 @@ impl Ui {
                         state.backend_ready.insert(backend.clone());
                     } else {
                         state.backend_ready.remove(&backend);
+                        state.releases.lost(Some(&backend));
                     }
                     drop(state);
                     if ready {
@@ -4872,6 +4937,10 @@ impl Ui {
                         return;
                     }
                     let request = self.state.borrow_mut().pending.remove(&id).unwrap();
+                    if let Pending::Release { thread, ticket } = request.action {
+                        self.release_result(&backend, generation, &thread, ticket, &payload);
+                        return;
+                    }
                     if let Pending::Send {
                         information: Some(ticket),
                         ..
@@ -5074,6 +5143,7 @@ impl Ui {
                     state.backend_generations.clear();
                     state.backend_ready.clear();
                     state.pending.clear();
+                    state.releases.lost(None);
                     state.ready = false;
                     state.sending = false;
                     state.loading = false;
@@ -5097,6 +5167,7 @@ impl Ui {
                 self.update_composer();
             }
             Event::Error(error) => {
+                self.state.borrow_mut().releases.lost(None);
                 self.language.gateway_failed();
                 self.message_flow.gateway_failed();
                 let settings = self.settings.borrow().clone();
@@ -5265,6 +5336,9 @@ impl Ui {
         }
         let result = &payload["result"];
         match pending {
+            // Handoffs are dispatched with their original backend and socket
+            // generation before selected-session response routing.
+            Pending::Release { .. } => {}
             Pending::Agents { .. } => {}
             Pending::Mcp { .. } => {}
             Pending::Tools(_) => {}

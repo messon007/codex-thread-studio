@@ -142,6 +142,7 @@ mod session_directory_policy;
 mod session_hydration;
 mod session_list;
 mod session_map;
+mod session_release;
 mod startup;
 mod turn_navigation;
 #[cfg(target_os = "linux")]

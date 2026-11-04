@@ -28,13 +28,12 @@ in the validation record.
 ## Confirmed implementation gaps and next order
 
 1. **Port the newer main workflows to native controls.** The current integration
-   baseline is `38e27e0`. Its JSON jq queries, Markdown-table SQL queries and
-   explicit Codex session-release action are present in the browser client but
-   do not yet have native controls. Existing native CSV/XLSX SQL is separate.
+   baseline is `38e27e0`. Its JSON jq queries and Markdown-table SQL queries
+   are present in the browser client but do not yet have native controls.
+   Explicit Codex session release now has native controls and safeguards.
+   Existing native CSV/XLSX SQL is separate.
    Reuse the bounded Rust query services and keep the application interface GTK;
-   do not embed the browser reader as a substitute. Release must pause queued
-   work and retain a readable conversation until explicit reload without
-   interrupting another client's work.
+   do not embed the browser reader as a substitute.
 2. **Finish the control/translation and compatibility audit.** Session Resources,
    information, connections and activity inspection now have native controls and
    focused acceptance. History paging and shared transcript actions now follow
@@ -67,6 +66,52 @@ the current image workspace explicitly does not support comments, and the
 existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
+
+## Release a Codex session to the CLI
+
+The native Main menu has **Release session to CLI** for a ready, idle Codex
+conversation. Active turns, local commands, sending/queued delivery, supervision
+and Router controllers prevent release. The action is disabled for OpenCode.
+Studio pauses the source queue and sends `thread/unsubscribe`; it never sends
+`turn/interrupt`. Conversation content and the in-memory draft remain readable.
+
+The source stays blocked for writing after release, including when selected
+again or when its backend reconnects. Errors, unexpected acknowledgments and
+connection loss leave release unconfirmed rather than implicitly resuming it.
+The normal 35-second RPC timeout also leaves the guard in place. Replies belong
+to their original backend, socket generation and release ticket; a late reply
+cannot revive a released source or affect another selected conversation.
+
+Use **Refresh sessions** explicitly to reconnect the selected released source
+with `thread/resume`. Queued follow-ups remain paused until separately resumed.
+Release status, its action and the queue explanation have native language
+bindings. The guard is local to this running Studio instance; starting a new
+instance follows the normal session-loading workflow.
+
+Run the installed acceptance without touching real profiles or the user's
+desktop:
+
+```sh
+python3 scripts/smoke-gnome-session-release.py /path/to/native-bundle
+python3 scripts/smoke-gnome-session-release.py /path/to/native-bundle --language zh-CN
+```
+
+The script uses an owned headless Wayland compositor, ordinary AT-SPI controls
+and deterministic provider processes. It checks delayed replies across session
+switches, release errors and unknown statuses, actual acknowledgment expiry,
+late notifications, explicit reload, durable queues and exact draft/source
+retention. It asserts that no model turn or interrupt was sent. Application test
+hooks and a gateway override are disabled; the bundle installs to a private
+prefix containing spaces and Unicode.
+
+The final debug package passes the installed workflow in English
+(`session-release-0cm39mdb`) and Chinese (`session-release-ag_hmerd`), including
+the real timeout and late reply. All 397 native tests pass (four opt-in ignored),
+and Rust 1.92 checks all release targets. The local candidate is
+`target/gnome-native-candidate-20261104-session-release`; its
+`SESSION-RELEASE-EVALUATION.json` lives beside the package in the external QA
+directory. These are native checkpoint checks; the final optimized distribution
+and complete migration acceptance remain outstanding.
 
 ## Current main integration
 

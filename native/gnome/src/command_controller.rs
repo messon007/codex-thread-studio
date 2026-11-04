@@ -7,6 +7,13 @@ use crate::{
 impl Ui {
     pub(super) fn command_context(&self) -> Option<Context> {
         let state = self.state.borrow();
+        if state.selected.as_ref().is_some_and(|thread| {
+            state
+                .releases
+                .blocked(&format!("{}:{}", state.backend, thread.id))
+        }) {
+            return None;
+        }
         if !state.ready
             || state.loading
             || state.session_mutation

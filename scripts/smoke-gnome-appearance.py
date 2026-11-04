@@ -113,7 +113,7 @@ def main():
             with isolated_environment(environment,headless=True) as private:
                 subprocess.run(['dbus-run-session','--',*command,sys.executable,str(Path(__file__).resolve()),*sys.argv[1:]],env=private,check=True,timeout=200)
         return
-    artifacts = Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke'
+    artifacts = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke')
     artifacts.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='appearance-ui-', dir=artifacts))
     runtime.create_profile(root)
@@ -134,6 +134,10 @@ def main():
                        CODEX_HOME=str(root / 'codex'), XDG_CONFIG_HOME=str(root / 'config'),
                        XDG_DATA_HOME=str(root / 'data'), XDG_CACHE_HOME=str(root / 'cache'),
                        READER_CACHE_DIR=str(root / 'reader-cache'), GDK_BACKEND='wayland',
+                       # This historical diagram-style probe reads the retained
+                       # block adapter's picture model. Default continuous Preview
+                       # is covered separately by installed release acceptance.
+                       STUDIO_GNOME_CONTINUOUS_PREVIEW='0',
                        STUDIO_GNOME_SMOKE_DIR=str(root))
     for key in ['DISPLAY', 'XAUTHORITY']:
         environment.pop(key, None)
@@ -171,7 +175,7 @@ def main():
     assert settings['mermaid']['layout'] == 'elk'
     assert settings['mermaid']['futureDiagram'] == {'keep': True}
     print(json.dumps({'ok': True, 'artifacts': str(root), 'appearanceApi': True,
-                      'launches': results, 'unrelatedPreferences': True, 'backendCleanup': True}))
+                      'launches': results, 'unrelatedPreferences': True, 'backendCleanup': True, 'diagramAdapter': 'retained-block', 'continuousDefaultValidated': False}))
 
 
 if __name__ == '__main__':

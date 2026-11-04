@@ -216,6 +216,59 @@ impl Drop for Runtime {
         gtk::style_context_remove_provider_for_display(&self.display, &self.provider);
     }
 }
+/// Shared transcript/composer bounds; gutters sit outside the content limit.
+pub fn reading_clamp(child: &impl IsA<gtk::Widget>) -> adw::Clamp {
+    let clamp = adw::Clamp::builder()
+        .maximum_size(960)
+        .tightening_threshold(960)
+        .unit(adw::LengthUnit::Px)
+        .margin_start(24)
+        .margin_end(24)
+        .child(child)
+        .build();
+    watch_clamp(&clamp);
+    clamp
+}
+
+#[cfg(debug_assertions)]
+fn width_allocation_acceptance() -> Result<Value, String> {
+    let mut results = Vec::new();
+    for (mode, limit) in [("comfortable", 960), ("wide", 1280), ("full", i32::MAX)] {
+        let snapshot: Snapshot = serde_json::from_value(json!({
+            "revision":"a".repeat(64), "values":{"contentWidth":mode},
+            "fonts":{"ui":[],"content":[],"code":[],"workspace":[]}
+        }))
+        .map_err(|e| e.to_string())?;
+        let plan = snapshot.plan()?;
+        for available in [480, 4000] {
+            let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let mut children = Vec::new();
+            for text in ["Transcript", "Composer"] {
+                let child = gtk::Label::builder()
+                    .label(text)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .build();
+                let clamp = reading_clamp(&child);
+                clamp.set_maximum_size(plan.maximum);
+                clamp.set_tightening_threshold(plan.threshold);
+                host.append(&clamp);
+                children.push(child);
+            }
+            host.measure(gtk::Orientation::Horizontal, -1);
+            host.allocate(available, 160, -1, None);
+            let widths: Vec<i32> = children.iter().map(|child| child.width()).collect();
+            let expected = (available - 48).min(limit);
+            if widths != [expected, expected] {
+                return Err(format!(
+                    "Reading width {mode} at {available}: {widths:?}, expected {expected}"
+                ));
+            }
+            results.push(json!({"mode":mode,"available":available,"widths":widths}));
+        }
+    }
+    Ok(results.into())
+}
+
 pub fn watch_clamp(clamp: &adw::Clamp) {
     ACTIVE.with(|a| {
         if let Some(r) = a.borrow().upgrade() {
@@ -1061,6 +1114,7 @@ impl Panel {
             Ok(())
         }
         until(|| !self.busy.get() && self.snapshot.borrow().is_some()).await?;
+        let width_allocations = width_allocation_acceptance()?;
         let errors = Rc::new(RefCell::new(Vec::new()));
         let observed = errors.clone();
         let handler = self
@@ -1077,7 +1131,7 @@ impl Panel {
             let snapshot = self.snapshot.borrow().clone().unwrap();
             if snapshot.values["typography"]["contentFontSize"].as_f64() != Some(19.0)
                 || snapshot.values["contentWidth"] != "wide"
-                || clamp.maximum_size() != 1400
+                || clamp.maximum_size() != 1280
                 || snapshot.values["markdownMode"] != "reading"
                 || self.markdown.selected() != 1
             {
@@ -1088,7 +1142,7 @@ impl Panel {
                 .await?;
             self.runtime.provider.disconnect(handler);
             return Ok(
-                json!({"ok":true,"restored":true,"width":clamp.maximum_size(),"inlineCodeTypography":true}),
+                json!({"ok":true,"restored":true,"widthAllocations":width_allocations,"width":clamp.maximum_size(),"inlineCodeTypography":true}),
             );
         }
         inline.verify(false)?;
@@ -1106,7 +1160,7 @@ impl Panel {
         self.fonts[0].weight.set_selected(1);
         self.fonts[3].weight.set_selected(2);
         self.contrast.set_active(true);
-        if clamp.maximum_size() != 1000
+        if clamp.maximum_size() != 960
             || !self.dirty.get()
             || !self.save.is_sensitive()
             || self.may_close()
@@ -1117,13 +1171,13 @@ impl Panel {
         self.fonts[0].family.set_text("sans-serif; color:red");
         self.save.emit_clicked();
         until(|| !self.busy.get()).await?;
-        if !self.dirty.get() || clamp.maximum_size() != 1000 {
+        if !self.dirty.get() || clamp.maximum_size() != 960 {
             return Err("Rejected typography was applied or discarded".into());
         }
         self.fonts[0].family.set_text("\"DejaVu Sans\", sans-serif");
         self.save.emit_clicked();
         until(|| !self.busy.get()).await?;
-        if self.dirty.get() || clamp.maximum_size() != 1400 {
+        if self.dirty.get() || clamp.maximum_size() != 1280 {
             return Err(format!("Appearance save failed: {}", self.status.text()));
         }
         inline.verify(true)?;
@@ -1139,7 +1193,7 @@ impl Panel {
         self.dialog.remove(&sample);
         let late = adw::Clamp::new();
         watch_clamp(&late);
-        if late.maximum_size() != 1400 {
+        if late.maximum_size() != 1280 {
             return Err("New reading views lost the saved width".into());
         }
         let terminal = vte::Terminal::new();
@@ -1185,7 +1239,7 @@ impl Panel {
         self.reload.emit_clicked();
         confirm("Reload saved appearance?", "discard")?;
         until(|| !self.busy.get() && !self.dirty.get()).await?;
-        if self.fonts[1].size.value() != 19.0 || clamp.maximum_size() != 1000 {
+        if self.fonts[1].size.value() != 19.0 || clamp.maximum_size() != 960 {
             return Err("Reload did not apply the external appearance".into());
         }
         // Turning customization off restores GNOME font inheritance and VTE defaults.
@@ -1244,7 +1298,7 @@ impl Panel {
             ));
         }
         Ok(
-            json!({"ok":true,"explicitSave":true,"invalidRetained":true,"conflictRetained":true,"reloadCancellation":true,"closeCancellation":true,"nativeFontReset":true,"terminalFont":font.to_string(),"existingAndNewWidth":true,"inlineCodeTypography":true,"inlineCodeReset":true,"inlineCodeReuse":true,"inlineCodeSelection":true,"inlineCodeEmphasis":true,"markdownModes":modes,"defaultFontModes":true,"cssErrors":errors.borrow().len()}),
+            json!({"ok":true,"explicitSave":true,"invalidRetained":true,"conflictRetained":true,"reloadCancellation":true,"closeCancellation":true,"nativeFontReset":true,"terminalFont":font.to_string(),"existingAndNewWidth":true,"widthAllocations":width_allocations,"inlineCodeTypography":true,"inlineCodeReset":true,"inlineCodeReuse":true,"inlineCodeSelection":true,"inlineCodeEmphasis":true,"markdownModes":modes,"defaultFontModes":true,"cssErrors":errors.borrow().len()}),
         )
     }
 }

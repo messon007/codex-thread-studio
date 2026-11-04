@@ -958,17 +958,10 @@ fn build(
     composer_box.append(&router_target);
     composer_box.append(&actions);
     composer_box.add_css_class("card");
-    let composer_clamp = adw::Clamp::builder()
-        .maximum_size(1000)
-        .tightening_threshold(800)
-        .child(&composer_box)
-        .build();
+    let composer_clamp = crate::appearance_ui::reading_clamp(&composer_box);
     composer_clamp.set_margin_top(12);
-    crate::appearance_ui::watch_clamp(&composer_clamp);
     composer.add_css_class("studio-content");
     composer_clamp.set_margin_bottom(16);
-    composer_clamp.set_margin_start(24);
-    composer_clamp.set_margin_end(24);
     let status = gtk::Label::builder()
         .label("Starting Studio…")
         .xalign(0.0)

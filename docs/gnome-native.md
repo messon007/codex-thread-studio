@@ -11,7 +11,32 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
-## Current Favorites question candidate
+## Current native parity candidate
+
+The [full requirement review](gnome-native-acceptance.md) now maps the complete
+current product scope. The latest correction shares reading-width/gutter
+construction between native transcript and composer, restoring the existing
+960/1280px contract and adaptive Full mode. Run its separate optimized package:
+
+```sh
+./target/gnome-native-candidate-20261105-parity/codex-thread-studio-gnome
+```
+
+All 408 native tests and Rust 1.92 release-target checks pass. The unchanged
+shared sources retain the preceding 430 default-workspace tests, 753 web tests
+and offline audit coverage. Actual GTK allocations and two-launch appearance
+save/restart checks pass. The optimized installed workflow passes default
+continuous Preview, native language/backend/Git/viewer and diagram controls,
+source editing and cross-page Favorites without application hooks or reader
+and gateway overrides. Installation and isolated clean Ubuntu runtime loading
+also pass. Exact scope, retained old-probe failures, memory samples and source/
+executable hashes are in `NATIVE-PARITY-EVALUATION.json` beside the external
+package; see [width qualification](gnome-native-status.md#native-reading-width-parity).
+Remote CI/publication and physical desktop/provider/platform checks remain
+explicit in the [current inventory](gnome-native-status.md). Older candidates
+and the normal installation are preserved.
+
+## Previous Favorites question candidate
 
 The [Favorites source-preservation checkpoint](gnome-native-status.md#native-favorites-source-preservation)
 fixes complete-message capture, historical-page ownership and optional-question

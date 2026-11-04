@@ -480,14 +480,7 @@ pub fn factory_observed(
     factory.connect_setup(|_, object| {
         let item = object.downcast_ref::<gtk::ListItem>().unwrap();
         let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        row.set_margin_start(24);
-        row.set_margin_end(24);
-        let clamp = adw::Clamp::builder()
-            .maximum_size(1000)
-            .tightening_threshold(800)
-            .child(&row)
-            .build();
-        crate::appearance_ui::watch_clamp(&clamp);
+        let clamp = crate::appearance_ui::reading_clamp(&row);
         row.add_css_class("studio-content");
         item.set_child(Some(&clamp));
     });

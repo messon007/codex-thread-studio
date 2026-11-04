@@ -29,7 +29,9 @@ are owned by this work; the user does not need to prioritize individual features
 ## Order and parity inventory
 
 Use the [current parity inventory](gnome-native-status.md) for present gaps and
-implementation order. Native turn supervision now includes the Rust worker,
+implementation order. The [requirement review](gnome-native-acceptance.md) maps
+the complete current product scope and separates automated evidence from manual
+desktop/provider and remote CI gates. Native turn supervision now includes the Rust worker,
 explicit running-turn controls, bounded isolated evaluation and continuations,
 authoritative source/ownership checks, source/controller queue coordination,
 Router handoff and shutdown without replay. Cold target-side opt-in resolves
@@ -2093,6 +2095,15 @@ optimized table-image API fixture also passes and is included in CI.
 See [table-image coverage](gnome-native.md#native-markdown-table-images).
 Wider rendering/style/resource and physical-desktop acceptance gates still apply;
 this remains part of the full application migration.
+
+The full product review is now recorded in
+[the acceptance matrix](gnome-native-acceptance.md). Its confirmed Favorites
+source/question and reading-width corrections are implemented. The matching
+optimized parity package passes installed default continuous Preview, native
+controls/viewers/diagrams/Git, source editing and split-Turn capture; the existing
+appearance probe separately verifies real GTK bounds and save/restart behavior.
+Final remote CI and physical/provider/platform gates retain their documented
+scope. See [reading-width qualification](gnome-native-status.md#native-reading-width-parity).
 
 ## Completion and validation
 

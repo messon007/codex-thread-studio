@@ -25,47 +25,38 @@ These rows summarize implemented areas, not a claim that every interaction or
 format has reached complete parity. Exact test scope and preserved failures are
 in the validation record.
 
-## Confirmed implementation gaps and next order
+## Current review and remaining validation
 
-The current main integration baseline is `38e27e0`. Markdown-table SQL, JSON jq
-and explicit Codex session release now have native controls and safeguards.
-SQL and jq reuse the bounded shared Rust services. Existing native CSV/XLSX SQL
-retains its separate source importer and shares formatting and table controls.
+The integration baseline is main `38e27e0`. Session release, Markdown-table SQL,
+JSON jq and all application areas above have native controls over the existing
+shared Rust services. The [requirement review](gnome-native-acceptance.md) maps
+all 16 functional requirements and every product acceptance passage, including
+the product's duplicated criterion numbers, to implementation and evidence.
+Future/deferred roadmap features are not silently added to the migration scope.
 
-1. **Finish the control/translation and compatibility audit.** Session Resources,
-   information, connections and activity inspection now have native controls and
-   focused acceptance. History paging and shared transcript actions now follow
-   live language changes, with retained data/selection/draft checks. The composer's
-   accessible instruction and Router target picker/control now have matching
-   language and identity-preservation coverage. Router history captions and
-   sidebar activity/pin prefixes now have live bindings too, preserving literal
-   names, queries and state. Named HTML menu actions now pass actual AT-SPI
-   Copy, Select all and Translate activation, plus keyboard and pointer checks.
-   New session and image controls now pass installed language and portal checks,
-   preserving literal paths/names and zoom. The audited fixed
-   controls in Tables, EPUB, conversation search and Terminal now have bindings
-   and complete installed acceptance. Shared adaptive choices retain their popup
-   style and raw model values; EPUB section input survives asynchronous relayout.
-   Command palette, session status, permission choices/confirmation and diagram
-   inspectors now have bindings and installed English/Chinese debug and optimized
-   acceptance. The migration is committed locally as `5342ff9`. Review remaining
-   diagnostics against the feature inventory; string matches alone do not
-   establish complete control coverage.
-   Assess renderer limits against actual supported documents. Historical missing
-   Router execution, images, animation, recovery, EPUB search and output-paging
-   notes are superseded by later implementations.
-   Favorites source capture and original-question retrieval now have focused
-   validation below, including a history page beginning inside a Turn. Continue
-   the requirement/compatibility review; these cases do not establish complete
-   application parity.
-2. **Release acceptance.** Keep installed workflows and existing clients' checks
-   passing as gaps close; validate fresh-machine packaging and record physical
-   GNOME/input/assistive-technology and real-provider checks separately. Tests
-   continue using private profiles and document/repository copies. The matched
-   optimized pair now passes the installed checks below. Four new private
-   profiles reached conversation readiness in 2.6–4.1 seconds without the
-   earlier debug startup timeout; its original cause is still not established.
-   Fresh-machine/remote CI and physical desktop checks remain separate gates.
+That review reproduced and corrected complete-message Favorites capture and
+question discovery across split history pages. The reading-width follow-up also
+aligns Comfortable/Wide with the existing 960/1280px contract and reuses one
+native layout for transcript/composer gutters. Its qualification is recorded
+below. No further unimplemented product area was confirmed by this review;
+this is not a guarantee that every interaction is defect-free.
+
+Remaining validation is explicit:
+
+1. Keep matched package, existing-client checks and focused regressions current
+   as corrections close. The final width package and default continuous-reader
+   workflow now pass their installed checks below; prior optimized checkpoints
+   remain preserved.
+2. Remote GNOME CI has not run. Publishing the new workflow was rejected because
+   the available GitHub token lacks `workflow` scope. Earlier SSH publication
+   also failed. Local implementation/testing does not establish remote CI or
+   macOS/Windows runtime acceptance.
+3. Physical GNOME launcher/notifications, real IME/Orca, fractional scaling,
+   multiple monitors, voice quality and real-provider compatibility remain
+   manual checks. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
+   runtime startup have their narrower documented scope. Four new private
+   profiles reached conversation readiness in 2.6–4.1 seconds; the earlier
+   isolated debug startup timeout's original cause remains unestablished.
 
 Image-region comments and advanced review comments are not assumed parity gaps:
 the current image workspace explicitly does not support comments, and the
@@ -1172,3 +1163,51 @@ packaged files match the previous candidate. The broader installed workflow
 results still refer to `native-flow-prefix-20261103`; they were not rerun for
 this focused opt-in adapter fix. Both bundles and the default installation are
 preserved. See the [selection-lifecycle follow-up](gnome-native.md#selection-lifecycle-follow-up).
+
+## Native reading width parity
+
+Comfortable and Wide now use the existing 960px and 1280px reading bounds.
+Full uses the available width. A shared GTK reading-clamp constructor owns the
+external 24px gutters and subscribes to the existing appearance runtime for both
+transcript rows and the composer. Previously the transcript counted its gutters
+inside its cap while the composer counted them outside, and their maxima were
+1000/1400. Native widths now use logical pixels consistently with the existing
+client; font size and GTK interaction remain native.
+
+Actual GTK allocations verify both children at 432px in a 480px host, 960px or
+1280px at a 4000px host, and 3952px for Full at that host width. The existing
+appearance fixture verifies each mode before and after restart, explicit Save,
+rejected input, external preference conflicts, dirty-state cancellation, font
+reset and original saved diagram settings. Its historical diagram assertions
+explicitly exercise the retained block adapter; they do not qualify default
+continuous Preview. The latter is checked separately through installed release
+controls. The fixture now accepts the same external QA directory as other
+native workflows.
+
+All 408 native tests and Rust 1.92 release-target checks pass. The preceding
+question-lookup checkpoint's 430 default-workspace tests, 753 web tests and
+offline dependency audit remain applicable to the unchanged shared gateway,
+reader and browser sources. Matching package qualification and exact failure
+scope are recorded in the external parity evaluation, rather than treating an
+unpackaged diagram probe or an old adapter assumption as a renderer regression.
+
+
+The optimized candidate is `target/gnome-native-candidate-20261105-parity`.
+Its installed `release-ui-v5y4aiwb` passes default continuous Preview and exact
+cross-block Copy, Preview/Source/Edit and saves, language/backend settings,
+connection/activity views, Git, viewer returns, PDF/EPUB/passive HTML, table/image
+controls and all four math/diagram engines at 400% zoom. No application hooks,
+gateway override or continuous-reader override are used by this installed check.
+A further installed split-Turn Favorites check passes after the layout change.
+The standalone installer and clean extracted Ubuntu runtime CLI/dependency check
+also pass. These checks retain the user's default installation and older bundles.
+
+`NATIVE-PARITY-EVALUATION.json` beside the external package records executable and
+source identities, the two-launch debug appearance probe, installed optimized
+results, memory samples and inherited shared-source test scope. It also preserves
+the earlier appearance timeouts and corrects their initial attribution: the bare
+debug directory did have a worker; the historical diagram signature probe was
+incompatible with default continuous Preview. Its corrected retained-adapter
+scope and the successful installed default path are recorded separately. The
+[requirement review](gnome-native-acceptance.md) now has no confirmed remaining
+implementation correction; the remote/physical/provider gates above remain.

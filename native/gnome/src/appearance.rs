@@ -231,9 +231,9 @@ impl Snapshot {
             return Err("Invalid appearance revision".into());
         }
         let (maximum, threshold) = match self.values["contentWidth"].as_str() {
-            None | Some("comfortable") => (1000, 800),
-            Some("wide") => (1400, 1100),
-            Some("full") => (8192, 8192),
+            None | Some("comfortable") => (960, 960),
+            Some("wide") => (1280, 1280),
+            Some("full") => (i32::MAX, i32::MAX),
             _ => return Err("Invalid reading width".into()),
         };
         let markdown = match self.values.get("markdownMode").filter(|v| !v.is_null()) {
@@ -415,8 +415,8 @@ mod tests {
         let plan = Plan {
             css: String::new(),
             contrast: false,
-            maximum: 1000,
-            threshold: 800,
+            maximum: 960,
+            threshold: 960,
             code: Some(("Font \"quote\" & <literal>,monospace".into(), 15.0, 600)),
             markdown: MarkdownMode::Technical,
             diagram: Default::default(),
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn default_plan_and_family_escaping_are_bounded() {
         let base:Snapshot=serde_json::from_value(serde_json::json!({"revision":"a".repeat(64),"values":{"contentWidth":"wide","typography":null},"fonts":{"ui":[],"content":[],"code":[],"workspace":[]}})).unwrap();
-        assert_eq!(base.plan().unwrap().maximum, 1400);
+        assert_eq!(base.plan().unwrap().maximum, 1280);
         assert!(!base.plan().unwrap().css.contains("font-family"));
         let mut invalid = base;
         invalid.values["contentWidth"] = serde_json::json!("unbounded");

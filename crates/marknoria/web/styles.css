@@ -185,7 +185,7 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 .column-selection-hint { font-size: 11px; color: var(--reader-faint); }
 .reader-shell .column-panel-footer button { background: var(--reader-brand); border-color: var(--reader-brand); color: #fff; font-size: 12px; padding: 5px 14px; }
 .reader-shell .column-panel-footer button:hover:not(:disabled) { background: var(--brand-hover,#066b60); color: #fff; }
-.reader-shell .page .table-content { overflow: auto; overscroll-behavior: contain; max-height: var(--table-viewport-height,65vh); max-width: none; width: 100%; border: 1px solid var(--reader-border); border-radius: 0 0 9px 9px; scrollbar-color: #bac8ce var(--reader-soft); scrollbar-width: thin; }
+.reader-shell .page .table-content { position: relative; overflow: auto; overscroll-behavior-x: contain; overscroll-behavior-y: auto; max-height: var(--table-viewport-height,65vh); max-width: none; width: 100%; border: 1px solid var(--reader-border); border-radius: 0 0 9px 9px; scrollbar-color: #bac8ce var(--reader-soft); scrollbar-width: thin; }
 .reader-shell .page table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: max(100%,calc(var(--columns) * var(--column-width))); font-size: 13px; line-height: 1.6; }
 .reader-shell .page th,.reader-shell .page td { width: var(--column-width); border: 0; border-right: 1px solid #e5ebee; border-bottom: 1px solid #e1e8eb; padding: 9px 12px; vertical-align: top; overflow-wrap: anywhere; text-align: left; }
 .reader-shell .page th { position: sticky; top: 0; z-index: 1; background: var(--reader-soft); color: var(--reader-muted); font-size: 12px; font-weight: 600; padding: 10px 12px; border-bottom-color: var(--reader-border); }
@@ -371,3 +371,14 @@ html[data-theme="dark"] :is(.notes-dialog,.notes-toolbar) { --reader-panel:#171d
 html[data-theme="dark"] .notes-dialog { --notes-soft:#1e2730; --notes-muted:#a2b3bd; --notes-brand:#53c7b5; --notes-brand-soft:#173b38; }
 html[data-theme="dark"] .notes-dialog .notes-primary { color:#111a1f; }
 @media(max-width:620px) { .notes-workspace { grid-template-columns:1fr; grid-template-rows:minmax(100px,30%) minmax(0,1fr); } .notes-list { border-right:0; border-bottom:1px solid var(--reader-border,#d5dee2); display:flex; gap:8px; } .notes-list .note-row { min-width:180px; max-width:240px; margin:0; } .notes-detail { padding:14px; } .notes-dialog .notes-danger { margin-left:0; } .notes-heading { padding:12px 14px; } }
+
+.reader-shell .table-content > table :is(th,td) { width:auto; }
+.table-column-resize { position: absolute; top: 0; width: 8px; z-index: 2; cursor: col-resize; touch-action: none; }
+.table-column-resize:hover,.table-column-resize:focus-visible { background: var(--reader-brand-soft); outline: 1px solid var(--reader-brand); }
+.table-resizing,.table-resizing * { cursor: col-resize !important; user-select: none; }
+.table-content.has-horizontal-overflow { padding-bottom: 18px; }
+.table-scrollbar { position: absolute; z-index: 3; height: 18px; padding-block: 4px; border: 1px solid var(--reader-border); border-radius: 4px; background: var(--reader-soft); touch-action: none; }
+.table-scrollbar-thumb { height: 8px; border-radius: 5px; background: var(--reader-faint); }
+.table-scrollbar:hover .table-scrollbar-thumb,.table-scrollbar:focus-visible .table-scrollbar-thumb { background: var(--reader-muted); }
+.table-measurement { position: fixed; left: 0; top: 0; visibility: hidden; pointer-events: none; width: max-content; }
+.reader-shell .column-width-reset { width: 100%; margin-top: 8px; }

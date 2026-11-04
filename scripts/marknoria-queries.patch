@@ -728,7 +728,7 @@ index 8bca7b0..8f08482 100644
          .get(1)
 diff --git a/crates/marknoria/src/table_query.rs b/crates/marknoria/src/table_query.rs
 new file mode 100644
-index 0000000..488d3c9
+index 0000000..3c32887
 --- /dev/null
 +++ b/crates/marknoria/src/table_query.rs
 @@ -0,0 +1,561 @@

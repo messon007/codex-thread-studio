@@ -319,7 +319,7 @@ impl Queries {
             self.input = None;
             self.input = Some(build_input(parent, index, table, &cancelled)?);
         }
-        let db = Connection::open_with_flags(
+        let mut db = Connection::open_with_flags(
             self.input
                 .as_ref()
                 .unwrap()

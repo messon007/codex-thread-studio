@@ -11,8 +11,21 @@ import os
 import time
 
 
+def _virtual_monitor_args(monitors):
+    import re
+    if not isinstance(monitors,(tuple,list)) or not 1<=len(monitors)<=2:
+        raise RuntimeError('Private Shell requires one or two bounded virtual monitors')
+    result=[]
+    for monitor in monitors:
+        match=re.fullmatch(r'(\d{3,4})x(\d{3,4})',monitor) if isinstance(monitor,str) else None
+        if not match or not (1280<=int(match[1])<=3840 and 720<=int(match[2])<=2160):
+            raise RuntimeError('Virtual monitor geometry exceeds the private fixture bounds')
+        result+=['--virtual-monitor',monitor]
+    return result
+
+
 @contextmanager
-def owned_gnome_shell(root):
+def owned_gnome_shell(root, monitors=('1600x1000',)):
     """Run one real GNOME Shell on the caller's private bus and Wayland runtime.
 
     Reuse this for desktop activation, IME and accessibility acceptance. It must
@@ -25,12 +38,13 @@ def owned_gnome_shell(root):
             or not runtime.is_dir() or os.environ.get('XDG_CONFIG_HOME') != str(root/'config')):
         raise RuntimeError('GNOME Shell requires the owned session bus, runtime and configuration')
     from gi.repository import Gio, GLib
+    monitor_args = _virtual_monitor_args(monitors)
     previous = os.environ.get('WAYLAND_DISPLAY')
     os.environ['WAYLAND_DISPLAY'] = 'studio-shell'
     controlled = None
     with (root/'gnome-shell.log').open('w') as log:
         shell = subprocess.Popen(['/usr/bin/gnome-shell', '--headless', '--wayland',
-            '--no-x11', '--wayland-display', 'studio-shell', '--virtual-monitor', '1600x1000'],
+            '--no-x11', '--wayland-display', 'studio-shell', *monitor_args],
             stdout=log, stderr=log, start_new_session=True)
         try:
             bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)

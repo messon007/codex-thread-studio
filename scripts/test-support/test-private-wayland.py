@@ -8,6 +8,7 @@ import tempfile
 from unittest.mock import patch
 import private_wayland
 import private_orca
+import private_displays
 
 ROOT='/tmp/studio-wayland-private-test'
 def mount(path,kind):return f'1 0 0:1 / {path} rw - {kind} private rw\n'
@@ -62,6 +63,25 @@ class OrcaOwnership(unittest.TestCase):
                     self.fail('Unexpected screen reader startup')
             spawn.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()),[])
+
+class DisplayOwnership(unittest.TestCase):
+    def test_display_configuration_rejects_an_arbitrary_compositor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError,'live owned compositor'):
+                private_displays.OwnedDisplays(directory,object())
+            self.assertEqual(list(Path(directory).iterdir()),[])
+
+    def test_display_configuration_rejects_login_bus_before_query(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(private_displays,'_input_compositor_pid',return_value=1), patch.object(private_displays.OwnedDisplays,'_bus_call') as bus:
+            with self.assertRaisesRegex(RuntimeError,'owned session bus and private profile'):
+                private_displays.OwnedDisplays(directory,object())
+            bus.assert_not_called()
+
+    def test_private_virtual_monitor_resources_are_bounded(self):
+        for monitors in [[],['1600x1000']*3,['9999x9999'],['1600x1000 --replace'],'1600x1000']:
+            with self.subTest(monitors=monitors),self.assertRaises(RuntimeError):
+                private_wayland._virtual_monitor_args(monitors)
+        self.assertEqual(private_wayland._virtual_monitor_args(('1920x1200','2560x1600')),['--virtual-monitor','1920x1200','--virtual-monitor','2560x1600'])
 
 class Teardown(unittest.TestCase):
     def test_only_exact_owned_portal_and_gvfs_mounts_are_detached(self):

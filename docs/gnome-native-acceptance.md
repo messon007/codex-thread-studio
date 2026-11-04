@@ -87,8 +87,12 @@ The real [Wayland/IBus pinyin workflow](gnome-native-status.md#native-wayland-im
 also checks a real Shell candidate popup, composition/command-menu interaction,
 Enter/Ctrl+Enter, exact committed delivery and cancellation. It reproduced and
 corrected partial-draft sending during preedit. Physical GNOME pointer/input-device
-interaction, other input engines/layouts, fractional scaling/multiple monitors,
+interaction, other input engines/layouts, physical display/driver behavior,
 physical Orca interaction and voice quality still require manual desktop acceptance.
+[Mixed-scale virtual GNOME output checks](gnome-native-status.md#mixed-scale-virtual-gnome-displays)
+now cover eight real monitor transitions at 100/125/150/200%, protocol scale/output
+events, responsive layouts and Source/draft retention, with captured window images.
+They do not establish physical hotplug, GPU/color or suspend/resume behavior.
 Actual [Orca generated-speech/keyboard checks](gnome-native-status.md#actual-orca-composer-and-menu-validation)
 now cover the composer and native Settings menu using the installed screen
 reader with a private silent speech sink; broader document/menu coverage remains

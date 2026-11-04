@@ -55,7 +55,8 @@ Remaining validation is explicit:
    macOS/Windows runtime acceptance.
 3. Physical GNOME pointer interaction, input-method/device combinations beyond
    the real IBus pinyin check below, physical Orca use beyond the automated
-   composer/menu checks below, fractional scaling, multiple monitors,
+   composer/menu checks below, physical display/GPU behavior beyond the virtual
+   mixed-scale checks below,
    voice quality and real-provider compatibility remain
    manual checks. Real Shell launcher/notification keyboard flows now pass the
    qualification below. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
@@ -1493,3 +1494,56 @@ and keyboard operations pass within that same workflow. The preceding
 `desktop-activation-0bdrc3lb` isolates the screen-reader checks. External
 `ASSISTIVE-EVALUATION.json` records exact runtime, fixture and result identities;
 remaining physical/scaling/provider/CI scopes are not inferred from these checks.
+
+
+## Mixed-scale virtual GNOME displays
+
+The unchanged optimized `ab21d4c` pair passes `desktop-activation-taexfr9o` on
+Ubuntu 26.04 GNOME Shell/Mutter 50.1 with two real headless virtual outputs
+(1920×1200 and 2560×1600). Eight keyboard-driven monitor transitions cover
+100%, 125%, 150% and 200%, including mixed scales within the same session.
+Both the compositor's temporary display state and the native toplevel's actual
+Wayland output-enter/leave and fractional `preferred_scale` events are checked.
+No `GDK_SCALE`/`GDK_DPI_SCALE` overrides simulate these transitions.
+
+```sh
+python3 scripts/smoke-gnome-desktop-activation.py /path/to/native-bundle --gnome-shell --displays
+```
+
+This reuses the installed desktop/profile/provider workflow, owned Shell/input,
+GTK accessibility client and the same native reader. The bounded display helper
+checks the display-service owner PID against that owned compositor before each
+operation. It uses Mutter's verification and temporary methods, never persistent
+monitor configuration. Monitor count and geometry are bounded; all 13 private
+input/desktop/display ownership and cleanup tests pass.
+
+Each transition checks allocated native control bounds, exact CRLF/Unicode
+Source, actual rendered Preview, menu availability and retained composer text.
+At a 960px logical window, the existing responsive reader correctly occupies
+the whole pane; closing it restores a usable composer with the exact draft.
+Split layouts and this document-only/return path both pass. Sixteen window
+screenshots are captured by GNOME's ordinary Alt+Print shortcut into the
+fixture's private home. The 125% split layout and both 200% layouts were visually
+inspected, including table/math rendering and the restored Send controls.
+Compositor actor images may be supersampled; their PNG dimensions are not used
+as a substitute for the protocol's fractional-scale value.
+
+Initial fixture failures are retained. It first incorrectly required Send while
+the responsive reader had hidden the conversation. It also treated Source text
+containing the heading as completed Preview, and an already visible Send button
+as proof that a document's delayed GTK close action had finished. The fast debug
+trace `desktop-activation-xrt8y3xj` showed a new Open before the preceding close
+activation, followed by that close affecting the new document. The final fixture
+waits for an actually mapped Preview control and a disappeared reading pane
+before the next Open. Speculative Gio-loop changes and temporary lifecycle logs
+were removed; no native application correction was needed.
+
+Single-monitor actual-Orca/launcher/notifications (`desktop-activation-qfybdk30`)
+and standalone Mutter (`desktop-activation-kgxqsrks`) pass after the shared test
+changes. Exact package/fixture/screenshot identities, negative traces and prior
+checks are in external `native-displays-20261105/DISPLAY-EVALUATION.json`.
+The current candidate remains `target/gnome-native-candidate-20261105-ime`;
+application/shared/browser sources and the complete package are unchanged.
+Physical monitor hotplug, driver/color behavior, suspend/resume and perceptual
+quality remain hardware checks, alongside broader input/voice/provider acceptance
+and remote workflow publication/CI. Virtual outputs do not establish those scopes.

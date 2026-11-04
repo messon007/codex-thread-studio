@@ -35,7 +35,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca_debug=None):
+def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca_debug=None, displays=None):
     import gi
     gi.require_version('GioUnix', '2.0')
     from gi.repository import Gio, GioUnix, GLib
@@ -237,13 +237,13 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca
             'CODEX_THREAD_STUDIO_CODEX_BIN', 'CODEX_THREAD_STUDIO_OPENCODE_BIN',
             'CODEX_THREAD_STUDIO_BACKENDS_CONFIG', 'READER_CACHE_DIR']
         values = {name: os.environ[name] for name in names if name in os.environ}
-        if interactions and os.environ.get('STUDIO_TEST_WAYLAND_TRACE')=='1':
+        if displays is not None or interactions and os.environ.get('STUDIO_TEST_WAYLAND_TRACE')=='1':
             values['WAYLAND_DEBUG']='client'
         call('UpdateActivationEnvironment', GLib.Variant('(a{ss})', (values,)), '()')
         desktop = GioUnix.DesktopAppInfo.new_from_filename(str(prefix / ('share/applications/'+APP_ID+'.desktop')))
         assert desktop and desktop.get_boolean('DBusActivatable')
         assert not has_owner(), 'Private application already running before cold activation'
-        if interactions:
+        if interactions or displays is not None:
             monitor_log=(root/'notification-bus.log').open('w')
             monitor=subprocess.Popen(['stdbuf','-oL','-eL','dbus-monitor','--session',"interface='org.gtk.Notifications'","interface='org.gtk.Actions'","interface='org.freedesktop.Application'"],stdout=monitor_log,stderr=monitor_log)
         start = time.monotonic()
@@ -264,8 +264,15 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca
         assert peer().pid == first.pid, 'File activation created another application'
         assert client.contents(composer) == DRAFT
         client.click('Close document')
+        client.wait('forwarded document actually closed',lambda:not client.find(lambda n:n.get_name()=='Close document' and client.showing(n)))
         client.wait('conversation restored', lambda: client.text('Launcher response'))
         assert client.contents(composer) == DRAFT
+        if displays is not None:
+            from private_displays import exercise_native_displays
+            leave_overview();owned.focus_only_window()
+            display_result=exercise_native_displays(displays,root,client,composer,DRAFT,keys,
+                lambda path:desktop.launch([Gio.File.new_for_path(str(path))],None))
+            shell_results['displayScaling']=dict(samples=len(display_result['samples']),sourceUnchanged=True,draftRetained=True)
         if orca_debug is not None:
             assistive_controls(client,composer)
         if interactions:
@@ -342,9 +349,13 @@ def run(prefix, root, controlled=None, shell_peer=None, interactions=False, orca
             owned.close()
 
 
-def run_with_shell(prefix, root, interactions=False, orca=False):
+def run_with_shell(prefix, root, interactions=False, orca=False, displays=False):
     from gi.repository import Gio
-    with owned_gnome_shell(root) as (shell, controlled):
+    with owned_gnome_shell(root,('1920x1200','2560x1600') if displays else ('1600x1000',)) as (shell, controlled):
+        display_control=None
+        if displays:
+            from private_displays import OwnedDisplays
+            display_control=OwnedDisplays(root,shell)
         if interactions:
             providers=Gio.Settings.new('org.gnome.desktop.search-providers')
             assert providers.set_boolean('disable-external',True)
@@ -353,9 +364,9 @@ def run_with_shell(prefix, root, interactions=False, orca=False):
         if orca:
             from private_orca import private_orca
             with private_orca(root,shell) as debug:
-                run(prefix,root,controlled,ProcessPeer(shell.pid,'/usr/bin/gnome-shell'),interactions,debug)
+                run(prefix,root,controlled,ProcessPeer(shell.pid,'/usr/bin/gnome-shell'),interactions,debug,display_control)
         else:
-            run(prefix, root, controlled, ProcessPeer(shell.pid, '/usr/bin/gnome-shell'), interactions)
+            run(prefix, root, controlled, ProcessPeer(shell.pid, '/usr/bin/gnome-shell'), interactions, displays=display_control)
 
 
 def main():
@@ -365,14 +376,17 @@ def main():
     parser.add_argument('--gnome-shell', action='store_true', help='use an owned headless GNOME Shell rather than standalone Mutter')
     parser.add_argument('--shell-interactions', action='store_true', help='verify real Shell launcher search and notification controls; requires --gnome-shell')
     parser.add_argument('--orca',action='store_true',help='check actual Orca announcements with a private silent speech module; requires --gnome-shell')
+    parser.add_argument('--displays',action='store_true',help='test temporary mixed-scale virtual monitors; requires --gnome-shell')
     args = parser.parse_args()
+    if args.displays and not args.gnome_shell:
+        parser.error('--displays requires --gnome-shell')
     if args.orca and not args.gnome_shell:
         parser.error('--orca requires --gnome-shell')
     if args.shell_interactions and not args.gnome_shell:
         parser.error('--shell-interactions requires --gnome-shell')
     resource.setrlimit(resource.RLIMIT_CORE, (0,0))
     if args.private_root:
-        return run_with_shell(args.bundle, args.private_root, args.shell_interactions, args.orca) if args.gnome_shell else run(args.bundle, args.private_root)
+        return run_with_shell(args.bundle, args.private_root, args.shell_interactions, args.orca, args.displays) if args.gnome_shell else run(args.bundle, args.private_root)
     base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or REPO/'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='desktop-activation-', dir=base))
@@ -384,6 +398,9 @@ def main():
     (prefs.parent/'gnome.json').write_text(json.dumps(dict(selectedBackend='codex', selectedSession='target', windowWidth=1280, windowHeight=900)))
     source = root/'project/desktop launch 中文 % $ ` " \\.md'
     source.write_bytes(SOURCE.encode())
+    if args.displays:
+        from private_displays import DISPLAY_SOURCE
+        (root/'project/display-scaling.md').write_bytes(DISPLAY_SOURCE.encode())
     (root/'codex-turns.json').write_text(json.dumps(dict(target=[dict(id='turn-1', status='completed', items=[dict(id='user-1', type='userMessage', content=[dict(type='text', text='Launcher question')]), dict(id='answer-1', type='agentMessage', text='Launcher response')])], other=[])))
     (root/'oc-turns.json').write_text('{}')
     for name, value in zip(['fake-codex.py','fake-opencode.py'], history.providers()):
@@ -401,6 +418,12 @@ def main():
     for key in list(env):
         if key.startswith('STUDIO_GNOME_SMOKE') or key in ['CODEX_THREAD_STUDIO_GATEWAY_BIN', 'STUDIO_GNOME_CONTINUOUS_PREVIEW']:
             env.pop(key)
+    if args.displays:
+        home=root/'home';(home/'Pictures').mkdir(parents=True,exist_ok=True)
+        (root/'config/user-dirs.dirs').write_text('XDG_PICTURES_DIR="$HOME/Pictures"\n')
+        env['HOME']=str(home)
+        for name in ['GDK_SCALE','GDK_DPI_SCALE','QT_SCALE_FACTOR','GTK_THEME']:
+            env.pop(name,None)
     if args.gnome_shell:
         env.update(XDG_CURRENT_DESKTOP='GNOME', XDG_SESSION_TYPE='wayland',
             GSETTINGS_BACKEND='memory', GNOME_SHELL_SESSION_MODE='user', LC_ALL='C.UTF-8')
@@ -420,7 +443,14 @@ def main():
             command += ['--shell-interactions']
         if args.orca:
             command += ['--orca']
-        subprocess.run(command, cwd=root, env=private, check=True, timeout=180)
+        if args.displays:
+            command += ['--displays']
+        if args.displays:
+            with (root/'private-desktop.log').open('w') as log:
+                subprocess.run(command,cwd=root,env=private,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=240)
+            print((root/'desktop-activation-result.json').read_text())
+        else:
+            subprocess.run(command, cwd=root, env=private, check=True, timeout=180)
 
 
 if __name__=='__main__':

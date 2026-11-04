@@ -11831,3 +11831,50 @@ retain their prior scope. Exact fixture/result/runtime hashes and retained
 negative evidence are in external `native-assistive-20261105/ASSISTIVE-EVALUATION.json`.
 Physical input and broader Orca/voice checks, fractional/multiple-monitor testing,
 real providers and remote workflow publication/CI remain explicit acceptance work.
+
+
+## Mixed-scale virtual-output qualification
+
+The optimized installed pair remains the exact `ab21d4c` package. In the owned
+GNOME Shell/Mutter 50.1 session, two virtual outputs advertise their actual modes
+and fractional scales. The shared display helper verifies its bus owner against
+the spawned headless compositor before every read/application call and bounds
+virtual output count/geometry. It uses the upstream [Mutter 50.1 DisplayConfig
+contract](https://github.com/GNOME/mutter/blob/50.1/data/dbus-interfaces/org.gnome.Mutter.DisplayConfig.xml)
+with verify/temporary application only. No persistent configuration or login
+compositor is used, and the native process has no GDK scale override.
+
+`desktop-activation-taexfr9o` passes eight maximized keyboard monitor transitions
+across 100%, 125%, 150% and 200%. Its observed native Wayland toplevel output and
+fractional-scale events agree with the requested compositor state. Actual GTK
+control allocations, Source/Preview, exact CRLF/Unicode content, source bytes,
+menus and retained draft pass. At 960 logical pixels, the documented adaptive
+workspace uses a document-only view; Close restores chat and its draft. Wider
+split layouts remain usable. Sixteen original window PNGs come from GNOME's
+normal Alt+Print capture into a private home/Pictures directory. The 125% split,
+200% split and 200% document/returned-chat images were inspected. Screenshot
+texture dimensions may be supersampled and do not independently prove scale;
+the actual protocol/compositor data supplies that evidence.
+
+The initial fixture expected Send to remain visible while the compact reader
+intentionally hid chat. Once corrected, premature UI assertions exposed another
+harness race: matching the document heading could read the old Source view, and
+Send was already present before a delayed GTK Close activation. The fast debug
+case `desktop-activation-xrt8y3xj` records Open generation 3 followed by another
+Open generation 4 and then Close of generation 4. The final test waits for a
+real visible Preview control and for the reader to disappear before reopening.
+The debug-with-screenshot case `desktop-activation-o5himdye` established the
+otherwise correct state transitions. Its earlier Source-mode PNGs are diagnostic,
+not promoted as correct Preview screenshots. A Gio-event-pumping hypothesis was
+not causal and was reverted. Temporary Reader lifecycle prints were removed;
+application code, common services, dependency graph and release bytes are unchanged.
+
+The existing installed actual-Orca/notification workflow `desktop-activation-qfybdk30`
+and standalone Mutter workflow `desktop-activation-kgxqsrks` pass with the stronger
+close wait and default single-monitor launch. All 13 ownership/mount tests pass.
+Existing 408 native tests (four opt-in ignored), 430 root tests and 753 web tests
+are inherited for unchanged application inputs, not rerun for test/docs changes.
+`native-displays-20261105/DISPLAY-EVALUATION.json` preserves exact identities and
+negative evidence. Real physical monitor/driver/color/hotplug/suspend testing,
+broader devices/voice/real providers and remote workflow publication/CI remain
+explicitly outside these virtual-output results. The native goal remains active.

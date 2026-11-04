@@ -146,8 +146,8 @@ test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
 // explicitly test-only items without excluding runtime code following a helper.
 function rustRuntimeSource(source) {
   // An inner file attribute gates every item, including shared fixture helpers.
-  if (source.startsWith('#![cfg(test)]\n')) return ''
-  const lines = source.split('\n')
+  const lines = source.split(/\r?\n/u)
+  if (lines[0] === '#![cfg(test)]') return ''
   let excluded = null
   let declaration = false
   return lines.map((line, index) => {
@@ -174,10 +174,13 @@ function rustRuntimeSource(source) {
 test('runtime text audit excludes only test items and retains subsequent runtime code', () => {
   const han = String.fromCodePoint(0x4e2d)
   const source = `#[cfg(test)]\nfn fixture() {\n    let text = "${han}";\n}\n#[cfg(test)]\nfn empty() {}\nfn runtime() {\n    let text = "${han}";\n}\n`
-  const runtime = rustRuntimeSource(source)
-  assert.ok(!runtime.includes('fixture'))
-  assert.ok(runtime.includes(`let text = "${han}"`))
-  assert.equal(rustRuntimeSource(`#![cfg(test)]\n${source}`), '')
+  for (const eol of ['\n', '\r\n']) {
+    const input = source.replaceAll('\n', eol)
+    const runtime = rustRuntimeSource(input)
+    assert.ok(!runtime.includes('fixture'))
+    assert.ok(runtime.includes(`let text = "${han}"`))
+    assert.equal(rustRuntimeSource(`#![cfg(test)]${eol}${input}`), '')
+  }
 })
 
 test('native and prototype runtime source contains no embedded Chinese UI text', () => {

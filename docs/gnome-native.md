@@ -11,7 +11,31 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
-## Current desktop activation candidate
+## Current validated candidate
+
+Run the optimized candidate that includes the notification activation and IME
+composition fixes:
+
+```sh
+./target/gnome-native-candidate-20261105-ime/codex-thread-studio-gnome
+```
+
+The application source is `ab21d4c`; later branch checkpoints qualify the same
+package. Actual GNOME Shell, IBus pinyin, Orca and mixed-scale virtual displays
+have recorded checks. Actual Codex 0.166.0 and OpenCode 1.18.31 also pass the
+installed native workflow with private local models. See the
+[current inventory](gnome-native-status.md) and
+[requirement review](gnome-native-acceptance.md) for exact scope and remaining
+physical/remote gates.
+
+A portable copy of this package and its archive checksum are available under
+`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz` and the
+matching `.sha256` path. Follow the
+[physical desktop check](gnome-native-desktop-check.md) to install it on Ubuntu
+26.04 or review the existing candidate. That checklist records manual results;
+it does not claim a physical desktop has passed.
+
+## Previous desktop activation candidate
 
 The real Shell launcher/notification workflow exposed a native token-loss defect:
 notification activation withdrew the notice but left the minimized window in the

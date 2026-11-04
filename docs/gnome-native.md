@@ -36,11 +36,30 @@ the literal slash command and waits for the asynchronous filter before Enter.
 Those failed artifacts remain alongside the passing run. License snapshots,
 native/shared formatting, interface catalog and shell syntax checks pass.
 
-The checkpoint resides in private `native-status-inspector-20261104`. Its
-optimized build, Rust 1.92 check and expanded installed release validation are
-still in progress. The previous optimized reader-controls candidate and default
-installation remain unchanged. This does not finish the full migration; see
-the current inventory for release, renderer and physical-desktop validation.
+The optimized build and Rust 1.92 all-release-target check also pass. Installed
+optimized `release-ui-btd85gzz` passes `--language --viewers --backends`, covering
+the new dialogs plus PDF, EPUB, structured/passive HTML original saves,
+animation, original-image handoff, source search/edit/reload, backend JSON save
+and connection diagnostics. The final manifest-only EOF cleanup leaves the
+optimized build fresh and its binary identical to the installed package.
+Unchanged gateway/web inputs and both gateway hashes retain the preceding
+264 gateway tests (one ignored), 749 web tests and Tauri Linux evidence; those
+tests were not rerun for this UI-only follow-up.
+
+```bash
+GDK_BACKEND=wayland ./target/gnome-native-candidate-20261104-status-inspector/codex-thread-studio-gnome
+```
+
+Private `native-status-inspector-20261104/STATUS-INSPECTOR-EVALUATION.json` retains
+source/package identities, failed fixture attempts and successful acceptance.
+The previous reader-controls candidate and default installation are unchanged.
+Commit `5342ff9` records the migration locally on
+`feat/ubuntu-26-04-gnome-native`. SSH authentication failed when publishing; the
+authenticated CLI credential then rejected the new workflow without `workflow`
+scope, and the GitHub connector returned 403 for branch creation. A branch push
+and remote CI remain unverified, pending suitable GitHub authorization. This
+does not finish the full migration; see the current inventory for renderer,
+pending-alignment wheel and physical-desktop validation.
 
 ## Native reader, search and terminal language controls
 

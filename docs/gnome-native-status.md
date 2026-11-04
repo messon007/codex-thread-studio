@@ -42,8 +42,8 @@ in the validation record.
    and complete installed acceptance. Shared adaptive choices retain their popup
    style and raw model values; EPUB section input survives asynchronous relayout.
    Command palette, session status, permission choices/confirmation and diagram
-   inspectors now have bindings and installed English/Chinese debug acceptance.
-   The optimized package is being qualified separately. Review remaining
+   inspectors now have bindings and installed English/Chinese debug and optimized
+   acceptance. The migration is committed locally as `5342ff9`. Review remaining
    diagnostics against the feature inventory; string matches alone do not
    establish complete control coverage.
    Assess renderer limits against actual supported documents. Historical missing
@@ -73,14 +73,24 @@ same run. No web-content process is started for these native operations.
 Two earlier fixture attempts are retained: `status` also matches the MCP
 description, so the final check uses `/status` and waits for its filtered result
 before Enter. These failures do not establish a product command-dispatch defect.
-The new code is not yet represented by the previous optimized reader-controls
-candidate. Rust 1.92 and optimized installed acceptance are in progress.
+Rust 1.92 release-target checks and the optimized build pass. Optimized installed
+`release-ui-btd85gzz` passes the expanded language/viewer/backend workflow,
+including PDF, EPUB, structured and passive HTML saves, animation, original
+image handoff, source search/edit/reload and connection diagnostics. The local
+candidate is `target/gnome-native-candidate-20261104-status-inspector`; private
+`native-status-inspector-20261104/STATUS-INSPECTOR-EVALUATION.json` retains exact
+source, binary and installed-package identities. The previous optimized
+reader-controls candidate and default installation are preserved.
 
 The shared-gateway review covers preserved default Tauri builds and Linux-only
 native dependencies, authenticated routes, bounded workspace/Map work, optional
 revision checks for legacy clients, private history-reply correlation and shared
-annotation/source preservation. This is a local development checkpoint, not a
-claim of remote CI or physical GNOME/IME/Orca/real-provider acceptance. Remaining
+annotation/source preservation. Commit `5342ff9` records the migration on
+`feat/ubuntu-26-04-gnome-native`. Publishing that branch is blocked: SSH key
+authentication failed, the GitHub CLI OAuth credential lacks `workflow` scope,
+and the connector returned 403 when creating the branch reference. No remote
+branch or CI run is claimed. This is not physical GNOME/IME/Orca/real-provider
+acceptance. Remaining
 work includes the renderer/release audit and explicit wheel interruption while a
 navigation alignment is pending. The whole-application goal remains active.
 

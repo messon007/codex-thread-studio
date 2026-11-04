@@ -24,6 +24,7 @@ mod backend_config;
 mod backend_runtime;
 mod browser_runtime;
 mod codex_app_server;
+mod codex_connection;
 #[cfg(all(target_os = "linux", debug_assertions))]
 mod dev_capture;
 #[cfg(target_os = "linux")]
@@ -4383,7 +4384,8 @@ fn build_backend_registry(
     let mut descriptors = vec![codex_descriptor];
     for backend in configured {
         let command_line = display_command(&backend.command, &backend.args);
-        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone());
+        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone())
+            .with_connection_mode(backend.connection_mode);
         descriptors.push(backend.descriptor.clone());
         instances.insert(
             backend.descriptor.id.clone(),
@@ -4762,6 +4764,7 @@ mod tests {
             },
             command: "company-launcher".to_string(),
             args: vec!["codex".to_string()],
+            connection_mode: codex_connection::ConnectionMode::Embedded,
         };
         let codex = CodexAppServer::new("codex".to_string(), runtime.clone());
         let (instances, descriptors) =

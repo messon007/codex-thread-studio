@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use crate::backend_runtime::BackendRuntime;
 #[cfg(windows)]
 use crate::backend_runtime::RuntimeFile;
+use crate::codex_connection::{unsupported_command, ConnectionMode};
 
 const INITIALIZE_REQUEST_ID: i64 = -7_301;
 const MAX_CLIENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
@@ -22,6 +23,8 @@ pub struct CodexAppServer {
     binary: Arc<str>,
     prefix_args: Arc<[String]>,
     runtime: Arc<BackendRuntime>,
+    connection_mode: Option<ConnectionMode>,
+    startup: Arc<Mutex<()>>,
     process: Arc<Mutex<Option<ProcessConnection>>>,
     events: broadcast::Sender<String>,
     lifecycle_events: broadcast::Sender<String>,
@@ -34,11 +37,14 @@ struct ProcessConnection {
     input: mpsc::Sender<String>,
     ready: bool,
     initialization: Option<Value>,
+    shared: bool,
 }
 
 impl CodexAppServer {
     pub fn new(binary: String, runtime: BackendRuntime) -> Self {
-        Self::with_prefix(binary, Vec::new(), runtime)
+        let mut server = Self::with_prefix(binary, Vec::new(), runtime);
+        server.connection_mode = None;
+        server
     }
 
     pub fn with_prefix(binary: String, prefix_args: Vec<String>, runtime: BackendRuntime) -> Self {
@@ -48,11 +54,18 @@ impl CodexAppServer {
             binary: Arc::from(binary),
             prefix_args: Arc::from(prefix_args),
             runtime: Arc::new(runtime),
+            connection_mode: Some(ConnectionMode::Embedded),
+            startup: Arc::new(Mutex::new(())),
             process: Arc::new(Mutex::new(None)),
             events,
             lifecycle_events,
             generation: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    pub fn with_connection_mode(mut self, mode: ConnectionMode) -> Self {
+        self.connection_mode = Some(mode);
+        self
     }
 
     pub fn binary(&self) -> &str {
@@ -92,18 +105,88 @@ impl CodexAppServer {
             .await
     }
 
+    async fn shared_daemon(&self) -> Result<bool, String> {
+        let mode = match self.connection_mode {
+            Some(mode) => mode,
+            None => ConnectionMode::builtin()?,
+        };
+        if mode == ConnectionMode::Embedded {
+            return Ok(false);
+        }
+        for command in [
+            &["app-server", "proxy", "--help"][..],
+            &["app-server", "daemon", "start", "--help"][..],
+        ] {
+            let args = self
+                .prefix_args
+                .iter()
+                .map(String::as_str)
+                .chain(command.iter().copied())
+                .collect::<Vec<_>>();
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                self.run_workspace_command(self.binary.as_ref(), &args, &[]),
+            )
+            .await
+            .map_err(|_| "Timed out checking Codex shared-daemon support".to_string())?
+            .map_err(|error| format!("Unable to check Codex shared-daemon support: {error}"))?;
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr);
+                if mode == ConnectionMode::Auto
+                    && output.status.code() == Some(2)
+                    && unsupported_command(&error)
+                {
+                    return Ok(false);
+                }
+                return Err(format!(
+                    "Shared Codex daemon requires a CLI with app-server daemon/proxy support: {}",
+                    error.chars().take(2048).collect::<String>()
+                ));
+            }
+        }
+        let args = self
+            .prefix_args
+            .iter()
+            .map(String::as_str)
+            .chain(["app-server", "daemon", "start"])
+            .collect::<Vec<_>>();
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(45),
+            self.run_workspace_command(self.binary.as_ref(), &args, &[]),
+        )
+        .await
+        .map_err(|_| "Timed out starting the shared Codex daemon".to_string())?
+        .map_err(|error| format!("Unable to start the shared Codex daemon: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Unable to start the shared Codex daemon: {}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(2048)
+                    .collect::<String>()
+            ));
+        }
+        Ok(true)
+    }
+
     async fn ensure_started(&self) -> Result<(), String> {
+        let _startup = self.startup.lock().await;
         if self.process.lock().await.is_some() {
             return Ok(());
         }
 
+        let shared = self.shared_daemon().await?;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let mut arguments = self
             .prefix_args
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        arguments.extend(["app-server", "--stdio", "-c", "thread_unload_delay_secs=0"]);
+        if shared {
+            arguments.extend(["app-server", "proxy"]);
+        } else {
+            arguments.extend(["app-server", "--stdio", "-c", "thread_unload_delay_secs=0"]);
+        }
         let mut command =
             self.runtime
                 .command(self.binary.as_ref(), &arguments, &[("LOG_FORMAT", "json")]);
@@ -134,6 +217,7 @@ impl CodexAppServer {
             input: input.clone(),
             ready: false,
             initialization: None,
+            shared,
         });
         self.emit(json!({
             "method": "studio/appServer/status",
@@ -141,23 +225,85 @@ impl CodexAppServer {
         }));
 
         let events = self.events.clone();
-        tokio::spawn(async move {
-            let mut stdin = stdin;
-            while let Some(line) = input_rx.recv().await {
-                if stdin.write_all(line.as_bytes()).await.is_err()
-                    || stdin.write_all(b"\n").await.is_err()
-                    || stdin.flush().await.is_err()
-                {
-                    break;
+        let (upstream_tx, mut upstream_rx) = mpsc::channel::<String>(512);
+        if shared {
+            // The official proxy carries a WebSocket byte stream over stdio,
+            // rather than JSONL. The daemon owns independent client connections.
+            let transport = tokio::io::join(stdout, stdin);
+            let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+                .max_message_size(Some(64 * 1024 * 1024))
+                .max_frame_size(Some(64 * 1024 * 1024));
+            let handshake = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio_tungstenite::client_async_with_config(
+                    "ws://localhost/",
+                    transport,
+                    Some(config),
+                ),
+            )
+            .await;
+            let socket = match handshake {
+                Ok(Ok((socket, _))) => socket,
+                error => {
+                    self.mark_stopped(generation, "shared daemon handshake failed")
+                        .await;
+                    return Err(format!("Shared Codex daemon handshake failed: {error:?}"));
                 }
-            }
-        });
+            };
+            let (mut writer, mut reader) = socket.split();
+            tokio::spawn(async move {
+                use tokio_tungstenite::tungstenite::Message as UpstreamMessage;
+                // The official byte proxy can retain stdout after its socket
+                // closes until stdin is written. Pings detect this half-close.
+                let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(5));
+                heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut last_received = tokio::time::Instant::now();
+                loop {
+                    tokio::select! {
+                        _ = heartbeat.tick() => {
+                            if last_received.elapsed() >= std::time::Duration::from_secs(30) { break; }
+                            if writer.send(UpstreamMessage::Ping(Vec::new().into())).await.is_err() { break; }
+                        }
+                        line = input_rx.recv() => {
+                            let Some(line) = line else { break };
+                            if writer.send(UpstreamMessage::Text(line.into())).await.is_err() { break; }
+                        }
+                        message = reader.next() => match message {
+                            Some(Ok(UpstreamMessage::Text(text))) => { last_received = tokio::time::Instant::now(); if upstream_tx.send(text.to_string()).await.is_err() { break; } }
+                            Some(Ok(UpstreamMessage::Ping(data))) => { last_received = tokio::time::Instant::now(); if writer.send(UpstreamMessage::Pong(data)).await.is_err() { break; } }
+                            Some(Ok(UpstreamMessage::Pong(_))) => { last_received = tokio::time::Instant::now(); }
+                            Some(Ok(UpstreamMessage::Close(_))) | Some(Err(_)) | None => break,
+                            _ => {}
+                        }
+                    }
+                }
+            });
+        } else {
+            tokio::spawn(async move {
+                let mut stdin = stdin;
+                while let Some(line) = input_rx.recv().await {
+                    if stdin.write_all(line.as_bytes()).await.is_err()
+                        || stdin.write_all(b"\n").await.is_err()
+                        || stdin.flush().await.is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if upstream_tx.send(line).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
 
         let reader_server = self.clone();
         let reader_input = input.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            while let Some(line) = upstream_rx.recv().await {
                 let value = match serde_json::from_str::<Value>(&line) {
                     Ok(value) => value,
                     Err(_) => {
@@ -194,6 +340,9 @@ impl CodexAppServer {
                 }
                 reader_server.emit(value);
             }
+            reader_server
+                .mark_stopped(generation, "App Server transport closed")
+                .await;
         });
 
         let stderr_events = self.events.clone();
@@ -255,6 +404,7 @@ impl CodexAppServer {
         };
         connection.ready = true;
         connection.initialization = Some(initialization.clone());
+        let shared = connection.shared;
         drop(process);
         self.emit(json!({
             "method": "studio/appServer/status",
@@ -263,7 +413,7 @@ impl CodexAppServer {
                 "binary": self.binary.as_ref(),
                 "generation": generation,
                 "initialization": initialization,
-                "clientCapabilities": studio_client_capabilities()
+                "clientCapabilities": studio_client_capabilities(shared)
             }
         }));
     }
@@ -287,6 +437,7 @@ impl CodexAppServer {
 
     async fn status_message(&self) -> String {
         let process = self.process.lock().await;
+        let shared = process.as_ref().is_some_and(|connection| connection.shared);
         let (state, generation, initialization) = match process.as_ref() {
             Some(connection) if connection.ready => (
                 "ready",
@@ -307,7 +458,7 @@ impl CodexAppServer {
                 "binary": self.binary.as_ref(),
                 "generation": generation,
                 "initialization": initialization,
-                "clientCapabilities": studio_client_capabilities()
+                "clientCapabilities": studio_client_capabilities(shared)
             }
         })
         .to_string()
@@ -454,8 +605,9 @@ fn is_lifecycle_message(value: &Value) -> bool {
     )
 }
 
-fn studio_client_capabilities() -> Value {
+fn studio_client_capabilities(shared: bool) -> Value {
     json!({
+        "sharedSessions": shared,
         "experimentalApi": true,
         "requestUserInput": true,
         "mcpElicitation": true,
@@ -528,6 +680,70 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn embedded_mode_does_not_probe_or_start_a_daemon() {
+        let server = CodexAppServer::with_prefix(
+            "nonexistent-fixture-binary".into(),
+            Vec::new(),
+            BackendRuntime::new(
+                std::ffi::OsString::new(),
+                crate::backend_runtime::WslSettings::default(),
+            ),
+        );
+        assert!(!server.shared_daemon().await.unwrap());
+        assert!(!studio_client_capabilities(false)["sharedSessions"]
+            .as_bool()
+            .unwrap());
+        assert!(studio_client_capabilities(true)["sharedSessions"]
+            .as_bool()
+            .unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shared_start_failure_is_reported_and_old_cli_fallback_is_explicit() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory =
+            std::env::temp_dir().join(format!("studio-daemon-probe-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let binary = directory.join("codex-fixture");
+        std::fs::write(
+            &binary,
+            r#"#!/bin/sh
+case "$*" in
+  'profile app-server proxy --help'|'profile app-server daemon start --help') exit 0 ;;
+  'profile app-server daemon start') echo 'fixture start rejected' >&2; exit 1 ;;
+  *) echo 'unexpected command' >&2; exit 42 ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let server = CodexAppServer::with_prefix(
+            binary.to_string_lossy().into_owned(),
+            vec!["profile".into()],
+            BackendRuntime::new(
+                std::env::var_os("PATH").unwrap_or_default(),
+                crate::backend_runtime::WslSettings::default(),
+            ),
+        )
+        .with_connection_mode(ConnectionMode::Auto);
+        assert!(server
+            .shared_daemon()
+            .await
+            .unwrap_err()
+            .contains("fixture start rejected"));
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\necho \"error: unrecognized subcommand 'proxy'\" >&2\nexit 2\n",
+        )
+        .unwrap();
+        assert!(!server.shared_daemon().await.unwrap());
+        let strict = server.with_connection_mode(ConnectionMode::Shared);
+        assert!(strict.shared_daemon().await.is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn rejects_initialization_messages_from_the_webview() {

@@ -107,23 +107,81 @@ project file.
 See [Add a DeepSeek Codex backend](deepseek-backend.md) for a worked example that runs an
 independent provider alongside the built-in backend.
 
-## Hand a Codex session to another client
+## Share a session with the Codex CLI
 
-When the session is idle, choose **More session actions → Release session write
-access**. Studio pauses its local queue and unsubscribes from that thread. Its
-Codex app server uses `thread_unload_delay_secs=0`, so an idle thread without
-subscribers is unloaded and releases its writer lock. Another CLI can then run
-`codex resume <thread-id>` against the same Codex home on the backend machine.
-Allow a brief moment for shutdown before resuming in the other client.
+The built-in Codex backend now uses the same local app-server daemon as recent
+Codex CLI clients. With Codex CLI 0.166.0, Studio starts the daemon idempotently
+and attaches using `codex app-server proxy`. The official proxy carries
+WebSocket frames over stdio; Studio performs the WebSocket handshake and keeps
+its JSON-RPC connection independent from each CLI connection.
+
+Studio and the CLI can stay open on the same session and submit messages. Both
+receive the session's events. Codex coordinates the shared turn; CLI queue/steer
+behavior still applies while a turn is running. Studio's own queued messages
+retain their existing queue controls.
+
+For another computer, SSH to the machine running that session and use the same
+OS user and `CODEX_HOME`:
+
+```sh
+ssh -t user@session-host 'codex resume <session-id>'
+```
+
+Use the CLI's default daemon mode for sharing. A login to the same OpenAI account
+on two separate hosts does not connect those hosts to the same local daemon.
+The SSH session runs the CLI beside Studio's backend and needs no access to the
+already-open Studio window. After updating Studio, restart it once so its old
+private app-server process can exit.
+
+Studio disconnecting or exiting only closes its proxy; it does not stop the
+shared daemon or another CLI's work. The connector sends WebSocket heartbeats
+and detects closed/stalled transports, so normal reconnect handling can resume
+after the daemon restarts. Studio does not restart or stop an existing daemon.
+
+### Choose a connection mode
+
+For the built-in backend, set `CODEX_THREAD_STUDIO_CODEX_CONNECTION` before
+starting Studio:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | Use the shared daemon when the CLI supports daemon/proxy commands; use the legacy embedded server for older CLIs. |
+| `shared` | Require daemon/proxy support. Report startup or connection failures instead of opening a private writer. |
+| `embedded` | Start Studio's independent `app-server --stdio` process. |
+
+A supported daemon failing to start is always reported. Only an older CLI's
+unsupported-command response allows `auto` to select the embedded server.
+
+Configured providers default to `embedded` to preserve profile isolation. To
+share a configured provider, add `"connectionMode": "shared"` (or `"auto"`) to
+its `backends.json` entry. Studio preserves the command/prefix arguments when
+probing capabilities, starting the daemon and attaching the proxy. Share the
+same provider, OS user and `CODEX_HOME` with its CLI clients.
+
+### Legacy single-writer handoff
+
+For embedded mode, when the session is idle choose **More session actions →
+Release session write access**. Studio pauses its local queue and unsubscribes.
+The embedded app server uses `thread_unload_delay_secs=0`, so an idle thread
+without subscribers unloads and releases its writer lock. Another independent
+CLI can then resume it. This compatibility action requires the Studio UI;
+shared mode above supports the remote, unattended scenario.
 
 The saved conversation, draft and queued messages remain intact. Use **Reload
-session** to resume in Studio after the other writer has released the session.
-Running turns, queue submissions and supervised sessions cannot be released with
-this action. Other browser clients of the same Studio gateway share its app
-server: releasing a session releases that gateway's subscription, rather than
-creating independent writers. This is a single-writer handoff, not concurrent
-writing to the rollout file.
+session** to resume in Studio after the independent writer releases it. Running
+turns, queue submissions and supervised sessions cannot be released by this
+compatibility action.
 
-`python3 scripts/smoke-codex-handoff.py` verifies the lock with two real Codex app
-servers using a temporary Codex home and a saved fixture. It does not request
-model inference. Verified with Codex CLI 0.166.0.
+### Verification
+
+`python3 scripts/smoke-codex-shared.py` compiles the actual Studio connector
+sources in a headless harness and uses a private temporary `CODEX_HOME`, a real
+Codex CLI daemon and a local mock Responses provider. It verifies two attached
+clients writing the same thread, a Studio turn, a real `codex queue --resume`
+message, completion events on both connections and reconnection after a daemon
+restart. It also runs the connector/runtime/configuration unit tests. No real
+model service or account data is used. Verified locally with Codex CLI 0.166.0
+on Linux; the headless harness requires Cargo dependencies to be cached.
+
+`python3 scripts/smoke-codex-handoff.py` separately verifies the legacy embedded
+handoff with two independent app servers and no inference requests.

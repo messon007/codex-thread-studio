@@ -55,6 +55,14 @@ in both languages. The candidate and exact scope are in the
 Finish the feature/compatibility review against the inventory; physical desktop,
 fresh-machine and remote CI validation remain explicitly separate.
 
+The subsequent Favorites audit reproduced display-excerpt persistence and fixed
+complete-source capture, historical-page ownership and optional-question controls,
+reusing the immutable snapshot cache and shared store limits. Matched installed
+debug/release checks, 403 native tests, 273 gateway tests, Rust 1.92 and default
+Tauri checking pass. Continue with question discovery when a history page splits
+a Turn, then the remaining requirement/compatibility review; see the
+[current Favorites checkpoint](gnome-native-status.md#native-favorites-source-preservation).
+
 At the supervision checkpoint, 392 native tests and 257 headless gateway tests
 passed (four and one opt-in
 ignored respectively), with Rust 1.92 and the existing GTK3/Tauri Linux check.

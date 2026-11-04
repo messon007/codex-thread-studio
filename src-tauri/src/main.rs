@@ -1297,6 +1297,7 @@ fn gateway_router(state: GatewayState) -> Router {
         )
         .route("/studio/favorites/export", get(export_favorites))
         .route("/studio/favorites/count", get(count_favorites))
+        .route("/studio/native/favorites/limits", get(favorite_limits))
         .route(
             "/studio/favorites/{id}",
             get(get_favorite)
@@ -4221,6 +4222,10 @@ async fn list_favorites(
     .await
 }
 
+async fn favorite_limits() -> Response<Body> {
+    json_response(StatusCode::OK, &favorites::limits())
+}
+
 async fn count_favorites(State(state): State<GatewayState>) -> Response<Body> {
     run_studio_database(move || match favorites::count(&state.studio_path) {
         Ok(count) => json_response(StatusCode::OK, &serde_json::json!({ "count": count })),
@@ -5526,6 +5531,7 @@ mod tests {
                 "/studio/session-state",
                 "/studio/favorites",
                 "/studio/favorites/count",
+                "/studio/native/favorites/limits",
                 "/studio/session-map/codex/thread-1",
                 "/studio/epub/state",
             ] {
@@ -6636,6 +6642,26 @@ mod tests {
                 "tags": ["design"],
                 "createdAt": "2026-07-24T00:00:00.000Z"
             });
+            let limits = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/studio/native/favorites/limits")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(limits.status(), StatusCode::OK);
+            let limits: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(limits.into_body(), 4096)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(limits["contentBytes"], favorites::limits().content_bytes);
+            assert_eq!(limits["questionBytes"], favorites::limits().question_bytes);
+            assert_eq!(limits["bodyBytes"], MAX_FAVORITE_BODY_BYTES);
             let create = router
                 .clone()
                 .oneshot(

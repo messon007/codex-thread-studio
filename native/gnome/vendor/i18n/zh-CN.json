@@ -1743,6 +1743,7 @@
   "The outline is truncated to 2,000 sections": "目录过长，仅显示前 2000 项",
   "The path is outside the current session root": "路径位于当前会话根目录之外",
   "The project changed. Choose message permissions again.": "项目已更改，请重新选择消息权限。",
+  "The question could not be included. You can still save the response.": "无法包含这次提问，但仍可保存回复。",
   "The resource has no file target that can be opened": "资源没有可打开的文件目标",
   "The same session cannot be configured as a fallback more than once.": "同一个会话不能重复配置为 fallback。",
   "The selected content is required.": "选中内容不能为空。",

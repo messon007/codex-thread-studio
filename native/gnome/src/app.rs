@@ -2077,35 +2077,39 @@ impl Ui {
         favorites
     }
     fn save_favorite(self: &Rc<Self>, item: Arc<Item>, selection: Option<String>) {
+        let historical = self.history_pages.items();
         let source = {
             let state = self.state.borrow();
+            let displayed = historical.as_deref().unwrap_or(&state.items);
             state
                 .selected
                 .as_ref()
                 .filter(|_| {
                     !state.loading
-                        && state
-                            .items
-                            .iter()
-                            .any(|visible| Arc::ptr_eq(visible, &item))
+                        && displayed.iter().any(|visible| Arc::ptr_eq(visible, &item))
                         && state.active_turn.as_deref() != Some(item.turn_id.as_str())
                 })
                 .map(|thread| {
                     (
                         state.backend.clone(),
                         thread.clone(),
-                        state
-                            .items
+                        displayed
                             .iter()
                             .find(|question| {
                                 question.role == "You" && question.turn_id == item.turn_id
                             })
                             .map(|question| question.body.clone())
                             .unwrap_or_default(),
+                        displayed
+                            .iter()
+                            .find(|question| {
+                                question.role == "You" && question.turn_id == item.turn_id
+                            })
+                            .and_then(|question| question.output.clone()),
                     )
                 })
         };
-        let Some((mut backend, mut thread, mut question)) = source else {
+        let Some((mut backend, mut thread, mut question, mut question_source)) = source else {
             self.error("Wait for the response to finish loading before saving it");
             return;
         };
@@ -2115,6 +2119,7 @@ impl Ui {
             thread.title = origin.title.clone();
             thread.cwd = origin.root.clone();
             question = origin.question.as_ref().clone();
+            question_source = None;
             (origin.turn.clone(), origin.item.clone())
         } else {
             (item.turn_id.clone(), item.id.clone())
@@ -2128,12 +2133,10 @@ impl Ui {
             self.notice("Save or discard the current favorite before adding another");
             return;
         }
-        let excerpt = item.origin.as_ref().is_some_and(|origin| origin.excerpt)
-            || item
-                .body
-                .ends_with("… Output truncated in the native view.")
-            || item.body.starts_with("[Excerpt around the selected match]");
+        let excerpt = (item.origin.as_ref().is_some_and(|origin| origin.excerpt) || item.truncated)
+            && item.output.is_none();
         let selected = selection.is_some() || excerpt;
+        let content_source = (!selected).then(|| item.output.clone()).flatten();
         let content = selection.unwrap_or_else(|| item.body.clone());
         if content.trim().is_empty() {
             self.error("Select non-empty response text");
@@ -2163,7 +2166,11 @@ impl Ui {
                 .map(|value| value.to_string())
                 .unwrap_or_else(|_| "unknown".into()),
         };
-        library.draft(favorite);
+        library.capture(crate::favorites::Capture {
+            favorite,
+            content: content_source,
+            question: question_source,
+        });
     }
     fn open_favorite_source(self: &Rc<Self>, favorite: crate::favorites::Favorite) {
         let target = {

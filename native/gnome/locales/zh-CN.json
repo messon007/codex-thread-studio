@@ -920,5 +920,6 @@
   "Delete this session with confirmation": "确认后删除此会话",
   "None": "无",
   "Selected": "已选择",
-  "Use full access": "使用完全访问权限"
+  "Use full access": "使用完全访问权限",
+  "The question could not be included. You can still save the response.": "无法包含这次提问，但仍可保存回复。"
 }

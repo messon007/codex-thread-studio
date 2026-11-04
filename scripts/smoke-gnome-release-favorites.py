@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Installed Favorites: language changes, dirty dialogs, native Copy/save/export.
+"""Packaged Favorites: language changes, dirty dialogs, native Copy/save/export.
 
 Uses only private profiles/providers/files, the owned compositor and AT-SPI.
 There are no application test hooks, model turns or gateway-location overrides.
@@ -197,7 +197,7 @@ def run(bundle, root):
     for name in ['backend.pid', 'opencode.pid']:
         if (root / name).exists():
             assert not Path('/proc', (root / name).read_text().strip()).exists(), 'Owned provider survived'
-    result = dict(ok=True, installedPair=True, applicationHooks=False, gatewayOverride=False, nativeFavoritesLanguage=True,
+    result = dict(ok=True, packagedPair=True, installedPrefix=False, applicationHooks=False, gatewayOverride=False, nativeFavoritesLanguage=True,
                   bilingualDirtyDialogs=True, literalMetadata=True, filteredCounter=True, previewSource=True,
                   sourceDiscardGuard=True, nativeExportCancelFailureSuccess=True, localizedExportFailure=True,
                   explicitSave=True, sourceIdentityPreserved=True, independentClipboard=True, cancelRemoval=True,
@@ -215,7 +215,7 @@ def main():
     bundle = Path(args.bundle).resolve()
     if args.private_root:
         return run(bundle, Path(args.private_root))
-    base = Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke'
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='release-favorites-', dir=base))
     runtime.create_profile(root)

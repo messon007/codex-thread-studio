@@ -14,6 +14,22 @@ const MAX_CONTENT_BYTES: usize = 192 * 1024;
 const MAX_NOTE_BYTES: usize = 16 * 1024;
 const MAX_RESULTS: usize = 2_000;
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Limits {
+    pub content_bytes: usize,
+    pub question_bytes: usize,
+    pub body_bytes: usize,
+}
+
+pub fn limits() -> Limits {
+    Limits {
+        content_bytes: MAX_CONTENT_BYTES,
+        question_bytes: MAX_CONTENT_BYTES,
+        body_bytes: MAX_FAVORITE_BODY_BYTES,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Favorite {
@@ -500,6 +516,21 @@ mod tests {
         ] {
             fs::remove_file(candidate).ok();
         }
+    }
+
+    #[test]
+    fn published_limits_follow_store_validation() {
+        let bounds = limits();
+        let mut value = favorite("limits", "Bounded", &"x".repeat(bounds.content_bytes));
+        assert!(validate(&value).is_ok());
+        value.content.push('x');
+        assert!(validate(&value).is_err());
+        value.content = "answer".into();
+        value.question = "x".repeat(bounds.question_bytes);
+        assert!(validate(&value).is_ok());
+        value.question.push('x');
+        assert!(validate(&value).is_err());
+        assert_eq!(bounds.body_bytes, MAX_FAVORITE_BODY_BYTES);
     }
 
     #[test]

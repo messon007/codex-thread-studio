@@ -41,6 +41,9 @@ pub struct Favorites {
     note: gtk::TextView,
     location: gtk::Label,
     question: gtk::Label,
+    include_question: gtk::CheckButton,
+    question_expander: gtk::Expander,
+    question_issue: gtk::Label,
     save: gtk::Button,
     remove: gtk::Button,
     source: gtk::Button,
@@ -255,6 +258,17 @@ impl Favorites {
             .child(&question)
             .build()
             .ui_text("label", "Question");
+        let include_question = gtk::CheckButton::new().ui_text("label", "Also save this question");
+        let question_issue = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .visible(false)
+            .build()
+            .ui_text(
+                "label",
+                "The question could not be included. You can still save the response.",
+            );
+        question_issue.add_css_class("dim-label");
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let save = gtk::Button::new().ui_text("label", "Save");
         save.add_css_class("suggested-action");
@@ -312,6 +326,8 @@ impl Favorites {
             note_scroll.upcast_ref(),
             actions.upcast_ref(),
             location.upcast_ref(),
+            include_question.upcast_ref(),
+            question_issue.upcast_ref(),
             question_expander.upcast_ref(),
             switcher.upcast_ref(),
             views.upcast_ref(),
@@ -366,6 +382,9 @@ impl Favorites {
             note,
             location,
             question,
+            include_question,
+            question_expander,
+            question_issue,
             save,
             remove,
             source,
@@ -427,6 +446,13 @@ impl Favorites {
             }
         });
         let weak = Rc::downgrade(&ui);
+        ui.include_question.connect_toggled(move |button| {
+            if let Some(ui) = weak.upgrade() {
+                ui.question_expander.set_visible(button.is_active());
+                ui.changed();
+            }
+        });
+        let weak = Rc::downgrade(&ui);
         ui.save.connect_clicked(move |_| {
             if let Some(ui) = weak.upgrade() {
                 ui.save();
@@ -442,20 +468,23 @@ impl Favorites {
         ui.copy.connect_clicked(move |button| {
             if let Some(ui) = weak.upgrade() {
                 if let Some(value) = ui.current.borrow().as_ref() {
-                    button.clipboard().set_text(&format!(
-                        "{}{}{}",
-                        if value.question.is_empty() {
-                            String::new()
-                        } else {
-                            format!("Question:\n{}\n\n", value.question)
-                        },
-                        value.content,
-                        if value.note.is_empty() {
-                            String::new()
-                        } else {
-                            format!("\n\nNote:\n{}", value.note)
-                        }
-                    ));
+                    button.clipboard().set_text(
+                        &format!(
+                            "{}{}{}",
+                            if !ui.include_question.is_active() || value.question.is_empty() {
+                                String::new()
+                            } else {
+                                format!("Question:\n{}\n\n", value.question)
+                            },
+                            value.content,
+                            if value.note.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\n\nNote:\n{}", value.note)
+                            }
+                        )
+                        .replace('\0', "␀"),
+                    );
                 }
             }
         });
@@ -531,6 +560,14 @@ impl Favorites {
         self.title.set_sensitive(!busy);
         self.tags.set_sensitive(!busy);
         self.note.set_sensitive(!busy);
+        self.include_question.set_sensitive(
+            !busy
+                && self
+                    .current
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|favorite| !favorite.question.is_empty()),
+        );
         self.save.set_sensitive(!busy && self.dirty.get());
         self.remove
             .set_sensitive(!busy && !self.new.get() && self.current.borrow().is_some());
@@ -565,10 +602,16 @@ impl Favorites {
             .unwrap_or_default()
     }
     pub fn draft(&self, favorite: Favorite) {
+        self.prepare(Request::Preview(favorite));
+    }
+    pub fn capture(&self, source: crate::favorites::Capture) {
+        self.prepare(Request::Capture(source));
+    }
+    fn prepare(&self, request: Request) {
         let serial = self.next();
         self.detail_serial.set(serial);
         self.editor.set_sensitive(false);
-        if !self.request(serial, Request::Preview(favorite)) {
+        if !self.request(serial, request) {
             self.editor.set_sensitive(true);
         }
     }
@@ -626,7 +669,15 @@ impl Favorites {
         self.title.set_text(&favorite.title);
         self.tags.set_text(&favorite.tags.join(", "));
         self.note.buffer().set_text(&favorite.note);
-        self.question.set_text(&favorite.question);
+        self.question
+            .set_text(&favorite.question.replace('\0', "␀"));
+        self.include_question
+            .set_sensitive(!favorite.question.is_empty());
+        self.include_question
+            .set_active(!favorite.question.is_empty());
+        self.question_expander
+            .set_visible(!favorite.question.is_empty());
+        self.question_issue.set_visible(false);
         self.location.set_text(&format!(
             "{} · {} · {}",
             favorite.backend, favorite.thread_title, favorite.created_at
@@ -654,7 +705,9 @@ impl Favorites {
             && self.source_box.first_child().is_none()
         {
             if let Some(value) = self.current.borrow().as_ref() {
-                let code = self.styles.full_code("markdown", &value.content);
+                let code = self
+                    .styles
+                    .full_code("markdown", &value.content.replace('\0', "␀"));
                 code.set_vexpand(true);
                 self.source_box.append(&code);
             }
@@ -668,6 +721,9 @@ impl Favorites {
             return;
         };
         favorite.title = self.title.text().trim().into();
+        if !self.include_question.is_active() {
+            favorite.question.clear();
+        }
         favorite.tags = crate::favorites::tags(&self.tags.text());
         let buffer = self.note.buffer();
         favorite.note = buffer
@@ -902,6 +958,18 @@ impl Favorites {
             }
             Ok(Reply::Draft { favorite, preview }) if serial == self.detail_serial.get() => {
                 self.show(favorite, preview, true)
+            }
+            Ok(Reply::Captured {
+                favorite,
+                preview,
+                question_issue,
+            }) if serial == self.detail_serial.get() => {
+                self.show(favorite, preview, true);
+                if let Some(issue) = question_issue {
+                    self.question_issue
+                        .set_tooltip_text(Some(&issue.replace('\0', "␀")));
+                    self.question_issue.set_visible(true);
+                }
             }
             Ok(Reply::Saved { favorite, preview }) if serial == self.write_serial.get() => {
                 self.write_serial.set(0);

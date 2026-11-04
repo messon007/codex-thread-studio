@@ -11,6 +11,24 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
+## Current Favorites source candidate
+
+The [Favorites source-preservation checkpoint](gnome-native-status.md#native-favorites-source-preservation)
+fixes complete-message capture, historical-page ownership and optional-question
+controls found during the final parity audit. The current optimized candidate is:
+
+```sh
+./target/gnome-native-candidate-20261104-favorite-source/codex-thread-studio-gnome
+```
+
+Matching debug/release pairs pass installed Codex English, OpenCode Chinese and
+the existing Favorites library workflows; 403 native and 273 gateway tests,
+Rust 1.92 and the default Tauri Linux check pass. Exact hashes and the preceding
+failing byte comparison are in `FAVORITE-SOURCE-EVALUATION.json` beside the
+package. Remaining question-discovery, broader parity, host and publishing gates
+stay explicit in the current inventory. The older integrated candidate below is
+preserved rather than overwritten.
+
 ## Integrated optimized candidate
 
 The [optimized release checkpoint](gnome-native-status.md#optimized-integrated-release-checkpoint)
@@ -2004,8 +2022,11 @@ Implemented native workflows:
   or select response text/code/table-cell text and use its context menu. Edit
   titles, notes and tags, search the shared library, copy, switch Preview/Source,
   confirm removal and export Markdown through the native file chooser. Unsaved
-  metadata is guarded and mutations wait for their result. Truncated responses
-  are saved as labeled excerpts. Codex and OpenCode source navigation open
+  metadata is guarded and mutations wait for their result. Complete-message
+  capture reuses immutable output snapshots within the shared store's limits;
+  explicit selections remain selections and oversized responses fail visibly.
+  Question inclusion is optional, and missing/oversized question snapshots are
+  explained. Codex and OpenCode source navigation open
   read-only paged context, including sources from another configured backend or
   session, without changing the live draft. OpenCode retains up to 40 surrounding
   items on each side, including context crossing a page boundary. Exports retain

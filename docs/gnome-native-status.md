@@ -54,6 +54,9 @@ retains its separate source importer and shares formatting and table controls.
    Assess renderer limits against actual supported documents. Historical missing
    Router execution, images, animation, recovery, EPUB search and output-paging
    notes are superseded by later implementations.
+   Favorites source capture now has the focused validation below. Next verify
+   question retrieval when a history page begins inside a Turn, rather than
+   assuming the question is present among the displayed Items.
 2. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
@@ -211,6 +214,55 @@ release-target checks pass. The debug candidate is
 `target/gnome-native-candidate-20261104-reader-sql`, with source/package hashes
 and retained failure records in `READER-SQL-EVALUATION.json` beside the package.
 The following optimized checkpoint now covers the integrated pair as well.
+
+## Native Favorites source preservation
+
+The audit reproduced an actual source-loss gap in the preceding release:
+a 191,747-byte completed response was saved as a 131,111-byte display excerpt.
+The native capture now restores the original response from the existing immutable
+output snapshot on a bounded Rust worker. It preserves Markdown, Unicode, CRLF
+and NUL bytes in the shared Favorites store while keeping the visible preview
+bounded. Displayed selections remain selections. Truncation comes from structured
+metadata; literal text resembling a truncation marker remains ordinary content.
+
+Historical-page actions now validate their Item against the displayed history
+page and retain its backend/Thread/Turn/Item anchors. OpenCode keeps its original
+text-part Item ID and parent-user Turn ID. **Also save this question** controls
+both explicit Save and Copy; changing it does not write the database. Question
+inclusion is optional. An unavailable or oversized question has a visible
+explanation and can be omitted while the original response is saved. An oversized
+response fails explicitly rather than silently becoming an excerpt.
+
+The authenticated `/studio/native/favorites/limits` read returns the shared
+store's existing content, question and request-body limits. The native adapter
+does not maintain another limit constant, database or storage schema. Its
+source/preview widgets, language bindings, themes, snapshot cache, private
+Wayland harness and provider fixtures are reused. NUL is represented visibly
+in GTK source/clipboard text; persisted source bytes remain exact.
+
+All 403 native tests, 273 headless gateway tests, Rust 1.92 release-target checks
+and the existing default Tauri Linux check pass. Matching debug and optimized
+pairs pass installed Codex English and OpenCode Chinese capture checks, plus the
+existing bilingual Favorites library regression. The latter covers dirty-state
+guards, literal metadata, native export cancellation/failure/success, source
+identity, copy and removal. These checks use no application hooks, no gateway
+override and no model turns. The old failing case and corrected fixture caption/
+part-ID assumptions are retained separately from product failures.
+
+The optimized candidate is `target/gnome-native-candidate-20261104-favorite-source`.
+`FAVORITE-SOURCE-EVALUATION.json` beside its external package records exact
+source/executable hashes, four installed capture results and two packaged-library
+results. The library regression launches the packaged sibling executables;
+the capture checks additionally install into private prefixes. The older integrated package
+below remains preserved with its own, earlier scope. Complete question discovery
+across a split history Turn is still an audit item; the current successful cases
+have their question available in the displayed page.
+
+```sh
+python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle
+python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle --backend opencode --language zh-CN
+python3 scripts/smoke-gnome-release-favorites.py /path/to/native-bundle
+```
 
 ## Optimized integrated release checkpoint
 

@@ -38,8 +38,10 @@ That review reproduced and corrected complete-message Favorites capture and
 question discovery across split history pages. The reading-width follow-up also
 aligns Comfortable/Wide with the existing 960/1280px contract and reuses one
 native layout for transcript/composer gutters. Its qualification is recorded
-below. No further unimplemented product area was confirmed by this review;
-this is not a guarantee that every interaction is defect-free.
+below. The subsequent real Shell launcher/notification workflow exposed and
+corrected activation-token loss; its matching optimized qualification now
+passes below. The feature inventory is not a guarantee that every interaction
+is defect-free.
 
 Remaining validation is explicit:
 
@@ -51,9 +53,10 @@ Remaining validation is explicit:
    the available GitHub token lacks `workflow` scope. Earlier SSH publication
    also failed. Local implementation/testing does not establish remote CI or
    macOS/Windows runtime acceptance.
-3. Physical GNOME launcher/notifications, real IME/Orca, fractional scaling,
+3. Physical GNOME pointer interaction, real IME/Orca, fractional scaling,
    multiple monitors, voice quality and real-provider compatibility remain
-   manual checks. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
+   manual checks. Real Shell launcher/notification keyboard flows now pass the
+   qualification below. Private Wayland/AT-SPI, portals and extracted clean Ubuntu
    runtime startup have their narrower documented scope. Four new private
    profiles reached conversation readiness in 2.6–4.1 seconds; the earlier
    isolated debug startup timeout's original cause remains unestablished.
@@ -1298,3 +1301,74 @@ Orca or mixed-DPI test. Those remaining scopes are not inferred from D-Bus
 activation or AT-SPI editing. The isolated Shell has no login authentication agent;
 that expected warning is recorded, while its qualified run has no JS ERROR or
 CRITICAL log marker. Real-provider and remote CI/publication gates remain.
+
+## GNOME Shell launcher and notification activation
+
+Real overview search now finds the installed application and launches it with
+keyboard Enter. The fixture uses the actual Shell, installed desktop/service
+metadata and optimized/debug native executables, with no application hooks.
+External search providers are disabled in the private session's own dconf store
+before searching. The input controller still checks compositor ownership before
+any settings/control operation; the user's desktop settings are not used.
+
+This workflow reproduced a product defect missed by the earlier substitute
+notification server: activating a completion notice invoked Studio's action and
+withdrew the notice, but left the minimized window in the background. A passive
+private-bus trace showed the supplied `activation-token`; Wayland tracing proved
+that token was not used, while new `TIME0` tokens were requested instead.
+
+The notification action called `Application.activate()` inside an existing
+exported action. [GLib 2.88's implementation](https://github.com/GNOME/glib/blob/2.88.0/gio/gapplication.c#L2319)
+reenters `before_emit` with local platform data; GTK's
+[Wayland implementation](https://github.com/GNOME/gtk/blob/4.22.4/gtk/gtkapplication-wayland.c#L169)
+then replaces the pending startup token. The native fix reuses its existing
+activation signal/window handler inside the original desktop request. The same
+helper is used by cold file Open. It retains the original request's token and
+both existing-window and initial-window behavior, without a second application
+activation or a manually maintained token cache.
+
+The fixed debug package passes the complete private Shell workflow
+`desktop-activation-o55lwn35`: overview search/Enter, live file handoff, original
+Source, actual completion banner, notification-center activation, foreground
+restoration and removal, no initial-history or duplicate-completion notice, a
+fresh subsequent notice, exact draft/file retention and owned-provider cleanup.
+After closing the application, the retained notice also starts a new native
+instance and gives it focus. A final cold file Open passes too. Both notification
+actions use their supplied original Wayland tokens. No model inference is sent.
+
+```sh
+python3 scripts/smoke-gnome-desktop-activation.py /path/to/native-bundle --gnome-shell --shell-interactions
+```
+
+The real notification center is operated through its focusable notification
+entry and keyboard Enter; the banner itself is checked for title and safe
+session caption. Initial attempts incorrectly expected an AT-SPI click action
+or treated Super+N's banner-container focus as activation. Those are retained
+fixture diagnostics, separate from the later confirmed token-loss defect.
+A passive bus monitor provides exact Add/Remove/action evidence instead of
+inferring notification delivery from an application preference or counter.
+
+All 408 native tests pass (four opt-in fixtures ignored), and Rust 1.92 checks
+all release targets. The optimized package passes the full actual-Shell workflow
+`desktop-activation-nwp45ciw` using ordinary Tab/Enter navigation in the notification
+center, including retained-notice cold startup and exact original-token use for
+both actions. The earlier optimized assistive-focus run `desktop-activation-re4lpxie`
+also passes. Across the complete workflow, the passive monitor records exactly
+two AddNotification calls: none for initial history or the repeated completion.
+
+Matching optimized `desktop-activation-e5oqsg56` passes the original Mutter mode;
+`release-ui-mz_2ycix` passes installed language/backend/Git/viewer controls,
+Preview/Source/Edit and original saves, default continuous Preview and all four
+math/diagram engines at 400% zoom. The standalone installer and clean extracted
+Ubuntu dependency-loading/CLI-help checks pass too. Shared gateway/reader/browser
+sources retain their preceding verified identities, 430 default-workspace tests,
+753 web tests and offline audit scope.
+
+The current optimized candidate is
+`target/gnome-native-candidate-20261105-notification-activation`.
+`SHELL-INTERACTIONS-EVALUATION.json` beside its external package records exact
+source/binary/fixture identities, negative and positive token traces and precise
+inherited checks. The private Shell logs one signal-handler disconnect diagnostic;
+its cause remains unestablished and is retained separately. Every asserted native
+workflow completed. This headless real-Shell keyboard evidence does not qualify
+physical pointer/IME/Orca/scaling, real providers or remote CI/publication.

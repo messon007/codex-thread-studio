@@ -11,7 +11,31 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
-## Current native parity candidate
+## Current desktop activation candidate
+
+The real Shell launcher/notification workflow exposed a native token-loss defect:
+notification activation withdrew the notice but left the minimized window in the
+background. The existing window handler is now reused within the original desktop
+request for both notification actions and cold file Open, preserving its Wayland
+activation token. The separately qualified optimized package is:
+
+```sh
+./target/gnome-native-candidate-20261105-notification-activation/codex-thread-studio-gnome
+```
+
+The final real GNOME Shell workflow passes launcher search/Enter, actual completion
+banners, notification-center Tab/Enter activation, foreground restoration, duplicate
+suppression, exact draft/source retention and notification activation after process
+exit. Both actions' original tokens reach Wayland. The matching package also
+passes the original Mutter mode, installed native core/reader/viewer/Git/language
+and diagram workflow, standalone installation and isolated Ubuntu runtime startup.
+All 408 native tests and Rust 1.92 release-target checks pass. Earlier shared-source
+checks retain their exact unchanged-source scope. See
+[launcher and notification qualification](gnome-native-status.md#gnome-shell-launcher-and-notification-activation)
+and `SHELL-INTERACTIONS-EVALUATION.json` beside the external package for hashes,
+negative traces, retained Shell diagnostics and physical/provider/remote limits.
+
+## Previous native parity candidate
 
 The [full requirement review](gnome-native-acceptance.md) now maps the complete
 current product scope. The latest correction shares reading-width/gutter

@@ -413,6 +413,14 @@ struct Ui {
     state: RefCell<State>,
 }
 
+// Open and exported actions already run inside GApplication::before_emit.
+// Calling activate() here starts another before_emit with local platform data,
+// replacing the desktop's Wayland activation token. Reuse our existing window
+// handler without entering a second application request.
+fn activate_from_desktop_request(app: &adw::Application) {
+    app.emit_by_name::<()>("activate", &[]);
+}
+
 pub fn run() -> glib::ExitCode {
     let runtime = Rc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -465,7 +473,7 @@ pub fn run() -> glib::ExitCode {
             return;
         };
         if let Some(app) = weak_app.upgrade() {
-            app.activate();
+            activate_from_desktop_request(&app);
             if let Some(ui) = target.borrow().upgrade() {
                 ui.notifications.activated(&id);
             }
@@ -536,7 +544,7 @@ pub fn run() -> glib::ExitCode {
     });
     app.connect_open(move |app, files, _| {
         if controller.borrow().upgrade().is_none() {
-            app.activate();
+            activate_from_desktop_request(app);
         }
         if let Some(ui) = controller.borrow().upgrade() {
             ui.window.present();

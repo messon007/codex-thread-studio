@@ -55,6 +55,14 @@ For independent simultaneous instances, use distinct configuration directories, 
 That profile has separate settings and Studio databases; it does not automatically isolate
 the underlying Codex/OpenCode accounts or their session histories.
 
+## Use the CLI from another computer
+
+Recent Codex CLI versions and the built-in Studio backend share Codex's local
+app-server daemon. SSH to the backend host as the same user and run
+`codex resume <session-id>` with the same `CODEX_HOME`. Studio can remain open;
+you can submit messages from either client without clicking Release in Studio.
+See [shared sessions and connection modes](backend-instances.md#share-a-session-with-the-codex-cli).
+
 ## Connect from Windows
 
 Large Markdown reading is built into Studio; no separate MarkNoria installation

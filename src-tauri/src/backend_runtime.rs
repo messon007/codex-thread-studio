@@ -383,6 +383,67 @@ impl RuntimeCommand {
         })
     }
 
+    /// The CLI owns its detached service. Do not put its manager in the
+    /// Windows command job, or wait for pipe handles inherited by that service.
+    pub async fn daemon_output(mut self) -> io::Result<Output> {
+        use tokio::io::AsyncReadExt;
+        const CAPTURE_BYTES: usize = 64 * 1024;
+        let command = self
+            .command
+            .as_mut()
+            .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
+        command
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        let mut stdout_pipe = child.stdout.take().expect("piped stdout");
+        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut out_buffer = [0; 4096];
+        let mut err_buffer = [0; 4096];
+        let mut out_open = true;
+        let mut err_open = true;
+        let mut status = None;
+        let mut drain_deadline = tokio::time::Instant::now();
+        loop {
+            tokio::select! {
+                result = child.wait(), if status.is_none() => {
+                    status = Some(result?);
+                    // Drain final diagnostics, but inherited service handles
+                    // may keep these pipes open indefinitely after manager exit.
+                    drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(200);
+                }
+                result = stdout_pipe.read(&mut out_buffer), if out_open => {
+                    let bytes = result?;
+                    out_open = bytes != 0;
+                    let kept = bytes.min(CAPTURE_BYTES.saturating_sub(stdout.len()));
+                    stdout.extend_from_slice(&out_buffer[..kept]);
+                }
+                result = stderr_pipe.read(&mut err_buffer), if err_open => {
+                    let bytes = result?;
+                    err_open = bytes != 0;
+                    let kept = bytes.min(CAPTURE_BYTES.saturating_sub(stderr.len()));
+                    stderr.extend_from_slice(&err_buffer[..kept]);
+                }
+                _ = tokio::time::sleep_until(drain_deadline), if status.is_some() => break,
+            }
+            if status.is_some() && !out_open && !err_open {
+                break;
+            }
+        }
+        if let Some(cleanup) = self.cleanup.as_mut() {
+            cleanup.terminate().await?;
+        }
+        Ok(Output {
+            status: status.expect("manager exited"),
+            stdout,
+            stderr,
+        })
+    }
+
     pub async fn output(mut self) -> io::Result<Output> {
         #[cfg(all(windows, feature = "windows-native"))]
         if self.cleanup.is_none() {
@@ -697,6 +758,90 @@ mod tests {
         println!("STUDIO_NATIVE_READY");
         std::io::stdout().flush().unwrap();
         std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+
+    #[cfg(any(unix, all(windows, feature = "windows-native")))]
+    #[test]
+    fn daemon_manager_child_fixture() {
+        let Ok(directory) = std::env::var("STUDIO_DAEMON_FIXTURE_DIRECTORY") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        if std::env::var("STUDIO_DAEMON_FIXTURE_ROLE").as_deref() == Ok("manager") {
+            let _service = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend_runtime::tests::daemon_manager_child_fixture",
+                    "--nocapture",
+                ])
+                .env("STUDIO_DAEMON_FIXTURE_ROLE", "daemon")
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            return;
+        }
+        std::fs::write(directory.join("ready"), "ready").unwrap();
+        for _ in 0..600 {
+            if directory.join("stop").exists() {
+                std::fs::write(directory.join("done"), "done").unwrap();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[cfg(any(unix, all(windows, feature = "windows-native")))]
+    #[tokio::test]
+    async fn daemon_manager_output_preserves_its_detached_service() {
+        let directory =
+            std::env::temp_dir().join(format!("studio-daemon-lifecycle-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        #[cfg(all(windows, feature = "windows-native"))]
+        let runtime = BackendRuntime::native(std::env::var_os("PATH").unwrap_or_default());
+        #[cfg(unix)]
+        let runtime = BackendRuntime::new(
+            std::env::var_os("PATH").unwrap_or_default(),
+            WslSettings::default(),
+        );
+        let executable = std::env::current_exe().unwrap();
+        let output = runtime
+            .command(
+                executable.to_str().unwrap(),
+                &[
+                    "--exact",
+                    "backend_runtime::tests::daemon_manager_child_fixture",
+                    "--nocapture",
+                ],
+                &[
+                    (
+                        "STUDIO_DAEMON_FIXTURE_DIRECTORY",
+                        directory.to_str().unwrap(),
+                    ),
+                    ("STUDIO_DAEMON_FIXTURE_ROLE", "manager"),
+                ],
+            )
+            .daemon_output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !directory.join("ready").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::write(directory.join("stop"), "stop").unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !directory.join("done").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("the manager exiting must not kill its detached service");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(all(windows, feature = "windows-native"))]

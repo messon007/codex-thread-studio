@@ -24,6 +24,7 @@ mod backend_config;
 mod backend_runtime;
 mod browser_runtime;
 mod codex_app_server;
+mod codex_connection;
 #[cfg(all(target_os = "linux", debug_assertions))]
 mod dev_capture;
 #[cfg(target_os = "linux")]
@@ -1205,6 +1206,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
+            "/markdown-table-layout.mjs",
+            get(|| async {
+                javascript(include_str!("../../crates/marknoria/web/table-layout.mjs"))
+            }),
+        )
+        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
         )
@@ -1498,7 +1505,10 @@ fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
         if total > MAX_UNCOMPRESSED_BYTES {
             return Err("XLSX expanded content exceeds 200 MiB".into());
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| format!("invalid XLSX entry name: {error}"))?
+            .replace('\\', "/");
         if name == "[Content_Types].xml" {
             content_types = true;
         }
@@ -4383,7 +4393,8 @@ fn build_backend_registry(
     let mut descriptors = vec![codex_descriptor];
     for backend in configured {
         let command_line = display_command(&backend.command, &backend.args);
-        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone());
+        let server = CodexAppServer::with_prefix(backend.command, backend.args, runtime.clone())
+            .with_connection_mode(backend.connection_mode);
         descriptors.push(backend.descriptor.clone());
         instances.insert(
             backend.descriptor.id.clone(),
@@ -4762,6 +4773,7 @@ mod tests {
             },
             command: "company-launcher".to_string(),
             args: vec!["codex".to_string()],
+            connection_mode: codex_connection::ConnectionMode::Embedded,
         };
         let codex = CodexAppServer::new("codex".to_string(), runtime.clone());
         let (instances, descriptors) =
@@ -5210,6 +5222,7 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
+                "/markdown-table-layout.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",

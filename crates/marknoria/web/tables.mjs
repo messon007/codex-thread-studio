@@ -1,12 +1,21 @@
-import { tableQuery } from './table-query.mjs'
 import DOMPurify from './vendor/purify.mjs'
-import { pagerIcon } from './icons.mjs'
+import { tableControls } from './table-controls.mjs'
+import { tableLayout } from './table-layout.mjs'
+import { tableQuery } from './table-query.mjs'
 
 export function tableController(index, api, changed) {
   const items = []
   const itemForPage = []
   const states = new Map()
   const active = new Map()
+  // Session-local presentation state, isolated to this document/revision/pane.
+  const widths = new Map()
+  let queryDialog = null
+  const saveWidths = (id, value) => {
+    widths.delete(id)
+    if (value.size) widths.set(id, value)
+    if (widths.size > 256) widths.delete(widths.keys().next().value)
+  }
   for (let page = 0; page < index.pages.length; page += 1) {
     const table = index.pages[page].table
     if (table == null || page === index.tables[table].firstPage) items.push({ page, table })
@@ -32,112 +41,13 @@ export function tableController(index, api, changed) {
     const id = item.table
     const metadata = index.tables[id]
     const state = stateFor(id)
-    const controls = document.createElement('div')
-    controls.className = 'table-controls'
-    const position = document.createElement('span')
-    position.className = 'table-position'
-    const caption = document.createElement('div')
-    caption.className = 'table-caption'
-    const title = document.createElement('span')
-    title.className = 'table-label'
-    title.textContent = 'Table'
-    caption.append(title, position)
-    const actions = document.createElement('div')
-    actions.className = 'table-actions'
-    const previous = document.createElement('button')
-    previous.append(pagerIcon('previous'))
-    previous.title = 'Previous page'
-    previous.setAttribute('aria-label', 'Previous page')
-    const next = document.createElement('button')
-    next.append(pagerIcon('next'))
-    next.title = 'Next page'
-    next.setAttribute('aria-label', 'Next page')
-    const pageLabel = document.createElement('label')
-    pageLabel.className = 'table-page-label'
-    const pageInput = document.createElement('input')
-    pageInput.type = 'number'
-    pageInput.min = '1'
-    pageInput.className = 'table-page-number'
-    pageInput.setAttribute('aria-label', 'Table page')
-    const pageCount = document.createElement('span')
-    pageLabel.append(pageInput, pageCount)
-    const picker = document.createElement('details')
-    picker.className = 'column-picker'
-    const summary = document.createElement('summary')
-    summary.append(document.createTextNode('Columns'))
-    const columnCount = document.createElement('span')
-    columnCount.className = 'column-count'
-    summary.append(columnCount)
-    const panel = document.createElement('div')
-    panel.className = 'column-panel'
-    const panelTitle = document.createElement('strong')
-    panelTitle.className = 'column-panel-title'
-    panelTitle.textContent = 'Visible columns'
-    const search = document.createElement('input')
-    search.type = 'search'
-    search.placeholder = 'Find column…'
-    search.setAttribute('aria-label', 'Find column')
-    const choices = document.createElement('div')
-    choices.className = 'column-choices'
-    const all = document.createElement('button')
-    all.textContent = 'Select all'
-    const none = document.createElement('button')
-    none.textContent = 'Clear'
-    const apply = document.createElement('button')
-    apply.textContent = 'Apply'
-    const hint = document.createElement('span')
-    hint.className = 'column-selection-hint'
-    const draft = new Set(state.columns)
-    const updateSelection = () => {
-      apply.disabled = draft.size === 0
-      hint.textContent = `${draft.size} of ${metadata.columns.length} selected`
-    }
-    updateSelection()
-    const checkboxes = metadata.columns.map((name, column) => {
-      const label = document.createElement('label')
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.checked = draft.has(column)
-      checkbox.value = column
-      const number = document.createElement('span')
-      number.className = 'column-number'
-      number.textContent = column + 1
-      const text = document.createElement('span')
-      text.className = 'column-name'
-      text.textContent = name || '(unnamed)'
-      label.append(checkbox, number, text)
-      choices.append(label)
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) draft.add(column)
-        else draft.delete(column)
-        updateSelection()
-      })
-      return { label, checkbox, name: name.toLocaleLowerCase() }
-    })
-    search.addEventListener('input', () => {
-      const query = search.value.toLocaleLowerCase()
-      for (const choice of checkboxes) choice.label.hidden = !choice.name.includes(query)
-    })
-    const select = selected => {
-      for (const { checkbox } of checkboxes) checkbox.checked = selected
-      draft.clear()
-      if (selected) metadata.columns.forEach((_, column) => draft.add(column))
-      updateSelection()
-    }
-    all.addEventListener('click', () => select(true))
-    none.addEventListener('click', () => select(false))
-    const shortcuts = document.createElement('div')
-    shortcuts.className = 'column-shortcuts'
-    shortcuts.append(all, none)
-    const footer = document.createElement('div')
-    footer.className = 'column-panel-footer'
-    footer.append(hint, apply)
-    panel.append(panelTitle, search, shortcuts, choices, footer)
-    picker.append(summary, panel)
-    actions.append(previous, pageLabel, next, picker)
-    const sql = document.createElement('button'); sql.textContent = 'SQL'; sql.type = 'button'; sql.addEventListener('click', () => tableQuery(id, index, api))
+    const tools=tableControls({names:metadata.columns,selected:state.columns,label:metadata.label||'Table',bounds:()=>document.querySelector('#viewport'),onApply:columns=>{
+      state.row=anchorRow();state.columns=columns;move(state.row)
+    }})
+    const {controls,position,actions,previous,next,pageLabel,pageInput,pageCount,picker,columnCount,resetWidths}=tools
+    const sql = document.createElement('button'); sql.textContent = 'SQL'; sql.className = 'table-query-open'; sql.title = 'Query and filter all table rows'
+    sql.addEventListener('click', () => { queryDialog?.dispose(); queryDialog = tableQuery(id, index, api) })
     actions.append(sql)
-    controls.append(caption, actions)
     const content = document.createElement('div')
     content.className = 'table-content'
     content.style.setProperty('--table-page-height', `${state.height}px`)
@@ -153,6 +63,8 @@ export function tableController(index, api, changed) {
     controls.append(errorNotice)
     article.replaceChildren(controls, content)
     article.dataset.table = id
+    const layout = tableLayout(article, content, state, () => new Map(widths.get(id)), value => saveWidths(id, value), changed)
+    resetWidths.addEventListener('click', () => { picker.open = false; layout.reset() })
     article.dataset.loading = 'true'
     article.classList.remove('placeholder')
     let request
@@ -173,7 +85,7 @@ export function tableController(index, api, changed) {
     }
     const anchorRow = () => {
       if (!current || !article.dataset.ready) return state.row
-      const top = content.getBoundingClientRect().top + (content.querySelector('thead')?.getBoundingClientRect().height || 0)
+      const top = Math.max(content.getBoundingClientRect().top, article.closest('#viewport').getBoundingClientRect().top)
       const rows = [...content.querySelectorAll('tbody tr')]
       const row = rows.findIndex(row => row.getBoundingClientRect().bottom > top + 2)
       return row < 0 ? current.rowStart : current.rowStart + row
@@ -196,9 +108,11 @@ export function tableController(index, api, changed) {
         const response = await api(`/api/table?id=${id}&row=${state.row}&columns=${state.columns.join(',')}`, request.signal)
         if (generation !== ticket || !article.isConnected || response.revision !== index.revision) return
         current = response.result
+        article.dataset.selectedColumns=JSON.stringify(state.columns)
         article.style.setProperty('--columns', state.columns.length)
         columnCount.textContent = `${state.columns.length}/${metadata.columns.length}`
         content.innerHTML = DOMPurify.sanitize(current.html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'form', 'style'] })
+        layout.update()
         for (const link of content.querySelectorAll('a')) { link.target = '_blank'; link.rel = 'noopener noreferrer' }
         for (const row of content.querySelectorAll('tr[data-source-line]')) row.title = `Source line ${row.dataset.sourceLine}`
         position.textContent = `${(current.totalRows ? current.rowStart + 1 : 0).toLocaleString()}–${current.rowEnd.toLocaleString()} of ${current.totalRows.toLocaleString()} rows`
@@ -219,11 +133,6 @@ export function tableController(index, api, changed) {
         article.dataset.ready = 'true'
         changed(article)
         retainHeight()
-        const target = content.querySelectorAll('tbody tr')[state.row - current.rowStart]
-        if (target) {
-          const headerHeight = content.querySelector('thead')?.getBoundingClientRect().height || 0
-          content.scrollTop += target.getBoundingClientRect().top - content.getBoundingClientRect().top - content.clientTop - headerHeight
-        }
       } catch (error) {
         if (generation !== ticket || error.name === 'AbortError' || !article.isConnected) return
         loading = false
@@ -249,38 +158,11 @@ export function tableController(index, api, changed) {
       const page = Math.min(Number(pageInput.max), Math.max(1, Math.trunc(Number(pageInput.value)) || 1))
       move((page - 1) * current.pageSize)
     })
-    apply.addEventListener('click', () => {
-      state.row = anchorRow()
-      state.columns = [...draft].sort((left, right) => left - right)
-      picker.open = false
-      move(state.row)
-    })
-    const closePicker = () => { picker.open = false }
-    const outside = event => { if (picker.open && !picker.contains(event.target)) closePicker() }
-    const escape = event => { if (event.key === 'Escape' && picker.open) { closePicker(); summary.focus() } }
-    const placePicker = () => {
-      if (!picker.open) return
-      const bounds = summary.getBoundingClientRect()
-      const viewport = article.closest('#viewport').getBoundingClientRect()
-      const below = viewport.bottom - bounds.bottom - 16
-      const above = bounds.top - viewport.top - 16
-      const upward = below < 340 && above > below
-      picker.dataset.side = upward ? 'above' : 'below'
-      panel.style.maxHeight = `${Math.min(430, Math.max(150, upward ? above : below))}px`
-    }
-    picker.addEventListener('toggle', () => {
-      if (picker.open) {
-        for (const open of article.closest('.reader-shell').querySelectorAll('.column-picker[open]')) if (open !== picker) open.open = false
-        placePicker()
-      }
-    })
-    document.addEventListener('pointerdown', outside)
-    document.addEventListener('keydown', escape)
-    active.set(article, { anchor: anchorRow, capture: () => { state.row = anchorRow() }, refresh: () => { if (requestedRow !== requestKey()) load(); placePicker() }, stop: () => {
+    active.set(article, { position: layout.position, anchor: anchorRow, capture: () => { state.row = anchorRow() }, refresh: () => { if (requestedRow !== requestKey()) load(); layout.refresh(); tools.refresh() }, stop: () => {
       ticket += 1
       request?.abort()
-      document.removeEventListener('pointerdown', outside)
-      document.removeEventListener('keydown', escape)
+      layout.dispose()
+      tools.dispose()
     } })
     load()
   }
@@ -290,7 +172,8 @@ export function tableController(index, api, changed) {
     anchor(article) { return active.get(article)?.anchor() ?? 0 },
     capture(article) { active.get(article)?.capture() },
     refresh(article) { active.get(article)?.refresh() },
+    position() { for (const controller of active.values()) controller.position() },
     prune() { for (const [article, controller] of active) if (!article.isConnected) { controller.stop(); active.delete(article) } },
-    dispose() { for (const controller of active.values()) controller.stop(); active.clear() },
+    dispose() { queryDialog?.dispose(); for (const controller of active.values()) controller.stop(); active.clear() },
   }
 }

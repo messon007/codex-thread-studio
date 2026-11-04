@@ -55,7 +55,21 @@ git diff -- .github/upstream-watch.json
 ```
 
 Commit the accepted baseline together with any required adapter, fixture, or documentation changes.
-The next healthy scheduled run closes the existing review Issue. Do not edit a hash by hand unless
+The next healthy scheduled run closes the existing review Issue.
+
+Deterministic session smoke tests are available without live provider credentials:
+
+```bash
+python3 scripts/smoke-codex-shared.py
+STUDIO_OPENCODE_BIN=/path/to/opencode node scripts/smoke-opencode-session.mjs
+```
+
+They use private temporary state and local mock providers. The Codex check tests
+Studio's production Rust connector plus the actual CLI; the OpenCode check tests
+Studio's protocol adapter, SSE and session lifecycle. Neither upgrades the user's
+installed runtime. See [the 2026-11-04 review](ecosystem-review-2026-11-04.md) for
+the reviewed contract differences, audit fixes and maintenance risk assessment.
+ Do not edit a hash by hand unless
 it was generated and compared from the exact accepted binaries.
 
 To inspect without accepting anything:

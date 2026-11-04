@@ -24,13 +24,14 @@ export function tableLayout(article, content, state, readWidths, saveWidths, cha
   // A transformed virtual article offsets CSS sticky positioning. Keep the
   // control in the stable workspace and place it after virtualizer layout.
   workspace.append(track)
-  let table, cols = [], selected = [], natural = [], handles = [], manual = readWidths()
+  let table, group = null, cols = [], selected = [], natural = [], handles = [], manual = readWidths()
   let drag = null, thumbDrag = null, layoutKey = '', stopped = false
   const options = { signal: signal.signal }
   // WebKit does not expose a layout box for <col>; measure real header cells.
   const widths = () => [...table.rows[0].cells].map(cell => cell.getBoundingClientRect().width)
   const key = () => `${content.clientWidth}:${getComputedStyle(shell).getPropertyValue('--column-width')}:${shell.classList.contains('no-wrap')}`
   const rows = () => [...(table?.tBodies[0]?.rows || [])]
+  const samples = () => Array.from({ length: Math.min(table.rows.length, 200) }, (_, row) => table.rows[row])
   const anchor = y => rows().find(row => row.getBoundingClientRect().bottom > y) || null
   function keepRow(row, update) {
     const top = row?.getBoundingClientRect().top
@@ -69,6 +70,7 @@ export function tableLayout(article, content, state, readWidths, saveWidths, cha
     const sizes = natural.map(width => Math.max(64, Math.min(limit, width)))
     if (!manual.size) {
       const flexible = natural.flatMap((width, i) => width > limit ? [i] : [])
+      if (context.fillWidth && !flexible.length) flexible.push(...natural.map((_, i) => i))
       const spare = Math.max(0, content.clientWidth - sizes.reduce((a, b) => a + b, 0))
       for (const i of flexible) sizes[i] += spare / flexible.length
     }
@@ -114,9 +116,10 @@ export function tableLayout(article, content, state, readWidths, saveWidths, cha
     measure.className = 'table-measurement'
     const sample = document.createElement('table')
     sample.style.cssText = 'width:max-content;table-layout:auto'
-    for (const source of table.rows) {
+    for (const source of samples()) {
       const cell = source.cells[column]?.cloneNode(true)
       if (!cell) continue
+      if (cell.textContent.length > 16384) cell.textContent = cell.textContent.slice(0, 16384)
       cell.style.cssText = 'width:auto;min-width:0;max-width:none;white-space:pre;overflow:visible'
       sample.insertRow().append(cell)
     }
@@ -218,15 +221,16 @@ export function tableLayout(article, content, state, readWidths, saveWidths, cha
       // loading. Their widths must keep the IDs of the displayed projection.
       selected = [...state.columns]
       handles.forEach(handle => handle.remove())
-      const group = document.createElement('colgroup')
+      group?.remove()
+      group = document.createElement('colgroup')
       cols = selected.map(() => group.appendChild(document.createElement('col')))
       table.prepend(group)
       const canvas = document.createElement('canvas').getContext('2d')
       const font = getComputedStyle(table.querySelector('td') || table.querySelector('th')).font
       canvas.font = font
-      natural = selected.map((_, column) => Math.max(64, ...[...table.rows].map(row => {
+      natural = selected.map((_, column) => Math.max(64, ...samples().map(row => {
         const cell = row.cells[column]
-        return Math.min(MAX, Math.max(...cell.textContent.split('\n').map(line => canvas.measureText(line).width)) + 25)
+        return Math.min(MAX, Math.max(...cell.textContent.slice(0, 16384).split('\n').map(line => canvas.measureText(line).width)) + 25)
       })))
       handles = selected.map((original, column) => {
         const handle = document.createElement('div')
@@ -257,6 +261,6 @@ export function tableLayout(article, content, state, readWidths, saveWidths, cha
     },
     position: sync,
     refresh() { if (table && layoutKey !== key() && !drag) apply(); sync() },
-    dispose() { stopped = true; observer.disconnect(); visibility.disconnect(); signal.abort(); endDrag(); track.remove() },
+    dispose() { stopped = true; observer.disconnect(); visibility.disconnect(); signal.abort(); endDrag(); handles.forEach(handle => handle.remove()); group?.remove(); track.remove() },
   }
 }

@@ -77,6 +77,56 @@ existing Git Review renders read-only unified diffs. Adding these capabilities
 would be separate feature development. Existing PDF region comments remain part
 of native PDF coverage.
 
+## Real installed Codex shared-daemon workflow
+
+The installed optimized native pair now has actual Codex 0.166.0 Wayland
+acceptance in `auto` connection mode. A real CLI seeds one private session through
+the loopback Responses provider shared with `smoke-codex-shared.py`. The native
+client then loads its history, sends two turns, refreshes with an unchanged draft,
+closes normally, restarts without replay and sends a third turn. The expected
+four model requests retain exact prompts and Unicode replies.
+
+```sh
+python3 scripts/smoke-gnome-real-backend.py /path/to/native-bundle --backend codex
+python3 scripts/smoke-gnome-real-backend.py /path/to/native-bundle --backend opencode
+```
+
+Both providers reuse one installed-bundle, private namespace, GTK accessibility
+and ordinary Wayland input driver. The previous `smoke-gnome-real-opencode.py`
+command delegates to it for compatibility. Codex needs its complete installed
+package, not a relocated ELF alone; the fixture mounts that package read-only
+and binds its private home at a short namespace-local path for Unix sockets.
+It needs no real credentials, external model or application test hook.
+
+PID/start-time checks verify that closing each window reaps the gateway/proxy
+while preserving the same shared daemon. At fixture shutdown, the actual CLI
+stops its app-server. Codex 0.166.0 leaves a separate `app-server daemon
+pid-update-loop` helper alive in this namespace. Test cleanup accepts only that
+exact role under the marked private package directory, checks executable and
+start time, and signals through a pidfd. It does not kill the shared daemon when
+closing Studio. Unknown roles and reused PIDs are rejected before signaling.
+The same guarded cleanup is reused by the original broker/CLI regression.
+That command retains its original CLI-only stop behavior on other platforms;
+Linux process inspection does not imply a macOS/Windows runtime result.
+
+All 20 ownership/cleanup checks pass, including unmarked/foreign homes, unknown
+roles, PID reuse and the non-Linux command path. Original failures are retained:
+an isolated ELF could not start the daemon, then the app-server stopped but its
+PID-update helper remained. A short home did not remove the latter behavior;
+the fixture now handles that helper explicitly. Application sources and the
+qualified package remain unchanged. Exact final real-provider and legacy
+regression identities are recorded in external
+`native-real-codex-20261105/CODEX-EVALUATION.json`. External model configurations,
+other CLI versions and physical GNOME interactions remain outside these checks.
+
+Final runs are `real-codex-hgn2mfhy` and `real-opencode-knz_hrbz`. The original
+Codex broker/CLI regression and OpenCode adapter mode both pass too. The stricter
+shared driver's controller-exit assertion exposed a test-fixture bug after all
+OpenCode UI operations had passed: a signal-terminated child has a null
+`exitCode` and a populated `signalCode`; the second shutdown waited for an exit
+event that had already occurred. The signal-state check is corrected, and both
+OpenCode modes now exit normally without timeout killing their controller.
+
 ## Real OpenCode with the installed native frontend
 
 The optimized native package now has an opt-in real OpenCode 1.18.31 workflow
@@ -109,7 +159,8 @@ Original harness failures are retained: private bus and accessibility-bus policy
 queries failed on the read-only security filesystem, and the first widget query
 incorrectly expected a `push button` rather than GTK4's actual `button` role.
 They did not establish an application defect. Both private entry paths now
-reject a login profile before writes; all 14 shared ownership/cleanup tests pass.
+reject a login profile before writes; 14 shared ownership/cleanup tests passed
+at that checkpoint. The shared-driver follow-up above adds Codex coverage.
 The existing default OpenCode adapter test also passes after the fixture changes.
 The final `real-opencode-ykw6r0f0` run observes both real executable/PID pairs
 before each close, then verifies that neither survives it. Exact package,

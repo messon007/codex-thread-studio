@@ -268,8 +268,9 @@ jobs:
       # --paged-math also checks atomic formula pages, search/quotes, failed
       # large-expression source, bounded style tags and English/Chinese controls.
       # plus scripts/smoke-gnome-release.py RELEASE_PACKAGE_DIRECTORY
-      # Real OpenCode opt-in, with Node/OpenCode installed and a private loopback model:
-      # python3 scripts/smoke-gnome-real-opencode.py RELEASE_PACKAGE_DIRECTORY
+      # Real-provider opt-in with installed Codex package or Node/OpenCode and local mock models:
+      # python3 scripts/smoke-gnome-real-backend.py RELEASE_PACKAGE_DIRECTORY --backend codex
+      # python3 scripts/smoke-gnome-real-backend.py RELEASE_PACKAGE_DIRECTORY --backend opencode
       # plus scripts/smoke-gnome-release-large.py RELEASE_PACKAGE_DIRECTORY --reference LARGE_MD
       # (actual report, LF/CRLF 32 MiB tables, EOF Source/Edit/undo, exact row cursors;
       # installed launcher and owned GNOME controls, no application test hooks)

@@ -42,7 +42,7 @@ await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve))
 let child, events, readerTask
 const received = [], eventAbort = new AbortController()
 async function stopServer() {
-  if (!child?.pid || child.exitCode !== null) return
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return
   const stopped = new Promise(resolve => child.once('exit', resolve))
   const timeout = setTimeout(() => child.kill('SIGKILL'), 5000)
   child.kill()

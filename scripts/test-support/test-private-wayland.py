@@ -6,9 +6,11 @@ import sys
 import os
 import tempfile
 from unittest.mock import patch
+from types import SimpleNamespace
 import private_wayland
 import private_orca
 import private_displays
+import local_codex_provider
 
 ROOT='/tmp/studio-wayland-private-test'
 def mount(path,kind):return f'1 0 0:1 / {path} rw - {kind} private rw\n'
@@ -66,15 +68,61 @@ class OrcaOwnership(unittest.TestCase):
 
 class ProviderOwnership(unittest.TestCase):
     def test_real_provider_entries_reject_login_profile_before_writes(self):
-        script=Path(__file__).resolve().parents[1]/'smoke-gnome-real-opencode.py'
+        script=Path(__file__).resolve().parents[1]/'smoke-gnome-real-backend.py'
         for entry in ['--private-root','--sandbox-root']:
             with self.subTest(entry=entry),tempfile.TemporaryDirectory() as directory:
                 env=dict(os.environ)
-                env.pop('STUDIO_REAL_OPENCODE_NAMESPACE',None)
+                env.pop('STUDIO_REAL_BACKEND_NAMESPACE',None)
                 result=subprocess.run([sys.executable,str(script),directory,entry,directory],env=env,capture_output=True,text=True,timeout=10)
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn('requires its private desktop/profile',result.stderr)
                 self.assertEqual(list(Path(directory).iterdir()),[])
+
+    def test_codex_controller_rejects_login_profile_before_writes(self):
+        script=Path(__file__).with_name('codex-native-fixture.py')
+        with tempfile.TemporaryDirectory() as directory:
+            env=dict(os.environ)
+            env.pop('STUDIO_REAL_BACKEND_NAMESPACE',None)
+            result=subprocess.run([sys.executable,str(script),directory],env=env,capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('requires its private desktop/profile',result.stderr)
+            self.assertEqual(list(Path(directory).iterdir()),[])
+
+class CodexCleanupOwnership(unittest.TestCase):
+    def test_unmarked_profile_cannot_stop_a_daemon(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(local_codex_provider.subprocess,'run') as run:
+            with self.assertRaises(AssertionError):
+                local_codex_provider.stop_private_daemon('codex',directory,{'CODEX_HOME':directory},None)
+            run.assert_not_called()
+
+    def test_foreign_home_cannot_stop_a_daemon(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(local_codex_provider.subprocess,'run') as run:
+            home=Path(directory)/'owned';home.mkdir();(home/'studio-smoke-fixture').touch()
+            other=Path(directory)/'other';other.mkdir()
+            with self.assertRaises(AssertionError):
+                local_codex_provider.stop_private_daemon('codex',home,{'CODEX_HOME':str(other)},None)
+            run.assert_not_called()
+
+    def test_unknown_remaining_process_is_never_signaled(self):
+        rows=[dict(pid=123,started='1',executable='/private/codex',roleArguments=['app-server','unknown'])]
+        with patch.object(local_codex_provider,'fixture_homes'),patch.object(local_codex_provider,'private_daemon_processes',return_value=rows),patch.object(local_codex_provider.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(local_codex_provider.time,'monotonic',side_effect=[0,20,20,40]),patch.object(local_codex_provider.os,'pidfd_open') as opened:
+            result=local_codex_provider.stop_private_daemon('codex','/private',{},None)
+            self.assertFalse(result['ok']);opened.assert_not_called()
+
+    def test_reused_pid_is_rejected_before_signaling(self):
+        rows=[dict(pid=123,started='old',executable='/private/codex',roleArguments=['app-server','daemon','pid-update-loop'])]
+        with patch.object(local_codex_provider,'fixture_homes'),patch.object(local_codex_provider,'private_daemon_processes',return_value=rows),patch.object(local_codex_provider.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(local_codex_provider.os,'pidfd_open',return_value=9),patch.object(local_codex_provider,'ProcessPeer',return_value=SimpleNamespace(started='new')),patch.object(local_codex_provider.signal,'pidfd_send_signal') as sent,patch.object(local_codex_provider.os,'close') as closed:
+            with self.assertRaises(AssertionError):
+                local_codex_provider.stop_private_daemon('codex','/private',{},None)
+            sent.assert_not_called();closed.assert_called_once_with(9)
+
+    def test_non_linux_preserves_cli_stop_without_proc_or_pidfds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory)/'studio-smoke-fixture').touch()
+            with patch.object(local_codex_provider.sys,'platform','darwin'),patch.object(local_codex_provider.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(local_codex_provider,'private_daemon_processes') as inspected:
+                result=local_codex_provider.stop_private_daemon('codex',directory,{'CODEX_HOME':directory},None)
+                self.assertTrue(result['ok']);self.assertFalse(result['pidHelperCleanupAvailable'])
+                inspected.assert_not_called()
 
 class DisplayOwnership(unittest.TestCase):
     def test_display_configuration_rejects_an_arbitrary_compositor(self):

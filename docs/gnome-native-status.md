@@ -1252,3 +1252,49 @@ candidate remain those of `30c04b1`. The earlier installer test using a fake
 Gio.Application still covers Exec quoting independently. These real native
 cold-start checks use an isolated Mutter desktop, not a physical GNOME Shell
 launcher; IME, actual Orca, scaling, voice and real-provider gates remain explicit.
+
+
+## Real GNOME Shell session validation
+
+The installed desktop-activation fixture now has an optional `--gnome-shell`
+mode. It starts the actual installed GNOME Shell 50.1 as a separate headless
+Wayland compositor, with its own session bus, short private runtime directory,
+private application data and in-memory Shell settings. It removes inherited
+physical-session identifiers. Readiness checks the Shell's bus-owner PID, its
+Wayland socket and exported overview property before exercising the application.
+No application test hook, gateway override or renderer override is used.
+
+```sh
+python3 scripts/smoke-gnome-desktop-activation.py /path/to/native-bundle --gnome-shell
+```
+
+The shared owned-input helper accepts either the existing Mutter parent or a
+live compositor subprocess created by the fixture itself. The latter path checks
+its parent PID, canonical executable, headless/Wayland/no-X11 arguments, private
+runtime and actual RemoteDesktop bus-owner PID before opening an input session.
+Arbitrary objects, owned non-compositor processes and non-Mutter parents are
+rejected before connecting to a control bus. The six input/mount-boundary tests
+pass, including rejection of unrelated portal/GVfs mount records.
+
+Qualified `desktop-activation-3jmxrry2` passes real installed cold D-Bus Activate
+and Open with explicit service-mode proof, same-process live file opening,
+original Unicode/CRLF Source, Preview switching, retained unsent draft, verified
+focus and keyboard Close, bus-name release and owned-provider cleanup. The first
+window initially finds Shell's overview open; Escape closes that actual overview
+before Alt+Tab and Close. Both window states are recorded. An earlier attempt
+incorrectly assumed overview was already closed and timed out on focus; it did
+not establish an application focus defect.
+
+The unchanged default Mutter mode also passes in `desktop-activation-t49r_w1v`,
+protecting existing callers of the shared helper. The application/gateway/worker
+bytes still match the qualified optimized `30c04b1` package. This increment only
+changes QA support and documentation. The external `GNOME-SHELL-EVALUATION.json`
+records source/executable hashes, exact cases, startup observations, ownership
+checks and the earlier diagnostic attempts.
+
+This exercises actual GNOME Shell, rather than only standalone Mutter, but it is
+not a physical login, launcher-search click, notification-banner, hardware IME,
+Orca or mixed-DPI test. Those remaining scopes are not inferred from D-Bus
+activation or AT-SPI editing. The isolated Shell has no login authentication agent;
+that expected warning is recorded, while its qualified run has no JS ERROR or
+CRITICAL log marker. Real-provider and remote CI/publication gates remain.

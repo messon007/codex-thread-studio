@@ -2,11 +2,32 @@
 from pathlib import Path
 import subprocess
 import unittest
+import sys
+import os
 from unittest.mock import patch
 import private_wayland
 
 ROOT='/tmp/studio-wayland-private-test'
 def mount(path,kind):return f'1 0 0:1 / {path} rw - {kind} private rw\n'
+class InputOwnership(unittest.TestCase):
+    def test_arbitrary_objects_cannot_enable_virtual_input(self):
+        with self.assertRaisesRegex(RuntimeError, 'live owned compositor'):
+            private_wayland.OwnedMutterInput(object())
+
+    def test_an_owned_non_compositor_process_cannot_enable_input(self):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'])
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'supported compositor'):
+                private_wayland.OwnedMutterInput(child)
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+
+    def test_default_mode_rejects_non_mutter_parents_before_bus_access(self):
+        with patch.object(private_wayland.os, 'getppid', return_value=os.getpid()):
+            with self.assertRaisesRegex(RuntimeError, 'Mutter parent'):
+                private_wayland.OwnedMutterInput()
+
 class Teardown(unittest.TestCase):
     def test_only_exact_owned_portal_and_gvfs_mounts_are_detached(self):
         rows=mount(ROOT+'/doc','fuse.portal')+mount(ROOT+'/gvfs','fuse.gvfsd-fuse')+mount('/run/user/1001/gvfs','fuse.gvfsd-fuse')+mount(ROOT+'-other/doc','fuse.portal')

@@ -48,6 +48,19 @@ of the real native binary. See [cold desktop activation](gnome-native-status.md#
 for exact scope and the external `DESKTOP-ACTIVATION-EVALUATION.json` record.
 It does not substitute for physical GNOME Shell/input/screen-reader acceptance.
 
+## Headless real GNOME Shell follow-up
+
+The same optimized package now passes installed cold Activate/Open, native
+Preview/Source, focus/keyboard Close and provider cleanup inside actual GNOME
+Shell 50.1, with a private bus, display and settings. The existing owned-input
+helper is reused with explicit child-process/runtime and bus-owner validation;
+its six safety tests and the original Mutter-mode workflow pass too. The Shell
+fixture exits its startup overview before ordinary switching/Close, retaining
+the earlier failed focus assumption as a diagnostic. See
+[real Shell qualification](gnome-native-status.md#real-gnome-shell-session-validation)
+and the external `GNOME-SHELL-EVALUATION.json` record. This does not qualify a
+physical login, launcher search, notification banners, IME, Orca or mixed DPI.
+
 ## Previous Favorites question candidate
 
 The [Favorites source-preservation checkpoint](gnome-native-status.md#native-favorites-source-preservation)

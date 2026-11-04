@@ -10,23 +10,45 @@ import subprocess
 import os
 
 
+def _input_compositor_pid(compositor):
+    if compositor is None:
+        parent = os.getppid()
+        if Path('/proc', str(parent), 'exe').resolve() != Path('/usr/bin/mutter').resolve():
+            raise RuntimeError('Virtual input requires the owned Mutter parent process')
+        return parent
+    if not isinstance(compositor, subprocess.Popen) or compositor.poll() is not None:
+        raise RuntimeError('Virtual input requires a live owned compositor subprocess')
+    pid = compositor.pid
+    fields = Path('/proc', str(pid), 'stat').read_text().rsplit(')', 1)[1].split()
+    if int(fields[1]) != os.getpid():
+        raise RuntimeError('Virtual input compositor is not a child of this fixture')
+    executable = Path('/proc', str(pid), 'exe').resolve(strict=True)
+    if executable not in [Path('/usr/bin/mutter').resolve(), Path('/usr/bin/gnome-shell').resolve()]:
+        raise RuntimeError('Virtual input subprocess is not a supported compositor')
+    argv = Path('/proc', str(pid), 'cmdline').read_bytes().split(b'\0')
+    if not all(flag in argv for flag in [b'--headless', b'--wayland', b'--no-x11']) or b'--replace' in argv:
+        raise RuntimeError('Owned compositor must be a separate headless Wayland server')
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', ''))
+    if runtime.parent != Path('/tmp') or not runtime.name.startswith('studio-wayland-') or not runtime.is_dir():
+        raise RuntimeError('Owned compositor requires the fixture private runtime')
+    return pid
+
+
 class OwnedMutterInput:
-    """Test input on the parent fixture compositor only, never the user desktop.
+    """Input on the parent Mutter or a verified owned headless compositor.
 
     Mutter's standalone plugin can map an application without focusing it.
     Activate the sole test window through a private remote keyboard session.
     """
-    def __init__(self):
+    def __init__(self, compositor=None):
+        expected = _input_compositor_pid(compositor)
         from gi.repository import Gio, GLib
         self.Gio,self.GLib=Gio,GLib
         self.bus=Gio.bus_get_sync(Gio.BusType.SESSION,None)
         self.service='org.gnome.Mutter.RemoteDesktop'
-        parent=os.getppid()
-        if Path('/proc',str(parent),'exe').resolve()!=Path('/usr/bin/mutter').resolve():
-            raise RuntimeError('Virtual input requires the owned Mutter parent process')
         owner=self.bus.call_sync('org.freedesktop.DBus','/org/freedesktop/DBus','org.freedesktop.DBus','GetNameOwner',GLib.Variant('(s)',(self.service,)),GLib.VariantType.new('(s)'),Gio.DBusCallFlags.NONE,3000,None).unpack()[0]
         identity=self.bus.call_sync('org.freedesktop.DBus','/org/freedesktop/DBus','org.freedesktop.DBus','GetConnectionUnixProcessID',GLib.Variant('(s)',(owner,)),GLib.VariantType.new('(u)'),Gio.DBusCallFlags.NONE,3000,None).unpack()[0]
-        if identity!=parent:raise RuntimeError('Remote input service is not the owned compositor')
+        if identity!=expected:raise RuntimeError('Remote input service is not the owned compositor')
         self.target=owner
         self.path=self.bus.call_sync(self.target,'/org/gnome/Mutter/RemoteDesktop',self.service,'CreateSession',None,GLib.VariantType.new('(o)'),Gio.DBusCallFlags.NONE,3000,None).unpack()[0]
         self.call('Start')

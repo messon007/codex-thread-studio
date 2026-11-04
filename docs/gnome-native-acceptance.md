@@ -79,9 +79,10 @@ substitute for remote macOS/Windows builds or an actual fresh GNOME login.
 
 Physical GNOME launcher/notification interaction, real IME composition,
 fractional scaling/multiple monitors, actual Orca use and voice quality require
-manual desktop acceptance. Real installed cold D-Bus activation/Open, private Wayland/AT-SPI, actual GNOME
-portal and isolated Ubuntu runtime checks establish only their documented
-automated scope. Cold D-Bus startup is now checked on the native executable,
+manual desktop acceptance. Real installed cold D-Bus activation/Open now also passes in an
+[owned actual GNOME Shell session](gnome-native-status.md#real-gnome-shell-session-validation).
+Private Wayland/AT-SPI, actual GNOME portals and isolated Ubuntu runtime checks
+establish only their documented automated scope. Cold D-Bus startup is now checked on the native executable,
 including service-mode proof, independently of the older fake installer probe. Real-provider
 compatibility also remains separate from deterministic fake-provider coverage.
 

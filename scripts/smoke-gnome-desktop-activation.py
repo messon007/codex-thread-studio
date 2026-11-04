@@ -35,19 +35,20 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(prefix, root):
+def run(prefix, root, controlled=None):
     import gi
     gi.require_version('GioUnix', '2.0')
     from gi.repository import Gio, GioUnix, GLib
     assert not any(key.startswith('STUDIO_GNOME_SMOKE') for key in os.environ)
     assert 'CODEX_THREAD_STUDIO_GATEWAY_BIN' not in os.environ
-    owned = OwnedMutterInput()
+    owned = controlled if controlled is not None else OwnedMutterInput()
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     native = prefix / 'bin/codex-thread-studio-gnome'
     source = root / 'project/desktop launch 中文 % $ ` " \\.md'
     originals = {path: digest(path) for path in [source, root/'codex-turns.json', root/'oc-turns.json']}
     peers = []
     phases = []
+    focus_states = []
 
     def call(method, args, signature):
         return bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
@@ -89,6 +90,18 @@ def run(prefix, root):
         return [int(path.read_text()) for path in [root/'backend.pid', root/'opencode.pid'] if path.exists()]
 
     def close(client, process, providers):
+        if controlled is not None:
+            def overview():
+                return bus.call_sync(owned.target, '/org/gnome/Shell',
+                    'org.freedesktop.DBus.Properties', 'Get',
+                    GLib.Variant('(ss)', ('org.gnome.Shell', 'OverviewActive')),
+                    GLib.VariantType.new('(v)'), Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+            before = overview()
+            if before:
+                keys([0xff1b])
+                until('private Shell overview closed', lambda: not overview())
+            focus_states.append(dict(pid=process.pid, overviewBeforeClose=before, overviewAfterEscape=overview()))
+            (root/'shell-focus.json').write_text(json.dumps(focus_states, indent=2))
         owned.focus_only_window()
         client.wait('owned focused frame', lambda: client.find(lambda n:
             n.get_role_name() == 'frame' and n.get_state_set().contains(client.api.StateType.ACTIVE)))
@@ -157,12 +170,16 @@ def run(prefix, root):
             gatewayOverride=False, coldDbusActivate=True, coldDbusOpen=True,
             specialCharacterPrefix=True, specialCharacterDocument=True,
             sourcePreserved=True, noInference=True, ownedProcessCleanup=True,
-            physicalGnomeShell=False, phases=phases, artifacts=str(root))
+            physicalGnomeShell=False, realGnomeShell=controlled is not None,
+            shellOverviewHandling=focus_states, phases=phases, artifacts=str(root))
         (root/'desktop-activation-result.json').write_text(json.dumps(result, indent=2)+'\n')
         print(json.dumps(result))
     except BaseException:
         if 'client' in locals() and client.process.poll() is None:
             (root/'failed-tree.json').write_text(json.dumps(client.describe(), ensure_ascii=False, indent=2))
+            (root/'failed-window-state.json').write_text(json.dumps([
+                dict(name=n.get_name(), role=n.get_role_name(), active=n.get_state_set().contains(client.api.StateType.ACTIVE), focused=n.get_state_set().contains(client.api.StateType.FOCUSED))
+                for n in client.tree() if n.get_role_name() in ('frame', 'dialog')], ensure_ascii=False, indent=2))
         raise
     finally:
         # Only peers obtained from this owned bus and validated against the
@@ -173,14 +190,60 @@ def run(prefix, root):
         owned.close()
 
 
+def run_with_shell(prefix, root):
+    from gi.repository import Gio, GLib
+    os.environ['WAYLAND_DISPLAY'] = 'studio-shell'
+    log = (root/'gnome-shell.log').open('w')
+    shell = subprocess.Popen(['/usr/bin/gnome-shell', '--headless', '--wayland',
+        '--no-x11', '--wayland-display', 'studio-shell', '--virtual-monitor', '1600x1000'],
+        stdout=log, stderr=log, start_new_session=True)
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    try:
+        deadline = time.monotonic()+30
+        ready = None
+        while time.monotonic()<deadline:
+            if shell.poll() is not None:
+                raise RuntimeError(('Private GNOME Shell exited', shell.returncode, str(root)))
+            try:
+                owner = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                    'org.freedesktop.DBus', 'GetNameOwner', GLib.Variant('(s)', ('org.gnome.Shell',)),
+                    GLib.VariantType.new('(s)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+                pid = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                    'org.freedesktop.DBus', 'GetConnectionUnixProcessID', GLib.Variant('(s)', (owner,)),
+                    GLib.VariantType.new('(u)'), Gio.DBusCallFlags.NONE, 1000, None).unpack()[0]
+                bus.call_sync(owner, '/org/gnome/Shell', 'org.freedesktop.DBus.Properties',
+                    'Get', GLib.Variant('(ss)', ('org.gnome.Shell', 'OverviewActive')),
+                    GLib.VariantType.new('(v)'), Gio.DBusCallFlags.NONE, 1000, None)
+                if pid==shell.pid and (Path(os.environ['XDG_RUNTIME_DIR'])/'studio-shell').is_socket():
+                    ready = ready or time.monotonic()
+                    if time.monotonic()-ready>=2:
+                        break
+            except GLib.Error:
+                ready = None
+            time.sleep(.05)
+        else:
+            raise RuntimeError(('Private GNOME Shell did not become ready', str(root)))
+        run(prefix, root, OwnedMutterInput(compositor=shell))
+    finally:
+        if shell.poll() is None:
+            shell.terminate()
+            try:
+                shell.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                shell.kill()
+                shell.wait(timeout=5)
+        log.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('bundle', type=Path)
     parser.add_argument('--private-root', type=Path)
+    parser.add_argument('--gnome-shell', action='store_true', help='use an owned headless GNOME Shell rather than standalone Mutter')
     args = parser.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0,0))
     if args.private_root:
-        return run(args.bundle, args.private_root)
+        return run_with_shell(args.bundle, args.private_root) if args.gnome_shell else run(args.bundle, args.private_root)
     base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or REPO/'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='desktop-activation-', dir=base))
@@ -209,11 +272,20 @@ def main():
     for key in list(env):
         if key.startswith('STUDIO_GNOME_SMOKE') or key in ['CODEX_THREAD_STUDIO_GATEWAY_BIN', 'STUDIO_GNOME_CONTINUOUS_PREVIEW']:
             env.pop(key)
+    if args.gnome_shell:
+        env.update(XDG_CURRENT_DESKTOP='GNOME', XDG_SESSION_TYPE='wayland',
+            GSETTINGS_BACKEND='memory', GNOME_SHELL_SESSION_MODE='user')
+        for name in ['XDG_SESSION_ID', 'XDG_SEAT', 'XDG_VTNR', 'GNOME_SESSION_ID', 'SESSION_MANAGER', 'DESKTOP_SESSION']:
+            env.pop(name, None)
     with isolated_environment(env, headless=True) as private:
-        subprocess.run(['dbus-run-session', '--', shutil.which('mutter') or 'mutter',
-            '--headless','--wayland','--no-x11','--wayland-display','studio-test',
-            '--virtual-monitor','1600x1000','--',sys.executable,str(Path(__file__).resolve()),
-            str(prefix),'--private-root',str(root)], cwd=root, env=private, check=True, timeout=180)
+        command = ['dbus-run-session', '--']
+        if not args.gnome_shell:
+            command += [shutil.which('mutter') or 'mutter', '--headless', '--wayland',
+                '--no-x11', '--wayland-display', 'studio-test', '--virtual-monitor', '1600x1000', '--']
+        command += [sys.executable, str(Path(__file__).resolve()), str(prefix), '--private-root', str(root)]
+        if args.gnome_shell:
+            command += ['--gnome-shell']
+        subprocess.run(command, cwd=root, env=private, check=True, timeout=180)
 
 
 if __name__=='__main__':

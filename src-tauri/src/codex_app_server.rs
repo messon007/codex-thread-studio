@@ -152,7 +152,9 @@ impl CodexAppServer {
             .collect::<Vec<_>>();
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(45),
-            self.run_workspace_command(self.binary.as_ref(), &args, &[]),
+            self.runtime
+                .command(self.binary.as_ref(), &args, &[])
+                .daemon_output(),
         )
         .await
         .map_err(|_| "Timed out starting the shared Codex daemon".to_string())?

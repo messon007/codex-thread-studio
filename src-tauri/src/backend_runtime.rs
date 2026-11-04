@@ -383,6 +383,18 @@ impl RuntimeCommand {
         })
     }
 
+    /// The CLI's daemon manager owns the service it launches. In native Windows
+    /// mode its detached daemon must not enter our kill-on-close command job.
+    pub async fn daemon_output(self) -> io::Result<Output> {
+        #[cfg(all(windows, feature = "windows-native"))]
+        if self.cleanup.is_none() {
+            let mut command = self.command?;
+            command.kill_on_drop(true);
+            return command.output().await;
+        }
+        self.output().await
+    }
+
     pub async fn output(mut self) -> io::Result<Output> {
         #[cfg(all(windows, feature = "windows-native"))]
         if self.cleanup.is_none() {
@@ -697,6 +709,84 @@ mod tests {
         println!("STUDIO_NATIVE_READY");
         std::io::stdout().flush().unwrap();
         std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+
+    #[cfg(all(windows, feature = "windows-native"))]
+    #[test]
+    fn daemon_manager_child_fixture() {
+        let Ok(directory) = std::env::var("STUDIO_DAEMON_FIXTURE_DIRECTORY") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        if std::env::var("STUDIO_DAEMON_FIXTURE_ROLE").as_deref() == Ok("manager") {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend_runtime::tests::daemon_manager_child_fixture",
+                    "--nocapture",
+                ])
+                .env("STUDIO_DAEMON_FIXTURE_ROLE", "daemon")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            return;
+        }
+        std::fs::write(directory.join("ready"), "ready").unwrap();
+        for _ in 0..600 {
+            if directory.join("stop").exists() {
+                std::fs::write(directory.join("done"), "done").unwrap();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[cfg(all(windows, feature = "windows-native"))]
+    #[tokio::test]
+    async fn daemon_manager_output_preserves_its_detached_service() {
+        let directory =
+            std::env::temp_dir().join(format!("studio-daemon-lifecycle-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let runtime = BackendRuntime::native(std::env::var_os("PATH").unwrap_or_default());
+        let executable = std::env::current_exe().unwrap();
+        let output = runtime
+            .command(
+                executable.to_str().unwrap(),
+                &[
+                    "--exact",
+                    "backend_runtime::tests::daemon_manager_child_fixture",
+                    "--nocapture",
+                ],
+                &[
+                    (
+                        "STUDIO_DAEMON_FIXTURE_DIRECTORY",
+                        directory.to_str().unwrap(),
+                    ),
+                    ("STUDIO_DAEMON_FIXTURE_ROLE", "manager"),
+                ],
+            )
+            .daemon_output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !directory.join("ready").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::write(directory.join("stop"), "stop").unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !directory.join("done").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("the manager exiting must not kill its detached service");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(all(windows, feature = "windows-native"))]

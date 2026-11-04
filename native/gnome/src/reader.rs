@@ -187,6 +187,7 @@ struct TrackedSelection {
 pub struct Reader {
     query_button: gtk::Button,
     query: RefCell<Option<Rc<crate::reader_query_ui::Jq>>>,
+    sql_query: RefCell<Option<Rc<crate::reader_sql_ui::Sql>>>,
     gateway_available: Cell<bool>,
     session_valid: Cell<bool>,
     pub image_renderer: RefCell<Option<Rc<crate::images_ui::Renderer>>>,
@@ -1028,6 +1029,7 @@ impl Reader {
         let reader = Rc::new(Self {
             query_button: query_button.clone(),
             query: RefCell::default(),
+            sql_query: RefCell::default(),
             gateway_available: Cell::new(true),
             session_valid: Cell::new(true),
             flow_diagrams: crate::chat_diagrams::Renderer::new_viewport_bounded(
@@ -2529,6 +2531,9 @@ impl Reader {
     }
 
     fn finish_close(&self) {
+        if let Some(query) = self.sql_query.borrow_mut().take() {
+            query.close();
+        }
         if let Some(query) = self.query.borrow_mut().take() {
             query.close();
         }
@@ -2656,6 +2661,45 @@ impl Reader {
             button.set_active(mode == value);
         }
     }
+    fn open_table_query(&self, table: usize) {
+        let state = self.state.borrow();
+        let Some(index) = state
+            .index
+            .as_ref()
+            .filter(|index| table < index.tables.len())
+        else {
+            return;
+        };
+        if !self.gateway_available.get() || !self.session_valid.get() || state.busy || state.dirty {
+            return;
+        }
+        let context = crate::reader_query::Context {
+            key: self.key,
+            generation: state.generation,
+            revision: index.revision.clone(),
+        };
+        if let Some(query) =
+            self.sql_query.borrow().as_ref().filter(|query| {
+                query.context == context && query.table == table && !query.is_closed()
+            })
+        {
+            query.present();
+            return;
+        }
+        let name = index.name.clone();
+        drop(state);
+        if let Some(query) = self.sql_query.borrow_mut().take() {
+            query.close();
+        }
+        self.sql_query.replace(Some(crate::reader_sql_ui::Sql::new(
+            &self.window,
+            self.sender.clone(),
+            context,
+            table,
+            &name,
+        )));
+    }
+
     fn open_query(&self) {
         let state = self.state.borrow();
         let Some(index) = state
@@ -2695,6 +2739,20 @@ impl Reader {
     fn update(&self) {
         let state = self.state.borrow();
         let available = self.gateway_available.get() && self.session_valid.get();
+        let close_sql = self.sql_query.borrow().as_ref().is_some_and(|query| {
+            !available
+                || state.dirty
+                || query.context.generation != state.generation
+                || state
+                    .index
+                    .as_ref()
+                    .is_none_or(|index| query.context.revision != index.revision)
+        });
+        if close_sql {
+            if let Some(query) = self.sql_query.borrow_mut().take() {
+                query.close();
+            }
+        }
         let query_supported = state
             .index
             .as_ref()
@@ -4097,10 +4155,12 @@ impl TableUi {
         let previous = icon("go-previous-symbolic", "Previous table page");
         let next = icon("go-next-symbolic", "Next table page");
         let menu = gtk::MenuButton::builder().label("Columns").build();
+        let sql = icon("system-search-symbolic", "Query table with SQL");
         toolbar.append(&label);
         toolbar.append(&previous);
         toolbar.append(&next);
         toolbar.append(&menu);
+        toolbar.append(&sql);
         widget.append(&toolbar);
         let rows = gio::ListStore::new::<glib::BoxedAnyObject>();
         let model = gtk::NoSelection::new(Some(rows.clone()));
@@ -4154,6 +4214,14 @@ impl TableUi {
         table.next.connect_clicked(move |_| {
             if let Some(table) = weak.upgrade() {
                 table.load(table.start.get() + table.size.get());
+            }
+        });
+        let weak = Rc::downgrade(&table);
+        sql.connect_clicked(move |_| {
+            if let Some(table) = weak.upgrade() {
+                if let Some(reader) = table.current_reader() {
+                    reader.open_table_query(table.id);
+                }
             }
         });
         let names = reader

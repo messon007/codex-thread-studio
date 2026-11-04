@@ -102,7 +102,7 @@ jobs:
         run: python3 scripts/test-gnome-mermaid-package.py target/gnome-native/package --output target/gnome-mermaid-package-tests
       - name: Verify native document source, edit and row-cursor bounds without a compositor
         run: python3 scripts/smoke-gnome-documents.py target/gnome-native/package/codex-thread-studio-gateway
-      - name: Verify native JSON queries and source responsiveness without a compositor
+      - name: Verify native JSON and Markdown SQL queries and source responsiveness without a compositor
         run: python3 scripts/smoke-gnome-reader-queries.py target/gnome-native/package/codex-thread-studio-gateway
       - name: Verify durable Router controller setup
         run: python3 scripts/smoke-gnome-router.py target/gnome-native/package/codex-thread-studio-gateway

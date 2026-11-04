@@ -15,6 +15,10 @@ Kuchikiki. It loads all rows, including their original source line, into a
 private disk-backed SQLite database. Named columns use `data`; positional names
 `c1`, `c2`, etc. use `t`. Statements are read only, authorized, timed and bounded;
 results stay on disk and are paged. No process-wide SQLite heap limit is changed.
+The default projection lists every normalized, quoted field on a separate line,
+including `_row` and `_line`. Tables with 255–256 data fields use the positional
+view to stay within the result-column limit. If the named query would exceed the
+16 KiB statement limit, the schema supplies `SELECT * FROM data` instead.
 Small Markdown documents reuse Studio's existing table query UI and bounded
 SQLite endpoint after DOM cell extraction.
 
@@ -53,6 +57,12 @@ checks, result cache and cleanup through the authenticated native
 separate MarkNoria installation, a system `jq` executable or Python at runtime.
 `scripts/smoke-gnome-reader-queries.py` checks that API with private files and
 also reads the source while an infinite filter is being supervised.
+
+GTK Markdown tables use authenticated `table-query`, `table-query-schema` and
+`table-query-close` aliases to this same SQLite implementation. Their native
+controls share the jq query window and the existing source editor, SQL formatter,
+column picker, cell styling, theme and language bindings. SQL result cells are
+literal text; paging and hiding columns do not change the Markdown source.
 
 The document table controller and column resizing styles were also ported from
 that local working tree for Studio issues #39 and #43. Ordinary Markdown uses

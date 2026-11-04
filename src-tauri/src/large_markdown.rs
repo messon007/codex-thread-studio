@@ -363,13 +363,16 @@ pub async fn native_data(
         "search" => "api/search",
         "diagram-source" => "api/diagram-source",
         "jq-query" => "api/jq-query",
+        "table-query" => "api/table-query",
+        "table-query-schema" => "api/table-query/schema",
+        "table-query-close" => "api/table-query/close",
         "heartbeat" => "heartbeat",
         _ => return json_error(StatusCode::NOT_FOUND, "Unknown native reader operation"),
     };
-    let allowed_method = if path == "api/jq-query" {
-        request.method() == Method::POST
-    } else {
-        request.method() == Method::GET || (path == "api/edit" && request.method() == Method::POST)
+    let allowed_method = match path {
+        "api/jq-query" | "api/table-query/close" => request.method() == Method::POST,
+        "api/edit" | "api/table-query" => matches!(*request.method(), Method::GET | Method::POST),
+        _ => request.method() == Method::GET,
     };
     if !allowed_method {
         return json_error(

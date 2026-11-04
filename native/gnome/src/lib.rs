@@ -139,6 +139,8 @@ mod reader_query;
 mod reader_query_source;
 #[cfg(target_os = "linux")]
 mod reader_query_ui;
+#[cfg(target_os = "linux")]
+mod reader_sql_ui;
 mod remote_images;
 #[cfg(target_os = "linux")]
 mod rich_paragraph;

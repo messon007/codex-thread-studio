@@ -1,4 +1,6 @@
 {
+  "Columns and query help": "列名与查询帮助",
+  "Reset query": "重置查询",
   "JSON query": "JSON 查询",
   "jq filter": "jq 筛选表达式",
   "Query output": "查询输出",

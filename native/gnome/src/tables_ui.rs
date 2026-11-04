@@ -1353,17 +1353,7 @@ impl Tables {
                 let weak = Rc::downgrade(self);
                 factory.connect_setup(move |_, object| {
                     let item = object.downcast_ref::<gtk::ListItem>().unwrap();
-                    let label = gtk::Label::builder()
-                        .xalign(0.0)
-                        .yalign(0.0)
-                        .hexpand(true)
-                        .width_chars(1)
-                        .selectable(true)
-                        .margin_start(10)
-                        .margin_end(10)
-                        .margin_top(7)
-                        .margin_bottom(7)
-                        .build();
+                    let label = crate::table_cell::plain_label();
                     if let Some(ui) = weak.upgrade() {
                         ui.labels.borrow_mut().push(label.downgrade());
                     }
@@ -1621,7 +1611,7 @@ impl Tables {
         dialog.present(self.parent.upgrade().as_ref());
     }
 }
-fn style_cell(label: &gtk::Label, wrap: bool) {
+pub(crate) fn style_cell(label: &gtk::Label, wrap: bool) {
     label.set_wrap(wrap);
     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_lines(if wrap { -1 } else { 1 });

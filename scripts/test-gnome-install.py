@@ -30,7 +30,7 @@ def main():
     args = parser.parse_args()
     bundle = args.bundle.resolve(strict=True)
     repo = Path(__file__).resolve().parents[1]
-    base = repo / 'target/gnome-native-smoke'
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or repo / 'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='bundle-install-', dir=base))
     prefix = root / 'native install 中文 % \' " $ space'

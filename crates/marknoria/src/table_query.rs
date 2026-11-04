@@ -70,23 +70,37 @@ pub fn schema(index: &Index, table: usize) -> io::Result<Schema> {
         }
         names.push(candidate);
     }
+    let default_sql = {
+        let positional = metadata.columns.len() > 254;
+        let fields = if positional {
+            (1..=metadata.columns.len())
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+        } else {
+            ["_row".to_string(), "_line".into()]
+                .into_iter()
+                .chain(names.iter().cloned())
+                .map(|name| quoted(&name))
+                .collect()
+        };
+        let sql = format!(
+            "SELECT\n  {}\nFROM {}",
+            fields.join(",\n  "),
+            if positional { "t" } else { "data" }
+        );
+        if sql.len() <= SQL_BYTES {
+            sql
+        } else {
+            "SELECT * FROM data".into()
+        }
+    };
     Ok(Schema {
         revision: index.revision.clone(),
         table,
         source_rows: metadata.rows,
         positional_columns: (1..=names.len()).map(|i| format!("c{i}")).collect(),
         columns: names,
-        default_sql: if metadata.columns.len() > 254 {
-            format!(
-                "SELECT {} FROM t",
-                (1..=metadata.columns.len())
-                    .map(|i| format!("c{i}"))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        } else {
-            "SELECT * FROM data".into()
-        },
+        default_sql,
     })
 }
 struct Input {
@@ -512,5 +526,36 @@ impl ResultSet {
             total_rows: self.total,
             elapsed_ms: self.elapsed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn default_projection_names_every_column_and_quotes_deduplicated_headers() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.md");
+        std::fs::write(
+            &source,
+            "| _row | A\"B | A\"B |\n|---|---|---|\n| user-row | 中文😀 | last |\n",
+        )
+        .unwrap();
+        let index = crate::build_index(&source, directory.path()).unwrap();
+        let schema = schema(&index, 0).unwrap();
+        assert!(!schema.default_sql.contains('*'));
+        assert!(schema.default_sql.contains("\"A\"\"B\""));
+        let page = Queries::default()
+            .run(
+                directory.path(),
+                &index,
+                0,
+                &schema.default_sql,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+        assert_eq!(page.columns.len(), 5);
+        assert_eq!(page.rows[0][2].as_deref(), Some("user-row"));
+        assert_eq!(page.rows[0][3].as_deref(), Some("中文😀"));
     }
 }

@@ -13,7 +13,7 @@ its feature is still absent.
 | --- | --- |
 | Shell and conversations | GTK4/libadwaita navigation, virtualized transcripts, composer, search, history, lifecycle/reconnect recovery, background status and notifications. Private Wayland fixtures and installed workflow/recovery checks cover these paths. |
 | Providers and session tools | Codex-compatible instances and OpenCode, models/effort/Fast, permissions/agent input, commands/skills/MCP/subagents, attachments, queues, Router, Session Map and latest-turn Resources with filters, source occurrences and shared favorites. Fake providers verify request identities and mutation/cleanup behavior without touching real sessions. |
-| Markdown | Default continuous native text Preview, Rust indexing, bounded Preview/Source/Edit, outline/search, tables with column controls and paging, explicit/page-change saves, conflicts and undo/redo; independent read-only comparison. Real report copies and generated 32 MiB tables exercise source/context preservation. |
+| Markdown | Default continuous native text Preview, Rust indexing, bounded Preview/Source/Edit, outline/search, tables with column controls, paging and read-only SQL queries, explicit/page-change saves, conflicts and undo/redo; independent read-only comparison. Real report copies and generated 32 MiB tables exercise source/context preservation. |
 | Rich content | Native images and bounded animation, Mermaid/PlantUML/D2 and math, original-image Save, PDF, tabular SQL/charts. EPUB XHTML, passive local HTML and website content use isolated, lazily created GTK4 WebKit surfaces with native application controls. Rendering limits remain documented. |
 | Structured files | Rust token formatting for JSON variants, XML and assignment files; YAML indentation is preserved. Native paged Preview/Source/Edit, display search, original-source comment mapping, explicit/page-change save and native syntax admission. JSON jq filters, slurp and paged read-only output reuse the shared Rust query service. |
 | Workspace | Native Files, watches/shared roots, VTE terminal, Git status/staging/history and line-numbered diffs, exclusive panels and parent-view navigation. Private repositories/files/PTYs and installed controls have acceptance coverage. |
@@ -27,14 +27,12 @@ in the validation record.
 
 ## Confirmed implementation gaps and next order
 
-1. **Port the newer main workflows to native controls.** The current integration
-   baseline is `38e27e0`. Its Markdown-table SQL queries are present in the
-   browser client but do not yet have native controls. JSON jq queries and
-   explicit Codex session release now have native controls and safeguards.
-   Existing native CSV/XLSX SQL is separate.
-   Reuse the bounded Rust query services and keep the application interface GTK;
-   do not embed the browser reader as a substitute.
-2. **Finish the control/translation and compatibility audit.** Session Resources,
+The current main integration baseline is `38e27e0`. Markdown-table SQL, JSON jq
+and explicit Codex session release now have native controls and safeguards.
+SQL and jq reuse the bounded shared Rust services. Existing native CSV/XLSX SQL
+retains its separate source importer and shares formatting and table controls.
+
+1. **Finish the control/translation and compatibility audit.** Session Resources,
    information, connections and activity inspection now have native controls and
    focused acceptance. History paging and shared transcript actions now follow
    live language changes, with retained data/selection/draft checks. The composer's
@@ -56,7 +54,7 @@ in the validation record.
    Assess renderer limits against actual supported documents. Historical missing
    Router execution, images, animation, recovery, EPUB search and output-paging
    notes are superseded by later implementations.
-3. **Release acceptance.** Keep installed workflows and existing clients' checks
+2. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
    continue using private profiles and document/repository copies. Recheck
@@ -169,6 +167,50 @@ release-target checks pass. The local debug candidate is
 and retains the startup-timeout observation. The final optimized distribution, fresh-profile
 startup qualification and the broader migration audit remain outstanding.
 
+## Native Markdown-table SQL
+
+Both continuous and paged Markdown table toolbars expose **Query table with
+SQL**. The saved document's full table, including physical `_line` metadata,
+uses the same bounded, read-only Rust SQLite service as the browser reader.
+The initial query names every field; users can remove fields or add `WHERE`,
+`ORDER BY` and `CASE`. Compact formatting uses the existing Rust SQL formatter.
+The GTK query window shares its source editor, adjustable input/result split,
+asynchronous transport, result cleanup, theme and language bindings with jq.
+The existing native column picker and CSV cell styling provide result-column
+visibility, resize and Wrap. Columns, Copy and Wrap stay together on the right.
+
+Result paging does not rebuild the source table or write Markdown. Invalid or
+unauthorized statements retain the last successful result. Query windows retire
+when that reader replaces its source, becomes dirty or loses its valid gateway
+context. Navigation to a separate retained workspace still follows the existing
+Back-navigation lifetime. A reproduced GTK crash when resetting from three
+result columns to five is fixed by removing old model rows before installing
+the incoming schema; GTK binds columns synchronously.
+
+Installed English (`reader-query-ui-fa0tlhyr`) and Chinese
+(`reader-query-ui-ov1spvtc`) checks pass on the matched debug package, without
+application hooks. They cover 1,200 source rows, numeric sorting/filtering and
+`CASE`, result paging, the shared picker, actual row-height changes with Wrap,
+independent Wayland clipboard reads, error retention, reset/schema replacement
+and source retirement. Original files and the chat draft remain unchanged;
+no inference is started. The native API check also covers all 600 filtered
+rows, exact source lines, result close, stale/cross-document identities,
+authentication/origin/method checks, write/file-access rejection and bounded
+recursive SQL execution.
+
+```sh
+python3 scripts/smoke-gnome-reader-query-ui.py /path/to/native-bundle --sql
+python3 scripts/smoke-gnome-reader-query-ui.py /path/to/native-bundle --sql --language zh-CN
+```
+
+The same pair also passes English (`reader-query-ui-hsv4cn1l`) and Chinese
+(`reader-query-ui-jn9k_660`) jq regression checks after the shared window changes.
+All 400 native tests, 40 shared reader tests, 272 gateway tests and Rust 1.92
+release-target checks pass. The debug candidate is
+`target/gnome-native-candidate-20261104-reader-sql`, with source/package hashes
+and retained failure records in `READER-SQL-EVALUATION.json` beside the package.
+The final optimized pair and startup qualification remain separate gates.
+
 ## Current main integration
 
 The native branch integrates main through `38e27e0`, retaining shared
@@ -197,7 +239,7 @@ dependency tree is preserved.
 
 Optimized acceptance must be refreshed for this integration; the preceding
 optimized status/inspector package is not this merged version. The native query
-and session-release controls above remain actual parity gaps. Remote publishing
+and session-release controls above now have their focused debug acceptance. Remote publishing
 still requires suitable workflow permission; no remote branch or CI is claimed.
 
 ## Navigation timing follow-up

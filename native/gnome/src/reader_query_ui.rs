@@ -19,6 +19,7 @@ pub(crate) struct Controls {
     pub input: sourceview::View,
     pub options: adw::WrapBox,
     pub output: gtk::Box,
+    pub tools: adw::WrapBox,
     pub status: gtk::Label,
     pub query: gtk::Button,
     pub previous: gtk::Button,
@@ -58,10 +59,10 @@ impl Controls {
         let editor = gtk::ScrolledWindow::builder()
             .child(&input)
             .min_content_height(90)
-            .max_content_height(180)
-            .propagate_natural_height(true)
+            .vexpand(true)
             .build();
-        body.append(&editor);
+        let input_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        input_box.append(&editor);
         let options = crate::adaptive::toolbar(6);
         options.set_margin_start(12);
         options.set_margin_end(12);
@@ -76,11 +77,20 @@ impl Controls {
         options.append(&spacer);
         options.append(&spinner);
         options.append(&query);
-        body.append(&options);
-        body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        input_box.append(&options);
         let output = gtk::Box::new(gtk::Orientation::Vertical, 0);
         output.set_vexpand(true);
-        body.append(&output);
+        let split = gtk::Paned::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .start_child(&input_box)
+            .end_child(&output)
+            .position(180)
+            .resize_start_child(false)
+            .shrink_start_child(false)
+            .shrink_end_child(false)
+            .vexpand(true)
+            .build();
+        body.append(&split);
         let footer = crate::adaptive::toolbar(6);
         footer.set_margin_start(12);
         footer.set_margin_end(12);
@@ -104,8 +114,17 @@ impl Controls {
         for button in [&query, &copy, &previous, &next] {
             crate::adaptive::compact_button(button);
         }
+        let tools = crate::adaptive::toolbar(6);
+        tools.set_margin_start(12);
+        tools.set_margin_end(12);
+        tools.set_margin_top(6);
+        tools.set_margin_bottom(6);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        tools.append(&spacer);
+        tools.append(&copy);
+        output.append(&tools);
         footer.append(&status);
-        footer.append(&copy);
         footer.append(&previous);
         footer.append(&next);
         body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -120,6 +139,7 @@ impl Controls {
             input,
             options,
             output,
+            tools,
             status,
             query,
             previous,
@@ -128,7 +148,7 @@ impl Controls {
             spinner,
         }
     }
-    fn busy(&self, busy: bool) {
+    pub(crate) fn busy(&self, busy: bool) {
         self.query.set_sensitive(!busy);
         self.input.set_editable(!busy);
         self.spinner.set_spinning(busy);
@@ -152,7 +172,7 @@ pub struct Jq {
     closed: Cell<bool>,
 }
 
-fn send(
+pub(crate) fn send(
     sender: &mpsc::Sender<document::Message>,
     context: &Context,
     serial: u64,
@@ -173,8 +193,12 @@ fn send(
         .map_err(|_| "Reader query could not be sent".to_string())?;
     Ok(receive)
 }
-fn close_result(sender: &mpsc::Sender<document::Message>, context: &Context, id: String) {
-    if let Ok(receive) = send(sender, context, 0, Operation::JqClose { id }) {
+pub(crate) fn release_result(
+    sender: &mpsc::Sender<document::Message>,
+    context: &Context,
+    operation: Operation,
+) {
+    if let Ok(receive) = send(sender, context, 0, operation) {
         glib::MainContext::default().spawn_local(async move {
             let _ = receive.await;
         });
@@ -275,7 +299,11 @@ impl Jq {
             return;
         }
         if let Some(result) = self.result.borrow_mut().take() {
-            close_result(&self.sender, &self.context, result.id);
+            release_result(
+                &self.sender,
+                &self.context,
+                Operation::JqClose { id: result.id },
+            );
         }
     }
     fn style(&self) {
@@ -356,7 +384,7 @@ impl Jq {
                 .filter(|ui| !ui.closed.get() && ui.sequence.get() == sequence)
             else {
                 if let Ok(Reply::Jq(result)) = result {
-                    close_result(&sender, &context, result.id);
+                    release_result(&sender, &context, Operation::JqClose { id: result.id });
                 }
                 return;
             };
@@ -366,6 +394,7 @@ impl Jq {
             match result {
                 Ok(Reply::Jq(page)) => ui.display(page),
                 Ok(Reply::Closed) => {}
+                Ok(_) => ui.error("Unexpected reader query response"),
                 Err(error) => ui.error(&error),
             }
         });
@@ -377,7 +406,11 @@ impl Jq {
             .take()
             .filter(|old| old.id != page.id)
         {
-            close_result(&self.sender, &self.context, old.id);
+            release_result(
+                &self.sender,
+                &self.context,
+                Operation::JqClose { id: old.id },
+            );
         }
         crate::source_surface::set_text(&self.output.buffer(), &page.text);
         self.controls.previous.set_sensitive(page.page > 0);

@@ -9,6 +9,20 @@ use studio_markdown_native::Cell;
 pub type ConfigureText = Rc<dyn Fn(&gtk::Widget)>;
 pub type RenderImages = Rc<dyn Fn(&gtk::Box, &studio_markdown_native::RichText, bool)>;
 
+pub(crate) fn plain_label() -> gtk::Label {
+    gtk::Label::builder()
+        .xalign(0.0)
+        .yalign(0.0)
+        .hexpand(true)
+        .width_chars(1)
+        .selectable(true)
+        .margin_start(10)
+        .margin_end(10)
+        .margin_top(7)
+        .margin_bottom(7)
+        .build()
+}
+
 #[path = "table_cell_find.rs"]
 mod find;
 #[path = "table_math_pages.rs"]

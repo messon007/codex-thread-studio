@@ -56,9 +56,10 @@ class Client:
             if name in names:
                 assert self.api.Action.do_action(interface,names.index(name));return
         raise RuntimeError(('Owned native control has no activation action',node.get_name(),names))
-    def click(self,name):
+    def click(self,name,parent=None):
         def actionable(node):
             if node.get_name()!=name or not self.showing(node) or not self.sensitive(node):return False
+            if parent is not None and not self.within(node,parent):return False
             interface=node.get_action_iface()
             return interface and any(self.api.Action.get_action_name(interface,i) in ('click','activate','toggle') for i in range(self.api.Action.get_n_actions(interface)))
         # GtkMenuButton exports a named wrapper and a named toggle child. Only
@@ -66,13 +67,13 @@ class Client:
         node=self.wait(name,lambda:self.find(actionable))
         self.activate(node);return node
     def text(self,value):return self.find(lambda n:self.showing(n) and value in n.get_name())
-    def toggle(self,name,keys):
+    def toggle(self,name,keys,parent=None):
         """Use a native check button, including GTK nodes without AT-SPI Action.
 
         `keys` must send input through the caller's owned private compositor.
         The fallback follows real Tab stops and observes the checked state.
         """
-        node=self.wait(name,lambda:self.find(lambda n:n.get_name()==name and n.get_role_name() in ('check box','radio button') and self.showing(n) and self.sensitive(n)))
+        node=self.wait(name,lambda:self.find(lambda n:n.get_name()==name and n.get_role_name() in ('check box','radio button') and self.showing(n) and self.sensitive(n) and (parent is None or self.within(n,parent))))
         def checked():
             node.clear_cache()
             return node.get_state_set().contains(self.api.StateType.CHECKED)

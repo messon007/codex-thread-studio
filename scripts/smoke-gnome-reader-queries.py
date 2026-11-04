@@ -58,6 +58,9 @@ def api(gateway_binary, root):
     array = project/'array.json'
     array.write_text(json.dumps(rows[:3],ensure_ascii=False))
     originals = {path:path.read_bytes() for path in (source,array)}
+    markdown=project/'table query 中文.md'
+    markdown.write_text('# SQL source\n\n| Name | Value | Status |\n|---|---|---|\n'+''.join('| SQL row-%04d 中文😀 | %d | %s |\n'%(i,i,'keep' if i%2==0 else 'skip') for i in range(1200)))
+    originals[markdown]=markdown.read_bytes()
     runtime.fixture.BACKEND = runtime.CODEX
     runtime.fixture.OPENCODE_BACKEND = runtime.OPENCODE
     gateway = runtime.fixture.Gateway(Path(gateway_binary).resolve(),root)
@@ -103,9 +106,37 @@ def api(gateway_binary, root):
         answer = call(gateway,'/studio/native/markdown/'+second+'/jq-query',dict(revision=second_revision,filter='map(.value) | add'),second_document)
         assert json.loads(answer['text'])==3
         call(gateway,path,payload,second_document,expected=409)
+        sql_reader, sql_document, sql_revision=opened(gateway,markdown,readonly=True)
+        readers.append(sql_reader)
+        sql_base='/studio/native/markdown/'+sql_reader
+        schema=call(gateway,sql_base+'/table-query-schema?table=0',document=sql_document)
+        assert schema['sourceRows']==1200 and schema['columns']==['Name','Value','Status']
+        assert '\n' in schema['defaultSql'] and '*' not in schema['defaultSql']
+        call(gateway,sql_base+'/table-query-schema',dict(table=0),sql_document,expected=405)
+        call(gateway,sql_base+'/table-query-close',document=sql_document,expected=405)
+        sql='SELECT "Name", CAST("Value" AS INTEGER) AS number, CASE WHEN "Status"=\'keep\' THEN \'保留😀\' ELSE NULL END AS flag FROM data WHERE "Status"=\'keep\' ORDER BY number DESC'
+        statement=dict(table=0,revision=sql_revision,sql=sql)
+        call(gateway,sql_base+'/table-query',statement,sql_document,expected=401,authorized=False)
+        call(gateway,sql_base+'/table-query',statement,sql_document,expected=403,origin='https://unowned.invalid')
+        call(gateway,sql_base+'/table-query',{**statement,'revision':'old'},sql_document,expected=409)
+        result=call(gateway,sql_base+'/table-query',statement,sql_document)
+        assert result['totalRows']==600 and result['rows'][0]==['SQL row-1198 中文😀','1198','保留😀']
+        rows_out=result['rows'][:];next_row=result['rowEnd']
+        while next_row<result['totalRows']:
+            page=call(gateway,sql_base+'/table-query?id='+result['id']+'&row='+str(next_row),document=sql_document)
+            assert page['id']==result['id'] and page['rowStart']==next_row
+            rows_out.extend(page['rows']);next_row=page['rowEnd']
+        assert len(rows_out)==600 and rows_out[-1][1]=='0'
+        assert call(gateway,sql_base+'/table-query-close',dict(id=result['id']),sql_document)['closed']
+        call(gateway,sql_base+'/table-query?id='+result['id'],document=sql_document,expected=400)
+        line=call(gateway,sql_base+'/table-query',dict(table=0,revision=sql_revision,sql='SELECT _line, "Name" FROM data WHERE CAST("Value" AS INTEGER)=0'),sql_document)
+        assert line['rows']==[['5','SQL row-0000 中文😀']]
+        for rejected in ['DROP TABLE data',"ATTACH DATABASE 'forbidden.sqlite' AS external", "SELECT readfile('/etc/passwd')",'WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x) SELECT count(*) FROM x']:
+            call(gateway,sql_base+'/table-query',dict(table=0,revision=sql_revision,sql=rejected),sql_document,expected=400)
+        assert not (root/'forbidden.sqlite').exists()
         assert all(path.read_bytes()==data for path,data in originals.items())
         assert not runtime.starts(root)
-        result = dict(ok=True,readOnlyDocument=True,jqFilter=True,slurp=True,pagedUnicodeResults=True,queryClose=True,sourceRevisionChecks=True,authorization=True,originChecks=True,methodAllowlist=True,environmentDisabled=True,infiniteFilterBounded=True,sourceResponsiveSeconds=responsiveness,originalSourcesUnchanged=True,noInference=True,artifacts=str(root))
+        result = dict(ok=True,readOnlyDocument=True,jqFilter=True,slurp=True,pagedUnicodeResults=True,queryClose=True,sourceRevisionChecks=True,authorization=True,originChecks=True,methodAllowlist=True,environmentDisabled=True,infiniteFilterBounded=True,sourceResponsiveSeconds=responsiveness,markdownSql=True,fullSourceRows=True,sqlProjectionFilterSortCase=True,sqlResultPaging=True,sqlSourceLine=True,sqlMutationFileAccessRejected=True,sqlRecursionBounded=True,originalSourcesUnchanged=True,noInference=True,artifacts=str(root))
         (root/'query-api-result.json').write_text(json.dumps(result,indent=2)+'\n')
         print(json.dumps(result))
     finally:

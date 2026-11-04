@@ -100,9 +100,9 @@ TLS/structured/HTML notice checks; the temporary cache was then removed.
 The first runs were CI `41901661923` and Native GNOME `41901662382`; their failed
 and cancelled jobs do not qualify the integrated head. PR #50 initially had
 main conflicts, so pull-request runs were absent. The merge resolves those
-conflicts. New remote checks and matched optimized-gateway qualification are
-pending. Previously qualified binaries and the physical desktop check remain
-available with their original identities.
+conflicts. Matched optimized-gateway qualification now passes below; remote
+checks remain pending. Previously qualified binaries and the physical desktop
+check remain available with their original identities.
 
 The next PR matrix (`41905837725` / `41905837728`) passes Linux desktop,
 PDF runtime and all three native notice checks. Windows then exposed two path
@@ -112,9 +112,78 @@ compared a JSON-quoted path with its unescaped spelling. Missing destinations
 now resolve through their existing ancestor before computing identity; the
 reference assertion decodes the exact JSON value and compares canonical paths.
 All five focused backend/reference tests pass locally. The pinned renderer's
-library test also fails remotely, but its original CI output hid the detailed
-log. Failure diagnostics now retain that log and print a bounded tail; the
-cause and passing remote validation are still pending.
+library test also fails remotely; the retained log identifies the missing-font
+case below. Run `41908063006` passes all three existing desktop platforms at
+`6b540c0`, including the optional Windows backend. Native GNOME's matching
+push run `41908063325` passes the 408 native tests, notices and worker tests
+before failing that one renderer-library test. The corrected font dependency
+still needs a passing remote run.
+
+## Optimized main integration qualification
+
+Gateway source `6b540c0` integrates main `c73fdf4` and the Windows path fixes.
+Its optimized package reuses the qualified `ab21d4c` frontend and all diagram
+engines unchanged. A complete inventory comparison finds only the gateway and
+`SHA256SUMS` changed; all 495 manifest entries verify. That initial manifest is
+`111507166b861061ac80258c21636da9419bcd960328550d6abd6d339fdd3833`.
+
+Seven sequential checks pass: package assembly, standalone installation,
+Markdown SQL/JSON jq APIs, the installed native workflow (language, backend
+save, Git, viewers, process and event-gap recovery), actual large Markdown and
+32 MiB LF/CRLF reading/editing, real Codex 0.166.0 and real OpenCode 1.18.31.
+Both actual providers use private local models and the same reusable installed
+Wayland driver; each verifies four exact requests, consecutive turns without
+manual Stop, draft retention, restart history/no replay and owned-child cleanup.
+Codex retains its shared daemon across window closes and stops it at fixture
+shutdown. The native frontend and pinned diagram component are not rebuilt.
+
+The large-document check uses the preserved 8,814,855-byte actual report and
+33,555,074/33,574,894-byte generated LF/CRLF tables. It checks exact outline/source
+lines, bounded Source/Edit windows, explicit save, table paging and column
+filtering without losing the page. Observed opens are 3610/666/650 ms;
+outline interactions are 9749/5483/5661 ms in that fixture, not a claim of
+instant navigation or physical-device performance. Native/gateway peak RSS is
+372540/29812 KiB, with no WebKit content process in that document check.
+
+Records are under the external QA root's
+`native-main-c73fdf4-20261105/INTEGRATION-EVALUATION.json`, with logs and private
+fixtures alongside it. A fresh isolated pinned renderer library test passes
+all 1,029 tests locally; it does not explain the remote failure by itself.
+The 102,751,097-byte portable archive is qualified by
+`native-handoff-main-20261105/HANDOFF-EVALUATION.json`; extraction verifies all
+495 files and their modes. Its archive SHA-256 is
+`cc0adda68953cd295549d21cee2e42bb1a42c8175afe5358884f53d3aff8692b`.
+The font follow-up below updates only its runtime dependency installer and
+manifest. Previous packages and evidence remain intact. Integrated remote and
+physical acceptance are still required.
+
+## Declared emoji font prerequisite
+
+The retained CI log shows 1,028 renderer tests passing and only
+`resolved_fallback_viewport_contains_real_ink` failing. CI installed DejaVu and
+CJK fonts but no emoji font. The same existing renderer test binary reproduces
+that failure in a private namespace exposing only those fonts; adding
+`NotoColorEmoji.ttf` makes all 1,029 tests pass with zero ignored. No renderer
+patch, test exclusion or application binary change is needed. Both CI and the
+shared runtime dependency installer now declare `fonts-noto-color-emoji`; the
+development installer already reuses that runtime list. Failure output retains
+separate bounded stdout/stderr tails so compiler output cannot hide test errors.
+
+The updated package changes only `install-runtime-deps.sh` and `SHA256SUMS`
+relative to the seven-check qualification above. Standalone installation is
+retested; the full archive is extracted and all 495 files/modes verify again.
+Its manifest SHA-256 is
+`482bf8bd71d14bcd53f93b25ad8bc0652e046abb1ce6bf50161bd962a6f13125`.
+The archive is `codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz`,
+102,751,228 bytes, SHA-256
+`e1b5be274a18f56f16bf7ff86da3c2a74035e5eada65ade799013cb68760f3f2`.
+Its record is the external QA root's
+`native-handoff-main-fonts-20261105/HANDOFF-EVALUATION.json`.
+The `gnome-native-candidate-20261105-main` alias and
+[desktop check](gnome-native-desktop-check.md) select this package. The prior
+packages are preserved. The runtime installer dry run passes without modifying
+host packages. Remote font-corrected CI and physical desktop feedback remain
+pending.
 
 ## Real installed Codex shared-daemon workflow
 

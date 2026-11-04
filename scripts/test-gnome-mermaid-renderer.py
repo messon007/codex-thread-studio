@@ -109,7 +109,9 @@ def main():
     if not ok:
         # Keep the full log as an artifact, but expose a bounded diagnostic in
         # CI too: an early build failure otherwise reports only zero tests.
-        print('\n'.join(log.splitlines()[-100:]))
+        for stream, output in [('stdout', result.stdout), ('stderr', result.stderr)]:
+            print(f'Renderer {stream}:')
+            print('\n'.join(output.splitlines()[-60:]))
         raise SystemExit(f'Inspect renderer library tests: {out / "tests.log"}')
 
 

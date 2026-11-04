@@ -13,27 +13,36 @@ from the historical checkpoints below.
 
 ## Current validated candidate
 
-Run the optimized candidate that includes the notification activation and IME
-composition fixes:
+Run the optimized candidate integrating main `c73fdf4` and retaining the
+notification activation and IME composition fixes:
 
 ```sh
-./target/gnome-native-candidate-20261105-ime/codex-thread-studio-gnome
+./target/gnome-native-candidate-20261105-main/codex-thread-studio-gnome
 ```
 
-The application source is `ab21d4c`; later branch checkpoints qualify the same
-package. Actual GNOME Shell, IBus pinyin, Orca and mixed-scale virtual displays
-have recorded checks. Actual Codex 0.166.0 and OpenCode 1.18.31 also pass the
-installed native workflow with private local models. See the
+The shared gateway is built at `6b540c0`. The native frontend and diagram engines
+reuse the qualified `ab21d4c` package byte for byte; its actual GNOME Shell,
+IBus pinyin, Orca and mixed-scale virtual-display evidence remains scoped to
+that frontend. The new pair passes installed reading/editing, Git, settings,
+viewers, recovery, actual large reports and 32 MiB LF/CRLF editing. Actual Codex
+0.166.0 and OpenCode 1.18.31 also pass the new installed workflow with private
+local models. See the
 [current inventory](gnome-native-status.md) and
 [requirement review](gnome-native-acceptance.md) for exact scope and remaining
 physical/remote gates.
 
 A portable copy of this package and its archive checksum are available under
-`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz` and the
+`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz` and the
 matching `.sha256` path. Follow the
 [physical desktop check](gnome-native-desktop-check.md) to install it on Ubuntu
 26.04 or review the existing candidate. That checklist records manual results;
 it does not claim a physical desktop has passed.
+
+The package's dependency installer includes Noto Color Emoji, verified against
+the pinned renderer's real fallback-glyph test in a minimal-font namespace.
+
+The prior `gnome-native-candidate-20261105-ime` package and `ab21d4c` archive
+remain available with their original identities.
 
 ## Previous desktop activation candidate
 

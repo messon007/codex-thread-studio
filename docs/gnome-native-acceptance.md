@@ -119,10 +119,15 @@ or guarantee freedom from defects.
 
 The feature branch is now published through SSH and
 [draft PR #50](https://github.com/messon007/codex-thread-studio/pull/50) is open.
-Initial remote checks exposed two corrected CI issues; the
+Remote checks exposed audit, fresh-cache and Windows-path corrections; the
 [main integration follow-up](gnome-native-status.md#main-integration-and-initial-remote-checks)
 records their scope. Passing integrated remote jobs and physical desktop results
 remain required; local tests do not substitute for them.
+
+The [updated optimized package](gnome-native-status.md#optimized-main-integration-qualification)
+passes its installed workflow, actual/32 MiB LF/CRLF documents and both real
+Codex/OpenCode CLIs with private local models. It reuses the verified native
+frontend and engines and changes only the main-integrated gateway and manifest.
 
 The real Shell [launcher/notification workflow](gnome-native-status.md#gnome-shell-launcher-and-notification-activation)
 also passes ordinary keyboard activation, actual banner delivery, notification

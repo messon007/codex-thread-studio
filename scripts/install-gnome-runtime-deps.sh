@@ -5,7 +5,7 @@ set -euo pipefail
 packages=(
   libgtk-4-1 libadwaita-1-0 libgtksourceview-5-0 libvte-2.91-gtk4-0
   libwebkitgtk-6.0-4 libssl3t64 ca-certificates
-  adwaita-icon-theme fontconfig fonts-dejavu-core fonts-noto-cjk
+  adwaita-icon-theme fontconfig fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
   shared-mime-info desktop-file-utils bubblewrap graphviz default-jre-headless
   speech-dispatcher speech-dispatcher-espeak-ng
 )

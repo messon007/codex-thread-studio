@@ -1,9 +1,10 @@
 # Native GNOME desktop check
 
 Development branch: `feat/ubuntu-26-04-gnome-native`. The current optimized
-application source is `ab21d4c`; its package manifest SHA-256 is
-`38d4bdbafd45dafab62f8735475a3bb53a75740854dc4f3321eb3b79cf32aa0a`.
-Later checkpoints reuse the same binaries. Automated evidence is listed in the
+gateway source is `6b540c0`, with the verified frontend/engines reused from
+`ab21d4c`. Its package manifest SHA-256 is
+`482bf8bd71d14bcd53f93b25ad8bc0652e046abb1ce6bf50161bd962a6f13125`.
+Automated evidence is listed in the
 [acceptance review](gnome-native-acceptance.md) and
 [current inventory](gnome-native-status.md).
 
@@ -14,7 +15,7 @@ because the native application shares its existing Studio profile and stores.
 From the repository root:
 
 ```sh
-./target/gnome-native-candidate-20261105-ime/codex-thread-studio-gnome
+./target/gnome-native-candidate-20261105-main/codex-thread-studio-gnome
 ```
 
 The native executable and gateway remain siblings in the qualified package.
@@ -24,8 +25,8 @@ The native executable and gateway remain siblings in the qualified package.
 Copy these two files from the build machine's `target/` into an empty working
 directory on the Ubuntu 26.04 x86_64 machine:
 
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz`
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz.sha256`
+- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz`
+- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz.sha256`
 
 The build-machine `target/` entries are symlinks to the external disk. Use
 `cp -L` locally or `scp` to copy the archive bytes and checksum.
@@ -33,8 +34,8 @@ The build-machine `target/` entries are symlinks to the external disk. Use
 From that directory:
 
 ```sh
-sha256sum -c codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz.sha256
-tar -xzf codex-thread-studio-gnome-ubuntu-26.04-x86_64-ab21d4c.tar.gz
+sha256sum -c codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz.sha256
+tar -xzf codex-thread-studio-gnome-ubuntu-26.04-x86_64-6b540c0-fonts.tar.gz
 cd release-package
 bash ./install-runtime-deps.sh
 bash ./install.sh

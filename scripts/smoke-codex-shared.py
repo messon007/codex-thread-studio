@@ -37,7 +37,7 @@ axum={version="=0.8.9",features=["ws"]}
 futures-util="0.3.31"
 serde={version="=1.0.229",features=["derive"]}
 serde_json="=1.0.151"
-tokio={version="=1.53.1",features=["io-util","net","process","rt-multi-thread","sync","time","macros"]}
+tokio={version="=1.53.3",features=["io-util","net","process","rt-multi-thread","sync","time","macros"]}
 tokio-tungstenite={version="=0.29.0",default-features=false,features=["handshake"]}
 uuid={version="1.23.5",features=["v4"]}
 libc="0.2.174"

@@ -69,6 +69,7 @@ mod conversation_output_ui;
 mod conversation_pages;
 #[cfg(target_os = "linux")]
 mod conversation_pages_ui;
+mod conversation_question;
 mod download_file;
 mod environment;
 mod epub;
@@ -151,6 +152,8 @@ mod session_list;
 mod session_map;
 mod session_release;
 mod startup;
+#[cfg(test)]
+mod test_http;
 mod turn_navigation;
 #[cfg(target_os = "linux")]
 mod turn_navigation_ui;

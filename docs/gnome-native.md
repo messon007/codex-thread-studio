@@ -11,23 +11,30 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
-## Current Favorites source candidate
+## Current Favorites question candidate
 
 The [Favorites source-preservation checkpoint](gnome-native-status.md#native-favorites-source-preservation)
 fixes complete-message capture, historical-page ownership and optional-question
-controls found during the final parity audit. The current optimized candidate is:
+controls found during the final parity audit. The subsequent
+[original-question checkpoint](gnome-native-status.md#native-favorites-questions-across-history-pages)
+resolves a question outside the displayed history page without resuming or
+replacing that conversation. The current optimized candidate is:
 
 ```sh
-./target/gnome-native-candidate-20261104-favorite-source/codex-thread-studio-gnome
+./target/gnome-native-candidate-20261104-favorite-question/codex-thread-studio-gnome
 ```
 
-Matching debug/release pairs pass installed Codex English, OpenCode Chinese and
-the existing Favorites library workflows; 403 native and 273 gateway tests,
-Rust 1.92 and the default Tauri Linux check pass. Exact hashes and the preceding
-failing byte comparison are in `FAVORITE-SOURCE-EVALUATION.json` beside the
-package. Remaining question-discovery, broader parity, host and publishing gates
-stay explicit in the current inventory. The older integrated candidate below is
-preserved rather than overwritten.
+Matching debug/release pairs pass installed Codex English and both OpenCode
+question-read paths, with ordinary capture regressions on the optimized pair;
+408 native tests and Rust 1.92 release-target checks pass. The unchanged packaged
+gateway retains its verified executable identity. The default-feature Rust
+workspace additionally passes 430 tests, including 285 GTK3/Tauri gateway tests;
+753 web tests and the offline npm audit pass. Standalone installation and clean
+Ubuntu runtime dependency loading/CLI help pass with their documented limits.
+Exact hashes, earlier failing capture and fixture corrections are in
+`QUESTION-LOOKUP-EVALUATION.json` beside the package. Broader parity, host and
+publishing gates stay explicit in the current inventory. The earlier Favorites
+and integrated candidates are preserved rather than overwritten.
 
 ## Integrated optimized candidate
 

@@ -54,9 +54,10 @@ retains its separate source importer and shares formatting and table controls.
    Assess renderer limits against actual supported documents. Historical missing
    Router execution, images, animation, recovery, EPUB search and output-paging
    notes are superseded by later implementations.
-   Favorites source capture now has the focused validation below. Next verify
-   question retrieval when a history page begins inside a Turn, rather than
-   assuming the question is present among the displayed Items.
+   Favorites source capture and original-question retrieval now have focused
+   validation below, including a history page beginning inside a Turn. Continue
+   the requirement/compatibility review; these cases do not establish complete
+   application parity.
 2. **Release acceptance.** Keep installed workflows and existing clients' checks
    passing as gaps close; validate fresh-machine packaging and record physical
    GNOME/input/assistive-technology and real-provider checks separately. Tests
@@ -254,15 +255,73 @@ The optimized candidate is `target/gnome-native-candidate-20261104-favorite-sour
 source/executable hashes, four installed capture results and two packaged-library
 results. The library regression launches the packaged sibling executables;
 the capture checks additionally install into private prefixes. The older integrated package
-below remains preserved with its own, earlier scope. Complete question discovery
-across a split history Turn is still an audit item; the current successful cases
-have their question available in the displayed page.
+below remains preserved with its own, earlier scope. The following checkpoint
+also verifies questions outside the displayed history page.
 
 ```sh
 python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle
 python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle --backend opencode --language zh-CN
 python3 scripts/smoke-gnome-release-favorites.py /path/to/native-bundle
 ```
+
+## Native Favorites questions across history pages
+
+The audit reproduced a second source-loss case: the response belonged to the
+displayed page, but its user question was on the preceding page. Saving silently
+omitted the question. Capture now uses the existing immutable question snapshot
+when available, then performs a bounded read of its original conversation if
+the question is absent or that snapshot is unavailable. The visible page, live
+conversation, composer and selected session remain unchanged.
+
+Codex uses the existing authenticated, private conversation-history service and
+its full-turn pagination, including the existing legacy read compatibility path.
+It never resumes the source thread. OpenCode uses its documented
+[single-message read](https://opencode.ai/docs/server/#messages) with the original
+parent-user ID and project directory. Only HTTP 404/405 permits the existing
+cursor-paged history fallback; a denied or malformed reply remains an explicit
+error. Session, user and response-part ownership are checked. The lookup admits
+at most 64 pages and 20 seconds, reuses the existing cursor budget and shared
+Favorites question limit, and performs projection on the existing Rust worker
+pool. An unavailable question retains the existing visible explanation and
+optional-question behavior; saving the complete response is still possible.
+
+This reuses the history transport, provider normalization, snapshot cache,
+Favorites store/editor and bounded workers. The HTTP fixture formerly local to
+Session Map tests is shared with these protocol tests rather than copied.
+
+All 408 native tests pass (four opt-in fixtures ignored), and Rust 1.92 checks
+all release targets. The required default-feature Rust workspace passes 430
+tests (two opt-in fixtures ignored), including 285 existing GTK3/Tauri gateway
+tests. All 753 web tests and the offline npm audit pass; this is not a live
+advisory audit. Matching installed debug and optimized packages pass three
+split-Turn cases: Codex English, OpenCode Chinese with paged fallback, and
+OpenCode English with the direct read. The optimized pair additionally passes
+both ordinary capture regressions. Actual SQLite and an independent Wayland
+clipboard reader verify exact source/question content, original anchors and
+unchanged drafts/files; no model turn or implicit resume is sent. These are
+private deterministic providers, not a real-provider compatibility guarantee.
+
+```sh
+python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle --split-turn
+python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle --split-turn --backend opencode --language zh-CN
+python3 scripts/smoke-gnome-favorite-source.py /path/to/native-bundle --split-turn --backend opencode --direct-question
+```
+
+The optimized candidate is
+`target/gnome-native-candidate-20261104-favorite-question`.
+`QUESTION-LOOKUP-EVALUATION.json` beside its external package records hashes,
+the earlier failing capture and exact acceptance scope. Older packages and the
+default installation are preserved. Full requirement review, remote CI and
+physical desktop/provider checks remain separate gates.
+
+The native binary also passes dependency loading and CLI help against the
+previously prepared clean Ubuntu 26.04 runtime, with no host system/home, source
+checkout, network or display mounted. The standalone installer passes checksum,
+update/reinstall, unusual-prefix and unrelated-tool preservation checks. These
+do not constitute a fresh GNOME login. The first default-workspace link exposed
+missing runtime targets in the private GTK3 SDK; official Ubuntu runtime archives
+were extracted there before the successful repeat, without installing host
+packages or changing the native GTK4 dependency graph.
 
 ## Optimized integrated release checkpoint
 

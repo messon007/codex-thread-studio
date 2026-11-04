@@ -51,6 +51,7 @@ pub struct Capture {
     pub favorite: Favorite,
     pub content: Option<crate::conversation_output::Reference>,
     pub question: Option<crate::conversation_output::Reference>,
+    pub question_lookup: Option<crate::conversation_focus::Request>,
 }
 impl Capture {
     fn resolve(mut self, limits: Limits) -> Result<(Favorite, Option<String>), String> {
@@ -180,14 +181,34 @@ fn detail(value: Value, saved: bool) -> Result<Reply, String> {
 }
 pub async fn execute(api: &Api, request: Request) -> Result<Reply, String> {
     match request {
-        Request::Capture(capture) => {
+        Request::Capture(mut capture) => {
             let limits: Limits = serde_json::from_value(
                 api.json(Method::GET, "/studio/native/favorites/limits", None)
                     .await?,
             )
             .map_err(|_| "The server returned invalid Favorites source limits")?;
+            let question_lookup = capture.question_lookup.take();
+            let question_limit = limits.question_bytes;
+            let retry_question = capture.question.as_ref().is_none_or(|source| {
+                source.unavailable.is_some() || source.bytes <= question_limit
+            });
+            let (mut favorite, mut question_issue) =
+                crate::worker::compute(move || capture.resolve(limits)).await?;
+            if retry_question && (question_issue.is_some() || favorite.question.is_empty()) {
+                if let Some(request) = question_lookup {
+                    match crate::conversation_question::load(api, request, question_limit).await {
+                        Ok(question) => {
+                            favorite.question = question;
+                            question_issue = None;
+                        }
+                        Err(error) => {
+                            favorite.question.clear();
+                            question_issue = Some(error);
+                        }
+                    }
+                }
+            }
             crate::worker::compute(move || {
-                let (favorite, question_issue) = capture.resolve(limits)?;
                 let value = serde_json::to_value(favorite).map_err(|error| error.to_string())?;
                 let Reply::Detail { favorite, preview } = detail(value, false)? else {
                     unreachable!()
@@ -270,6 +291,7 @@ mod tests {
             favorite: serde_json::from_value(json!({"id":"f","scope":"message","backend":"codex","threadId":"t","threadTitle":"Title","projectPath":"/tmp/project","turnId":"turn","itemId":"item","title":"Source","question":"question","content":"preview","note":"","tags":[],"createdAt":"now"})).unwrap(),
             content: None,
             question: None,
+            question_lookup: None,
         }
     }
     #[test]

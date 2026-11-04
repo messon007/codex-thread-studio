@@ -12,12 +12,12 @@ const PAGE_SIZE: usize = 80;
 const CONTEXT_ITEMS: usize = 40;
 const SEARCH_METADATA_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Default)]
-struct Cursors {
+pub(crate) struct Cursors {
     seen: HashSet<String>,
     bytes: usize,
 }
 impl Cursors {
-    fn advance(&mut self, next: &str) -> Result<bool, String> {
+    pub(crate) fn advance(&mut self, next: &str) -> Result<bool, String> {
         if self.seen.contains(next) {
             return Err("OpenCode repeated its history cursor".into());
         }
@@ -31,7 +31,7 @@ impl Cursors {
     }
 }
 
-async fn page(
+pub(crate) async fn page(
     api: &Api,
     thread: &str,
     directory: &str,

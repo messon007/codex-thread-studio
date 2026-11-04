@@ -2106,10 +2106,20 @@ impl Ui {
                                 question.role == "You" && question.turn_id == item.turn_id
                             })
                             .and_then(|question| question.output.clone()),
+                        !displayed.iter().any(|question| {
+                            question.role == "You" && question.turn_id == item.turn_id
+                        }),
                     )
                 })
         };
-        let Some((mut backend, mut thread, mut question, mut question_source)) = source else {
+        let Some((
+            mut backend,
+            mut thread,
+            mut question,
+            mut question_source,
+            mut question_missing,
+        )) = source
+        else {
             self.error("Wait for the response to finish loading before saving it");
             return;
         };
@@ -2120,6 +2130,7 @@ impl Ui {
             thread.cwd = origin.root.clone();
             question = origin.question.as_ref().clone();
             question_source = None;
+            question_missing = false;
             (origin.turn.clone(), origin.item.clone())
         } else {
             (item.turn_id.clone(), item.id.clone())
@@ -2166,10 +2177,46 @@ impl Ui {
                 .map(|value| value.to_string())
                 .unwrap_or_else(|_| "unknown".into()),
         };
+        let question_lookup = if question_missing || question_source.is_some() {
+            let state = self.state.borrow();
+            Some(crate::conversation_focus::Request {
+                backend_kind: state
+                    .backends
+                    .iter()
+                    .find(|value| value.id == favorite.backend)
+                    .map(|value| value.kind.clone())
+                    .unwrap_or_default(),
+                directory: favorite.project_path.clone(),
+                context: crate::session_search::Context {
+                    backend: favorite.backend.clone(),
+                    thread: favorite.thread_id.clone(),
+                    generation: *state
+                        .backend_generations
+                        .get(&favorite.backend)
+                        .unwrap_or(&0),
+                },
+                serial: 0,
+                hit: crate::session_search::Occurrence {
+                    turn_id: favorite.turn_id.clone(),
+                    item_id: favorite.item_id.clone(),
+                    kind: crate::session_search::Filter::Assistant,
+                    snippet: String::new(),
+                    highlight: 0..0,
+                    source: None,
+                    block: None,
+                    table_row: None,
+                    paragraph_page: None,
+                    paragraph_range: None,
+                },
+            })
+        } else {
+            None
+        };
         library.capture(crate::favorites::Capture {
             favorite,
             content: content_source,
             question: question_source,
+            question_lookup,
         });
     }
     fn open_favorite_source(self: &Rc<Self>, favorite: crate::favorites::Favorite) {

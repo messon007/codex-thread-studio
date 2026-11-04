@@ -458,6 +458,14 @@ pub fn message_page_path(id: &str, directory: &str, cursor: Option<&str>, limit:
     endpoint(&session_path(id, "/message"), directory, &query)
 }
 
+pub fn message_path(id: &str, directory: &str, message: &str) -> String {
+    endpoint(
+        &session_path(id, &format!("/message/{}", segment(message))),
+        directory,
+        &[],
+    )
+}
+
 /// One stable user item per message, assistant/tool items retain their part IDs.
 /// The caller owns the page-size/transport budget and performs this on a worker.
 fn user_item(id: &str, parts: &Value) -> Value {

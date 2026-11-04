@@ -59,8 +59,11 @@ The subsequent Favorites audit reproduced display-excerpt persistence and fixed
 complete-source capture, historical-page ownership and optional-question controls,
 reusing the immutable snapshot cache and shared store limits. Matched installed
 debug/release checks, 403 native tests, 273 gateway tests, Rust 1.92 and default
-Tauri checking pass. Continue with question discovery when a history page splits
-a Turn, then the remaining requirement/compatibility review; see the
+Tauri checking pass. The next checkpoint also resolves questions across split
+history pages through the existing private history reader, with bounded
+OpenCode single-message/cursor compatibility, 408 native tests and matching
+installed debug/optimized acceptance. Continue the requirement/compatibility
+review; see the
 [current Favorites checkpoint](gnome-native-status.md#native-favorites-source-preservation).
 
 At the supervision checkpoint, 392 native tests and 257 headless gateway tests

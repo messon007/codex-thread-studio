@@ -1505,7 +1505,10 @@ fn validate_spreadsheet_archive(bytes: &[u8]) -> Result<(), String> {
         if total > MAX_UNCOMPRESSED_BYTES {
             return Err("XLSX expanded content exceeds 200 MiB".into());
         }
-        let name = entry.name().replace('\\', "/");
+        let name = entry
+            .name()
+            .map_err(|error| format!("invalid XLSX entry name: {error}"))?
+            .replace('\\', "/");
         if name == "[Content_Types].xml" {
             content_types = true;
         }

@@ -53,3 +53,7 @@ behavior; Shift-wheel keeps horizontal table scrolling.
 The browser smoke check additionally covers pointer/keyboard resizing, widths
 across paged rows, native wheel chaining in both directions, small-document
 mount/unmount persistence, and disposal of table controls.
+
+The local patch also pins the security-reviewed parser/runtime fixes and narrows
+Syntect to built-in syntax/theme loading, HTML and fancy regex; see
+`docs/ecosystem-review-2026-11-04.md` for the dependency applicability review.

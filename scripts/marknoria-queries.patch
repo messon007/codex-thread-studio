@@ -1,5 +1,5 @@
 diff --git a/crates/marknoria/Cargo.toml b/crates/marknoria/Cargo.toml
-index 909cc5f..7f389b6 100644
+index 909cc5f..b1e1f7c 100644
 --- a/crates/marknoria/Cargo.toml
 +++ b/crates/marknoria/Cargo.toml
 @@ -9,15 +9,21 @@ autobins = false
@@ -9,24 +9,28 @@ index 909cc5f..7f389b6 100644
 -pulldown-cmark = { version = "=0.13.5", default-features = false, features = ["html", "simd"] }
 +pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html", "simd"] }
  serde = { version = "=1.0.229", features = ["derive"] }
- serde_json = "=1.0.151"
- sha2 = "=0.11.0"
- similar = { version = "=3.2.0", default-features = false, features = ["std", "text"] }
+-serde_json = "=1.0.151"
+-sha2 = "=0.11.0"
+-similar = { version = "=3.2.0", default-features = false, features = ["std", "text"] }
++serde_json = "=1.0.154"
++sha2 = "=0.11.1"
++similar = { version = "=3.2.1", default-features = false, features = ["std", "text"] }
  same-file = "=1.0.6"
 -syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
 +syntect = { version = "=5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
  tempfile = "=3.27.0"
 -tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
-+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
++tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
  tower = { version = "=0.5.3", features = ["util"] }
- tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
+-tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
++tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
  uuid = { version = "1.23.5", features = ["v4"] }
 +
 +kuchikiki = "=0.8.2"
-+rusqlite = { version = "=0.40.2", features = ["bundled", "hooks", "limits"] }
-+jaq-core = "=3.1.0"
-+jaq-std = "=3.0.1"
-+jaq-json = "=2.0.1"
++rusqlite = { version = "=0.41.1", features = ["bundled", "hooks", "limits"] }
++jaq-core = "=3.1.2"
++jaq-std = "=3.0.4"
++jaq-json = "=2.0.3"
 diff --git a/crates/marknoria/src/files.rs b/crates/marknoria/src/files.rs
 index 7a1849b..0e8344a 100644
 --- a/crates/marknoria/src/files.rs
@@ -724,6 +728,7 @@ index 8bca7b0..8f08482 100644
          .get(1)
 diff --git a/crates/marknoria/src/table_query.rs b/crates/marknoria/src/table_query.rs
 new file mode 100644
+index 0000000..488d3c9
 --- /dev/null
 +++ b/crates/marknoria/src/table_query.rs
 @@ -0,0 +1,561 @@
@@ -1062,7 +1067,7 @@ new file mode 100644
 +            self.input = None;
 +            self.input = Some(build_input(parent, index, table, &cancelled)?);
 +        }
-+        let db = Connection::open_with_flags(
++        let mut db = Connection::open_with_flags(
 +            self.input
 +                .as_ref()
 +                .unwrap()

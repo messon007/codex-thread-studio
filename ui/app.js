@@ -1152,6 +1152,7 @@ function bindUI() {
     if (!event.target.closest('#thread-content-search')) sessionManagement.search.hideResults()
   })
   document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || document.querySelector('dialog[open]')) return
     const modifier = event.ctrlKey || event.metaKey
     if (modifier && event.key.toLowerCase() === 'f' && selectedThread() && !event.target.closest('.artifact-rail, .workspace-files-rail, .workspace-terminal-rail, .workspace-review-rail, .embedded-browser-rail')) {
       event.preventDefault()
@@ -5220,7 +5221,6 @@ async function handleMarkdownActionClick(event) {
     const block = sourceButton.closest('.markdown-diagram')
     if (block) {
       setDiagramSourceVisible(block, !block.classList.contains('show-source'))
-      if (state.artifactSearch.trim() && block.closest('#artifact-content')) applyArtifactSearchHighlights()
     }
     return
   }

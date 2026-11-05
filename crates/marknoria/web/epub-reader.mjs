@@ -97,6 +97,7 @@ export function mountEpubReader(root, options) {
       typography: options.typography || options.initialState?.typography,
       translate: options.translate,
       onSelection: currentSelection,
+      onShortcut: options.onShortcut,
       onRelocate: (value) => {
         reading = value
         if (value.cfi) firstLocation()
@@ -177,6 +178,13 @@ export function mountEpubReader(root, options) {
         await instance.settings(patch)
         reading = instance.state()
       })
+    },
+    async navigateOutline(id, { signal } = {}) {
+      await ready
+      signal?.throwIfAborted()
+      const items = instance.outline()
+      if (!Number.isSafeInteger(id) || id < 0 || id >= items.length) throw Error('Invalid EPUB outline identity')
+      return this.navigate({ kind: 'epubChapter', href: archiveHref(items[id].target.href) })
     },
     async outline({ offset = 0 } = {}) {
       await ready
@@ -339,6 +347,7 @@ export async function createEpubReader({
   onSelection = () => {},
   onRelocate = () => {},
   onExternalLink = () => {},
+  onShortcut,
   onError = () => {}
 } = {}) {
   if (!(container instanceof HTMLElement)) throw new Error('EPUB reader requires a container')
@@ -994,7 +1003,12 @@ export async function createEpubReader({
   }
 
   function handleKeydown(event) {
-    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.defaultPrevented || event.altKey) return
+    if (event.ctrlKey || event.metaKey) {
+      const key = event.key.toLowerCase()
+      if (onShortcut && ['f','o'].includes(key)) { event.preventDefault(); event.stopPropagation(); onShortcut(key) }
+      return
+    }
     if (
       event.key !== 'Escape' &&
       event.target?.closest?.('input,textarea,select,[contenteditable]')

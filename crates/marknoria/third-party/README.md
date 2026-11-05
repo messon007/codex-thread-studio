@@ -97,3 +97,15 @@ already part of kuchikiki's dependency graph. The added direct declaration does
 not copy another checkout or add a new package version. The existing source
 allowlist includes the local adapter, and the Web-only Cargo template retains the
 same exact dependency/options.
+
+`web/outline.mjs` adapts the hierarchy and ancestor-preserving filter semantics
+from Studio `ui-src/document-outline.mts` at frozen revision
+`a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a` (MIT, copyright 2026 messon007).
+It consumes existing indexed metadata, adds cancellable linear filtering, and
+uses viewport virtualization instead of copying the old 2,000-heading limit.
+The original MIT notice remains in `codex-thread-studio-MIT.txt`.
+
+The shared Source/Edit find panel reuses MIT-licensed `@codemirror/search`
+**6.7.2**, matching the fixed Studio dependency. The lockfile records its exact
+package/integrity; public exports retain its installed npm license and notice.
+No Studio editor wrapper or second search implementation is required.

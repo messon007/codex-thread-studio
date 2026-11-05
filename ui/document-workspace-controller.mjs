@@ -2,7 +2,7 @@ import { fuzzyFileLabel, reviewableFileKind } from './composer-tools.mjs'
 import { fileDisplayName } from './document-review.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { documentCommentSource } from './comment-source-providers.mjs'
-import { getLocale, t } from './i18n.mjs'
+import { getLocale, onLanguageChange, t } from './i18n.mjs'
 import { createLargeMarkdownHost, createReaderNotesHost } from './large-markdown-host.mjs'
 
 // Candidate resolution only; the WSL transport rechecks canonical file grants.
@@ -41,6 +41,7 @@ export function createDocumentWorkspaceController({
   randomId,
   notify = () => {},
   reportError = console.error,
+  loadReaderMessages = () => import(new URL('./reader-assets/ui-messages.mjs', import.meta.url).href),
 }) {
   const {
     selectedThread,
@@ -62,6 +63,18 @@ export function createDocumentWorkspaceController({
   const $ = (selector) => document.querySelector(selector)
   const toast = notify
   const showError = reportError
+  // uiLabels owns placeholder/number formatting. Keep Studio's existing
+  // translator and language events without expanding variables prematurely.
+  const hostTranslate = key => t(key)
+  Object.defineProperty(hostTranslate, 'locale', { get: getLocale })
+  hostTranslate.subscribe = (listener, { signal } = {}) => {
+    if (signal?.aborted) return () => {}
+    const off = onLanguageChange(listener)
+    const remove = () => { off(); signal?.removeEventListener('abort', remove) }
+    signal?.addEventListener('abort', remove, { once: true })
+    return remove
+  }
+  let messageCatalog = null, localeMessages = null, messagesLocale = null, bound = false
   let artifactSearchTimer = null
   let epubReadingStateTimer = null
   let largeMarkdownFrame = null
@@ -94,8 +107,10 @@ export function createDocumentWorkspaceController({
   }
 
   let readerPresentationSignature = ''
-  function syncLargeMarkdownTheme() {
-    if (!largeMarkdownHost || !largeMarkdownFrame) return
+  async function readerPresentationSettings(file) {
+    const { readerMessages } = await (messageCatalog ||= loadReaderMessages())
+    const locale = getLocale()
+    if (messagesLocale !== locale) { messagesLocale = locale; localeMessages = { ...readerMessages(t), 'Ask AI': t('Ask AI') } }
     const style = getComputedStyle(document.documentElement)
     const palette = {}
     const canvas = document.createElement('canvas')
@@ -107,7 +122,7 @@ export function createDocumentWorkspaceController({
       context.clearRect(0,0,1,1);context.fillStyle=value;context.fillRect(0,0,1,1)
       palette[key]='#'+[...context.getImageData(0,0,1,1).data].map(channel=>channel.toString(16).padStart(2,'0')).join('')
     }
-    const settings = {theme:document.documentElement.dataset.theme==='dark'?'dark':'light',toolbar:'host',locale:getLocale(),palette}
+    const settings = {theme:document.documentElement.dataset.theme==='dark'?'dark':'light',toolbar:'host',locale,messages:localeMessages,palette}
     for (const [key,variable] of Object.entries({fontFamily:'ui-font-family',contentFontFamily:'content-font-family',codeFontFamily:'code-font-family'})) {
       const value=style.getPropertyValue('--'+variable).trim()
       if(value)settings[key]=value
@@ -118,20 +133,33 @@ export function createDocumentWorkspaceController({
     }
     const weight=Number(style.getPropertyValue('--content-font-weight'))
     if(Number.isInteger(weight)&&weight>=100&&weight<=900)settings.contentFontWeight=weight
-    if (largeMarkdownFile?.format === 'epub') settings.epub = { theme: largeMarkdownFile.readingState?.theme || 'light', typography: readingTypography() }
-    const notesRoot = $('#artifact-reader-shell')
-    if (notesRoot?.style) for (const [key,value] of Object.entries(palette)) notesRoot.style.setProperty('--reader-'+key,value)
-    const signature=JSON.stringify(settings)
-    if(signature===readerPresentationSignature)return
-    readerPresentationSignature=signature
+    if (file?.format === 'epub') settings.epub = { theme: file.readingState?.theme || 'light', typography: readingTypography() }
+    return settings
+  }
+
+  async function syncLargeMarkdownTheme() {
+    if (!largeMarkdownHost || !largeMarkdownFrame) return
     const host = largeMarkdownHost
-    host.settings(settings).catch(error=>{
+    try {
+      const settings = await readerPresentationSettings(largeMarkdownFile)
+      if (largeMarkdownHost !== host) return
+      const notesRoot = $('#artifact-reader-shell')
+      if (notesRoot?.style) for (const [key,value] of Object.entries(settings.palette)) notesRoot.style.setProperty('--reader-'+key,value)
+      const signature = JSON.stringify(settings)
+      if (signature === readerPresentationSignature) return
+      readerPresentationSignature = signature
+      await host.settings(settings)
+    } catch (error) {
       if (largeMarkdownHost !== host) return
       readerPresentationSignature='';showError(error)
-    })
+    }
   }
 
   function bind() {
+    if (bound) return
+    bound = true
+    const unsubscribeLocale = onLanguageChange(syncLargeMarkdownTheme)
+    window.addEventListener('pagehide', unsubscribeLocale, { once: true })
     $('#close-artifact')?.addEventListener('click', closeArtifactRail)
     $('#refresh-artifact')?.addEventListener('click', () => refreshArtifact().catch(showError))
     $('#artifact-preview')?.addEventListener('click', () => setArtifactView('preview'))
@@ -237,7 +265,11 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
       } catch (error) { releaseLargeMarkdown(result); throw error }
       if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) { releaseLargeMarkdown(result); return }
     }
-    state.artifact = { ...result, readingState, hash: result.bookHash, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
+    let initialPresentation
+    try { initialPresentation = await readerPresentationSettings({ ...result, readingState }) }
+    catch (error) { releaseLargeMarkdown(result); throw error }
+    if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) { releaseLargeMarkdown(result); return }
+    state.artifact = { ...result, initialPresentation, readingState, hash: result.bookHash, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
       readerReference: file.readerReference, readerFragment: file.readerFragment, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
     largeMarkdownFile = state.artifact
     state.artifactView = 'preview'
@@ -329,7 +361,14 @@ function setArtifactOutlineOpen(open) {
 }
 
 function handleArtifactNavigationKeydown(event) {
-  if (event.key !== 'Escape' || $('#artifact-rail').classList.contains('hidden')) return
+  if (event.defaultPrevented || document.querySelector('dialog[open]') || $('#artifact-rail').classList.contains('hidden')) return
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f' && state.artifactView !== 'edit' && $('#artifact-rail').contains(event.target)) {
+    event.preventDefault()
+    if (!state.artifactSearchOpen) toggleArtifactSearch()
+    else $('#artifact-search-input').focus()
+    return
+  }
+  if (event.key !== 'Escape') return
   if (state.artifactOutlineOpen && !$('#artifact-outline-toggle').classList.contains('hidden')) {
     event.preventDefault()
     setArtifactOutlineOpen(false)
@@ -383,6 +422,9 @@ function renderArtifact() {
   $('#artifact-error').classList.toggle('hidden', !file.error)
   $('#artifact-error-message').textContent = file.error || ''
   const largeMarkdownReady = !file.loading && !file.error && file.kind === 'large-markdown' && Boolean(file.largeMarkdown?.url)
+  const initializing = largeMarkdownReady && !file.readerReady
+  rail.classList.toggle('reader-initializing', initializing)
+  $('#artifact-loading').classList.toggle('hidden', !file.loading && !initializing)
   const ready = largeMarkdownReady
   const content = $('#artifact-content')
   $('#artifact-reader-shell').classList.toggle('hidden', !ready)
@@ -433,7 +475,12 @@ function renderArtifact() {
       largeMarkdownFrame = document.createElement('iframe')
       largeMarkdownFrame.className = 'artifact-large-markdown-frame'
       largeMarkdownFrame.title = fileDisplayName(file.path)
-      if ((file.readerReference || file.readerFragment || file.format === 'epub' && file.readingState?.cfi) && largeMarkdownFrame.style) largeMarkdownFrame.style.visibility = 'hidden'
+      // Keep the child mapped while the shell masks its initial chrome.
+      // The shell's loading cover masks initial chrome and restores input only
+      // after the public initialization/settings/reference handshake completes.
+      largeMarkdownFrame.inert = true
+      largeMarkdownFrame.tabIndex = -1
+      largeMarkdownFrame.setAttribute('aria-hidden','true')
       largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
       largeMarkdownFrame.setAttribute('referrerpolicy', 'no-referrer')
       largeMarkdownFrame.src = file.largeMarkdown.url
@@ -450,13 +497,17 @@ function renderArtifact() {
           baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
           readerReference: selection }) })
       readerNotesHost = createReaderNotesHost($('#artifact-reader-shell'), $('#artifact-notes-tools'), {
-        translate: t, onError: showError,
+        translate: hostTranslate, onError: showError,
         onAction: openCommentForSelection ? selection => openCommentForSelection(commentSelection(selection)) : undefined,
       })
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
         void readerNotesHost?.update(snapshot, largeMarkdownHost).catch(showError)
-        if (snapshot.initialized && largeMarkdownFrame?.style) largeMarkdownFrame.style.visibility = ''
+        if (snapshot.initialized && largeMarkdownFrame) {
+          largeMarkdownFrame.inert = false
+          largeMarkdownFrame.tabIndex = 0
+          largeMarkdownFrame.removeAttribute?.('aria-hidden')
+        }
         if (file.format === 'epub' && snapshot.initialized && snapshot.formatState?.ready) {
           const next = snapshot.formatState
           const reading = { cfi: next.cfi, chapterLabel: next.chapterLabel, progress: next.progress,
@@ -489,9 +540,9 @@ function renderArtifact() {
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
         initialReference: file.readerReference, initialFragment: file.readerFragment,
-        presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
+        presentation: { ...file.initialPresentation, ...(file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
           flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,
-          typography: readingTypography() } } : file.format === 'pdf' && file.pdfPresentation ? { pdf: file.pdfPresentation } : undefined,
+          typography: readingTypography() } } : file.format === 'pdf' && file.pdfPresentation ? { pdf: file.pdfPresentation } : {}) },
         initialLocation: file.readerReference ? undefined : file.format === 'epub' && file.readingState?.cfi
           ? {kind:'epub',cfi:file.readingState.cfi}
           : file.format === 'pdf' && file.page ? {kind:'pdf',pages:[{page:file.page,rects:[{x:0,y:0,width:1,height:0.000001}]}]} : undefined,

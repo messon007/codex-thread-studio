@@ -1,5 +1,6 @@
 export async function translationContract(moduleUrl) {
   const { createTranslator, uiLabels, TRANSLATION_PROFILE } = await import(moduleUrl)
+  const { readerMessages, readerMessageKeys } = await import(new URL('./ui-messages.mjs',new URL(moduleUrl,location.href)))
   const host = document.createElement('section'),
     other = document.createElement('section'),
     literal = document.createElement('pre')
@@ -21,6 +22,9 @@ export async function translationContract(moduleUrl) {
   host.append(button)
   other.append(second)
   try {
+    const dictionary = readerMessages(key => key)
+    check(readerMessageKeys.length < TRANSLATION_PROFILE.maxMessages && createTranslator({messages:dictionary}).state().messageCount === readerMessageKeys.length, 'Host vocabulary exceeds translation profile')
+    check(dictionary['Clear comments'] === 'Clear comments' && dictionary['Filter contents'] === 'Filter contents', 'Shared vocabulary lost Notes or outline keys')
     left.set(button, 'Copy')
     right.set(second, 'Copy')
     check(

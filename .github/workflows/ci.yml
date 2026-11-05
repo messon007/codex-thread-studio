@@ -71,6 +71,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Test the fixed public reader independently
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/reader-sdk-check
+        run: cargo test --manifest-path crates/marknoria/Cargo.toml --workspace --all-targets --locked
+
       - name: Test optional Windows native backend (WSL remains the default)
         if: runner.os == 'Windows'
         run: |

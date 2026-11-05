@@ -76,10 +76,21 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       return api('/api/selection/source',signal,{method:'POST',body:JSON.stringify({revision:params.revision,start:params.start,end:params.end,fromUtf16:params.fromUtf16,toUtf16:params.toUtf16})})
     }),
     outline: checked((params, signal) => {
-      if (renderer()) return renderer().outline({ offset: params.offset ?? 0, signal })
+      if (params.resolve != null && typeof params.resolve !== 'boolean') throw Error('Invalid outline resolution option')
+      if (renderer()) return renderer().outline({ offset: params.offset ?? 0, resolve: params.resolve ?? true, signal })
       const offset = params.offset ?? 0, headings = index().toc
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > headings.length) throw Error('Invalid outline offset')
       return { revision: state().revision, offset, total: headings.length, items: headings.slice(offset, offset + 256) }
+    }),
+    navigateOutline: checked(async (params, signal) => {
+      if (!Number.isSafeInteger(params.id) || params.id < 0) throw Error('Invalid outline identity')
+      if (renderer()) await renderer().navigateOutline(params.id, { signal })
+      else {
+        const heading = index().toc.find(item => item.id === params.id)
+        if (!heading) throw Error('Unknown outline identity')
+        await navigate({ kind: 'line', line: heading.line })
+      }
+      return state()
     }),
     search: checked((params, signal) => {
       if (typeof params.query !== 'string' || new TextEncoder().encode(params.query).length > 256) throw Error('Invalid source search')

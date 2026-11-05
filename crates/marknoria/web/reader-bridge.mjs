@@ -25,7 +25,8 @@ export function installReaderBridge({ origins, commands, state, onDispose = () =
     if (disposed || event.source !== parent || !allowed.has(event.origin)) return
     const message = event.data
     if (!message || message.protocol !== READER_PROTOCOL || !uuid(message.requestId)) return
-    const reply = data => parent.postMessage({ protocol: READER_PROTOCOL, version: READER_BRIDGE_VERSION, kind: 'response', requestId: message.requestId, ...data }, event.origin)
+    // Preserve the child caller realm for WebKit's cross-window sender check.
+    const reply = data => { parent.postMessage({ protocol: READER_PROTOCOL, version: READER_BRIDGE_VERSION, kind: 'response', requestId: message.requestId, ...data }, event.origin) }
     if (message.version !== READER_BRIDGE_VERSION) { reply({ error: { code: 'VERSION', message: 'Unsupported reader bridge version' } }); return }
     if (message.kind === 'cancel') { running.get(message.requestId)?.abort(); return }
     if (message.kind !== 'request') return

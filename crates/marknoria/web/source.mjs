@@ -64,7 +64,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       page = response.result
       const module = await import('./vendor/editor.mjs')
       if (ticket !== generation || !visible) return
-      if (!code) code = module.codeView(mount, { readOnly: true })
+      if (!code) code = module.codeView(mount, { readOnly: true, translate: options.translate })
       code.load(page.text.replaceAll('\r\n', '\n'), page.line, response.language)
       document.querySelector('.source-content').hidden = true
       text.textContent = page.text
@@ -132,6 +132,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   on(previous, 'click', () => { if (!loading && page?.start > 0) load(`offset=${page.start}&previous=true`) })
   on(next, 'click', () => { if (!loading && page && page.end < index.sourceBytes) load(`offset=${page.end}`) })
   return {
+    search: () => code?.search(),
     selectionLine() { return code&&page ? page.line+code.view.state.doc.lineAt(code.view.state.selection.main.from).number-1 : null },
     get code() { return code },
     get visible() { return visible }, get page() { return page }, currentLine, show, go, goRange,

@@ -68,7 +68,7 @@ export function editorController(token, options) {
       if (!code) {
         const module = await import('./vendor/editor.mjs')
         if (disposed) return false
-        code = module.codeView(document.getElementById('editor-mount'), { maxBytes: next.maxPageBytes, save, changed: update, error: message })
+        code = module.codeView(document.getElementById('editor-mount'), { translate: options.translate, maxBytes: next.maxPageBytes, save, changed: update, error: message })
       }
       if (query.includes('reload=true')) { savedSinceRead = true; options.saved(next) }
       data = next
@@ -161,7 +161,7 @@ export function editorController(token, options) {
     window.ipc?.postMessage(JSON.stringify({ type: 'marknoria:close-confirmed' }))
   })
   return {
-    save, go, get error() { return failure }, get busy() { return busy }, get dirty() { return dirty() }, get visible() { return visible },
+    save, go, search: () => code?.search(), get error() { return failure }, get busy() { return busy }, get dirty() { return dirty() }, get visible() { return visible },
     get needsRefresh() { return savedSinceRead }, get revision() { return data?.revision }, get data() { return data }, get code() { return code },
     refreshed() { savedSinceRead = false; update() },
     leaving() { leaving = true; lastDirty = false; if (options.nativeNotifications !== false) window.ipc?.postMessage(JSON.stringify({ type: 'marknoria:dirty', dirty: false })) },

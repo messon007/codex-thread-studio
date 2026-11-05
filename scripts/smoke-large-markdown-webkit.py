@@ -36,6 +36,7 @@ def loaded(view, event):
       try {
         await wait(() => window.readerExperiment?.metrics.firstContentMs != null);
         const reader = window.readerExperiment;
+        const openingMetrics = { ...reader.metrics, indexMs:reader.index.indexMs,indexPeakRssKiB:reader.index.peakRssKib,mounted:document.querySelectorAll('#space *').length };
         const { createReaderClient } = await import('/reader-assets/host-client.mjs');
         const client = createReaderClient({ src: location.href, contentWindow: window });
         await client.ready();
@@ -138,7 +139,7 @@ def loaded(view, event):
           await client.request('setView', { view: 'source' });
           if (!document.querySelector('#source-text').textContent.startsWith('Native Studio edit')) throw Error('Saved source did not refresh');
         }
-        window.webkit.messageHandlers.result.postMessage(JSON.stringify({sourceBytes: reader.index.sourceBytes, diagrams: reader.index.diagrams.length, mode: reader.diagramMetrics.mode, sourceReady: true, editing: __EDIT_CHECK__, mounted: document.querySelectorAll('#space *').length}));
+        window.webkit.messageHandlers.result.postMessage(JSON.stringify({openingMetrics,sourceBytes: reader.index.sourceBytes, diagrams: reader.index.diagrams.length, mode: reader.diagramMetrics.mode, sourceReady: true, editing: __EDIT_CHECK__, mounted: document.querySelectorAll('#space *').length}));
       } catch (error) {
         window.webkit.messageHandlers.result.postMessage(JSON.stringify({error: String(error)}));
       }

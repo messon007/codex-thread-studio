@@ -476,7 +476,9 @@ fn assets() -> Router {
         .route("/image-frames.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-frames.mjs")) }))
         .route("/references.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/references.mjs")) }))
         .route("/presentation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/presentation.mjs")) }))
+        .route("/outline.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/outline.mjs")) }))
         .route("/reader-ui.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-ui.mjs")) }))
+        .route("/ui-messages.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/ui-messages.mjs")) }))
         .route("/translation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/translation.mjs")) }))
         .route("/notes.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/notes.mjs")) }))
         .route("/jq-query.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/jq-query.css")) }))
@@ -766,6 +768,7 @@ pub fn reader_assets() -> Router {
         .route("/epub-reader.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/epub-reader.css")) }))
         .route("/vendor/epub.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/vendor/epub.mjs")) }))
         .route("/vendor/pdf/{*path}", get(pdf_runtime::resource))
+        .route("/pdf-outline.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/pdf-outline.mjs")) }))
         .route("/pdf-reader.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/pdf-reader.mjs")) }))
         .route("/pdf-reader.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/pdf-reader.css")) }))
 }

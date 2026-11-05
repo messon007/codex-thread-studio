@@ -5,6 +5,7 @@ export function readerUiLabels(root, translate, options) {
   const textSelectors = [
     '#preview-mode',
     '#source-mode',
+    '#edit-mode',
     '.reader-header-actions > [data-open-server] > span',
     '#compare-files > span',
     '.reader-settings-panel > strong',

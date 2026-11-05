@@ -121,6 +121,10 @@ export async function pdfReaderContract(moduleUrl) {
       results.complete && results.matches.length === 1 && results.matches[0].page === 12,
       'PDF search did not scan the complete document'
     )
+    const metadata = await reader.outline({ resolve: false })
+    check(metadata.total === 2 && metadata.items.every(item => item.navigable && !('location' in item)), 'PDF metadata outline resolved or exposed destinations')
+    await reader.navigateOutline(metadata.items[1].id)
+    check(reader.state().page === 12, 'PDF outline ID navigation failed')
     const outline = await reader.outline()
     check(
       outline.total === 2 && outline.items[1].location.pages[0].page === 12,

@@ -1450,3 +1450,6 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .query-snapshot-dialog[open] { display: flex; flex-direction: column; }
 .query-snapshot-dialog .dialog-header { flex: 0 1 auto; max-height: 35dvh; overflow: auto; }
 .query-snapshot-dialog .router-dialog-body { min-height: 0; max-height: none; overflow: auto; }
+
+/* Cover initialization without hiding/suspending the WebKit child frame. */
+.artifact-rail.reader-initializing #artifact-loading { position: absolute; inset: var(--app-header-height) 0 28px; z-index: 4; background: var(--panel); }

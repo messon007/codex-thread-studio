@@ -48,3 +48,10 @@ It mounts assets under `/reader-assets`, runs ordinary components at that prefix
 checks the exact served source bytes and rejects document/file/query/source
 routes. The example listens only on an ephemeral loopback address and shuts down
 when stdin receives a newline.
+
+`outline.mjs` supplies the shared virtualized Contents interaction over indexed
+`{id,level,label,navigable?}` metadata. It does not parse document source.
+`mountOutline` owns filter/collapse/active/focus state and cancellation; call
+`setItems` on a new document and `dispose` when its owner closes. PDF destination
+objects remain private to the renderer; public `outline({resolve:false})` pages
+and `navigateOutline` use revision-scoped IDs.

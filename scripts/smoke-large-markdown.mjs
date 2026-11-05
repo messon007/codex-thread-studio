@@ -16,7 +16,8 @@ if (fixtureArgument) await copyFile(resolve(fixtureArgument), fixture)
 const { chromium } = await import(process.env.STUDIO_PLAYWRIGHT_MODULE || 'playwright')
 const binary = process.env.STUDIO_REMOTE_BINARY || resolve(root, 'target/release/codex-thread-studio')
 const cache = join(directory, 'cache')
-const environment = { ...process.env, XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'), XDG_CACHE_HOME: join(directory, 'xdg-cache'), READER_CACHE_DIR: cache, READER_CHROMIUM: '/intentionally-unavailable-chromium' }
+const desktopEnvironment=Object.fromEntries(['XDG_RUNTIME_DIR','WAYLAND_DISPLAY','GDK_BACKEND','DBUS_SESSION_BUS_ADDRESS','WEBKIT_DISABLE_COMPOSITING_MODE'].filter(key=>process.env[key]).map(key=>[key,process.env[key]]))
+const environment = {PATH:'/usr/bin:/bin',LANG:'C.UTF-8',...desktopEnvironment,CODEX_HOME:join(directory,'codex'),XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'), XDG_CACHE_HOME: join(directory, 'xdg-cache'), READER_CACHE_DIR: cache, READER_CHROMIUM: '/intentionally-unavailable-chromium' }
 let browser
 let server
 let log = ''
@@ -84,6 +85,7 @@ try {
     const frame = await page.locator('.artifact-large-markdown-frame').elementHandle().then(element => element.contentFrame())
     await frame.waitForFunction(() => window.readerExperiment?.metrics.firstContentMs != null, null, { timeout: 60_000 })
     const snapshot = await frame.evaluate(() => ({ sourceBytes: readerExperiment.index.sourceBytes, pages: readerExperiment.index.pages.length, tables: readerExperiment.index.tables.length, mounted: document.querySelectorAll('#space *').length, diagrams: readerExperiment.index.diagrams.length, mode: readerExperiment.diagramMetrics.mode, indexMs: readerExperiment.index.indexMs, indexPeakRssKiB: readerExperiment.index.peakRssKib, firstUsefulContentMs: readerExperiment.metrics.firstContentMs, maxHeartbeatGapMs: readerExperiment.metrics.maxHeartbeatGapMs }))
+    await page.waitForFunction(()=>testState.artifact.readerReady)
     snapshot.hostFirstUsefulMs = Date.now() - started
     // Exercise the real outer Studio comment adapter, not only child selection.
     await page.evaluate(async () => {
@@ -150,6 +152,8 @@ try {
       await page.locator('#artifact-outline-toggle').click()
       await frame.locator('#reader-outline').waitFor({ state: 'visible' })
       await frame.locator('.toc-row').first().click()
+      assert.equal(await frame.locator('#reader-outline').isVisible(), true, 'Chapter navigation must keep Contents open')
+      await page.locator('#artifact-outline-toggle').click()
       await frame.locator('#reader-outline').waitFor({ state: 'hidden' })
       await page.waitForFunction(() => !document.querySelector('#artifact-outline-toggle').classList.contains('active'))
       const query = await frame.evaluate(() => readerExperiment.index.toc[0].label)
@@ -274,6 +278,8 @@ try {
         await frame.locator('.toc-row').first().click()
         await frame.waitForFunction(line => readerExperiment.editor.line() === line, first.line + 1)
         assert.equal(await page.evaluate(() => testState.artifact.dirty), true)
+        await page.locator('#artifact-outline-toggle').click()
+        await frame.locator('#reader-outline').waitFor({state:'hidden'})
       }
       await page.locator('#artifact-save').click()
       await page.waitForFunction(() => !testState.artifact.dirty && !testState.artifact.saving)

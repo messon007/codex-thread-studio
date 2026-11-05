@@ -35,7 +35,9 @@ export function createReaderClient(frame, { origin = new URL(frame.src, location
       const timer = setTimeout(() => { frame.contentWindow?.postMessage({ protocol: READER_PROTOCOL, version: READER_BRIDGE_VERSION, kind: 'cancel', requestId }, origin); finish(Object.assign(new Error('Reader command timed out'), { code: 'TIMEOUT' })); }, Math.max(100, Math.min(timeout, 120000)))
       pending.set(requestId, { finish, method })
       signal?.addEventListener('abort', abort, { once: true })
-      const send = () => frame.contentWindow?.postMessage({ protocol: READER_PROTOCOL, version: READER_BRIDGE_VERSION, kind: 'request', requestId, method, params }, origin)
+      // Keep a host call frame while posting across realms. A tail call from a
+      // timer can make WebKit identify the child as the incumbent sender.
+      const send = () => { frame.contentWindow?.postMessage({ protocol: READER_PROTOCOL, version: READER_BRIDGE_VERSION, kind: 'request', requestId, method, params }, origin) }
       send()
       // A hello sent before the child installs its listener must not be lost.
       if (method === 'hello') retry = setInterval(send, 250)

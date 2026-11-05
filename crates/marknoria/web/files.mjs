@@ -1,5 +1,7 @@
+import { uiLabels } from './translation.mjs'
 export function fileController(token, options = {}) {
   const lifetime = new AbortController()
+  const labels = uiLabels(options.translate, { signal: lifetime.signal })
   const on = (target, type, listener) => target.addEventListener(type, listener, { signal: lifetime.signal })
   const dialog = document.querySelector('#file-browser')
   const list = document.querySelector('#file-browser-list')
@@ -14,7 +16,7 @@ export function fileController(token, options = {}) {
   let nativeChoosing = false
   if (window.marknoriaDesktop) {
     const compare = document.querySelector('#compare-files')
-    if (compare) compare.title = 'Compare two local supported files (read only)'
+    if (compare) labels.set(compare,'Compare two local supported files (read only)',{},'title')
   }
 
   async function chooseLocal(selected) {
@@ -73,7 +75,7 @@ export function fileController(token, options = {}) {
     const ticket = ++browsing
     request?.abort()
     request = new AbortController()
-    list.textContent = 'Loading files…'
+    labels.set(list,'Loading files…')
     try {
       const response = await api(`/api/files?path=${encodeURIComponent(path)}`, { signal: request.signal })
       if (ticket !== browsing) return
@@ -84,8 +86,8 @@ export function fileController(token, options = {}) {
       document.querySelector('#file-browser-location').textContent = folder ? `${rootName} / ${folder.split('/').join(' / ')}` : response.root
       document.querySelector('#file-browser-location').title = location
       document.querySelector('#file-browser-up').disabled = !folder
-      document.querySelector('#file-browser-note').textContent = response.truncated ? 'Showing a limited list. Choose a smaller folder.' : 'Only supported files are shown. Browsing stays inside this server folder.'
-      list.replaceChildren()
+      labels.set(document.querySelector('#file-browser-note'),response.truncated ? 'Showing a limited list. Choose a smaller folder.' : 'Only supported files are shown. Browsing stays inside this server folder.')
+      labels.clear(list); list.replaceChildren()
       for (const entry of response.entries) {
         const button = document.createElement('button')
         button.type = 'button'
@@ -102,13 +104,14 @@ export function fileController(token, options = {}) {
         name.textContent = entry.name
         const size = document.createElement('span')
         size.className = 'file-entry-size'
-        size.textContent = entry.directory ? 'Folder' : entry.bytes >= 1048576 ? `${(entry.bytes / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.ceil(entry.bytes / 1024))} KiB`
+        if (entry.directory) labels.set(size,'Folder')
+        else size.textContent = entry.bytes >= 1048576 ? `${(entry.bytes / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.ceil(entry.bytes / 1024))} KiB`
         button.append(icon, name, size)
         button.addEventListener('click', () => { if (!opening) entry.directory ? browse(entry.path) : openServer(entry.path) })
         list.append(button)
       }
-      if (!response.entries.length) list.textContent = 'No supported files or folders here.'
-    } catch (error) { if (error.name !== 'AbortError' && ticket === browsing) list.textContent = error.message }
+      if (!response.entries.length) labels.set(list,'No supported files or folders here.')
+    } catch (error) { if (error.name !== 'AbortError' && ticket === browsing) { labels.clear(list); list.textContent = error.message } }
   }
 
   function chooseServer(selected = null, title = 'Open from server', initialFile = null) {
@@ -121,7 +124,7 @@ export function fileController(token, options = {}) {
     if (opening || dialog.open) return
     selection = typeof selected === 'function' ? selected : null
     document.querySelector('.reader-settings')?.removeAttribute('open')
-    dialog.querySelector('h2').textContent = title
+    labels.set(dialog.querySelector('h2'),title)
     dialog.showModal()
     browse(initialFile == null ? folder : initialFile.split('/').slice(0, -1).join('/'))
   }
@@ -134,7 +137,7 @@ export function fileController(token, options = {}) {
   on(document.querySelector('#file-browser-cancel'), 'click', close)
   on(document.querySelector('#file-browser-up'), 'click', () => { if (!opening) browse(folder.split('/').slice(0, -1).join('/')) })
   on(document.querySelector('#file-dismiss'), 'click', () => { feedback.hidden = true })
-  on(document, 'keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseServer() } })
+  on(document, 'keydown', event => { if (!event.defaultPrevented && !document.querySelector('dialog[open]') && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseServer() } })
   return {
     open(path) { selection = null; return openServer(path) },
     compare() {
@@ -147,9 +150,13 @@ export function fileController(token, options = {}) {
       const ready = state === 'ready'
       document.querySelector('#welcome').hidden = ready
       document.querySelector('#viewport').hidden = !ready
-      document.querySelector('#welcome-title').textContent = state === 'indexing' ? 'Preparing your document…' : state === 'error' ? 'Could not open this document' : 'Open a supported document'
-      document.querySelector('#welcome-description').textContent = error || (state === 'indexing' ? 'Building the outline and preparing the first pages. You can choose another file at any time.' : window.marknoriaDesktop ? 'Choose a supported document from any local folder. Read, edit and compare files in place.' : 'Choose a document on the server. Read large files, explore sections, and choose the columns you need.')
-      document.querySelector('#document-summary').textContent = state === 'idle' ? 'Choose a file to start reading' : state === 'indexing' ? 'Preparing document…' : state === 'error' ? 'Choose another file to continue' : ''
+      labels.set(document.querySelector('#welcome-title'),state === 'indexing' ? 'Preparing your document…' : state === 'error' ? 'Could not open this document' : 'Open a supported document')
+      const description = document.querySelector('#welcome-description')
+      if (error) { labels.clear(description); description.textContent = error }
+      else labels.set(description,state === 'indexing' ? 'Building the outline and preparing the first pages. You can choose another file at any time.' : window.marknoriaDesktop ? 'Choose a supported document from any local folder. Read, edit and compare files in place.' : 'Choose a document on the server. Read large files, explore sections, and choose the columns you need.')
+      const summary = document.querySelector('#document-summary')
+      if (ready) { labels.clear(summary); summary.textContent = '' }
+      else labels.set(summary,state === 'idle' ? 'Choose a file to start reading' : state === 'indexing' ? 'Preparing document…' : 'Choose another file to continue')
       for (const id of ['contents-toggle', 'search-toggle']) document.getElementById(id).disabled = !ready
     },
     dispose() { lifetime.abort(); browsing++; request?.abort(); if (dialog.open) dialog.close(); list.replaceChildren() },

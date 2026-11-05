@@ -396,6 +396,26 @@
       "name": "Marijn Haverbeke",
       "url": "http://marijnhaverbeke.nl"
     },
+    "integrity": "sha512-gUYkYhT2+n/+VGZ+8EzE5WFkYZUZYm1VOKDudIsNqh42uRVQJ0a6Yss9sdKT3MeOYfuL1N6AZA57oza0Oyr0LA==",
+    "license": "MIT",
+    "name": "@codemirror/search",
+    "notices": [
+      "licenses/npm/@codemirror/search/LICENSE",
+      "licenses/npm/@codemirror/search/README.md"
+    ],
+    "path": "node_modules/@codemirror/search",
+    "repository": {
+      "type": "git",
+      "url": "git+https://code.haverbeke.berlin/codemirror/search.git"
+    },
+    "version": "6.7.2"
+  },
+  {
+    "author": {
+      "email": "marijn@haverbeke.berlin",
+      "name": "Marijn Haverbeke",
+      "url": "http://marijnhaverbeke.nl"
+    },
     "integrity": "sha512-kAz+AncRtKuIknedxT1bq4XwXv4UowhbkHU1myPrtVb/jZtImWuV5BXzv5vK6i3kYACsdiZiQKFQQ5Mq7elW8w==",
     "license": "MIT",
     "name": "@codemirror/state",

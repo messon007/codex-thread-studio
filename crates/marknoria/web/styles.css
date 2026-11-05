@@ -135,11 +135,15 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 #section-count { padding: 0 7px; border-radius: 20px; color: var(--reader-brand); background: var(--reader-brand-soft); font-size: 10px; }
 #toc { flex: 1; overflow: auto; min-height: 0; margin: 8px; }
 #toc-space,#space { position: relative; }
-.reader-shell .toc-row { position: absolute; width: 100%; height: 32px; top: 0; left: 0; border: 0; border-radius: 6px; background: transparent; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; text-align: left; font-size: 12px; color: var(--reader-muted); }
+#toc-filter { min-width: 0; margin: 10px 12px 4px; font-size: 12px; }
+#toc-feedback { margin: 0 12px; min-height: 18px; color: var(--reader-muted); font-size: 11px; }
+.reader-shell .toc-row { position: absolute; display: flex; align-items: center; box-sizing: border-box; width: 100%; height: 32px; top: 0; left: 0; border-radius: 6px; }
 .reader-shell .toc-row:hover { background: var(--reader-soft); }
-.reader-shell .pdf-outline-row { display:block; width:100%; padding:8px 12px; border:0; background:transparent; text-align:left; white-space:normal; }
-.reader-shell .pdf-outline-row:hover { background:var(--reader-soft); }
-.reader-shell .toc-row[aria-current="location"] { background: var(--reader-brand-soft); color: var(--reader-brand); font-weight: 600; }
+.reader-shell .toc-row button { border: 0; background: transparent; height: 30px; font-size: 12px; color: var(--reader-muted); }
+.reader-shell .toc-branch { flex: 0 0 24px; padding: 0; }
+.reader-shell .toc-link { flex: 1; min-width: 0; padding: 4px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; text-align: left; }
+.reader-shell .toc-context .toc-link { color: var(--reader-faint); }
+.reader-shell .toc-link[aria-current="location"] { border-radius: 6px; background: var(--reader-brand-soft); color: var(--reader-brand); font-weight: 600; }
 #matches { position: absolute; z-index: 18; top: 8px; right: 12px; width: min(440px,calc(100% - 24px)); max-height: min(70%,420px); overflow: auto; font-size: 12px; padding: 8px; margin: 0; border: 1px solid var(--reader-border); border-radius: 10px; background: var(--reader-panel); box-shadow: 0 12px 34px #14232b1a; list-style: none; }
 #matches:empty { display: none; }
 #matches button { border: 0; background: transparent; text-align: left; width: 100%; font-size: 12px; padding: 7px 10px; }

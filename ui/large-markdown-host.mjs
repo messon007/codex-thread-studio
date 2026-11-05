@@ -144,7 +144,7 @@ export function createReaderNotesHost(root, toolbar, options = {}) {
         canSave: () => !host.dirty,
         queryNotes: Boolean(owner.capabilities.queryNotes),
         translate: options.translate,
-        actions: options.onAction ? [{ id: 'ask-ai', label: options.translate?.('Ask AI') || 'Ask AI', run: async (selection, { signal }) => {
+        actions: options.onAction ? [{ id: 'ask-ai', label: 'Ask AI', run: async (selection, { signal }) => {
           signal.throwIfAborted()
           if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
           if (selection.documentId !== identity.documentId || selection.revision !== identity.revision) throw Error('Notes owner changed')

@@ -1,3 +1,4 @@
+import { createPdfOutline } from './pdf-outline.mjs'
 // DOM/layout adapter around pinned PDF.js. See third-party/README.md.
 import { uiLabels } from './translation.mjs'
 import { getDocument, GlobalWorkerOptions, TextLayer } from './vendor/pdf/pdf.mjs'
@@ -62,8 +63,8 @@ export function mountPdfReader(root, options) {
     searchTicket = 0,
     lastError = null,
     disposal
-  const pages = [],
-    outlineItems = []
+  const pages = []
+  const outlines = createPdfOutline({ document: () => pdf, ensure: () => ensure(), bounded: (...args) => bounded(...args), pause: () => pause() })
   const started = performance.now()
   const state = () => ({
     format: 'pdf',
@@ -581,7 +582,7 @@ export function mountPdfReader(root, options) {
     selection = null
     readyState = false
     pages.length = 0
-    outlineItems.length = 0
+    outlines.dispose()
     sheet.replaceChildren()
     sheet.remove()
     return disposal
@@ -694,49 +695,15 @@ export function mountPdfReader(root, options) {
       }
       return { revision, matches, complete, limit: 500 }
     },
-    async outline({ offset = 0, signal: requestSignal } = {}) {
+    async navigateOutline(id, { signal } = {}) {
       await ready
-      if (!Number.isSafeInteger(offset) || offset < 0) throw Error('Invalid PDF outline offset')
-      if (!outlineItems.length) {
-        const roots = await bounded(pdf.getOutline(), 'PDF outline'),
-          queue = (roots || []).map((item) => ({ item, level: 1 })).reverse()
-        const resolved = []
-        while (queue.length) {
-          ensure()
-          requestSignal?.throwIfAborted()
-          const { item, level } = queue.pop()
-          if (resolved.length >= 2000 || queue.length > 2000)
-            throw Error('PDF outline exceeds 2,000 entries')
-          let destination = item.dest
-          if (typeof destination === 'string')
-            destination = await bounded(pdf.getDestination(destination), 'PDF outline destination')
-          let page = null
-          if (Array.isArray(destination))
-            page =
-              typeof destination[0] === 'number'
-                ? destination[0] + 1
-                : (await bounded(pdf.getPageIndex(destination[0]), 'PDF outline page')) + 1
-          resolved.push({
-            id: resolved.length,
-            level: Math.min(12, level),
-            label: String(item.title || '').slice(0, 1024),
-            location: page
-              ? { kind: 'pdf', pages: [{ page, rects: [{ x: 0, y: 0, width: 1, height: 1 }] }] }
-              : null
-          })
-          for (const child of (item.items || []).toReversed())
-            queue.push({ item: child, level: level + 1 })
-          await pause()
-        }
-        ensure()
-        if (!outlineItems.length) outlineItems.push(...resolved)
-      }
-      return {
-        revision,
-        offset,
-        total: outlineItems.length,
-        items: outlineItems.slice(offset, offset + 256)
-      }
+      const location = await outlines.location(id, signal)
+      if (!location) throw Error('This outline group has no destination')
+      return this.navigate(location)
+    },
+    async outline(options = {}) {
+      await ready
+      return { revision, ...await outlines.page(options) }
     }
   }
 }

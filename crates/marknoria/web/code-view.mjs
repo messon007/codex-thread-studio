@@ -1,3 +1,4 @@
+import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search'
 import { EditorState, Compartment, ChangeSet } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap, undo, redo, undoDepth, redoDepth, indentWithTab } from '@codemirror/commands'
@@ -24,6 +25,9 @@ export function codeView(parent, options = {}) {
   let changes
   const editing = new Compartment()
   const theme = new Compartment()
+  const phrases = new Compartment()
+  const searchPhrases = ['Find','Replace','next','previous','all','match case','regexp','by word','replace','replace all','close','current match','replaced $ matches','replaced $ match','replaced match on line $','on line','Go to line','go']
+  const translatedPhrases = () => Object.fromEntries(searchPhrases.map(key => [key,(options.translate || String)(key)]))
   const style = EditorView.theme({
     '&': { height: '100%', backgroundColor: 'var(--reader-panel)', color: 'var(--reader-text)' },
     '.cm-scroller': { fontFamily: 'var(--code-font-family,Consolas,monospace)', fontSize: 'var(--code-font-size,13px)', lineHeight: '24px', overflow: 'auto' },
@@ -36,6 +40,7 @@ export function codeView(parent, options = {}) {
   const extensions = [
     lineNumbers({ formatNumber: number => String(line + number - 1) }), style,
     theme.of(color()), editing.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
+    phrases.of(EditorState.phrases.of(translatedPhrases())), search({ top: true }), keymap.of(searchKeymap),
     bracketMatching(), drawSelection(),
     ...(options.readOnly ? [EditorView.contentAttributes.of({ tabindex: '0' }), keymap.of(defaultKeymap)] : [history({ minDepth: 100 }), highlightActiveLine(), highlightActiveLineGutter(), keymap.of([...historyKeymap, ...defaultKeymap, indentWithTab, { key: 'Mod-s', run: () => { options.save?.(); return true } }])]),
     EditorState.changeFilter.of(transaction => {
@@ -55,6 +60,13 @@ export function codeView(parent, options = {}) {
     }),
   ]
   const view = new EditorView({ parent })
+  const unsubscribe = options.translate?.subscribe?.(() => {
+    const open = searchPanelOpen(view.state)
+    view.dispatch({ effects: phrases.reconfigure(EditorState.phrases.of(translatedPhrases())) })
+    // CodeMirror builds panel labels on creation; remount only that small UI,
+    // retaining its query, document, selection, undo history and draft.
+    if (open) { closeSearchPanel(view); openSearchPanel(view) }
+  })
   const observer = new MutationObserver(() => view.dispatch({ effects: theme.reconfigure(color()) }))
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   return {
@@ -98,6 +110,7 @@ export function codeView(parent, options = {}) {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     },
     focus: () => view.focus(),
-    dispose() { observer.disconnect(); view.destroy() },
+    search: () => openSearchPanel(view),
+    dispose() { unsubscribe?.(); observer.disconnect(); view.destroy() },
   }
 }

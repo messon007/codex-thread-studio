@@ -47,6 +47,7 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
   const errors = []
   const controller = createDocumentWorkspaceController({
     state,
+    loadReaderMessages: () => import('../crates/marknoria/web/ui-messages.mjs'),
     gatewayFetch,
     randomId: () => `request-${++requestId}`,
     reportError: error => errors.push(error),

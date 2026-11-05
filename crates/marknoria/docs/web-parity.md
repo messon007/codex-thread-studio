@@ -1,288 +1,111 @@
-# Shared Web reader acceptance ledger
+# Shared Web reader acceptance
 
-This ledger concerns browser/WebView reading and its actual Rust dependencies.
-GTK/AppKit/WinUI remain maintained products, outside Studio's synchronization
-package. Frozen Studio runtime evidence is commit
-`a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a`; maintenance rules are frozen at
-`c73fdf4b6a5860afb7ef2335e781b86356ebbec3`. Source inspection, ordinary-host tests,
-application execution and downstream adoption are different evidence levels.
+Status: local implementation/evidence, **not whole-goal approval**. This concerns
+browser/WebView reading and its actual Rust dependencies. GTK/AppKit/WinUI,
+native controllers and FFI are outside synchronization. The original Studio
+checkout is untouched; adoption uses `sync/marknoria-public-reader`. Historical
+checkpoints do not override this matrix.
 
-| Format / action | Shared implementation and defaults | Coordinates and retained state | Verified upstream entry / remaining acceptance |
+The formal interface is `marknoria::reader`, `marknoria::web::Service`,
+`web::reader_assets()`, `createReaderClient` v1 and documented ordinary-DOM
+components. Immutable source/resource hashes are in `reader-manifest.json`;
+Studio separately pins the reviewed archive in `scripts/marknoria-release.json`.
+Ordinary builds/CI do not read a private checkout, its assets or credentials.
+
+| Acceptance area | Current implementation / evidence | Remaining gate |
+| --- | --- | --- |
+| Functional union / public API | Shared parsing, queries, PDF/EPUB, cells/charts, Notes, original resources, typed references; original public Rust fixtures and real two-product tests below | Independent whole-goal review |
+| Ordinary entry / defaults | Every ordinary Studio file uses the SDK; fresh Preview, capability-gated Source/Edit, explicit unsupported errors; 15-format gateway corpus in both engines | Current downstream platform CI |
+| Locale / shortcuts / visual / accessibility | Finite scoped host dictionary, live labels with literal data preserved; actual full Studio shell and standalone four-format scenes, screenshots, named controls, overlays and search | Control-name checks are not a full screen-reader audit |
+| Release performance | Separate index time/RSS, content timing, heartbeat and DOM; first-open and browser-cache reopen measurements below | Fresh platform cache still produces a 1.84 s WebKit heartbeat gap; no cold responsiveness pass |
+| Fixed delivery | MIT allowlist, provenance, locked isolated resource build, unchanged import; two clean offline exports and eight archive/inventory/Git-byte checks | Final pin, remote CI/review/merge, Astra approval |
+
+## Formats and actions
+
+All fresh documents open in Preview. Explicit/restored Source/Edit is retained
+when supported and granted. Queries do not grant writes. All listed checks are
+local evidence, distinct from remote platform acceptance.
+
+| Format / actions | Shared behavior / defaults | Retained state / references | Executed checks |
 | --- | --- | --- | --- |
-| Small/large Markdown | Rust GFM parsing, hard line breaks, safe HTML subset, shared bounded projection/sanitizer, table component; Preview by default | Original BOM/CRLF UTF-8 source; exact row/cell coordinates; rendered prose references declare approximate source lines | `markdown-profile-check`, `projection-view-check`, `embedded-check`; actual frozen Comrak WASM comparison recorded in `markdown-profile.md`; local-image hydration and relative-link host dispatch remain open |
-| Text/code | Rust language registry/highlight projections and shared CodeMirror source/editor; no frontend reparse of complete large documents | Original source windows, line continuations, LF-normalized UTF-16 selections converted to original UTF-8 in Rust | `syntax-check`, `structured-check`, `embedded-check`; complete remaining file/status translation integration remains open |
-| JSON/JSONL/TOML/YAML/XML | Rust structured projection and bounded highlighting; formatted JSONL Preview, original Source/Edit preserved; whole-input jq | Exact source revision; jq returns exact text windows without JS number rounding; source and formatted-output coordinates stay distinct | `structured-check`, `jq-query-check`, `embedded-jq-check`, actual Wry document checks; both products must adopt the same default, replacing Studio's old JSON Source default |
-| CSV/TSV/XLSX | Shared table view, complete-input Rust SQL, compact defaults, independent table paging, column visibility/resize/fit, edge scrolling | Original table/row/column IDs and sheet identity; per-instance session widths/columns/row; immutable result IDs and revision | `csv-query-check`, `table-interactions-check`, `table-view-check`; dataset/budget profiles in `table-components.md` |
-| Table cells / SQL results | Same cell selection, complete-cell dialog/copy, keyboard resize and complete-input charts in ordinary/virtual containers | Exact text/null values; source-cell references; SQL notes retain verified snapshot/query provenance after result close | `table-cells-check`, `table-plot-check`, `table-query-component-check`, real public two-pane host |
-| PDF | Original-container PDF.js, text layer, cross-page search, outline, text and Shift-region selection; document-wide zoom and flow | One-based original pages and normalized display-page rectangles; global settings and saved original position; bounded canvases/text | `pdf-reader-check`, `embedded-pdf-check`; no embedded Poppler/backend Chromium requirement |
-| EPUB | Original archive/epub.js, exact CFI, chapter outline/search, paginated/scrolled flow, paper/font settings; whole-book progress is explicit opt-in | Full CFIs survive selection/navigation/remount; chapter versus indexed progress precision is explicit | `epub-reader-check`, `embedded-epub-check`, `epub-progress-corpus-check`; protected archive-only resources retain their own revocable capability |
-| HTML | Rust static projection and shared sanitizer; scripts, forms, CSS and active content excluded | Original Source/Edit when granted; rendered text is approximate | Frozen Studio's `STATIC_HTML_FORBIDDEN_*` also rejects styles/stylesheets and embedded media: unrestricted styled HTML was not a maintained baseline feature; remaining safe tag/anchor differences require common-corpus review |
-| Images | Shared bounded Rust raster/SVG/animation decoding and Web image controls | Original image identity; bounded frames; fit/zoom/animation state | Existing browser/Wry document checks; Markdown-local image authorization/hydration is separate unfinished work |
-| Mermaid/PlantUML/D2 | Same owned browser renderer and cancellation/lifecycle profile; host can select browser mode | Document/revision-scoped bounded source; renderer teardown releases workers/observers | `diagram-engine-check`, shared diagram lifecycle in `table-interactions-check`; no AI account dependency |
-| Notes / selection actions | Shared Notes UI/storage interface and bounded host action extensions; comments/favorites are maintained reader features | Typed source/cell/query/PDF/EPUB references; scoped category Clear, copy and durable query snapshots; storage is an explicit host grant | `notes-component-check`, public two-pane query-note integration; Studio must connect its storage/AI actions through these interfaces without duplicate generic toolbars |
-| Source/Edit/save | Read-only by default; queries independent of writes; explicit writable file grant enables paged editing | Dirty draft versus saved/preview revisions; original identity, atomic save, conflicts, undo and guarded close | Public core tests and `embedded-check`, `editor-check`, `compare-check`; Windows atomic replacement regression exists; current remote matrix is blocked externally |
-| Host UI / lifecycle | Versioned exact-origin parent protocol; public view, Contents, search, selection, save, settings, disposal; ordinary components use scoped providers | Separate document IDs/revisions, bounded commands, cancellation, style leases and cleanup; shared locale/palette/fonts/typography | `embedding.md`, `reader-assets.md`, ordinary contracts and two-pane integration; no product host may read `readerExperiment` or private child controls |
+| Small/large Markdown | Rust GFM, safe HTML and bounded virtual fragments; ordinary/virtual tables share layout/paging/cells/SQL/charts; authorized local/inline images and links | Original BOM/CRLF UTF-8; exact source/cell anchors; prose precision explicitly approximate; scoped resources | Markdown profile/projection/references, two-pane embedded; actual common-entry and large-document Studio corpus |
+| Text / Python / C / C++ / Rust | Rust language/highlighting and shared paged CodeMirror Source/Edit; complete Preview search, current-page editor search | Editor LF/UTF-16 maps to original UTF-8; selection, draft/undo/redo, atomic save/conflict | Syntax/structured/source/CodeMirror contracts; actual entries and edit/save/conflict |
+| JSON / JSONL / XML / TOML / YAML | Bounded structured Preview/highlighting; JSONL formatting in Rust; complete-input jq with paged text | Original/formatted coordinates distinct; exact numeric text; visible input/output/cancel budgets | Structured/jq/embedded-jq and actual ordinary corpus |
+| CSV / TSV / XLSX | Shared independent paging, compact widths, drag/keyboard resize/fit/reset, columns/edge scroll, complete-input SQL/charts | Source row/column/sheet; session widths/selection; text Source/Edit, no workbook Source/Edit | Table/layout/cell/query/plot contracts; actual three-format corpus against locked ExcelJS oracle |
+| Cells / SQL snapshots | Complete-cell dialog/copy; source/result charts; SQL Notes and Ask AI historical values survive query close | Typed source cells; revision/result ownership; immutable bounded query snapshot/provenance; inspector never reruns SQL | Public Rust API, two-pane/query/Notes; actual AI draft database reload and 480×480 inspector |
+| PDF | Original-container PDF.js text layer, cross-page search, outline, text/Shift-region selection, global zoom/flow | One-based original pages and normalized rectangles; saved page/zoom/flow; bounded canvas/text; lazy outline destinations | Real PDF component/public embedded; actual restore and complete shell |
+| EPUB | Original archive/epub.js, CFI, chapter search/outline, flow/paper/font; whole-book progress opt-in | Exact CFI/content-keyed state; autosave verified before close; revocable archive-only resources | Component/progress/public embedded; actual autosave/reopen/selection/search/full shell |
+| Static HTML | Rust safe projection; raw images/links use authorized providers; scripts/forms/styles/media inert | Granted original Source/Edit; prose precision explicit | HTML/Markdown profiles, reference policy and actual resource corpus |
+| Images | Shared bounded raster/SVG/animation decode and compact fit/zoom/animation UI | Logical identity/revision; authorization before cached lookups; no repeated original-byte transfer on valid cache hits | Image/frame/host-image; actual project/shared/inline/revocation/replacement/image entries |
+| Mermaid / PlantUML / D2 | Owned browser renderers; no backend Chromium or installed upstream app needed by Studio | Bounded revision-scoped input; cancelled workers/observers disposed | Diagram lifecycle/engine; actual three-engine large corpus |
+| Notes / Comment / Favorite | One UI, category Clear/copy, durable storage provider, bounded Ask AI extension | Typed source/cell/query/PDF/EPUB anchors; stable file/WSL identity; owner/revision; literal comments preserved | Notes/translation/two-pane, durable SQL Notes/AI drafts, full-shell en/zh/en |
+| Outline / lifecycle / settings | Virtual ancestor filter/collapse, keep-open chapters, cross-window keyboard traversal; scoped locale/palette/fonts; exact-origin v1 protocol | Generation/cancel guards, separate document IDs/revisions, bounded queues/disposal | 35-assertion outline, presentation/translation/search, two-pane lifecycle, delayed-handshake regression |
 
-## Interaction and settings contract
+Provider profiles, limits, precision and migration are in
+[embedding.md](embedding.md), [reader-api.md](reader-api.md),
+[table-components.md](table-components.md), [jq-components.md](jq-components.md),
+[markdown-references.md](markdown-references.md), [translation.md](translation.md).
+Memory and whole-document query profiles declare their actual complete dataset;
+no truncated prefix is represented as a whole-input query.
 
-Table controls, SQL/jq, cells, charts, Notes, PDF and EPUB share their component
-shortcuts, labels and defaults; their component docs enumerate provider profiles
-and keyboard actions. SQL/jq Run supports Ctrl/Command+Enter. Embedded
-Ctrl/Command+O delegates to the host. Editor save uses Ctrl/Command+S and its
-shared CodeMirror undo/redo bindings. Escape closes owned overlays. Hosts supply
-locale/message dictionaries, common palette and UI/content/code typography through
-public settings; document literals and backend errors are not translated or
-reinterpreted as UI metadata. Remaining file/status text and cross-shell search
-shortcut integration still need final acceptance.
+Ctrl/Command+F opens Preview search, including EPUB chapter focus; Source/Edit
+use current-page CodeMirror search, with replacement only in Edit. Ctrl/Command+S
+saves; SQL/jq Run uses Ctrl/Command+Enter. Escape closes the owning overlay;
+active modals retain shortcut ownership. Embedded Ctrl/Command+O delegates to
+the host. Shared contracts cover focus return, handled events, retained drafts/
+queries and disposed subscriptions.
 
-## Downstream acceptance remains open
+## Latest local validation
 
-The isolated Studio consumer is committed locally at
-`6cb5ea3` on `sync/marknoria-public-reader`, based only on frozen Git objects.
-The original Studio checkout and remote are untouched. Its product adapter uses
-only the public client and facade: no child DOM, diagnostic globals, injected CSS,
-HTML rewriting or weakened CSP. The old embedding/query patches and orphaned
-reader bundle copies are removed. Ordinary Markdown table layout now uses the
-complete public SDK namespace. Application formatting explicitly excludes the
-unchanged vendor source; the normal Cargo matrix includes the SDK's original
-public contract fixtures.
+Ubuntu 26.04.1, Chromium 149 and mapped **native Wayland** WebKitGTK 2.52.6.
+Studio passes 792 UI tests, generated/type checks, 152 application Rust tests
+(one pre-existing ignored) and 14 original public SDK tests. Required upstream
+desktop-feature Rust tests and the 41-module Web build pass. The new delayed-child
+contract deliberately loses the first hello: original tail-call sender times
+out; fixed sender passes eight assertions in both engines. Source/origin checks
+are retained.
 
-It imports exact fixed package `0861a7b6662581991cf31424962e1c4f26766b6d`:
-780 inventory files, archive SHA-256
-`136434e10b88314af6aad4fe407966a539aeb961b906c8c27f6a3c5aef58973f`,
-tree SHA-256
-`93e36a0dc1b4984123114c2250f3919aafc14672402ddeffaf1ac4b7b115f55a`.
-Two clean offline exports match. Eight archive/inventory/Git checks include
-staging every file with `core.autocrlf=true`; the package's scoped `.gitattributes`
-preserves all source/resource/notice bytes. All 781 staged SDK Git blobs,
-including the manifest, were independently checked against that inventory before
-the local Studio commit. The importer has 13 synthetic tests, including failed
-replacement and rollback; a failed rollback retains the previous source.
+`smoke-reader-shell.mjs --webkit` runs the actual unmodified Studio app.
+`smoke-standalone-reader.mjs CORPUS --webkit` reuses its generated Markdown,
+123-row wide CSV, 12-page PDF and EPUB. Both test theme/control/overlay states;
+Markdown tests Notes/Contents/search, SQL tests dialog bounds. Chromium keyboard
+checks use physical events; native helper keyboard checks use synthetic DOM
+events. Screenshots were inspected and remain private. Product shell pixels,
+independent user font/paper preferences and a screen-reader audit are not claimed
+to be identical or covered by these checks.
 
-Studio's local full suite passes 750 UI tests, type checks, 146 application Rust
-tests (one pre-existing ignored) and 10 original public SDK contract tests.
-Actual gateway/workspace tests pass in Chromium and native Wayland WebKitGTK,
-using synthetic documents/configuration and no inherited private credentials.
-They cover a 1,941,749-byte Markdown document with a 24-column/120-row table,
-complete-table SQL count, paging/column selection without viewport jumps,
-Preview/Source/Edit draft preservation, save/undo/redo, conflict/discard protection,
-three browser diagram engines, read-only/project/symlink/token/origin boundaries
-and owned cache cleanup. Backend Chromium is deliberately unavailable. Runtime
-inputs in package `0861a7b` are byte-identical to the tested `978df425` package;
-the later package adds only byte-preserving Git attributes and its contract check.
-The latest exact package also builds and passes the full UI/type/format checks.
+| Release corpus / engine | First-open host→content | Browser-cache reopen | Opening heartbeat maximum | Mounted nodes |
+| --- | --- | --- | --- | --- |
+| Studio / Chromium | 284–324 ms | 295–384 ms | 40 ms | 31–731 |
+| Studio / Wayland WebKit | 330–539 ms | 331–429 ms | 98 ms | 31–731 |
+| Standalone / Chromium | 98–259 ms | 87–245 ms | 55 ms | 32–731 |
+| Standalone / Wayland WebKit | 231–1179 ms | 226–394 ms | 81 ms | 32–731 |
 
-In one warm local run, indexing took 298 / 233 ms with worker peak RSS
-65,624 / 62,504 KiB for Markdown / diagrams. Host opening to first useful text
-took 540 / 367 ms; reader-internal content times were 92 / 192 ms, with measured
-opening heartbeat gaps 21 / 20 ms. Chromium mounted 739 / 15 nodes then; WebKit's
-later source-check points mounted 1345 / 1574. These are different measurement
-points, not matched visual snapshots, cold-start guarantees or whole-application
-memory. First text in a diagram document is not SVG readiness; the test separately
-waits for all three rendered figures. The shared host setting now also prevents
-duplicate status/Save/Reload controls, and forced parent clients release their
-listeners after a lost-frame timeout while rejected dirty-close remains usable.
+These are new application/browser contexts and owned backend caches, **not
+cleared OS/GStreamer/font caches**. Studio worker RSS was about 41–43 MiB versus
+standalone 8–10 MiB; different executable footprints matter. These are index-worker
+peaks, excluding browser processes, not whole-application memory guarantees.
 
-Earlier independent gitless package `13b26b5` passed 9 facade + 1 Markdown tests,
-its packaged two-pane embedding checks, 323 table/comparison checks and 165 static
-SDK/component checks with only its own public dependencies and builds. This
-exposed and fixed the fresh-package sanitizer import missing from the HTTP alias.
-The build now verifies all 35 owned module import graphs. That independent
-consumer evidence remains distinct from Studio runtime adoption and from final
-all-format acceptance.
+Release 1,941,749-byte Markdown and 1,155,181-byte three-diagram fixtures pass
+reading, complete SQL, references, paged edit/save/undo/redo, conflicts, read-only
+and symlink/token/origin enforcement, and cache cleanup. Indexing took 49/35 ms
+at 53,092/49,944 KiB RSS; Chromium content took 201/194 ms, host content 324/289 ms,
+heartbeat gaps 37/19 ms, with 741/21 initial nodes. Source/editor and completed
+figures are separate later checks.
 
-Still required before closing #4/#5/#6/#7: finish remaining general feature gaps,
-complete the actual fixed Studio import and remove absorbed patches, execute the
-same generated corpus/actions in its normal and embedded containers, record
-visual/accessibility/default-state and performance conclusions, and verify the
-downstream matrix/merge. Current remote checks have not executed, and a pending
-workflow-scope update still prevents a valid current remote CI conclusion.
+With a **fresh private platform `XDG_CACHE_HOME`**, Wayland Markdown still took
+1952 ms to content with an 1839 ms heartbeat gap. Same-cache editing took 198 ms /
+90 ms gap and diagrams 47 ms / 34 ms gap. Earlier isolated experiments identified
+a GStreamer registry cache dependency, not the exact blocking call. Font/GPU/media
+toggles did not fix it. No prewarming/copied registry is presented as a product
+fix; **cold responsiveness is not passed**.
 
-At the owner's request, subsequent stages are committed locally; remote pushes
-are deferred until the complete change set and local validation are ready.
+WSL's exact portable read-only adapter passes seven formats on Linux, including
+reauthorization, stable identities and cleanup. This is **not actual Windows/WSL
+execution**. WSL EPUB remains explicitly unsupported as in its previous transport.
 
-## Local follow-up: public images, exact source restoration and Studio PDF
-
-Isolated Studio commit `691f612` consumes the unchanged public package from
-`c71f5015294757e9177eb9c5a9ea72c8a1fd3006`: 791 inventory files, archive SHA-256
-`0781fb4ca3ab53d90597ba831a9cabde651b44d9bb894c8d112f29f858a2c540`.
-Two clean offline exports match; all eight export/Git-byte contracts pass.
-The public image component/PNG Blob protocol passes Chromium and Wayland WebKit
-contracts. Exact source-range navigation retains BOM/CRLF/Unicode byte anchors
-and declares its capability; bounded explicit windows can cross 200 source lines.
-
-Studio now delegates static module inventory to `reader_assets()` while retaining
-its document API/origin/token/grant checks. This removes the duplicate resource
-list that initially omitted the new image module. Typed comments preserve the
-public location/revision/precision instead of reducing references to line numbers.
-Actual Chromium workspace capture verifies this outer adapter; gateway-served
-reader frames pass the existing native Wayland WebKit reading/editing checks.
-These are separate validation scopes, not a full WebKit Studio shell test.
-
-Studio's duplicate PDF renderer is replaced with a thin shared-component adapter.
-Twelve assertions pass in each engine using its actual gateway/static assets and
-authorized original bytes, including zoom/flow, outline/search, typed regions,
-stale references and cleanup. The latest consuming checkout passes 759 UI tests,
-type checks, 147 application Rust tests (one existing ignored) and 11 exact SDK
-contracts; its inventory remains unchanged after building. One warm debug run
-measured host first useful content at 467 ms for each generated document, with
-opening heartbeat gaps 23.3 / 20 ms. These measurements precede selection actions
-and do not establish release or cold-start performance.
-
-No platform-native UI, shared native controller or FFI changes are part of this
-stage. The original Studio checkout remains untouched; both repositories' new
-commits are local. All-format adoption, remaining Notes/storage/AI wiring,
-Markdown resources, visual/accessibility acceptance and current remote/platform
-CI remain open; these checkpoints do not close the synchronization issues.
-
-## Local follow-up: ordinary table document adoption
-
-Isolated Studio commit `f7940e8` imports the unchanged package from
-`a9cf902ded351b518222aaf74c1885864f703d78`: 791 inventory files, archive SHA-256
-`8cc605ddcd795e6be8aa0f9fceb0d38d2719a69fca9f1b8dc4a94910009e6cac`,
-tree SHA-256
-`210f8f4595ace9c9abec8c715bf5e99e2f32217af7f24f16df6870f486bb3452`.
-Two clean offline exports match; eight export/Git-byte checks pass. Host builds
-leave the imported inventory unchanged.
-
-CSV/TSV/XLSX workspace opens now use the shared service/client, with complete-input
-SQL/charts, typed cells, independent table paging and column sizing. A generated
-123-record corpus passes the actual Chromium gateway/workspace and native Wayland
-WebKitGTK reader frames. The workbook scalar oracle uses Studio's locked ExcelJS;
-the corpus includes two sheets, dates, boolean values and cached/uncached formulas.
-CSV/TSV editing, save, undo and reopening a Source view restore original bytes.
-Authentication/origin/project denials do not fall back to another loader; explicit
-WSL HTTP 501 retains the existing loader pending shared byte transport.
-
-The full consuming suites pass 769 UI tests, type/format checks, 149 application
-Rust tests (one existing ignored) and 12 unchanged public SDK contracts. Regression
-tests also cover one registry-owned maintenance task and disposal during pending
-initialization without a late heartbeat.
-
-One warm debug run measured index times 2.0 / 2.5 / 17.2 ms and worker peak RSS
-55,216 / 55,520 / 60,872 KiB for CSV / TSV / XLSX. Host first rows took
-564 / 305 / 325 ms; reader first useful content took 42 / 31 / 189 ms, with
-opening heartbeat gaps 29 / 20 / 24 ms. These small synthetic measurements are
-not large-input, release, cold-start or full WebKit Studio-shell acceptance.
-EPUB/image entry points, Markdown resources, Notes/storage/AI integration and the
-remaining common-corpus/remote gates stay open. No native UI or FFI was changed.
-
-## Local follow-up: Studio EPUB adoption
-
-Isolated Studio commit `d3209e9` adopts the shared EPUB service and parent protocol
-from the same unchanged `a9cf902` package. It retains existing `fnv1a64` content
-keys and SQLite reading state. The host computes the compatibility key with a
-64 KiB buffer under its single-open permit; complete original ZIP bytes no longer
-enter the UI. Shared resource grants and bounded chapter loading remain intact.
-
-Saved paper/flow/font settings and CFI are restored through public commands before
-the frame is revealed. Typed initial references use the same revision/precision
-checks as later navigation. Failed/superseded state loads release their new
-session. Disposal while settings/mode/location initialization is pending leaves
-no late heartbeat. Existing EPUB comment providers and their e-book-specific AI
-instruction remain intact, with public revision/CFI references preserved through
-the normalized draft serialization round trip.
-
-The real Chromium gateway/workspace passes original content-key compatibility,
-new-session reading-state restoration, physical text selection with exact CFI,
-comment capture/reopening, outline, complete-book search, paginated/scrolled
-settings, progress indexing/seek, delegated Open, chapter sandboxing, original
-byte preservation and cache cleanup. Native Wayland WebKitGTK reader frames pass
-outline/search, CFI/settings, progress/seek and cleanup. Full Studio-shell visual
-and accessibility acceptance remains a separate gate.
-
-Studio passes 776 UI tests, type/format checks, 149 application Rust tests (one
-existing ignored) and 12 unchanged SDK contracts. The shared-host table corpus
-and large Markdown/diagram workflows also pass after the initialization change.
-One concurrent Wayland WebKit process exited with SIGSEGV without a Markdown
-result; the isolated sequential rerun completed successfully. The process failure
-is recorded, not diagnosed or declared fixed by that rerun.
-
-One warm debug EPUB run measured index time 0.9 ms, worker peak RSS 57,896 KiB,
-reader first useful content 230 ms and host first book content 724 ms. The opening
-heartbeat gap was 67 ms; it does not prove a 50 ms responsiveness target or a
-release/cold-start/large-book budget. Image entry points, small Markdown resources,
-Notes/storage/AI wiring, locale/defaults and common acceptance still need work.
-The current remote issues explicitly limit synchronization to Web desktop and
-its Rust dependencies; GTK/AppKit/WinUI/FFI are not adoption or CI gates. Remote
-Web-host CI/review/merge remain open. This stage changes no native UI or FFI and
-all new commits remain local at the owner's request.
-
-## Local follow-up: host-owned document Notes
-
-Isolated Studio commit `9e1cc83` imports unchanged fixed package
-`7638fd367430884e0a2bb52e9467f8ad738da5e7`: 791 inventory files, archive SHA-256
-`180bcc579b727b1f1c15c1d25f275c39b700ff0eaac08df21ce22ac6271d1613`,
-tree SHA-256
-`45855b3ed4125ac751ac4329f3d5ebdc9a892e1b7ce0e60cd88aaea5682e257b`.
-Two clean offline exports match; eight export/inventory/Git-byte checks pass.
-
-The additive `settings({notes:'host'})` capability delegates UI ownership while
-retaining only explicitly granted Notes storage. Switching back recreates the
-child UI over the same records. A disabled service gains no storage authority.
-The actual public embedding check verifies both ownership and durable SQL Notes;
-the required Rust desktop-feature suite and npm build pass.
-
-Studio configures a document Notes store in its own application state directory
-and mounts the shared component in an explicit toolbar slot. Each binding captures
-its owner/revision/transport, maps frame selection bounds, rejects stale actions
-and disposes pending imports/UI. The additional Ask AI action calls Studio's
-existing comment workflow. Session/chat comments and favorites remain host-owned;
-this new store holds document Notes. No AI or gateway credential enters the SDK.
-
-The actual Chromium workspace verifies cell comments/favorites, a complete-input
-SQL aggregate favorite, durable provenance after result closure, copied snapshot
-labels, comment-only clearing, separate document stores, and persistence across
-edit/save/undo and a new reader session. Native Wayland WebKitGTK reader frames
-explicitly require Notes/query/ownership capabilities and verify durable SQL Notes
-through the scoped service for CSV, TSV and XLSX. Tests cannot skip that check when
-a capability is absent. The actual Notes dialog fits its viewport, and its local
-synthetic screenshot was inspected; screenshots remain outside version control.
-
-The workflow exposed a shared SQL initialization race: an early edit could be
-overwritten by the arriving default SQL. Input is now disabled until schema
-initialization; 27 component assertions pass in each engine. Studio's controls
-also remain unready until initial settings/location restoration finishes, covered
-by a delayed-location regression. EPUB and large Markdown/diagram workflows pass
-after the integration, including source bytes, references, save and cleanup.
-
-The consuming suites pass 780 UI tests, type/format checks, 149 application Rust
-tests (one existing ignored) and 12 unchanged public SDK contracts. Building
-preserves the fixed inventory. These checks do not establish full Studio-shell
-WebKit visual/accessibility or release performance acceptance. Ordinary PDF/image/
-small-Markdown Notes entry points, durable SQL references for AI drafts, Markdown
-local resources, remaining locale/defaults and the final common/remote gates stay
-open. This stage changes no native UI or FFI. All new commits remain local.
-
-## Local follow-up: bounded Markdown references
-
-Rust Web parsing now records Markdown-syntax image/link targets with exact
-original UTF-8 ranges, including BOM/CRLF. Private URI storage keeps large data
-images out of HTML/index transport. Trusted hosts explicitly grant resource
-directories; opening one file still grants no siblings. Lazy local/inline images
-use supervised decoding and the same compact image component in ordinary and
-virtual DOM. Link callbacks retain owner/revision/source identity. Public API,
-profiles and migration examples are in [markdown-references.md](markdown-references.md).
-
-Actual Chromium 149 and native Wayland WebKitGTK 2.52.6 each pass 25 shared
-contract assertions. Coverage includes scoped access, inline images, PNG Blob
-transport, stale identities, ordinary host links, compact controls, remount and
-cleanup, the 32-image mount budget and deferred-image recovery. The actual
-standalone reader also renders local/inline/table SVG images, navigates headings
-and opens an authorized sibling. HTTP token/Origin/revision checks and actual
-four-snapshot LRU eviction reject stale image frames; all owned caches are
-removed on close. The existing embedding regression, 22 image-component
-assertions in both engines, frame transport and isolated storage checks pass.
-The required Rust desktop-feature suite passes, including 132 library tests and
-12 public API tests; headless checking and the 38-module npm build also pass.
-
-Testing found and corrected a full-table audit using the interactive page event
-budget, small SVGs being enlarged to the 2048-pixel preview edge, and deferred
-images retaining their waiting flag after leaving the viewport. The indexed
-Markdown projection keeps its inert image fallback. No platform UI, native
-controller or FFI files change.
-
-This is upstream/local acceptance, not Studio adoption or completion of #7.
-Raw-HTML image compatibility, every heading slug dialect, original-image quality
-profiles, release performance and the previously listed common/remote gates
-remain open. No push or issue closure is implied.
+Remote results must identify the tested consuming commit. The latest upstream
+run `41943906410` did not start jobs: GitHub reported failed payments/spending
+limits. Old downstream platform passes do not validate this candidate. Current
+CI/review/merge, unresolved cold-cache responsiveness and Astra's whole-goal
+approval remain open. Do not close #2/#4/#5/#6/#7 from local feature passes alone.

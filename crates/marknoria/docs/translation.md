@@ -43,7 +43,28 @@ original column names, values, SVG bars and selection unchanged. The full embedd
 exposes its presentation version/state (see `embedding.md`). Reader chrome and
 source/edit range and dirty labels are integrated. PDF controls/page accessibility labels and EPUB settings/progress controls
 also update in place, retaining canvases/text selection and CFIs. The shared jq window also updates live controls/counters while retaining literal
-filter/result/example text. Remaining file/status chrome remains integration work; this module alone is not a claim that every reader UI has been localized.
+filter/result/example text. File-picker preparing/loading/empty/error headings and reader loading/search
+feedback now use the same scoped labels. Backend errors remain literal and clear
+obsolete label bindings before replacing feedback. The technical diagnostics
+record remains a stable developer-facing report.
+
+`web/ui-messages.mjs` exports the finite shared control vocabulary and
+`readerMessages(hostTranslate)`. An iframe host sends that bounded dictionary
+with `locale` through existing presentation settings; sending a locale by itself
+does not translate English fallback keys. Host-owned Notes can use
+`createTranslator` over the same dictionary so open controls update through its
+subscription interface. Additional host action keys may be appended within the
+same 512-key/64-KiB profile. The registry contains no document/user data.
+
+Source/Edit use pinned CodeMirror search 6.7.2, including the former Studio
+find/replace behavior. Its small panel labels remount on locale change while
+retaining the current query, document, selection and undo history. Source remains
+read-only. Ctrl/Command+F searches the current bounded source/edit page; the
+reader's document-search control searches the saved original source. Preview
+Ctrl/Command+F opens that document search, including from EPUB chapter focus.
+Ctrl/Command+O delegates to the host once; active modal dialogs and already
+handled editor shortcuts retain ownership. Escape closes the active owned panel
+and returns focus to its search/Contents trigger.
 
 `tests/browser/translation-check.mjs` runs the bounded dictionary/prototype,
 parameter, text-injection, scope, date, pruning/remount and disposal contracts.

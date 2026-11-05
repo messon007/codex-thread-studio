@@ -1,4 +1,4 @@
-import { createTranslator } from './translation.mjs'
+import { createTranslator, uiLabels } from './translation.mjs'
 import { readerPresentation } from './presentation.mjs'
 import { readerUiLabels } from './reader-ui.mjs'
 import { publicReader } from './public-reader.mjs'
@@ -15,9 +15,11 @@ import { fileController } from './files.mjs'
 import { sourceController } from './source.mjs'
 import { editorController } from './editor.mjs'
 import { readPosition, writePosition } from './position.mjs'
+import { mountOutline } from './outline.mjs'
 
 const mainLifetime = new AbortController()
 const translate = createTranslator()
+const labels = uiLabels(translate, { signal: mainLifetime.signal })
 const on = (target, type, listener, options = {}) => target.addEventListener(type, listener, { ...options, signal: mainLifetime.signal })
 const embedded = new URLSearchParams(location.search).has('embedded')
 const token = location.hash.slice(1)
@@ -28,8 +30,9 @@ let switching = false
 let contentsLoading = false
 let readerAbort = null
 let stopReader = null
-let stopToc = null
-const files = fileController(token, { enabled: !embedded, onOpen: () => bridge?.publish('openRequested', publicState()), beforeChange: () => !editor || editor.confirmLeave(), leaving: () => editor?.leaving() })
+let outlineView = null
+let formatOutlineOwner = null
+const files = fileController(token, { translate, enabled: !embedded, onOpen: () => bridge?.publish('openRequested', publicState()), beforeChange: () => !editor || editor.confirmLeave(), leaving: () => editor?.leaving() })
 on(document.querySelector('#compare-files'), 'click', () => {
   if (window.readerExperiment) writePosition(token, documentId, position())
   if (editor && !editor.confirmLeave()) return
@@ -84,6 +87,10 @@ const space = document.querySelector('#space')
 const toc = document.querySelector('#toc')
 const tocSpace = document.querySelector('#toc-space')
 const status = document.querySelector('#status')
+function setStatus(message, values) {
+  if (values == null) { labels.clear(status); status.textContent = message }
+  else labels.set(status,message,values)
+}
 const shell = document.querySelector('.reader-shell')
 const presentation = readerPresentation(shell, { translate, themeRoot: document.documentElement })
 readerUiLabels(shell, translate, { signal: mainLifetime.signal })
@@ -104,7 +111,6 @@ let jq = null
 let cacheBytes = 0
 let index
 let virtualizer
-let tocVirtualizer
 let tables
 let source
 let activeRequest = null
@@ -172,7 +178,7 @@ function report() {
   bridge?.publish('state', publicState())
   metrics.mountedPages = nodes.size
   metrics.mountedElements = space.querySelectorAll('*').length
-  status.textContent = loadError || `${(index.sourceBytes / 1048576).toFixed(2)} MiB · ${index.pages.length} fragments · ${index.toc.length} headings · index ${index.indexMs.toFixed(0)} ms · ${nodes.size} mounted fragments · ${(cacheBytes / 1048576).toFixed(1)} MiB HTML cache`
+  setStatus(loadError || `${(index.sourceBytes / 1048576).toFixed(2)} MiB · ${index.pages.length} fragments · ${index.toc.length} headings · index ${index.indexMs.toFixed(0)} ms · ${nodes.size} mounted fragments · ${(cacheBytes / 1048576).toFixed(1)} MiB HTML cache`, null)
   if (loadError) document.querySelector('.reader-diagnostics').open = true
 }
 
@@ -208,7 +214,8 @@ function reconcile() {
       node.dataset.page = descriptor.page
       node.style.setProperty('--columns', tables.columnCount(descriptor) || 1)
       const content = descriptor.table == null ? cached(descriptor.page) : null
-      node.textContent = 'Loading nearby content…'
+      const loadingLabel = document.createElement('span')
+      labels.set(loadingLabel,'Loading nearby content…'); node.append(loadingLabel)
       node.classList.add('placeholder')
       if (descriptor.table != null) tables.mount(node, descriptor)
       else if (content != null && mount == null) mount = { node, content }
@@ -226,7 +233,7 @@ function reconcile() {
       mountFrame = null
       if (!mount.node.isConnected || stopped) return
       try { mount.node.replaceChildren(projectionHtml(mount.content)) }
-      catch (error) { loadError = error.message; mount.node.textContent = loadError; mount.node.dataset.ready = 'true'; mount.node.classList.remove('placeholder'); report(); return }
+      catch (error) { loadError = error.message; labels.clear(mount.node); mount.node.textContent = loadError; mount.node.dataset.ready = 'true'; mount.node.classList.remove('placeholder'); report(); return }
       mount.node.dataset.ready = 'true'
       mount.node.classList.remove('placeholder')
       diagrams.mount(mount.node)
@@ -284,20 +291,20 @@ async function jump(sourcePage, heading = null, row = null, anchor = null) {
     const target = heading == null ? index.pages[sourcePage]?.line : index.toc.find(item => item.id === heading)?.line
     if (await editor.go(target, index.revision)) {
       activeHeading = heading
-      renderToc(tocVirtualizer)
+      outlineView?.active(activeHeading)
     }
     return
   }
   if (source?.visible) {
     activeHeading = heading ?? index.toc.findLast(item => item.page <= sourcePage)?.id ?? null
-    renderToc(tocVirtualizer)
+    outlineView?.active(activeHeading)
     const line = heading == null ? index.pages[sourcePage].line : index.toc.find(item => item.id === heading)?.line
     await source.go(line)
     return
   }
   const page = tables.target(sourcePage, row)
   activeHeading = heading ?? index.toc.findLast(item => item.page <= sourcePage)?.id ?? null
-  renderToc(tocVirtualizer)
+  outlineView?.active(activeHeading)
   loadError = null
   const ticket = ++navigation
   generation += 1
@@ -335,23 +342,10 @@ async function jump(sourcePage, heading = null, row = null, anchor = null) {
   if (ticket === navigation) { forcePage(null); schedule() }
 }
 
-function renderToc(instance) {
-  if (stopped || !index || !instance || instance !== tocVirtualizer) return
-  const fragment = document.createDocumentFragment()
-  for (const item of instance.getVirtualItems()) {
-    const heading = index.toc[item.index]
-    const button = document.createElement('button')
-    button.className = 'toc-row'
-    button.textContent = heading.label || 'Untitled section'
-    button.title = `${heading.label} · line ${heading.line}`
-    if (heading.id === activeHeading) button.setAttribute('aria-current', 'location')
-    button.style.paddingLeft = `${12 + (heading.level - 1) * 12}px`
-    button.style.transform = `translateY(${item.start}px)`
-    button.addEventListener('click', () => { setContents(false); jump(heading.page, heading.id) })
-    fragment.append(button)
-  }
-  tocSpace.style.height = `${instance.getTotalSize()}px`
-  tocSpace.replaceChildren(fragment)
+function createOutline(navigate) {
+  return mountOutline({ viewport: toc, space: tocSpace,
+    filter: document.querySelector('#toc-filter'), feedback: document.querySelector('#toc-feedback'),
+    navigate, translate, onError: error => { setStatus(error.message, null) } })
 }
 
 async function navigateFragment(fragment) {
@@ -398,7 +392,7 @@ function setup() {
   files.state('ready')
   document.querySelector('#document-name').textContent = index.name || 'Document'
   document.title = `${index.name || 'Document'} — MarkNoria`
-  document.querySelector('.reader-identity p').textContent = `${(index.format||'markdown').toUpperCase()} · Preview`
+  labels.set(document.querySelector('.reader-identity p'),'{format} · Preview',{format:(index.format||'markdown').toUpperCase()})
   document.querySelector('#section-count').textContent = index.toc.length
   document.querySelector('#document-summary').textContent = ['csv','tsv','xlsx'].includes(index.format)
     ? `${((index.originalBytes??index.sourceBytes) / 1048576).toFixed(2)} MiB · ${index.tables.reduce((n,t)=>n+t.rows,0)} rows · ${index.tables.length} tables`
@@ -447,12 +441,13 @@ function setup() {
     onChange: schedule,
   })
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = item => item.end <= viewport.scrollTop
-  tocVirtualizer = new Virtualizer({ count: index.toc.length, getScrollElement: () => toc, estimateSize: () => 32, observeElementRect, observeElementOffset, scrollToFn: elementScroll, overscan: 2, onChange: renderToc })
   stopReader = virtualizer._didMount()
-  stopToc = tocVirtualizer._didMount()
   virtualizer._willUpdate()
-  tocVirtualizer._willUpdate()
-  renderToc(tocVirtualizer)
+  outlineView = createOutline(id => {
+    const heading = index.toc.find(item => item.id === id)
+    return jump(heading.page, heading.id)
+  })
+  void outlineView.setItems(index.toc).then(() => outlineView?.active(activeHeading)).catch(error => { if (!readerAbort.signal.aborted) setStatus(error.message, null) })
   schedule()
   const cancelNavigation = () => {
     navigation += 1
@@ -492,7 +487,7 @@ function setupFormat() {
   formatLoading = true; space.style.height = pdf ? 'auto' : '100%'; space.style.width = '100%'; files.state('ready')
   document.querySelector('#document-name').textContent = index.name
   document.title = `${index.name} — MarkNoria`
-  document.querySelector('.reader-identity p').textContent = `${label} · Preview`
+  labels.set(document.querySelector('.reader-identity p'),'{format} · Preview',{format:label})
   document.querySelector('#source-mode').hidden = true; document.querySelector('#edit-mode').hidden = true
   document.querySelector('#view-modes').hidden = false; document.querySelector('#compare-files').disabled = true
   document.querySelector('#document-summary').textContent = `${(index.originalBytes / 1048576).toFixed(2)} MiB · Loading ${label}…`
@@ -501,6 +496,7 @@ function setupFormat() {
     owner.signal.throwIfAborted()
     const mount = pdf ? module.mountPdfReader : module.mountEpubReader
     formatRenderer = mount(space, { ...owner, viewport, api, translate,
+      onShortcut: key => { if (key === 'f') setSearch(true); else if (key === 'o') files.choose() },
       initialState: saved.epub || { theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light' },
       url: new URL(`./api/original?revision=${owner.revision}`, import.meta.url).href,
       headers: { 'x-reader-token': token, 'x-reader-document': owner.documentId },
@@ -510,7 +506,9 @@ function setupFormat() {
         if (metrics.firstContentMs == null && value.firstUsefulContentMs != null) metrics.firstContentMs = performance.now() - started
         metrics.mountedPages = value.mountedPages ?? space.querySelectorAll('iframe').length
         document.querySelector('#document-summary').textContent = `${(index.originalBytes / 1048576).toFixed(2)} MiB · ${pdf ? `${value.pages} pages` : `${Math.round((value.progress || 0) * 100)}% · ${value.chapterLabel || 'EPUB'}`}`
-        status.textContent = value.error || (pdf ? `Page ${value.page} / ${value.pages} · ${value.continuous ? 'Continuous' : 'Paged'}` : `${value.chapterLabel || 'EPUB'} · ${value.flow || 'paginated'} · ${value.progressPrecision || 'chapter'} progress`)
+        if (value.error) setStatus(value.error,null)
+        else if (pdf) setStatus(value.continuous ? 'Page {page} / {pages} · Continuous' : 'Page {page} / {pages} · Paged', {page:value.page,pages:value.pages})
+        else setStatus(`${value.chapterLabel || 'EPUB'} · ${value.flow || 'paginated'} · ${value.progressPrecision || 'chapter'} progress`,null)
         bridge?.publish('state', publicState())
       },
     })
@@ -518,28 +516,32 @@ function setupFormat() {
     if (pdf && saved.pdf) { await formatRenderer.settings({ zoom: saved.pdf.zoom, continuous: saved.pdf.continuous }); if (saved.pdf.location) await formatRenderer.navigate(saved.pdf.location) }
     formatLoading = false; bridge?.publish('state', publicState())
     window.readerExperiment = { index, documentId, metrics, formatRenderer, position }
-  }).catch(error => { formatLoading = false; if (!owner.signal.aborted) { documentError = error.message; status.textContent = error.message; files.state('error', error.message) } throw error })
+  }).catch(error => { formatLoading = false; if (!owner.signal.aborted) { documentError = error.message; setStatus(error.message, null); files.state('error', error.message) } throw error })
   void formatReady.catch(() => {})
 }
 
-async function renderPdfOutline(offset = 0) {
+async function renderPdfOutline() {
   const owner = formatRenderer, signal = readerAbort.signal
-  const outline = await owner.outline({ offset, signal })
+  if (formatOutlineOwner === owner) return
+  const items = []
+  let offset = 0, total
+  do {
+    const page = await owner.outline({ offset, resolve: false, signal })
+    if (signal.aborted || owner !== formatRenderer) return
+    total = page.total
+    items.push(...page.items); offset += page.items.length
+    if (offset < total && !page.items.length) throw Error('Incomplete outline metadata')
+  } while (offset < total)
+  formatOutlineTotal = total
+  outlineView?.dispose()
+  outlineView = createOutline(async id => {
+    await owner.navigateOutline(id, { signal })
+    if (!signal.aborted && owner === formatRenderer) outlineView?.active(id)
+  })
+  await outlineView.setItems(items)
   if (signal.aborted || owner !== formatRenderer) return
-  formatOutlineTotal = outline.total
-  tocSpace.replaceChildren(); tocSpace.style.height = 'auto'
-  const action = (label, invoke, disabled = false) => {
-    const button = document.createElement('button'); button.className = 'pdf-outline-row'; button.textContent = label; button.disabled = disabled
-    button.addEventListener('click', () => { Promise.resolve().then(invoke).catch(error => { status.textContent = error.message }) }, { signal })
-    tocSpace.append(button); return button
-  }
-  for (const item of outline.items) {
-    const button = action(item.label, () => { setContents(false); return owner.navigate(item.location) }, !item.location)
-    button.style.paddingLeft = `${12 + item.level * 12}px`
-  }
-  if (offset > 0) action('Previous outline entries', () => renderPdfOutline(Math.max(0, offset - 256)))
-  if (offset + outline.items.length < outline.total) action('Next outline entries', () => renderPdfOutline(offset + outline.items.length))
-  document.querySelector('#section-count').textContent = outline.total
+  formatOutlineOwner = owner
+  document.querySelector('#section-count').textContent = total
 }
 
 function teardown() {
@@ -562,9 +564,9 @@ function teardown() {
   documentReferences?.dispose(); documentReferences = null
   notes?.dispose(); notes = null
   jq?.dispose(); jq = null
-  stopReader?.(); stopToc?.()
-  stopReader = stopToc = null
-  virtualizer = tocVirtualizer = null
+  stopReader?.(); outlineView?.dispose()
+  stopReader = outlineView = formatOutlineOwner = null
+  virtualizer = null
   nodes.clear(); cache.clear(); cacheBytes = 0
   space.replaceChildren(); tocSpace.replaceChildren()
   forcedPage = null
@@ -579,7 +581,7 @@ function configureEditor(response) {
   documentId = response.documentId
   document.querySelector('#view-modes').hidden = false
   document.querySelector('#edit-mode').hidden = false
-  document.querySelector('.reader-footer-hint').textContent = 'Save or change editing pages to write'
+  labels.set(document.querySelector('.reader-footer-hint'),'Save or change editing pages to write')
   document.querySelector('#welcome small').innerHTML = window.marknoriaDesktop
     ? 'Ctrl / ⌘ O to open · Choose files from any local folder<br>Use Edit to change the file, then Save or turn the page.'
     : 'Ctrl / ⌘ O to open · Files stay on the server<br>Use Edit to change the file, then Save or turn the page.'
@@ -612,7 +614,7 @@ function configureEditor(response) {
 const notice = document.createElement('div')
 notice.id = 'edit-notice'
 notice.hidden = true
-notice.textContent = 'This view shows the saved file. Edit * keeps your unsaved page in memory; Save to refresh the reading views.'
+labels.set(notice,'This view shows the saved file. Edit * keeps your unsaved page in memory; Save to refresh the reading views.')
 shell.append(notice)
 
 async function refreshReading() {
@@ -633,7 +635,7 @@ async function refreshReading() {
       editor?.refreshed()
       return
     }
-    status.textContent = 'Refreshing the saved reading view…'
+    setStatus('Refreshing the saved reading view…', {})
     await new Promise(resolve => setTimeout(resolve, 100))
   }
 }
@@ -667,9 +669,9 @@ async function switchView(view) {
     }
     for (const mode of ['preview', 'source', 'edit']) document.getElementById(mode + '-mode').setAttribute('aria-pressed', String(mode === view))
     const format = (index.format||'markdown').toUpperCase()
-    document.querySelector('.reader-identity p').textContent = view === 'edit' ? `${format} · Paged editing` : view === 'source' ? `${format} · Read-only source` : `${format} · Read-only preview`
+    labels.set(document.querySelector('.reader-identity p'),view === 'edit' ? '{format} · Paged editing' : view === 'source' ? '{format} · Read-only source' : '{format} · Read-only preview',{format})
   } catch (error) {
-    status.textContent = error.message
+    setStatus(error.message, null)
     document.querySelector('.reader-diagnostics').open = true
   } finally { switching = false }
 }
@@ -691,7 +693,7 @@ function setContents(open) {
   document.querySelector('#reader-outline').hidden = !open
   document.querySelector('#contents-backdrop').hidden = !open
   document.querySelector('#contents-toggle').setAttribute('aria-expanded', String(open))
-  if (open) { tocVirtualizer?._willUpdate(); if (tocVirtualizer) renderToc(tocVirtualizer) }
+  if (open) { if (!formatRenderer) outlineView?.active(activeHeading); outlineView?.show() }
   bridge?.publish('state', publicState())
 }
 
@@ -721,7 +723,7 @@ async function showContents(open) {
     document.getElementById('reader-outline').title = editor?.visible ? 'Outline of the saved file. Changes in the current editing page are mapped when jumping.' : ''
     setContents(true)
   } catch (error) {
-    status.textContent = error.message
+    setStatus(error.message, null)
     document.querySelector('.reader-diagnostics').open = true
     throw error
   } finally {
@@ -732,11 +734,20 @@ async function showContents(open) {
   }
 }
 on(document.querySelector('#contents-toggle'), 'click', () => { showContents(document.querySelector('#reader-outline').hidden).catch(()=>{}) })
-on(document.querySelector('#contents-close'), 'click', () => setContents(false))
-on(document.querySelector('#contents-backdrop'), 'click', () => setContents(false))
+on(document.querySelector('#contents-close'), 'click', () => { setContents(false); document.querySelector('#contents-toggle').focus() })
+on(document.querySelector('#contents-backdrop'), 'click', () => { setContents(false); document.querySelector('#contents-toggle').focus() })
 on(document.querySelector('#search-toggle'), 'click', () => setSearch(document.querySelector('#search').hidden))
-on(document.querySelector('#search-close'), 'click', () => setSearch(false))
-on(document, 'keydown', event => { if (event.key === 'Escape') { setContents(false); setSearch(false); document.querySelector('.reader-settings').open = false } })
+on(document.querySelector('#search-close'), 'click', () => { setSearch(false); document.querySelector('#search-toggle').focus() })
+on(document, 'keydown', event => {
+  if (event.defaultPrevented || document.querySelector('dialog[open]')) return
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f' && index && !document.querySelector('dialog[open]')) {
+    event.preventDefault(); if (editor?.visible) editor.search(); else if (source?.visible) source.search(); else setSearch(true)
+  } else if (event.key === 'Escape') {
+    const outlineOpen = !document.querySelector('#reader-outline').hidden, searchOpen = !document.querySelector('#search').hidden
+    setContents(false); setSearch(false); document.querySelector('.reader-settings').open = false
+    if (outlineOpen) document.querySelector('#contents-toggle').focus(); else if (searchOpen) document.querySelector('#search-toggle').focus()
+  }
+})
 on(document, 'pointerdown', event => {
   const settings = document.querySelector('.reader-settings')
   if (settings.open && !settings.contains(event.target)) settings.open = false
@@ -755,17 +766,18 @@ on(document.querySelector('#search'), 'submit', async event => {
       const item = document.createElement('li')
       const button = document.createElement('button')
       button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
-      button.addEventListener('click', () => { list.hidden = true; if (formatRenderer) formatRenderer.navigate(match.location).catch(error => { status.textContent = error.message }); else if (source?.visible) source.go(match.line); else jump(match.page, null, match.tableRow) })
+      button.addEventListener('click', () => { list.hidden = true; if (formatRenderer) formatRenderer.navigate(match.location).catch(error => { setStatus(error.message, null) }); else if (source?.visible) source.go(match.line); else jump(match.page, null, match.tableRow) })
       item.append(button); list.append(item)
     }
-    status.textContent = formatRenderer ? `${response.matches.length} matching ${index.format === 'pdf' ? 'pages' : 'passages'}${response.complete ? '' : ' · Result limit reached'}` : `${response.matches.length} matching source lines (maximum ${response.limit}); case-sensitive`
+    if (formatRenderer) setStatus(index.format === 'pdf' ? (response.complete ? '{count} matching pages' : '{count} matching pages · Result limit reached') : (response.complete ? '{count} matching passages' : '{count} matching passages · Result limit reached'),{count:response.matches.length})
+    else setStatus('{count} matching source lines (maximum {limit}); case-sensitive',{count:response.matches.length,limit:response.limit})
     list.hidden = false
     if (!response.matches.length) {
       const empty = document.createElement('li')
-      empty.textContent = 'No matching source lines'
+      labels.set(empty,'No matching source lines')
       list.append(empty)
     }
-  } catch (error) { if (ticket === searchGeneration) status.textContent = error.message }
+  } catch (error) { if (ticket === searchGeneration) setStatus(error.message, null) }
 })
 
 function publicState() {
@@ -934,7 +946,7 @@ try {
   if (!stopped) {
   documentError = error.message
   bridge?.publish('error', publicState())
-  status.textContent = error.message
+  setStatus(error.message, null)
   files.state('error', error.message)
   document.querySelector('.reader-diagnostics').open = true
   }

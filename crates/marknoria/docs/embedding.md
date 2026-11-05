@@ -109,7 +109,8 @@ mounting its first view.
 | `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
 | `referenceInfo`, `referenceImageInfo`, `referenceImageFrame` | Markdown target/source metadata and bounded image snapshots; explicit directory grants, image revisions and host navigation events are described in [markdown-references.md](markdown-references.md) |
 | `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
-| `outline` | `offset` (default 0), at most 256 items, total and revision |
+| `outline` | `offset` (default 0), at most 256 items, total and revision; `resolve:false` returns renderer labels/IDs without PDF destination lookups |
+| `navigateOutline` | `id`: revision-scoped outline identity; resolves only the selected PDF destination or navigates the indexed heading/EPUB chapter |
 | `search` | `query`, 1–256 UTF-8 bytes; bounded source lines or complete-document PDF/EPUB search |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
 | `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |

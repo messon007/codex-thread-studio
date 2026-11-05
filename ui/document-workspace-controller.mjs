@@ -108,6 +108,10 @@ export function createDocumentWorkspaceController({
   }
 
   function disposeLargeMarkdown() {
+    if (largeMarkdownFile?.format === 'epub' && largeMarkdownFile.readingState) {
+      clearTimeout(epubReadingStateTimer); epubReadingStateTimer = null
+      persistEpubReadingState(largeMarkdownFile).catch(error => reportClientError(error))
+    }
     largeMarkdownHost?.dispose()
     largeMarkdownHost = null
     readerPresentationSignature = ''
@@ -142,6 +146,7 @@ export function createDocumentWorkspaceController({
     }
     const weight=Number(style.getPropertyValue('--content-font-weight'))
     if(Number.isInteger(weight)&&weight>=100&&weight<=900)settings.contentFontWeight=weight
+    if (largeMarkdownFile?.format === 'epub') settings.epub = { theme: largeMarkdownFile.readingState?.theme || 'light', typography: readingTypography() }
     const signature=JSON.stringify(settings)
     if(signature===readerPresentationSignature)return
     readerPresentationSignature=signature
@@ -185,9 +190,14 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   const path = fuzzyFileLabel(file)
   const requestedEpubCfi = String(file.epubCfi || '')
   if (!path) throw new Error(t('The file path is empty.'))
-  if (requestedEpubCfi && state.artifact?.kind === 'epub' && state.artifact.root === root && state.artifact.path === path) {
+  if (requestedEpubCfi && (state.artifact?.kind === 'epub' || state.artifact?.format === 'epub') && state.artifact.root === root && state.artifact.path === path) {
     activateRightWorkspace('document')
-    if (epubReader) await epubReader.display(requestedEpubCfi)
+    if (file.epubBookHash && file.epubBookHash !== state.artifact.hash) throw Error(t('The book has changed since this reference was captured'))
+    if (largeMarkdownHost && state.artifact.format === 'epub') {
+      if (file.readerReference) await largeMarkdownHost.navigateReference(file.readerReference)
+      else await largeMarkdownHost.navigateLocation({kind:'epub',cfi:requestedEpubCfi})
+    }
+    else if (epubReader) await epubReader.display(requestedEpubCfi)
     else {
       state.artifact.readingState = { ...(state.artifact.readingState || {}), cfi: requestedEpubCfi }
       renderArtifact()
@@ -220,7 +230,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
   state.artifact = { root, path, kind, readerReference: file.readerReference, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
-  let sharedReader = kind === 'table'
+  let sharedReader = kind === 'table' || kind === 'epub'
   const endpoint = sharedReader ? '/studio/reader/open' : kind === 'image'
     ? '/studio/review-image'
     : kind === 'epub' ? '/studio/review-epub'
@@ -237,7 +247,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
     // transport is shared. Never fall back on denial, bad input or server errors.
     if (sharedReader && response.status === 501) {
       sharedReader = false
-      response = await gatewayFetch(/\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet' : '/studio/review-file', {
+      response = await gatewayFetch(kind === 'epub' ? '/studio/review-epub' : /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet' : '/studio/review-file', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root, path }),
       })
     }
@@ -252,7 +262,17 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
         releaseLargeMarkdown(result)
         return
       }
-      state.artifact = { ...result, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
+      let readingState
+      if (result.format === 'epub') {
+        try {
+          if (!result.bookHash) throw Error(t('Invalid EPUB response'))
+          if (file.epubBookHash && file.epubBookHash !== result.bookHash) throw Error(t('The book has changed since this reference was captured'))
+          readingState = await loadEpubReadingState(root, path, result.bookHash)
+          if (requestedEpubCfi) readingState.cfi = requestedEpubCfi
+        } catch (error) { releaseLargeMarkdown(result); throw error }
+        if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) { releaseLargeMarkdown(result); return }
+      }
+      state.artifact = { ...result, readingState, hash: result.bookHash, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
         readerReference: file.readerReference, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
       largeMarkdownFile = state.artifact
       state.artifactView = 'preview'
@@ -820,6 +840,7 @@ function renderArtifact() {
       largeMarkdownFrame = document.createElement('iframe')
       largeMarkdownFrame.className = 'artifact-large-markdown-frame'
       largeMarkdownFrame.title = fileDisplayName(file.path)
+      if ((file.readerReference || file.format === 'epub' && file.readingState?.cfi) && largeMarkdownFrame.style) largeMarkdownFrame.style.visibility = 'hidden'
       largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
       largeMarkdownFrame.setAttribute('referrerpolicy', 'no-referrer')
       largeMarkdownFrame.src = file.largeMarkdown.url
@@ -830,10 +851,15 @@ function renderArtifact() {
       content.replaceChildren(largeMarkdownFrame)
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
-        if (snapshot.ready && file.readerReference && largeMarkdownHost) {
-          const reference = file.readerReference
-          delete file.readerReference
-          largeMarkdownHost.navigateReference(reference).catch(showError)
+        if (snapshot.initialized && largeMarkdownFrame?.style) largeMarkdownFrame.style.visibility = ''
+        if (file.format === 'epub' && snapshot.initialized && snapshot.formatState?.ready) {
+          const next = snapshot.formatState
+          const reading = { cfi: next.cfi, chapterLabel: next.chapterLabel, progress: next.progress,
+            fontScale: next.fontScale, theme: next.theme, flow: next.flow, tocOpen: next.tocOpen }
+          if (JSON.stringify(file.readingState) !== JSON.stringify(reading)) {
+            file.readingState = reading
+            scheduleEpubReadingState(file)
+          }
         }
         file.readerSourceAvailable = snapshot.capabilities?.source
         file.readerReady = snapshot.ready
@@ -851,10 +877,20 @@ function renderArtifact() {
       }, selection => {
         if (state.artifact !== file) return
         setSelection({ quote: selection.quote, itemId: null, turnId: null,
-          source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
+          source: selection.location?.kind === 'epub' ? epubCommentSource({ root: file.root, filePath: file.path,
+            bookHash: file.hash, cfiRange: selection.location.cfi, href: selection.location.href,
+            chapterLabel: file.readingState?.chapterLabel, readerReference: selection })
+            : documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
             baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
             readerReference: selection }) }, selection.rect)
-      }, { initialView: state.artifactView, onOpenRequested: () => openResources() })
+      }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
+        initialReference: file.readerReference,
+        presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
+          flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,
+          typography: readingTypography() } } : undefined,
+        initialLocation: file.format === 'epub' && !file.readerReference && file.readingState?.cfi ? {kind:'epub',cfi:file.readingState.cfi} : undefined,
+      })
+      delete file.readerReference
     }
     syncLargeMarkdownTheme()
     renderArtifactSearchStatus()
@@ -1282,6 +1318,8 @@ async function reopenEpubComment(anchor) {
     root: anchor.root || selectedThread()?.cwd,
     path: anchor.filePath,
     epubCfi: anchor.cfiRange,
+    epubBookHash: anchor.bookHash,
+    readerReference: anchor.readerReference,
   })
 }
 

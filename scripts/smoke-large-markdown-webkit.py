@@ -40,6 +40,24 @@ def loaded(view, event):
         const client = createReaderClient({ src: location.href, contentWindow: window });
         await client.ready();
         await client.request('settings', { toolbar: 'host' });
+        if (__EPUB_CHECK__) {
+          const owner = await client.request('state');
+          if (owner.format !== 'epub' || owner.capabilities.source || owner.capabilities.edit) throw Error('EPUB capabilities changed');
+          const outline = await client.request('outline');
+          if (outline.items.length !== 2) throw Error('Original EPUB outline changed');
+          const found = await client.request('search', { query: 'EPUB sentinel' });
+          if (found.matches.length !== 2) throw Error('Whole-book search missed a chapter');
+          await client.request('settings', { epub: { theme: 'sepia', flow: 'scrolled', fontScale: 1.25 } });
+          await client.request('navigate', { location: outline.items[1].location });
+          const value = await client.request('state');
+          if (!value.position.location.cfi.startsWith('epubcfi(') || value.formatState.theme !== 'sepia' || value.formatState.fontScale !== 1.25) throw Error('EPUB location/settings changed');
+          const indexed = await client.request('epubProgress', { operation: 'build' });
+          if (indexed.formatState.progressIndex.status !== 'ready') throw Error('Progress indexing failed');
+          await client.request('epubProgress', { operation: 'seek', percentage: 1 });
+          await client.dispose({ force: true });
+          window.webkit.messageHandlers.result.postMessage(JSON.stringify({ epub: true, search: true, cfi: true, progress: true, cleanup: client.active === 0 }));
+          return;
+        }
         if (__TABLE_CHECK__) {
           const owner = await client.request('state');
           const info = await client.request('tableInfo', { table: 0 });
@@ -109,7 +127,7 @@ def loaded(view, event):
         window.webkit.messageHandlers.result.postMessage(JSON.stringify({error: String(error)}));
       }
     })()
-    """.replace('__EDIT_CHECK__', 'true' if '--edit' in sys.argv else 'false').replace('__TABLE_CHECK__', 'true' if '--tables' in sys.argv else 'false'), None, None, None)
+    """.replace('__EDIT_CHECK__', 'true' if '--edit' in sys.argv else 'false').replace('__TABLE_CHECK__', 'true' if '--tables' in sys.argv else 'false').replace('__EPUB_CHECK__', 'true' if '--epub' in sys.argv else 'false'), None, None, None)
 
 
 manager.connect('script-message-received::result', received)

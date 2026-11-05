@@ -1,6 +1,6 @@
 import { commentRecord } from './comment-core.mjs'
 import type { CommentProvider, EpubAnchor } from './comment-types.mjs'
-import { fileDisplayName } from './document-review.mjs'
+import { fileDisplayName, normalizeReaderReference } from './document-review.mjs'
 
 export const EPUB_COMMENT_PROVIDER = 'epub'
 
@@ -48,6 +48,7 @@ export function normalizeEpubAnchor(value: unknown = {}): EpubAnchor {
     cfiRange: bounded(anchor.cfiRange, 8192),
     href: bounded(anchor.href, 8192),
     chapterLabel: bounded(anchor.chapterLabel, 1024),
+    ...(anchor.readerReference ? { readerReference: normalizeReaderReference(anchor.readerReference) } : {}),
   }
 }
 

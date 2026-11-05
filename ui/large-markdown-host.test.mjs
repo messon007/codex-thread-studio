@@ -95,16 +95,16 @@ test('binary capability never restores an unsupported Source or Edit view',async
  }
 })
 test('closing during settings or restored-mode initialization never creates a late heartbeat',async()=>{
- for(const stage of ['settings','source']){
+ for(const stage of ['settings','source','location','reference']){
   const timers=[],originalInterval=globalThis.setInterval
   globalThis.setInterval=(...args)=>{const timer=originalInterval(...args);timers.push(timer);return timer}
   let finish
   const owner={state:'ready',documentId:'doc',revision:'a'.repeat(64),view:'preview',capabilities:{source:true}}
   const client={ready:async()=>owner,request:async method=>{
-   if(method===(stage==='settings'?'settings':'setView'))return new Promise(resolve=>{finish=resolve})
+   if(method===(stage==='settings'?'settings':stage==='source'?'setView':'navigate'))return new Promise(resolve=>{finish=resolve})
    return owner
   },dispose:async()=>{}}
-  const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/test/#token'},()=>{},()=>{},{initialView:'source',createClient:()=>client})
+  const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/test/#token'},()=>{},()=>{},{initialView:stage==='source'?'source':undefined,initialLocation:stage==='location'?{kind:'epub',cfi:'epubcfi(/6/2!/4/2/1:0)'}:undefined,initialReference:stage==='reference'?{revision:owner.revision,precision:'exact',location:{kind:'line',line:2}}:undefined,createClient:()=>client})
   try{
    for(let i=0;i<20&&!finish;i++)await Promise.resolve()
    assert.equal(typeof finish,'function')
@@ -118,4 +118,38 @@ test('closing during settings or restored-mode initialization never creates a la
    globalThis.setInterval=originalInterval
   }
  }
+})
+
+test('EPUB initial presentation and CFI are restored before initialized state is published',async()=>{
+ const requests=[],states=[]
+ const owner={state:'ready',view:'preview',documentId:'epub',revision:'c'.repeat(64),capabilities:{source:false,edit:false},format:'epub',formatState:{ready:true,cfi:'epubcfi(/6/2!/4/2/1:0)'}}
+ const saved='epubcfi(/6/4!/4/2/1:0)'
+ const client={ready:async()=>owner,request:async(method,params)=>{
+  requests.push({method,params})
+  if(method==='navigate')owner.formatState={...owner.formatState,cfi:params.location.cfi}
+  return owner
+ },dispose:async()=>{}}
+ const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/book/#token'},value=>states.push(value),()=>{},{createClient:()=>client,
+  presentation:{epub:{theme:'sepia',flow:'scrolled',fontScale:1.25}},initialLocation:{kind:'epub',cfi:saved}})
+ try{
+  await host.ready
+  assert.deepEqual(requests.map(value=>value.method),['settings','navigate'])
+  assert.equal(requests[0].params.epub.theme,'sepia')
+  assert.equal(states.filter(value=>value.initialized).length,1)
+  assert.equal(states.at(-1).formatState.cfi,saved)
+ }finally{await host.dispose()}
+})
+
+
+test('an initial stale reference is rejected before showing initialized content',async()=>{
+ const owner={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{}}
+ const requests=[],states=[]
+ const client={ready:async()=>owner,request:async method=>{requests.push(method);return owner},dispose:async()=>{}}
+ const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/doc/#token'},value=>states.push(value),()=>{},
+  {createClient:()=>client,initialReference:{revision:'b'.repeat(64),precision:'exact',location:{kind:'epub',cfi:'epubcfi(/6/2!/4/2/1:0)'}}})
+ try{
+  await assert.rejects(host.ready,/document has changed/)
+  assert.deepEqual(requests,['settings'])
+  assert.equal(states.some(value=>value.initialized),false)
+ }finally{await host.dispose()}
 })

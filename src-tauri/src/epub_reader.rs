@@ -66,6 +66,35 @@ pub fn load(path: &Path) -> Result<EpubAsset, String> {
     })
 }
 
+/// Preserve the existing reading-state key without sending original ZIP bytes
+/// to the Web UI or keeping a second whole-book allocation during indexing.
+pub fn content_hash(path: &Path) -> Result<String, String> {
+    let mut input = File::open(path).map_err(|error| format!("unable to read EPUB: {error}"))?;
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    let mut hash = 0xcbf29ce484222325_u64;
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|error| format!("unable to read EPUB: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > MAX_EPUB_BYTES {
+            return Err("EPUB exceeds 128 MiB".into());
+        }
+        for byte in &buffer[..count] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    if total == 0 {
+        return Err("EPUB is empty".into());
+    }
+    Ok(format!("fnv1a64:{hash:016x}"))
+}
+
 pub fn find_state(
     database: &Path,
     canonical_book_path: &Path,
@@ -343,6 +372,7 @@ mod tests {
         write_epub(&path);
         let asset = load(&path).expect("load valid EPUB");
         assert!(asset.hash.starts_with("fnv1a64:"));
+        assert_eq!(content_hash(&path).unwrap(), asset.hash);
         assert_eq!(asset.size, asset.bytes.len() as u64);
         fs::remove_file(path).ok();
     }

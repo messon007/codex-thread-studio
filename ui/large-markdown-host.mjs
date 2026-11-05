@@ -2,12 +2,12 @@
 // It never reads the child DOM, diagnostic globals or implementation controls.
 export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, options = {}) {
   let client, disposed = false, snapshot = { state: 'indexing' }, request, generation = 0
-  let heartbeat = null, signature = ''
+  let heartbeat = null, signature = '', initialized = false
   const publish = state => {
     if (disposed || !state) return
     snapshot = state
     const visible = {
-      ready: state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
+      initialized, ready: state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
       editable: Boolean(state.capabilities?.edit), view: state.view, dirty: Boolean(state.dirty),
       busy: Boolean(state.busy), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
       lineCount: state.document?.sourceLines, size: state.document?.fileBytes,
@@ -44,6 +44,13 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     const initialView = options.initialView
     if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
     if (disposed) return
+    if (options.initialReference) {
+      validateReference(options.initialReference)
+      await client.request('navigate',{location:options.initialReference.location})
+    } else if (options.initialLocation) await client.request('navigate',{location:options.initialLocation})
+    if (disposed) return
+    initialized = true
+    publish(snapshot)
     const keepAlive = options.heartbeat || (async()=>{
       const url=new URL(frame.src)
       const response=await fetch(new URL('./api/capabilities',url),{headers:{'x-reader-token':url.hash.slice(1),'x-reader-document':snapshot.documentId}})
@@ -58,6 +65,12 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (disposed || !client) throw new DOMException('Reader host disposed','AbortError')
     return client.request(method,params,{signal})
   }
+  function validateReference(reference) {
+      if(reference.revision!==snapshot.revision)throw Error('The document has changed since this reference was captured')
+      if(reference.location?.kind==='source'&&!snapshot.capabilities?.sourceRangeNavigation)throw Error('This reader package does not support exact source-range navigation')
+      if(reference.precision==='draft')throw Error('An unsaved draft reference cannot be restored after reopening')
+      if(reference.location?.kind==='queryCell')throw Error('This SQL result reference is transient; run the original query again')
+  }
   return {
     ready,
     get busy(){return Boolean(snapshot.busy)}, get dirty(){return Boolean(snapshot.dirty)},
@@ -66,12 +79,10 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async setOutline(open){publish(await command('contents',{open}))},
     async settings(settings){publish(await command('settings',settings))},
     navigateLine(line){return command('navigate',{location:{kind:'line',line}})},
+    navigateLocation(location){return command('navigate',{location})},
     async navigateReference(reference){
       await ready
-      if(reference.revision!==snapshot.revision)throw Error('The document has changed since this reference was captured')
-      if(reference.location?.kind==='source'&&!snapshot.capabilities?.sourceRangeNavigation)throw Error('This reader package does not support exact source-range navigation')
-      if(reference.precision==='draft')throw Error('An unsaved draft reference cannot be restored after reopening')
-      if(reference.location?.kind==='queryCell')throw Error('This SQL result reference is transient; run the original query again')
+      validateReference(reference)
       return command('navigate',{location:reference.location})
     },
     async search(query){

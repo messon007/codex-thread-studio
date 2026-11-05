@@ -28,7 +28,7 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
 
 ## Executed locally on Ubuntu 26.04.1
 
-- Complete Studio UI suite: 769 passed; TypeScript type checks passed.
+- Complete Studio UI suite: 776 passed; TypeScript type checks passed.
 - Complete Rust workspace: 149 application tests passed, one pre-existing ignored
   test, and 12 exact shared SDK contract tests passed.
 - Strict import synthetic regression: 13 tests passed, including replacement and
@@ -121,12 +121,58 @@ start a late heartbeat. Lifecycle regression tests cover both conditions.
 The public archive's normalized tree SHA-256 is
 `210f8f4595ace9c9abec8c715bf5e99e2f32217af7f24f16df6870f486bb3452`.
 
+## Shared EPUB workspace stage
+
+Ordinary EPUB opens now use the same public service/client as shared tables.
+The previous `fnv1a64` content key and Studio's SQLite reading-state records remain
+compatible. Rust computes that key with a fixed 64 KiB buffer under the existing
+single-open permit; the UI no longer receives the whole original ZIP. Shared Rust
+archive/resource validation and bounded chapter loading remain authoritative.
+Source/Edit are unavailable, and no parent-directory grant is inferred.
+
+The host restores paper/flow/font settings and saved CFI through public commands.
+It reveals the frame after initial navigation, preserving layout dimensions while
+avoiding a first-chapter flash. Typed initial references undergo the same revision,
+precision and location checks as subsequent navigation. Disposal during settings,
+mode or location restoration cannot install a late heartbeat.
+
+Existing EPUB comments keep their provider, e-book-specific AI instruction,
+legacy book key/CFI and reopening workflow. They additionally preserve exact
+public revision/location metadata; legacy references still reopen under their
+original content key. Failed or superseded reading-state loads release their new
+reader lease. Closing flushes the current reading state through Studio's existing
+storage route before releasing the service.
+
+`scripts/smoke-shared-epub.mjs` runs the real gateway/document workspace against
+the fixed package's generated book. Chromium verifies opening without the legacy
+original-byte endpoint, prior content-key compatibility, chapter outline, complete
+book search, paginated/scrolled settings, a physical text selection with exact CFI,
+Studio comment-provider capture/reopening, progress index/seek, persistence across
+new sessions, delegated Open, resource sandboxing, original-byte preservation and
+cache cleanup. Native Wayland WebKitGTK reader frames also pass outline/search,
+CFI/settings, progress/seek and cleanup. This direct frame coverage does not claim
+full Studio-shell accessibility or visual acceptance in WebKit.
+
+One warm debug run measured indexing at 0.9 ms, index-worker peak RSS 57,896 KiB,
+reader first useful content at 230 ms and host first book content at 724 ms. The
+opening heartbeat gap was 67 ms, so this measurement does not establish a 50 ms
+responsiveness target. It is a small synthetic run, not release/cold-start or a
+large-book performance conclusion. The exact 791-file SDK inventory remains
+unchanged; this stage needs no upstream source/resource patch.
+
+The common-host CSV/TSV/XLSX and large Markdown/diagram workflows also pass after
+the initialization change, including original Source/edit/save, typed references,
+grants and cleanup. One concurrently launched Wayland WebKit process exited with
+SIGSEGV before producing its Markdown check result; the isolated sequential rerun
+completed successfully. This records the observed failure and rerun, rather than
+claiming that the environmental/process instability has been diagnosed or fixed.
+
 ## Remaining acceptance
 
 This is not a completed #48 adoption or #7 feature-union acceptance. Small
-Markdown still uses the existing ordinary document renderer; EPUB/image entry
-points have not migrated. WSL tables retain an explicit unsupported-transport
-fallback and still need shared byte transport. The shared PDF adapter still needs full
+Markdown still uses the existing ordinary document renderer; image entry points
+have not migrated. WSL tables retain an explicit unsupported-transport fallback
+and still need shared byte transport. The shared PDF adapter still needs full
 application visual/accessibility acceptance. Remaining work includes authorized Markdown
 image/link resources, full typed selection/Notes/AI adapter integration, remaining
 locale/default-state behavior, common corpus/visual/accessibility/performance

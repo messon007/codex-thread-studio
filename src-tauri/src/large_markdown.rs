@@ -139,6 +139,19 @@ impl Readers {
             FileGrant::read_only(&source)
         }
         .map_err(|error| (StatusCode::FORBIDDEN, error.to_string()))?;
+        let book_hash = if marknoria::reader::DocumentFormat::for_path(&source)
+            == Some(marknoria::reader::DocumentFormat::Epub)
+        {
+            let book = source.clone();
+            Some(
+                tokio::task::spawn_blocking(move || crate::epub_reader::content_hash(&book))
+                    .await
+                    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+                    .map_err(|error| (StatusCode::BAD_REQUEST, error))?,
+            )
+        } else {
+            None
+        };
         let service = Service::start_with_options(
             grant,
             ServiceOptions::default().diagrams(DiagramMode::Browser),
@@ -159,7 +172,7 @@ impl Readers {
         );
         self.maintenance.ensure(&self.entries);
         Ok(
-            json!({"id":id,"url":format!("/markdown-reader/{id}/?embedded=1&diagrams=browser#{token}")}),
+            json!({"id":id,"url":format!("/markdown-reader/{id}/?embedded=1&diagrams=browser#{token}"),"bookHash":book_hash}),
         )
     }
 }
@@ -256,7 +269,7 @@ pub async fn open_document(
             &json!({
                 "root":root,"path":path,"relativePath":path.strip_prefix(&document_root).unwrap_or(&path),
                 "documentRoot":document_root,"size":metadata.len(),"readOnly":read_only,
-                "format":format,"sourceAvailable":format.is_text(),"reader":reader,
+                "format":format,"sourceAvailable":format.is_text(),"reader":reader,"bookHash":reader["bookHash"],
             }),
         ),
         Err((status, message)) => json_error(status, &message),

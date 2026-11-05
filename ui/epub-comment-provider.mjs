@@ -1,6 +1,6 @@
 // Generated from ui-src; run npm run build:ui. Do not edit.
 import { commentRecord } from './comment-core.mjs';
-import { fileDisplayName } from './document-review.mjs';
+import { fileDisplayName, normalizeReaderReference } from './document-review.mjs';
 export const EPUB_COMMENT_PROVIDER = 'epub';
 export function epubCommentSource(anchor = {}) {
     return {
@@ -44,6 +44,7 @@ export function normalizeEpubAnchor(value = {}) {
         cfiRange: bounded(anchor.cfiRange, 8192),
         href: bounded(anchor.href, 8192),
         chapterLabel: bounded(anchor.chapterLabel, 1024),
+        ...(anchor.readerReference ? { readerReference: normalizeReaderReference(anchor.readerReference) } : {}),
     };
 }
 function bounded(value, limit) {

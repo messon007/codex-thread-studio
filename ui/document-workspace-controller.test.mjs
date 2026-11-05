@@ -360,3 +360,42 @@ for (const [path,endpoint] of [['data.csv','/studio/review-file'],['data.xlsx','
   assert.deepEqual(requests,['/studio/reader/open',endpoint])
  })
 }
+
+test('EPUB opens the shared session and retains its existing content-keyed reading state', async context => {
+ const requests=[],saved={cfi:'epubcfi(/6/4!/4/2/1:0)',theme:'sepia',flow:'scrolled',fontScale:1.25}
+ const result={root:'/project',path:'book.epub',size:2048,readOnly:true,sourceAvailable:false,format:'epub',bookHash:'fnv1a64:0123456789abcdef',reader:{id:'epub-1',url:'/markdown-reader/epub-1/?embedded=1#token'}}
+ const fixture=documentWorkspaceFixture(context,async(url,options)=>{
+  requests.push({url,body:JSON.parse(options.body)})
+  return new Response(JSON.stringify(url==='/studio/reader/open'?result:url==='/studio/epub/state'?saved:{}))
+ },{reportClientError:()=>{}})
+ document.createElement=tag=>tag==='canvas'?{getContext:()=>null}:{setAttribute(){},addEventListener(){},remove(){}}
+ await fixture.controller.open({path:'book.epub'})
+ assert.deepEqual(requests.map(value=>value.url),['/studio/reader/open','/studio/epub/state'])
+ assert.equal(requests[1].body.bookHash,result.bookHash)
+ assert.equal(fixture.state.artifact.kind,'large-markdown')
+ assert.deepEqual(fixture.state.artifact.readingState,saved)
+ assert.equal(fixture.state.artifact.bytes,undefined)
+ assert.equal(fixture.element('#artifact-source').classList.contains('hidden'),true)
+ assert.equal(fixture.element('#artifact-edit').classList.contains('hidden'),true)
+ fixture.controller.close({restoreMap:false})
+ assert.deepEqual(requests.slice(-2).map(value=>value.url),['/studio/epub/state','/studio/markdown/close'])
+})
+for(const mode of ['failure','closed','changed'])test(`EPUB ${mode} during reading-state load releases the new session`,async context=>{
+ let resolveState
+ const closed=[],result={root:'/project',path:'book.epub',format:'epub',bookHash:'fnv1a64:0123456789abcdef',reader:{id:'new-epub',url:'/markdown-reader/new-epub/#token'}}
+ const fixture=documentWorkspaceFixture(context,async(url,options)=>{
+  if(url.endsWith('/close')){closed.push(JSON.parse(options.body).id);return new Response('{}')}
+  if(url==='/studio/epub/state')return mode==='failure'?new Response(JSON.stringify({error:{message:'State storage failed'}}),{status:500}):new Promise(resolve=>{resolveState=resolve})
+  return new Response(JSON.stringify(result))
+ })
+ const pending=fixture.controller.open({path:'book.epub',...(mode==='changed'?{epubBookHash:'fnv1a64:ffffffffffffffff'}:{})})
+ if(mode==='closed'){
+  for(let i=0;i<40&&!resolveState;i++)await Promise.resolve()
+  assert.equal(typeof resolveState,'function')
+  fixture.controller.close({restoreMap:false})
+  resolveState(new Response('{}'))
+  await pending
+  assert.equal(fixture.state.artifact,null)
+ }else await assert.rejects(pending,mode==='failure'?/State storage failed/:/book has changed/)
+ assert.deepEqual(closed,['new-epub'])
+})

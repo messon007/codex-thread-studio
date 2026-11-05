@@ -39,6 +39,7 @@ export interface PdfAnchor extends CommentRecord {
 }
 export interface EpubAnchor extends CommentRecord {
   root: string; filePath: string; bookHash: string; cfiRange: string; href: string; chapterLabel: string
+  readerReference?: CommentRecord | undefined
 }
 export interface TableAnchor extends CommentRecord {
   root: string; filePath: string; documentHash: string; sheet: string; range: string

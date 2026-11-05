@@ -19,7 +19,10 @@ skipping tests. Path dependency Cargo config is not inherited from the dependenc
 other consumers must merge its flags into their own outer workspace/environment.
 The dynamic-root Windows fixture now uses a canonical URI spelling under its
 pre-I/O lexical grant policy; Unix raw directory aliases remain tested.
-Current platform results must be tied to this new consuming commit.
+Consuming commit `c0589560d7aaee8364ae833a9ca0cc28b7c2ef21` passed all
+three platforms in both push run `42029624553` and PR run `42029636607`.
+These passes include the independent fixed SDK and Windows-native backend tests;
+they did not exercise real WSL. Subsequent CI changes require their own results.
 
 No private MarkNoria checkout, token, build output, assets or installed executable
 is needed. The SDK's MIT allowlist and original third-party licenses/provenance
@@ -90,6 +93,9 @@ node scripts/smoke-shared-tables.mjs --webkit
 node scripts/smoke-large-markdown.mjs --edit --webkit
 # Reuse the first script's private generated corpus; supply MARKNORIA_SERVER.
 node scripts/smoke-standalone-reader.mjs CORPUS_DIRECTORY --webkit
+# On Windows, after provisioning Ubuntu-24.04 / reader-test with python3:
+# Uses real Studio --serve and /studio/reader/open; no browser or AI CLI needed.
+node scripts/smoke-windows-wsl-reader.mjs
 ```
 
 `--webkit` requires the native Wayland environment described by the smoke tools.
@@ -122,6 +128,12 @@ it is not attributed to Contents or screenshot capture. Cumulative maxima do
 not measure repeat-switch latency. This second performance item remains open.
 Derived fixture throughput is about 40/33 MB/s; wire byte counts, serialization
 CPU, sustained throughput and whole-application peak memory remain unmeasured.
-Current downstream CI/review/merge and Astra whole-goal approval remain open. Upstream private CI last reported a billing/spending block;
-earlier downstream CI results do not validate this candidate. The original Studio
-checkout stays untouched, and commits remain local until the final batch push.
+The three-platform candidate passes above remove the prior compile/test gate.
+The focused real Windows/WSL smoke check is added to Windows CI and still awaits
+execution; it asserts explicit distro/non-root user identity, exact Source,
+read-only behavior, cached shared-image revocation, stable identity on reopen,
+lease expiry and cache cleanup through the production gateway. It does not claim
+WSL2 or a seven-format real WSL run. Performance, review/merge and Astra whole-goal
+approval remain open. Upstream private CI last reported a billing/spending block.
+The original Studio checkout stays untouched. Local commits are batched before
+pushing review candidates; no SDK/native implementation change is needed here.

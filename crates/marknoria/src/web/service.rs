@@ -12,6 +12,7 @@ pub enum DiagramMode {
 
 #[derive(Clone, Debug)]
 pub struct ServiceOptions {
+    resource_id: Option<String>,
     projection: crate::core::ProjectionProfile,
     queries: bool,
     notes_directory: Option<PathBuf>,
@@ -19,10 +20,12 @@ pub struct ServiceOptions {
     diagrams: DiagramMode,
     reference_roots: Vec<PathBuf>,
     reference_roots_provider: Option<references::RootProvider>,
+    reference_image_loader: Option<references::ImageLoader>,
 }
 impl Default for ServiceOptions {
     fn default() -> Self {
         Self {
+            resource_id: None,
             projection: crate::core::ProjectionProfile::Web,
             queries: true,
             notes_directory: None,
@@ -30,10 +33,24 @@ impl Default for ServiceOptions {
             diagrams: DiagramMode::Backend,
             reference_roots: Vec::new(),
             reference_roots_provider: None,
+            reference_image_loader: None,
         }
     }
 }
 impl ServiceOptions {
+    /// Host-owned, bounded image transport, invoked before every cache hit.
+    /// The callback must reauthorize the original target, observe cancellation,
+    /// and return bytes on a cache miss/change. It grants no HTTP file API.
+    pub fn reference_image_loader(mut self, loader: impl Fn(&str, Option<&str>, u64, &AtomicBool) -> io::Result<references::HostImage> + Send + Sync + 'static) -> Self {
+        self.reference_image_loader = Some(references::ImageLoader::new(loader));
+        self
+    }
+    /// Trusted stable identity for an explicitly granted materialized input.
+    /// It changes note/position identity, never source or file authority.
+    pub fn resource_id(mut self, identity: String) -> Self {
+        self.resource_id = Some(identity);
+        self
+    }
     /// An explicit read-only directory capability for Markdown images/links.
     /// Opening one document never implicitly grants its parent folder.
     pub fn reference_root(mut self, root: impl AsRef<std::path::Path>) -> io::Result<Self> {
@@ -131,11 +148,33 @@ impl Service {
         Self::start_with_options(FileGrant::read_only(source)?, ServiceOptions::default()).await
     }
     pub async fn start_with_options(grant: FileGrant, options: ServiceOptions) -> io::Result<Self> {
+        Self::start_owned(grant, options, None).await
+    }
+    /// A read-only, privately materialized byte input. Hosts provide a stable
+    /// logical identity; temporary source ownership lasts until service cleanup.
+    pub async fn from_bytes(name: String, bytes: Vec<u8>, options: ServiceOptions) -> io::Result<Self> {
+        if name.is_empty() || name.len() > 255 || name.contains(['/', '\\', '\0']) || matches!(name.as_str(), "." | "..")
+            || bytes.len() > crate::core::MAX_SOURCE as usize
+            || options.resource_id.as_ref().is_none_or(|id| id.is_empty() || id.len() > 256 || id.contains('\0')) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Byte service requires a basename, bounded input and stable resource identity"));
+        }
+        let (grant, input) = tokio::task::spawn_blocking(move || {
+            let input = crate::runtime::cache::temporary_directory("mn-service-input-")?;
+            let path = input.path().join(name);
+            std::fs::write(&path, bytes)?;
+            Ok::<_, io::Error>((FileGrant::read_only(path)?, input))
+        }).await.map_err(io::Error::other)??;
+        Self::start_owned(grant, options, Some(input)).await
+    }
+    async fn start_owned(grant: FileGrant, options: ServiceOptions, input: Option<tempfile::TempDir>) -> io::Result<Self> {
+        if options.resource_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 256 || id.contains('\0')) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Resource identity exceeds its budget"));
+        }
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let documents = Arc::new(files::Documents::new(
             grant.path().parent().unwrap().to_owned(),
-        ).with_projection(options.projection));
+        ).with_projection(options.projection).with_resource_identity(options.resource_id));
         documents.open(
             grant.path().to_owned(),
             crate::runtime::cache::cache_directory()?,
@@ -144,7 +183,7 @@ impl Service {
         let browser_diagrams = matches!(options.diagrams, DiagramMode::Browser);
         let editor = Arc::new(edit_runtime::Editor::default());
         let app = App {
-            references: Arc::new(references::Resources::new(options.reference_roots).with_provider(options.reference_roots_provider)),
+            references: Arc::new(references::Resources::new(options.reference_roots).with_provider(options.reference_roots_provider).with_image_loader(options.reference_image_loader)),
             editable: grant.writable(),
             queries: options.queries,
             notes_directory: options.notes_directory,
@@ -204,7 +243,9 @@ impl Service {
             tokio::task::spawn_blocking(move || {
                 editor.clear();
                 closing.references.shutdown();
-                documents.shutdown_checked()
+                documents.shutdown_checked()?;
+                if let Some(input) = input { input.close()?; }
+                Ok(())
             })
             .await
             .map_err(io::Error::other)?
@@ -308,9 +349,9 @@ pub(super) async fn capabilities(State(app): State<App>) -> Json<Value> {
         "embedded":app.embedded,"edit":app.editable,"queries":app.queries,"charts":app.queries,"assetInfo":true,"assetFrame":true,
         "assetProfile":{"metadataBytes":16384,"frameBytes":20*1024*1024,"concurrentFrames":2,"frameEncoding":"image/png","imageResolution":if app.documents.projection==crate::core::ProjectionProfile::Web {"source"} else {"preview"},"sourcePixels":16*1024*1024,"animationBytes":16*1024*1024},
         "referenceInfo":true,"referenceImages":true,"referenceAnchors":true,
-        "referenceProfile":{"targets":4096,"targetBytes":32*1024*1024,"linkBytes":8192,"imageBytes":25*1024*1024,"imageSnapshots":4,"decodedEdge":32768,"imageResolution":"source","sourcePixels":16*1024*1024,"remoteImages":false,"implicitFolderGrant":false,"rootLimit":257,"dynamicRoots":true,"rootRelative":true},
+        "referenceProfile":{"targets":4096,"targetBytes":32*1024*1024,"linkBytes":8192,"imageBytes":25*1024*1024,"imageSnapshots":4,"decodedEdge":32768,"imageResolution":"source","sourcePixels":16*1024*1024,"remoteImages":false,"hostImages":app.references.host_images(),"implicitFolderGrant":false,"rootLimit":257,"dynamicRoots":true,"rootRelative":true},
         "chartProfile":{"datasetScope":"complete-input","valuePrecision":"float64","exactValueText":true,"maxPoints":crate::core::table_query::MAX_CHART_POINTS,"maxBytes":crate::core::MAX_HTML},
-        "notes":app.notes_directory.is_some(),"queryNotes":app.notes_directory.is_some() && app.queries,"parentOrigins":app.parent_origins.as_ref(),
+        "notes":app.notes_directory.is_some(),"queryNotes":app.notes_directory.is_some() && app.queries,"querySnapshots":app.queries,"parentOrigins":app.parent_origins.as_ref(),
         "diagrams":if app.browser_diagrams {"browser"} else {"backend"},
         "datasetScope":"complete-input"}))
 }
@@ -397,4 +438,20 @@ pub(super) async fn selection(
     })
     .await
     .map_err(failure)?
+}
+
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    #[tokio::test]
+    async fn materialized_input_rejects_unsafe_names_and_missing_or_invalid_identity() {
+        for name in ["", "../file.md", "dir/file.md", "dir\\file.md", ".", ".."] {
+            assert!(Service::from_bytes(name.into(),Vec::new(),ServiceOptions::default().resource_id("owned".into())).await.is_err());
+        }
+        for identity in [None,Some("".into()),Some("x".repeat(257)),Some("bad\0id".into())] {
+            let mut options=ServiceOptions::default();options.resource_id=identity;
+            assert!(Service::from_bytes("file.md".into(),Vec::new(),options).await.is_err());
+        }
+    }
 }

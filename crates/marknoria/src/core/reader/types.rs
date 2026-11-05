@@ -123,6 +123,26 @@ pub struct Selection {
     pub viewport_rect: Option<ViewportRect>,
 }
 
+/// Resolve one live SQL result cell without writing a Note. The returned
+/// provenance is historical data, never authority to rerun SQL or a source row.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuerySnapshotRequest {
+    pub revision: String,
+    pub location: Location,
+    pub quote: String,
+    #[serde(default)]
+    pub quote_truncated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuerySnapshot {
+    pub revision: String,
+    pub quote: String,
+    pub anchor: crate::core::notes::Anchor,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Budgets {
@@ -173,6 +193,7 @@ pub struct Capabilities {
     pub jq: bool,
     pub notes: bool,
     pub query_notes: bool,
+    pub query_snapshots: bool,
     pub assets: bool,
     pub asset_info: bool,
     pub reference_info: bool,

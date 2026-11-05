@@ -51,6 +51,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       validateReference(options.initialReference)
       await client.request('navigate',{location:options.initialReference.location})
     } else if (options.initialLocation) await client.request('navigate',{location:options.initialLocation})
+    if (options.initialFragment) await client.request('navigateFragment',{fragment:options.initialFragment})
     if (disposed) return
     initialized = true
     publish(snapshot)
@@ -81,9 +82,13 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async save(){publish(await command('save',{}));return true},
     async setOutline(open){publish(await command('contents',{open}))},
     async settings(settings){publish(await command('settings',settings))},
+    querySnapshot(selection, { signal } = {}) {
+      return command('querySnapshot',{documentId:selection.documentId,revision:selection.revision,location:selection.location,quote:selection.quote,quoteTruncated:selection.quoteTruncated === true},signal)
+    },
     notes(request, { documentId, revision, signal }) { return command('notes',{documentId,revision,request},signal) },
     navigateLine(line){return command('navigate',{location:{kind:'line',line}})},
     navigateLocation(location){return command('navigate',{location})},
+    navigateFragment(fragment){return command('navigateFragment',{fragment})},
     async navigateReference(reference){
       await ready
       validateReference(reference)
@@ -142,10 +147,30 @@ export function createReaderNotesHost(root, toolbar, options = {}) {
         actions: options.onAction ? [{ id: 'ask-ai', label: options.translate?.('Ask AI') || 'Ask AI', run: async (selection, { signal }) => {
           signal.throwIfAborted()
           if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
+          if (selection.documentId !== identity.documentId || selection.revision !== identity.revision) throw Error('Notes owner changed')
+          // Studio drafts have a 16 KiB UTF-8 excerpt budget. Capture a verified
+          // prefix before asking for provenance; never split a Unicode scalar.
+          let quote = selection.quote
+          if (quote.length > 16000) {
+            quote = quote.slice(0,16000)
+            const last = quote.charCodeAt(quote.length-1)
+            if (last >= 0xd800 && last <= 0xdbff) quote = quote.slice(0,-1)
+          }
+          const encoded = new TextEncoder().encode(quote)
+          if (encoded.length > 16384) {
+            let end = 16384
+            while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--
+            quote = new TextDecoder().decode(encoded.subarray(0,end))
+          }
+          const excerpt = quote === selection.quote ? selection : {...selection,quote,quoteTruncated:true}
+          const reference = excerpt.location?.kind === 'queryCell'
+            ? {...excerpt, querySnapshot: await host.querySnapshot(excerpt, {signal})} : excerpt
+          signal.throwIfAborted()
+          if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
           selected = null
           await binding?.selectionChanged()
           signal.throwIfAborted()
-          return options.onAction(selection, { signal })
+          return options.onAction(reference, { signal })
         } }] : [],
       })
       if (selected) await binding.selectionChanged()

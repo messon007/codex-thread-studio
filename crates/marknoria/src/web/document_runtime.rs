@@ -34,6 +34,28 @@ pub(super) async fn jq(
         Ok(Json(serde_json::to_value(result).map_err(failure)?))
     }).await.map_err(failure)?
 }
+pub(super) async fn query_snapshot(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(request): Json<crate::core::reader::QuerySnapshotRequest>,
+) -> Result<Json<crate::core::reader::QuerySnapshot>, ApiError> {
+    super::service::query_authority(&app)?;
+    let document = app.documents.select(&headers)?;
+    let index = index(&document)?;
+    if request.revision != index.revision {
+        return Err((StatusCode::CONFLICT, "Document revision changed; reopen SQL".into()));
+    }
+    let permit = app.work.clone().try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "Reader is busy".into()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        document.queries.try_lock()
+            .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "SQL result storage is busy".into()))?
+            .snapshot(&index, &request)
+            .map(Json)
+            .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+    }).await.map_err(failure)?
+}
 pub(super) async fn notes(
     State(app): State<App>,
     headers: HeaderMap,
@@ -57,7 +79,11 @@ pub(super) async fn notes(
                 .prepare_note(&index, &mut request)
                 .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         }
-        crate::core::notes::execute(&directory, &document.source, &index, request)
+        (if let Some(identity) = &document.note_identity {
+            crate::core::notes::execute_for_identity(&directory, identity, &index, request)
+        } else {
+            crate::core::notes::execute(&directory, &document.source, &index, request)
+        })
             .map(Json)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
     })

@@ -317,3 +317,49 @@ caches empty after close. The compact fixture helper reports functional check
 elapsed time, not release first-content performance. Existing EPUB and table
 adoption evidence applies to their retained shared branch; final cross-format,
 WSL, durable AI SQL drafts, shell visuals/accessibility and remote CI remain open.
+
+
+## Durable AI result drafts and WSL transport adoption
+
+The unchanged SDK now uses pin `9a692869ee48266c0efc521b6b4de1316d2211e2`,
+801 inventoried files, archive SHA-256
+`6560349475f1ac44f24de4871927115472fa86c73a9271017142a91d93073a81`, tree
+`1bf513e064c76551337e4784a9d4df0ca8e26ebe2ea4b4540cf9706e7007544a`.
+SQL Ask AI actions obtain verified snapshot provenance before creating a draft.
+The snapshot carries saved value, SQL, source revision, result coordinates and
+null/truncation semantics independently of an expired query ID. Closing a result
+or reader does not discard it. Historical inspection uses saved data and does not
+navigate source cells or rerun SQL. Failed, cancelled or replaced-owner captures
+create no partial draft. Excerpts respect both 16,000-character and 16 KiB UTF-8
+limits before verification, without splitting scalars. SQL draft source metadata
+has a bounded 128 KiB envelope; other sources retain 32 KiB. The existing 1 MiB
+request and draft count limits remain unchanged.
+
+The Studio-owned `wsl_reader` adapter reuses the existing canonical project/shared
+file script and supervised process groups. File output, header paths, size,
+deadline, growth and cancellation are checked. Its versioned internal response
+includes actual distro/uid/user; subsequent reads pin that environment. All
+materialized sessions are read-only, including project-local files. Notes identity
+hashes `(version,distro,uid,canonicalPath)`, independently of content or temporary
+names. Image cache hits still reauthorize the target; metadata fingerprints can
+avoid repeat byte transport and never masquerade as content hashes. Relative
+links resolve against the original Linux path and still go through authorized
+open. Literal-percent/Unicode paths and explicit file/root-relative URIs remain
+separate. WSL EPUB reading-state transport remains explicitly unavailable as in
+the previous product; this is not a new editable or EPUB-capable remote profile.
+
+Local actual checks: the shared CSV/TSV/XLSX workspace smoke passes typed cells,
+complete queries/charts, Notes, editing and cleanup, plus SQL aggregate and long
+result Ask AI drafts saved to the actual session database, result/reader closure,
+restoration and a 480×480 historical inspector. The inspector issues no SQL request
+and AI drafts create no Notes records. Targeted unit checks cover optional omitted
+false fields, null/truncation, owner/cancellation failures and UTF-8 excerpt bounds.
+Nine WSL-related Rust checks pass, including actual script authorization, bounded
+output, timeout/cancellation process reaping, growth rejection, URI candidates and
+identity isolation. `smoke-wsl-reader.mjs` passes seven formats via the exact
+portable adapter and public service: Markdown, text, JSON, CSV, PNG, PDF and XLSX,
+with original source/PDF bytes, shared revocation, canonical retargeting, Notes
+reopen/staleness/distro isolation, unchanged sources and empty owned caches.
+This Linux transport substitute is **not actual Windows/WSL runtime validation**.
+Final ordinary-entry cleanup, common locale/visual/accessibility/release evidence,
+fixed final delivery and remote platform CI/review remain open.

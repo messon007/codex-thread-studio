@@ -27,6 +27,8 @@ pub struct Document {
     projection: crate::core::ProjectionProfile,
     pub content_token: String,
     pub id: String,
+    pub resource_id: String,
+    pub(super) note_identity: Option<String>,
     pub selected_path: Option<String>,
     pub source: PathBuf,
     pub directory: PathBuf,
@@ -44,6 +46,7 @@ pub struct Document {
 }
 
 pub struct Documents {
+    resource_id: Option<String>,
     owner_cancelled: Option<Arc<AtomicBool>>,
     pub(super) projection: crate::core::ProjectionProfile,
     pub root: PathBuf,
@@ -111,6 +114,7 @@ impl Document {
 impl Documents {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            resource_id: None,
             owner_cancelled: None,
             projection: crate::core::ProjectionProfile::Web,
             root,
@@ -131,6 +135,10 @@ impl Documents {
 
     pub fn with_projection(mut self, projection: crate::core::ProjectionProfile) -> Self {
         self.projection = projection;
+        self
+    }
+    pub(super) fn with_resource_identity(mut self, identity: Option<String>) -> Self {
+        self.resource_id = identity;
         self
     }
     pub(super) fn with_owner_cancellation(mut self, owner: Arc<AtomicBool>) -> Self {
@@ -176,6 +184,8 @@ impl Documents {
             projection: self.projection,
             content_token: uuid::Uuid::new_v4().to_string(),
             id: uuid::Uuid::new_v4().to_string(),
+            resource_id: self.resource_id.clone().unwrap_or_else(|| crate::core::reader::file_identity(&source)),
+            note_identity: self.resource_id.clone(),
             selected_path,
             source: source.clone(),
             directory: cache.path().to_owned(),

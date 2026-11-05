@@ -1754,6 +1754,7 @@ dependencies = [
  "libc",
  "marknoria",
  "notify",
+ "percent-encoding",
  "portable-pty",
  "reqwest 0.13.5",
  "rusqlite",

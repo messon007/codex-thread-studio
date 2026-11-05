@@ -21,6 +21,7 @@ mod epub_runtime;
 mod service;
 mod references;
 pub use service::{Service, ServiceOptions, DiagramMode};
+pub use references::HostImage;
 use crate::core::{
     Index, audit_tables, build_index, read_diagram, read_page, read_table, search,
 };
@@ -237,7 +238,7 @@ async fn document(State(app): State<App>, headers: HeaderMap) -> Result<Json<Val
         if let Some(error) = &progress.error { return Ok(Json(json!({"state":"error", "error":error,"documentId":document.id,"editable":editable,"sourceAvailable":source_available}))); }
         let Some(index) = &progress.index else { return Ok(Json(json!({"state":"indexing","documentId":document.id,"editable":editable,"sourceAvailable":source_available}))); };
         let pages = (0..index.pages.len().min(3)).map(|page| Ok(json!({"id":page,"html":read_page(&document.directory, index, page).map_err(failure)?}))).collect::<Result<Vec<_>, ApiError>>()?;
-        Ok(Json(json!({"state":"ready", "documentId":document.id,"index":index.as_ref(), "initial":pages,"resourceId":crate::core::reader::file_identity(&document.source),"editable":app.editable && index.format.is_text(),"sourceAvailable":index.format.is_text()})))
+        Ok(Json(json!({"state":"ready", "documentId":document.id,"index":index.as_ref(), "initial":pages,"resourceId":document.resource_id,"editable":app.editable && index.format.is_text(),"sourceAvailable":index.format.is_text()})))
     }).await.map_err(failure)?
 }
 
@@ -790,6 +791,7 @@ fn reader_routes() -> Router<App> {
         .route("/api/asset", get(document_runtime::asset))
         .route("/api/asset-info", get(document_runtime::asset_info))
         .route("/api/notes", post(document_runtime::notes))
+        .route("/api/query-snapshot", post(document_runtime::query_snapshot))
         .route("/api/jq-query", post(document_runtime::jq))
         .route("/api/search", get(find))
         .route("/api/source", get(source_window))

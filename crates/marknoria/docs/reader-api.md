@@ -1,5 +1,10 @@
 # Public reader API v1
 
+`Reader::query_snapshot(QuerySnapshotRequest)` resolves a live SQL result cell
+into `QuerySnapshot {revision,quote,anchor}` without Notes storage. It shares the
+Notes validation path and requires query authority. See the
+[durable snapshot contract](notes-components.md) before saving host references.
+
 The stable namespace is `marknoria::reader`. Parsing, source snapshots, tables,
 queries, notes and positions do not require HTTP, a desktop toolkit or an AI
 account. The [headless host](../examples/reader-host.rs) is an executable consumer:

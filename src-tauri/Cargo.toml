@@ -19,6 +19,7 @@ sha2 = "=0.11.1"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
+sha2 = "=0.11.1"
 tower = { version = "0.5.2", features = ["util"] }
 marknoria = { path = "../crates/marknoria" }
 notify = "8.2.0"
@@ -37,6 +38,7 @@ tokio = { version = "1.53.3", features = ["io-util", "net", "process", "rt-multi
 uuid = { version = "1.23.5", features = ["v4"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 url = "2.5.8"
+percent-encoding = "=2.3.2"
 zip = { version = "=9.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

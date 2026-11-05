@@ -97,6 +97,7 @@ export function createReviewNotesController({
   const transcriptScrollFollower = { pause: pauseTranscript }
   const richArtifactReader = { goToPage: goToPdfPage }
   const reopenEpubComment = reopenEpubSource
+  let querySnapshotDialog = null
   let annotationPersistTimer = null
   let favoritesSearchTimer = null
   let translationGeneration = 0
@@ -643,6 +644,7 @@ function addAnnotation(event) {
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
+  querySnapshotDialog?.close()
   const close = () => {
     $('#annotation-rail').classList.add('hidden')
     if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
@@ -934,12 +936,40 @@ function commentProviderContext(index = 0) {
     translate: t,
     unknownLabel: t('Saved comment'),
     contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
+    openQuerySnapshot: showQuerySnapshot,
     openDocument: reopenDocumentComment,
     openEpubSource: reopenEpubComment,
     openPdfSource: reopenPdfComment,
     openTableSource: reopenTableComment,
     openWebSource: openBrowserUrl,
   }
+}
+
+function showQuerySnapshot(snapshot, target) {
+  querySnapshotDialog?.close()
+  const dialog = document.createElement('dialog')
+  dialog.className = 'dialog table-cell-dialog query-snapshot-dialog'
+  dialog.setAttribute('aria-label', t('SQL result snapshot'))
+  const header = document.createElement('header'); header.className = 'dialog-header'
+  const heading = document.createElement('div'), title = document.createElement('h2'), path = document.createElement('p')
+  title.textContent = t('SQL result snapshot'); path.textContent = target.filePath
+  heading.append(title,path)
+  const close = document.createElement('button'); close.type='button';close.className='icon-button';close.textContent='×'
+  close.setAttribute('aria-label',t('Close'));close.addEventListener('click',()=>dialog.close())
+  header.append(heading,close)
+  const body = document.createElement('div');body.className='router-dialog-body'
+  const value = document.createElement('pre'), provenance = document.createElement('pre')
+  value.textContent=snapshot.quote
+  provenance.textContent=JSON.stringify({sourceRevision:snapshot.revision,...snapshot.anchor.query,
+    quoteTruncated:snapshot.anchor.quoteTruncated},null,2)
+  for(const node of [value,provenance])node.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere'
+  const hint=document.createElement('p');hint.textContent=t('Saved SQL result; not a source cell. Opening this snapshot does not rerun the query.')
+  const valueTitle=document.createElement('h3');valueTitle.textContent=t('Saved value')
+  const sourceTitle=document.createElement('h3');sourceTitle.textContent=t('Query and source')
+  body.append(hint,valueTitle,value,sourceTitle,provenance);dialog.append(header,body);document.body.append(dialog)
+  querySnapshotDialog=dialog
+  dialog.addEventListener('close',()=>{dialog.remove();if(querySnapshotDialog===dialog)querySnapshotDialog=null},{once:true})
+  dialog.showModal();close.focus()
 }
 
 async function reopenPdfComment(anchor) {

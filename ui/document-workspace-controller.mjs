@@ -25,6 +25,20 @@ import DOMPurify from './vendor/purify.es.mjs'
 import { getLocale, t } from './i18n.mjs'
 import { createLargeMarkdownHost, createReaderNotesHost } from './large-markdown-host.mjs'
 
+// Candidate resolution only; the WSL transport rechecks canonical file grants.
+export function resolveWslDocumentLink(file, target) {
+  if (typeof target !== 'string' || new TextEncoder().encode(target).length>8192 || /[\u0000-\u001f\u007f]/u.test(target)) throw Error('Invalid WSL document link')
+  target=target.replaceAll('\\','/')
+  const base=new URL('file:///')
+  if(target.startsWith('/')&&!target.startsWith('//')) {base.pathname=(String(file.documentRoot).replace(/\/$/u,'')+'/').split('/').map(encodeURIComponent).join('/');target=target.replace(/^\/+/u,'')}
+  else base.pathname=String(file.path).split('/').map(encodeURIComponent).join('/')
+  const url=new URL(target,base)
+  if(url.protocol!=='file:' || url.hostname&&url.hostname!=='localhost')throw Error('WSL links require an authorized local file')
+  const path=decodeURIComponent(url.pathname)
+  if(!path.startsWith('/')||path.includes('\0'))throw Error('Invalid WSL document path')
+  return {path,fragment:url.hash}
+}
+
 export function createDocumentWorkspaceState() {
   return {
     artifact: null,
@@ -190,9 +204,14 @@ export function createDocumentWorkspaceController({
 
 async function openReaderLink(file, reference) {
   if (state.artifact !== file) return
-  if (reference.localPath) return openArtifact({ root: file.root, path: reference.localPath,
-    sourceSessionKey: file.sourceSessionKey }, { allowDetachedRoot: true, returnTool: file.returnTool })
   if (/^(https?:|mailto:)/i.test(reference.target)) return openBrowserUrl(reference.target)
+  const local=reference.localPath ? {path:reference.localPath,fragment:reference.target.includes('#')?reference.target.slice(reference.target.indexOf('#')):''}
+    : file.executionEnvironment==='wsl' ? resolveWslDocumentLink(file,reference.target) : null
+  if(local) {
+    if(local.path===file.path&&local.fragment&&largeMarkdownHost) return largeMarkdownHost.navigateFragment(local.fragment)
+    return openArtifact({root:file.root,path:local.path,readerFragment:local.fragment,
+      sourceSessionKey:file.sourceSessionKey},{allowDetachedRoot:true,returnTool:file.returnTool})
+  }
   throw Error(t('This link is outside the authorized document directories or uses an unsupported scheme.'))
 }
 
@@ -246,7 +265,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeLargeMarkdown()
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
-  state.artifact = { root, path, kind, readerReference: file.readerReference, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
+  state.artifact = { root, path, kind, readerReference: file.readerReference, readerFragment: file.readerFragment, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
   // All ordinary document entries use the same public reader and Notes owner.
   // Only the explicitly unavailable WSL byte transport retains the old adapter.
   let sharedReader = true
@@ -291,7 +310,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
         if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) { releaseLargeMarkdown(result); return }
       }
       state.artifact = { ...result, readingState, hash: result.bookHash, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
-        readerReference: file.readerReference, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+        readerReference: file.readerReference, readerFragment: file.readerFragment, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
       largeMarkdownFile = state.artifact
       state.artifactView = 'preview'
     } else if (kind === 'image') {
@@ -348,7 +367,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
         releaseLargeMarkdown(result)
         return
       }
-      state.artifact = { ...result, readerReference: file.readerReference, kind: result.largeMarkdown ? 'large-markdown' : kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      state.artifact = { ...result, readerReference: file.readerReference, readerFragment: file.readerFragment, kind: result.largeMarkdown ? 'large-markdown' : kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
       if (result.largeMarkdown) largeMarkdownFile = state.artifact
       state.artifactView = kind === 'table'
         ? 'table'
@@ -861,7 +880,7 @@ function renderArtifact() {
       largeMarkdownFrame = document.createElement('iframe')
       largeMarkdownFrame.className = 'artifact-large-markdown-frame'
       largeMarkdownFrame.title = fileDisplayName(file.path)
-      if ((file.readerReference || file.format === 'epub' && file.readingState?.cfi) && largeMarkdownFrame.style) largeMarkdownFrame.style.visibility = 'hidden'
+      if ((file.readerReference || file.readerFragment || file.format === 'epub' && file.readingState?.cfi) && largeMarkdownFrame.style) largeMarkdownFrame.style.visibility = 'hidden'
       largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
       largeMarkdownFrame.setAttribute('referrerpolicy', 'no-referrer')
       largeMarkdownFrame.src = file.largeMarkdown.url
@@ -916,7 +935,7 @@ function renderArtifact() {
         if (!readerNotesHost?.capture(selection)) setSelection(commentSelection(selection), selection.rect)
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
-        initialReference: file.readerReference,
+        initialReference: file.readerReference, initialFragment: file.readerFragment,
         presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
           flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,
           typography: readingTypography() } } : file.format === 'pdf' && file.pdfPresentation ? { pdf: file.pdfPresentation } : undefined,
@@ -925,6 +944,7 @@ function renderArtifact() {
           : file.format === 'pdf' && file.page ? {kind:'pdf',pages:[{page:file.page,rects:[{x:0,y:0,width:1,height:0.000001}]}]} : undefined,
       })
       delete file.readerReference
+      delete file.readerFragment
     }
     syncLargeMarkdownTheme()
     renderArtifactSearchStatus()

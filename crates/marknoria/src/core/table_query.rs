@@ -752,30 +752,47 @@ impl Queries {
     /// Resolve a live, document-owned result into bounded durable provenance.
     /// Never accept client-supplied SQL as evidence of a previously run query.
     pub fn prepare_note(&self, index: &Index, request: &mut crate::core::notes::Request) -> io::Result<()> {
-        use crate::core::{notes::{Anchor, QueryProvenance, Request}, reader::Location};
+        use crate::core::{notes::Request, reader::Location};
         let Request::Add { quote, anchor, revision, .. } = request else { return Ok(()) };
         if anchor.query.is_some() { return Err(error("Supply a live query cell, not client-supplied SQL provenance")); }
-        let Some(Location::QueryCell { query_id, row, column }) = &anchor.location else { return Ok(()) };
-        if revision != &index.revision { return Err(error("Document revision changed; reopen SQL")); }
+        if matches!(&anchor.location, Some(Location::QueryCell { .. })) {
+            *anchor = self.snapshot(index, &crate::core::reader::QuerySnapshotRequest {
+                revision: revision.clone(), location: anchor.location.clone().unwrap(),
+                quote: quote.clone(), quote_truncated: anchor.quote_truncated,
+            })?.anchor;
+        }
+        Ok(())
+    }
+    pub fn snapshot(&self, index: &Index, request: &crate::core::reader::QuerySnapshotRequest)
+        -> io::Result<crate::core::reader::QuerySnapshot> {
+        use crate::core::{notes::{Anchor, QueryProvenance}, reader::{Location, QuerySnapshot}};
+        if request.revision != index.revision { return Err(error("Document revision changed; reopen SQL")); }
+        if request.quote.len() > 32 * 1024 || request.quote.contains('\0') {
+            return Err(error("Query snapshot quote exceeds its text budget"));
+        }
+        request.location.validate()?;
+        let Location::QueryCell { query_id, row, column } = &request.location
+            else { return Err(error("A live query result cell is required")); };
         let window = self.page(index, query_id, *row)?;
         let value = window.rows.get(row - window.row_start).and_then(|values| values.get(*column))
             .ok_or_else(|| error("Query note cell is outside its result"))?;
         let value_is_null = value.is_none();
         let value = value.as_deref().unwrap_or("NULL");
-        if !(if anchor.quote_truncated { value.starts_with(quote.as_str()) } else { value == quote.as_str() }) {
+        if !(if request.quote_truncated { value.starts_with(&request.quote) } else { value == request.quote }) {
             return Err(error("Note quote does not match its query result cell"));
         }
-        *anchor = Anchor {
-            quote_truncated: anchor.quote_truncated,
-            query: Some(QueryProvenance {
-                table: window.table, sql: window.sql, row: *row, column: *column,
-                column_name: window.columns[*column].clone(), total_rows: window.total_rows,
-                source_rows: index.tables[window.table].rows,
-                value_is_null,
-            }),
-            ..Default::default()
-        };
-        Ok(())
+        Ok(QuerySnapshot {
+            revision: index.revision.clone(), quote: request.quote.clone(),
+            anchor: Anchor {
+                quote_truncated: request.quote_truncated,
+                query: Some(QueryProvenance {
+                    table: window.table, sql: window.sql, row: *row, column: *column,
+                    column_name: window.columns[*column].clone(), total_rows: window.total_rows,
+                    source_rows: index.tables[window.table].rows, value_is_null,
+                }),
+                ..Default::default()
+            },
+        })
     }
     pub fn close(&mut self, id: &str) {
         self.results.retain(|r| r.id != id);

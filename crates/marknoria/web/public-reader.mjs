@@ -94,6 +94,10 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       if (!Number.isSafeInteger(params.table) || params.table < 0 || typeof params.sql !== 'string' || params.sql.length > 16384) throw Error('Invalid SQL request')
       return queryOperation(api, params.revision, signal, operationId => api('/api/table-query', signal, { method: 'POST', body: JSON.stringify({ table: params.table, sql: params.sql, revision: params.revision, operationId }) }))
     }),
+    querySnapshot: checked((params, signal) => {
+      if (!state().capabilities.querySnapshots || params.location?.kind !== 'queryCell' || typeof params.quote !== 'string' || new TextEncoder().encode(params.quote).length > 32768) throw Error('Invalid or disabled SQL snapshot request')
+      return api('/api/query-snapshot', signal, {method:'POST',body:JSON.stringify({revision:params.revision,location:params.location,quote:params.quote,quoteTruncated:params.quoteTruncated === true})})
+    }),
     tableChart: checked((params, signal) => {
       if (!state().capabilities.charts) throw Error('Charts were disabled or no table is available')
       if (!Number.isSafeInteger(params.y) || params.y < 0 || params.x != null && (!Number.isSafeInteger(params.x) || params.x < 0)) throw Error('Invalid chart axes')

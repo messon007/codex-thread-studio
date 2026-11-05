@@ -396,6 +396,7 @@ impl Reader {
                 jq: self.options.queries && jq_query::supported(&self.index.name),
                 notes: self.options.notes_directory.is_some(),
                 query_notes: self.options.notes_directory.is_some() && self.options.queries,
+                query_snapshots: self.options.queries,
                 assets: !self.index.assets.is_empty(),
                 asset_info: true,
                 reference_info: self.options.projection == ProjectionProfile::Web,
@@ -605,6 +606,13 @@ impl Reader {
         self.check(revision)?;
         core::references::target(self.directory()?, &self.index, id)
     }
+    /// Verified durable SQL provenance, with no Notes storage side effect.
+    pub fn query_snapshot(&self, request: QuerySnapshotRequest) -> io::Result<QuerySnapshot> {
+        self.check(&request.revision)?;
+        if !self.options.queries { return Err(denied("Query capability is disabled")); }
+        self.sql.snapshot(&self.index, &request)
+    }
+
     pub fn notes(&self, mut request: core::notes::Request) -> io::Result<serde_json::Value> {
         self.directory()?;
         let path = self

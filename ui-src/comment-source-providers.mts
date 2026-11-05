@@ -61,6 +61,7 @@ export function createDocumentCommentProvider(): CommentProvider {
       const target = fileTarget(draft.source.anchor)
       if (target.readerReference) {
         const reference = commentRecord(target.readerReference)
+        if (reference.querySnapshot) return `${fileDisplayName(target.filePath)} · SQL result snapshot`
         return `${fileDisplayName(target.filePath)} · ${commentRecord(reference.location).kind} · ${reference.precision}`
       }
       const range = lineRangeForTarget(target, context.contentForSource?.(draft.source))
@@ -73,6 +74,11 @@ export function createDocumentCommentProvider(): CommentProvider {
       const target = fileTarget(draft.source.anchor)
       if (target.readerReference) {
         const reference = commentRecord(target.readerReference)
+        if (reference.querySnapshot) {
+          const snapshot = commentRecord(reference.querySnapshot), anchor = commentRecord(snapshot.anchor)
+          return [target.filePath,'SQL result snapshot; not a source cell',`source revision ${snapshot.revision}`,
+            `provenance ${JSON.stringify(anchor.query)}`,anchor.quoteTruncated ? 'truncated excerpt' : ''].filter(Boolean).join(' / ')
+        }
         return [target.filePath, `reader v1 ${JSON.stringify(reference.location)}`,
           `precision ${reference.precision}`, `revision ${reference.revision}`,
           commentRecord(reference.location).kind === 'queryCell' ? 'transient SQL result; not a source location' : '',
@@ -80,11 +86,18 @@ export function createDocumentCommentProvider(): CommentProvider {
       }
       return fileAnnotationAnchor(target, context.contentForSource?.(draft.source))
     },
-    promptInstruction(_draft, context) {
+    promptInstruction(draft, context) {
+      if (commentRecord(fileTarget(draft.source.anchor).readerReference).querySnapshot) {
+        return context.translate?.('SQL result snapshots are historical derived data. Use the saved value, query and source revision; result coordinates are not source rows. Opening a snapshot does not rerun its query.') || ''
+      }
       return context.translate?.('Document comments: read the current file at each annotated path, then make changes using the quote, location, and surrounding context.') || ''
     },
     async reopen(draft, context) {
       const target = fileTarget(draft.source.anchor)
+      if (commentRecord(target.readerReference).querySnapshot) {
+        await context.openQuerySnapshot?.(commentRecord(commentRecord(target.readerReference).querySnapshot), target)
+        return
+      }
       await context.openDocument?.(target, draft.excerpt)
     },
   }

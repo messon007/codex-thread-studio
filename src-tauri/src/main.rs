@@ -49,6 +49,9 @@ mod terminal_runtime;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
 mod workspace_watch;
+#[cfg(any(windows, target_os = "linux"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod wsl_reader;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
 use backend_runtime::{BackendRuntime, WslSettings};
@@ -4133,7 +4136,22 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                                     || source.provider.len() > 64
                                     || source.version == 0
                                     || serde_json::to_vec(&source.anchor)
-                                        .map_or(true, |anchor| anchor.len() > 32 * 1024)
+                                        // SQL AI references retain a bounded verified value and
+                                        // provenance. The existing 1 MiB request and draft
+                                        // count limits remain in force.
+                                        .map_or(true, |anchor| {
+                                            anchor.len()
+                                                > if source.provider == "document"
+                                                    && source
+                                                        .anchor
+                                                        .pointer("/readerReference/querySnapshot")
+                                                        .is_some_and(serde_json::Value::is_object)
+                                                {
+                                                    128 * 1024
+                                                } else {
+                                                    32 * 1024
+                                                }
+                                        })
                             })
                             || draft
                                 .item_id

@@ -116,6 +116,7 @@ mounting its first view.
 | `sourceWindow`, `sourceSelection` | Bounded original source by `line`, `offset,previous`, or explicit `offset,end` (at most 128 KiB); exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
 | `tableChart` | Complete source/result projection; `source:{kind:table,table}` or `{kind:query,queryId}`, `x` (nullable), `y`; see [table-components.md](table-components.md) |
 | `sql`, `jq` | Complete-input query, returns a bounded result page and result ID |
+| `querySnapshot` | `location:{kind:queryCell,queryId,row,column}`, `quote`, `quoteTruncated`; verifies a live result and returns durable SQL provenance without writing a Note |
 | `notes` | Nested `request` using the public Notes operations; explicit storage grant required |
 | `tableInfo`, `tableWindow` | `table`; or `table,row,columns` (original column IDs); scoped projection for ordinary DOM hosts |
 | `sqlSchema`, `sqlPage`, `sqlClose` | `table`; or `id,row`; or `id` |
@@ -293,8 +294,9 @@ the same shared `tableLayout` component, including keyboard resizing/fit.
 Query-cell references carry their owning result ID and expire when that result
 closes, is evicted or changes revision. Core validation checks result ownership
 and coordinates; saved reading positions cannot treat these as durable source
-locations. The current Notes adapter exposes copying for these transient cells;
-a durable query-note adapter remains open work. The shared table mount and plots
+locations. The Notes adapter captures verified durable SQL provenance when saving
+comments/favorites; hosts can use `querySnapshot` for their own draft storage.
+Neither path silently converts a derived value into a source cell. The shared table mount and plots
 are described in [table-components.md](table-components.md).
 
 The shared Notes storage/action/presentation adapters are documented in
@@ -353,3 +355,38 @@ hosts using the same public commands and complete Rust input. See
 [jq-components.md](jq-components.md) for provider contracts, paging/input budgets,
 locale, clipboard, cancellation and disposal. It does not parse query output or
 map its transient output text to invented source offsets.
+
+
+### Authorized materialized inputs and host image transports
+
+`Service::from_bytes(name, bytes, options)` consumes a bounded (128 MiB) byte
+snapshot and always grants read-only source access. `name` is a single basename
+(up to 255 bytes). Supply `ServiceOptions::resource_id` with a stable host-chosen
+identity (up to 256 bytes), independent of the temporary path and content revision.
+The service owns its private input until its workers and caches close; await
+`Service::close`. Matching logical identities share Notes across materializations;
+content changes keep the identity but mark old notes stale. Different users or
+remote environments must have distinct identities. File services without an
+explicit identity retain their existing path-based notebook keys.
+
+A trusted `reference_image_loader(target, cache_hint, byte_limit, cancelled)` may
+supply authorized local/remote-environment image snapshots as `HostImage`.
+This is a startup Rust callback, never a page/message-installed file API. It must
+check current grants on every call, including metadata/frame cache hits, and
+observe cancellation. Return a bounded basename, an opaque source/cache identity
+(up to 256 bytes) and bytes on a miss/change (at most 25 MiB). If the supplied
+hint is still authorized and unchanged, return the same identity with `bytes:None`;
+the SDK accepts that only for its own existing snapshot. A lost/evicted cache may
+require retry. Source/cache identity is not an exact content hash: the decoder's
+`imageRevision` remains the authoritative immutable snapshot revision. Metadata
+fingerprints may avoid repeated byte transport without claiming content equality.
+Inline images retain the ordinary sandboxed path. The same decoder, four-image
+cache, pixel/frame limits and owner cancellation apply. The SDK validates returned
+names/byte limits again, and closes the old snapshot on an identity change.
+`capabilities.referenceProfile.hostImages` declares this explicit host transport.
+
+`npm run check:host-images` checks the actual HTTP service, repeated cache hits
+without repeat byte reads, cached revocation, source replacement, invalid basename
+rejection and cleanup. `check:embedded-service` checks private byte inputs with
+stable Notes identities across separate paths, revision staleness and environment
+isolation. These synthetic Linux checks do not certify a particular remote OS.

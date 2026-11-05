@@ -120,14 +120,8 @@ impl Readers {
         self.notes_directory = Some(directory);
         self
     }
-    pub async fn open(
-        &self,
-        source: std::path::PathBuf,
-        root: std::path::PathBuf,
-        editable: bool,
-        shared_directories: Arc<Mutex<Vec<String>>>,
-    ) -> Result<serde_json::Value, (StatusCode, String)> {
-        let _permit = self.opening.clone().try_acquire_owned().map_err(|_| {
+    async fn admission(&self) -> Result<tokio::sync::OwnedSemaphorePermit, (StatusCode, String)> {
+        let permit = self.opening.clone().try_acquire_owned().map_err(|_| {
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Another document is opening".into(),
@@ -141,6 +135,17 @@ impl Readers {
                 "Close an existing document first".into(),
             ));
         }
+        Ok(permit)
+    }
+
+    pub async fn open(
+        &self,
+        source: std::path::PathBuf,
+        root: std::path::PathBuf,
+        editable: bool,
+        shared_directories: Arc<Mutex<Vec<String>>>,
+    ) -> Result<serde_json::Value, (StatusCode, String)> {
+        let _permit = self.admission().await?;
         let grant = if editable {
             FileGrant::read_write(&source)
         } else {
@@ -177,6 +182,16 @@ impl Readers {
         let service = Service::start_with_options(grant, options)
             .await
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        Ok(self.register(service, source, root, editable, book_hash))
+    }
+    fn register(
+        &self,
+        service: Service,
+        source: std::path::PathBuf,
+        root: std::path::PathBuf,
+        editable: bool,
+        book_hash: Option<String>,
+    ) -> serde_json::Value {
         let id = uuid::Uuid::new_v4().to_string();
         let token = service.token.clone();
         self.entries.lock().unwrap().insert(
@@ -190,8 +205,49 @@ impl Readers {
             },
         );
         self.maintenance.ensure(&self.entries);
+        json!({"id":id,"url":format!("/markdown-reader/{id}/?embedded=1&diagrams=browser#{token}"),"bookHash":book_hash})
+    }
+    #[cfg(windows)]
+    pub async fn open_wsl(
+        &self,
+        runtime: crate::backend_runtime::BackendRuntime,
+        request: &ReviewFileRequest,
+        directories: Arc<Mutex<Vec<String>>>,
+    ) -> Result<serde_json::Value, (StatusCode, String)> {
+        let _permit = self.admission().await?;
+        let opened = crate::wsl_reader::open(
+            runtime,
+            &request.root,
+            &request.path,
+            directories,
+            self.notes_directory.clone(),
+        )
+        .await
+        .map_err(|error| {
+            (
+                match error.kind() {
+                    std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                    std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+                    std::io::ErrorKind::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                    std::io::ErrorKind::Unsupported => StatusCode::NOT_IMPLEMENTED,
+                    std::io::ErrorKind::TimedOut => StatusCode::GATEWAY_TIMEOUT,
+                    _ => StatusCode::BAD_REQUEST,
+                },
+                error.to_string(),
+            )
+        })?;
+        let reader = self.register(
+            opened.service,
+            (&opened.path).into(),
+            (&opened.root).into(),
+            false,
+            None,
+        );
         Ok(
-            json!({"id":id,"url":format!("/markdown-reader/{id}/?embedded=1&diagrams=browser#{token}"),"bookHash":book_hash}),
+            json!({"root":opened.root,"path":opened.path,"relativePath":opened.relative_path,
+            "documentRoot":opened.document_root,"size":opened.size,"readOnly":true,
+            "format":opened.format,"sourceAvailable":opened.format.is_text(),"reader":reader,
+            "executionEnvironment":"wsl"}),
         )
     }
 }
@@ -253,10 +309,18 @@ pub async fn open_document(
 ) -> Response<Body> {
     #[cfg(windows)]
     if state.codex.execution_environment() == "wsl" {
-        return json_error(
-            StatusCode::NOT_IMPLEMENTED,
-            "Shared reader byte transport for WSL is not implemented yet",
-        );
+        return match state
+            .markdown_readers
+            .open_wsl(
+                state.codex.reader_runtime(),
+                &request,
+                state.shared_document_directories.clone(),
+            )
+            .await
+        {
+            Ok(document) => json_response(StatusCode::OK, &document),
+            Err((status, message)) => json_error(status, &message),
+        };
     }
     let shared = match shared_document_directories(&state) {
         Ok(shared) => shared,
@@ -356,6 +420,7 @@ fn allowed_path(path: &str) -> bool {
                 | "api/table-query"
                 | "api/table-query/schema"
                 | "api/table-query/close"
+                | "api/query-snapshot"
                 | "api/table-chart"
                 | "api/jq-query"
                 | "api/notes"
@@ -442,6 +507,7 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
             "api/edit"
                 | "api/table-query"
                 | "api/table-query/close"
+                | "api/query-snapshot"
                 | "api/jq-query"
                 | "api/table-chart"
                 | "api/operations"

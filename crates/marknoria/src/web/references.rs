@@ -13,6 +13,22 @@ use std::{
 const IMAGES: usize = 4;
 const IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 pub(super) const MAX_ROOTS: usize = 257;
+/// One explicitly authorized host image. `bytes:None` is valid only when the
+/// host revalidated the supplied cache identity and that snapshot still exists.
+/// Identity is a host cache key, not a claim of exact content-hash precision.
+pub struct HostImage {
+    pub name: String,
+    pub identity: String,
+    pub bytes: Option<Vec<u8>>,
+}
+#[derive(Clone)]
+pub(super) struct ImageLoader(Arc<dyn Fn(&str, Option<&str>, u64, &AtomicBool) -> io::Result<HostImage> + Send + Sync>);
+impl std::fmt::Debug for ImageLoader {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str("HostImageLoader") }
+}
+impl ImageLoader {
+    pub fn new(loader: impl Fn(&str, Option<&str>, u64, &AtomicBool) -> io::Result<HostImage> + Send + Sync + 'static) -> Self { Self(Arc::new(loader)) }
+}
 #[derive(Clone)]
 pub(super) struct RootProvider(Arc<dyn Fn() -> io::Result<Vec<PathBuf>> + Send + Sync>);
 impl std::fmt::Debug for RootProvider {
@@ -28,12 +44,14 @@ impl RootProvider {
 struct Entry {
     documents: files::Documents,
     source: Option<PathBuf>,
+    host_identity: Option<String>,
     _input: Option<tempfile::TempDir>,
     touched: Instant,
 }
 pub(super) struct Resources {
     roots: Vec<PathBuf>,
     provider: Option<RootProvider>,
+    image_loader: Option<ImageLoader>,
     entries: Mutex<HashMap<String, Entry>>,
 }
 impl Resources {
@@ -41,6 +59,7 @@ impl Resources {
         Self {
             roots,
             provider: None,
+            image_loader: None,
             entries: Mutex::new(HashMap::new()),
         }
     }
@@ -48,6 +67,11 @@ impl Resources {
         self.provider = provider;
         self
     }
+    pub fn with_image_loader(mut self, loader: Option<ImageLoader>) -> Self {
+        self.image_loader = loader;
+        self
+    }
+    pub fn host_images(&self) -> bool { self.image_loader.is_some() }
     fn current_roots(&self) -> io::Result<Vec<PathBuf>> {
         let mut roots = self.roots.clone();
         if let Some(provider) = &self.provider {
@@ -158,7 +182,31 @@ impl Resources {
             return Err((StatusCode::BAD_REQUEST, "Reference is not an image".into()));
         }
         let inline = index.references[id].inline;
-        let source = if inline {
+        let key = format!("{}:{}:{id}", parent.id, index.revision);
+        // Authorization precedes every metadata/frame cache lookup. Only the
+        // trusted host receives the previous key; markup cannot supply a key.
+        let host_image = if !inline && let Some(loader) = &self.image_loader {
+            let hint = self.entries.lock().map_err(failure)?.get(&key).and_then(|entry| entry.host_identity.clone());
+            let target = references::target(&parent.directory, index, id).map_err(failure)?;
+            let image = (loader.0)(&target, hint.as_deref(), IMAGE_BYTES, &parent.cancelled)
+                .map_err(|error| (StatusCode::FORBIDDEN, error.to_string()))?;
+            if image.identity.is_empty() || image.identity.len() > 256 || image.identity.chars().any(char::is_control)
+                || image.name.is_empty() || image.name.len() > 255 || image.name.contains(['/', '\\'])
+                || image.name.chars().any(char::is_control)
+                || crate::core::document_format::DocumentFormat::for_name(&image.name) != Some(crate::core::document_format::DocumentFormat::Image) {
+                return Err((StatusCode::BAD_REQUEST, "Invalid host image identity or basename".into()));
+            }
+            if image.bytes.as_ref().is_some_and(|bytes| bytes.len() as u64 > IMAGE_BYTES) {
+                return Err((StatusCode::PAYLOAD_TOO_LARGE, "Host image exceeds 25 MiB".into()));
+            }
+            if image.bytes.is_none() && hint.as_deref() != Some(image.identity.as_str()) {
+                return Err((StatusCode::BAD_REQUEST, "Uncached host image requires a snapshot".into()));
+            }
+            Some(image)
+        } else { None };
+        let host_identity = host_image.as_ref().map(|image| image.identity.clone());
+        if parent.is_cancelled() { return Err((StatusCode::GONE, "Owning document was closed".into())); }
+        let source = if inline || host_image.is_some() {
             None
         } else {
             let target = references::target(&parent.directory, index, id).map_err(failure)?;
@@ -167,7 +215,6 @@ impl Resources {
                     .map_err(|error| (StatusCode::FORBIDDEN, error.to_string()))?,
             )
         };
-        let key = format!("{}:{}:{id}", parent.id, index.revision);
         let mut entries = self.entries.lock().map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -176,7 +223,7 @@ impl Resources {
         })?;
         if entries
             .get(&key)
-            .is_some_and(|entry| entry.source != source)
+            .is_some_and(|entry| entry.source != source || entry.host_identity != host_identity)
         {
             if entries[&key]
                 .documents
@@ -223,7 +270,13 @@ impl Resources {
                 entry.documents.shutdown();
             }
         }
-        let (path, input) = if inline {
+        let (path, input) = if let Some(image) = host_image {
+            let bytes = image.bytes.ok_or((StatusCode::TOO_MANY_REQUESTS, "Host image snapshot was evicted; retry".into()))?;
+            let input = crate::runtime::cache::temporary_directory("mn-host-reference-").map_err(failure)?;
+            let path = input.path().join(image.name);
+            File::create(&path).and_then(|mut file| file.write_all(&bytes)).map_err(failure)?;
+            (path, Some(input))
+        } else if inline {
             let target = references::target(&parent.directory, index, id).map_err(failure)?;
             let parsed = data_url::DataUrl::process(&target)
                 .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid inline image URL".into()))?;
@@ -299,6 +352,7 @@ impl Resources {
             Entry {
                 documents,
                 source,
+                host_identity,
                 _input: input,
                 touched: Instant::now(),
             },

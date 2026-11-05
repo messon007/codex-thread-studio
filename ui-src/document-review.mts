@@ -201,7 +201,26 @@ export function normalizeReaderReference(value: unknown): RecordValue {
     documentId: input.documentId, revision: input.revision,
     precision: input.precision, location: JSON.parse(encoded) as RecordValue,
     quoteTruncated: Boolean(input.quoteTruncated),
+    ...(input.querySnapshot ? {querySnapshot: normalizeQuerySnapshot(input.querySnapshot,input.revision,location)} : {}),
   }
+}
+
+function normalizeQuerySnapshot(value: unknown, revision: string, location: RecordValue): RecordValue {
+  const snapshot = record(value), anchor = record(snapshot.anchor), query = record(anchor.query)
+  const bytes = (value: string) => new TextEncoder().encode(value).length
+  const offset = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0
+  if (bytes(JSON.stringify(snapshot)) > 65536 || snapshot.revision !== revision || location.kind !== 'queryCell'
+    || typeof snapshot.quote !== 'string' || bytes(snapshot.quote) > 32768
+    || typeof query.sql !== 'string' || !query.sql.trim() || bytes(query.sql) > 16384
+    || typeof query.columnName !== 'string' || bytes(query.columnName) > 4096
+    || ![query.table,query.row,query.column,query.totalRows,query.sourceRows].every(offset)
+    || Number(query.column) >= 256 || Number(query.row) >= Number(query.totalRows)
+    || query.row !== location.row || query.column !== location.column
+    || typeof query.valueIsNull !== 'boolean' || anchor.quoteTruncated !== undefined && typeof anchor.quoteTruncated !== 'boolean'
+    || anchor.location != null) throw new TypeError('Invalid durable SQL snapshot')
+  return {revision,quote:snapshot.quote,anchor:{quoteTruncated:Boolean(anchor.quoteTruncated),
+    query:{table:query.table,sql:query.sql,row:query.row,column:query.column,columnName:query.columnName,
+      totalRows:query.totalRows,sourceRows:query.sourceRows,valueIsNull:query.valueIsNull}}}
 }
 
 export function snapshotAnnotationSelection(value: unknown) {

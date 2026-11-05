@@ -110,6 +110,18 @@ or expand its file/query authority. This is a durable reference, not a navigable
 source-cell position. SQL text is bounded at 16 KiB and column labels at 4 KiB;
 normal note quote/comment/storage bounds still apply.
 
+Hosts saving their own drafts can call public Rust `Reader::query_snapshot` or
+the parent command `querySnapshot` (`POST /api/query-snapshot`). The request has
+revision, live `queryCell` location, quote and optional `quoteTruncated`; the
+response is `{revision,quote,anchor}` with the same verified `anchor.query`.
+`capabilities.querySnapshots` requires query authority, independently of Notes
+storage. This bounded lookup creates no Note/database record and never reruns
+SQL. Capture it before closing the result; expired/foreign results, mismatched
+quotes and changed revisions fail. Persist the returned value as historical data,
+display its provenance on reopening, and never reinterpret it as source offsets
+or automatically run the recorded SQL. Hosts must cancel/discard a late capture
+when the owning document changes.
+
 `npm run check:notes-component` exercises ordinary-host storage/actions, owner and
 revision isolation, literal text, comment/favorite category clearing, compact
 confirmation, copying, transient references, cancellation and remounting. The

@@ -265,3 +265,45 @@ test('removing a reader disconnects local transport without reporting expected l
  assert.equal(disconnects,1)
  assert.deepEqual(errors,[])
 })
+
+for(const mode of ['saved','failed','replaced','aborted'])test(`SQL Ask AI ${mode} waits for trusted snapshot and never creates a partial draft`,async()=>{
+ const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
+ const mounts=[],actions=[]
+ let resolveSnapshot,rejectSnapshot
+ const deferred=new Promise((resolve,reject)=>{resolveSnapshot=resolve;rejectSnapshot=reject})
+ const host={dirty:false,querySnapshot:()=>deferred}
+ const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{
+  load:async()=>({mountNotes:options=>{mounts.push(options);return {dispose(){},async selectionChanged(){}}}}),
+  onAction:selection=>actions.push(selection),
+ })
+ const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),name:'one.csv',capabilities:{notes:true,queryNotes:true,presentation:{notesOwner:true}}}
+ await controller.update(owner,host)
+ const selection={documentId:'one',revision:owner.revision,quote:'2',precision:'exact',location:{kind:'queryCell',queryId:'query',row:0,column:0}}
+ const abort=new AbortController()
+ const pending=mounts[0].actions[0].run(selection,{signal:abort.signal})
+ assert.equal(actions.length,0)
+ if(mode==='replaced')await controller.update({...owner,documentId:'two'},host)
+ if(mode==='aborted')abort.abort()
+ if(mode==='failed')rejectSnapshot(Error('Result expired'))
+ else resolveSnapshot({revision:owner.revision,quote:'2',anchor:{query:{sql:'SELECT COUNT(*) FROM t'}}})
+ if(mode==='saved') {
+  await pending
+  assert.equal(actions.length,1)
+  assert.equal(actions[0].querySnapshot.anchor.query.sql,'SELECT COUNT(*) FROM t')
+ } else {await assert.rejects(pending);assert.equal(actions.length,0)}
+ controller.dispose()
+})
+
+test('AI excerpt prefixes honor the persisted UTF-8 budget before SQL verification',async()=>{
+ const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
+ let mounted,captured,verified
+ const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{load:async()=>({mountNotes:options=>{mounted=options;return {dispose(){},async selectionChanged(){}}}}),onAction:value=>{captured=value}})
+ const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),capabilities:{notes:true,presentation:{notesOwner:true}}}
+ await controller.update(owner,{querySnapshot:async value=>{verified=value;return {revision:value.revision,quote:value.quote,anchor:{quoteTruncated:value.quoteTruncated}}}})
+ const original='中文😀'.repeat(5000)
+ await mounted.actions[0].run({documentId:'one',revision:owner.revision,quote:original,location:{kind:'queryCell',queryId:'query',row:0,column:0}},{signal:new AbortController().signal})
+ assert.ok(Buffer.byteLength(verified.quote)<=16384)
+ assert.ok(original.startsWith(verified.quote));assert.equal(verified.quote.includes('\ufffd'),false)
+ assert.equal(verified.quoteTruncated,true);assert.equal(captured.querySnapshot.quote,verified.quote)
+ controller.dispose()
+})

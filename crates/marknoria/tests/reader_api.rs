@@ -455,3 +455,42 @@ fn markdown_reference_api_retains_original_ranges_without_implicit_file_authorit
     assert_eq!(reader.original_range(&owner.revision,0,source.len()).unwrap(),source.as_bytes());
     reader.close().unwrap();
 }
+
+#[test]
+fn sql_snapshots_need_no_note_store_and_keep_verified_history_after_close() {
+    use marknoria::reader::{QuerySnapshotRequest, QuerySnapshot};
+    let root = root();
+    let mut reader = Reader::from_bytes("snapshots.csv", b"ID,Value\n001,7\n002,8\n", options(&root)).unwrap();
+    let owner = reader.descriptor();
+    assert!(owner.capabilities.query_snapshots);
+    assert!(!owner.capabilities.notes);
+    let operation = reader.operations().begin().unwrap();
+    let sql = "SELECT COUNT(*) AS count, NULL AS empty, '中文😀' AS label FROM t";
+    let result = reader.sql(&owner.revision, 0, sql, &operation).unwrap();
+    let request = |column, quote: &str, truncated| QuerySnapshotRequest {
+        revision: owner.revision.clone(), location: Location::QueryCell { query_id: result.id.clone(), row: 0, column },
+        quote: quote.into(), quote_truncated: truncated,
+    };
+    let snapshot = reader.query_snapshot(request(0, "2", false)).unwrap();
+    assert_eq!(snapshot.anchor.query.as_ref().unwrap().sql, sql);
+    assert_eq!(snapshot.anchor.query.as_ref().unwrap().source_rows, 2);
+    assert!(snapshot.anchor.location.is_none());
+    let null = reader.query_snapshot(request(1, "NULL", false)).unwrap();
+    assert!(null.anchor.query.unwrap().value_is_null);
+    assert!(reader.query_snapshot(request(0, "3", false)).is_err());
+    assert!(reader.query_snapshot(request(3, "2", false)).is_err());
+    assert!(reader.query_snapshot(request(2, "中文", false)).is_err());
+    assert!(reader.query_snapshot(request(2, "中文", true)).unwrap().anchor.quote_truncated);
+    let mut changed = request(0, "2", false); changed.revision = "a".repeat(64);
+    assert!(reader.query_snapshot(changed).is_err());
+    let foreign = Reader::from_bytes("foreign.csv", b"ID,Value\n001,7\n002,8\n", options(&root)).unwrap();
+    assert!(foreign.query_snapshot(request(0, "2", false)).is_err());
+    let serialized = serde_json::to_vec(&snapshot).unwrap();
+    reader.close_sql(&result.id);
+    assert!(reader.query_snapshot(request(0, "2", false)).is_err());
+    reader.close().unwrap();
+    let restored: QuerySnapshot = serde_json::from_slice(&serialized).unwrap();
+    assert_eq!(restored.quote, "2");
+    assert_eq!(restored.anchor.query.unwrap().column_name, "count");
+    assert!(!root.path().join("notes").exists());
+}

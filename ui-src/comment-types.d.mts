@@ -6,6 +6,7 @@ export interface CommentContext {
   unknownLabel?: string
   translate?: (message: string, values?: Record<string, string | number>) => string
   contentForSource?: (source: CommentSource) => string | null | undefined
+  openQuerySnapshot?: (snapshot: CommentRecord, target: CommentRecord) => unknown
   openDocument?: (target: CommentRecord, excerpt: string) => unknown
   openWebSource?: (url: string) => unknown
   openPdfSource?: (anchor: PdfAnchor, excerpt: string) => unknown

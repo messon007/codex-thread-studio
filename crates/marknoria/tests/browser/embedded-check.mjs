@@ -239,6 +239,23 @@ try {
   assert.equal(ordinaryQuery.closed,true)
   assert.equal(await page.evaluate(()=>clients[0].request('notes',{request:{operation:'list',offset:0}}).then(()=>false,()=>true)),true)
   assert.equal(states[0].capabilities.queryNotes,false);assert.equal(states[1].capabilities.queryNotes,true)
+  const queryHistory=await page.evaluate(async()=>{
+    const result=await clients[0].request('sql',{table:0,sql:'SELECT COUNT(*) AS count, NULL AS empty FROM t'})
+    const request={location:{kind:'queryCell',queryId:result.id,row:0,column:0},quote:'120'}
+    const snapshot=await clients[0].request('querySnapshot',request)
+    const foreign=await clients[1].request('querySnapshot',request).then(()=>false,()=>true)
+    const forged=await clients[0].request('querySnapshot',{...request,quote:'121'}).then(()=>false,()=>true)
+    const nullSnapshot=await clients[0].request('querySnapshot',{...request,location:{...request.location,column:1},quote:'NULL'})
+    await clients[0].request('sqlClose',{id:result.id})
+    const expired=await clients[0].request('querySnapshot',request).then(()=>false,()=>true)
+    return {snapshot,nullSnapshot,foreign,forged,expired}
+  })
+  assert.equal(queryHistory.snapshot.quote,'120')
+  assert.equal(queryHistory.snapshot.anchor.query.sql,'SELECT COUNT(*) AS count, NULL AS empty FROM t')
+  assert.equal(queryHistory.snapshot.anchor.query.sourceRows,120)
+  assert.equal(queryHistory.snapshot.anchor.location,null)
+  assert.equal(queryHistory.nullSnapshot.anchor.query.valueIsNull,true)
+  assert.equal(queryHistory.foreign,true);assert.equal(queryHistory.forged,true);assert.equal(queryHistory.expired,true)
   const noteOwner = await page.evaluate(async () => {
     const before = await clients[1].request('state')
     const host = await clients[1].request('settings', { notes: 'host' })

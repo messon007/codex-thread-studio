@@ -428,3 +428,15 @@ for (const view of ['source','edit']) test(`common entry restores explicit ${vie
  assert.equal(fixture.state.artifact.readerSourceAvailable,true)
  assert.equal(fixture.markdownRenders(),0)
 })
+
+test('WSL document link candidates preserve Unicode and fragments without changing the project grant',async()=>{
+ const {resolveWslDocumentLink}=await import('./document-workspace-controller.mjs')
+ const file={root:'/project',documentRoot:'/project',path:'/project/docs/notes.md'}
+ assert.deepEqual(resolveWslDocumentLink(file,'../images/%E4%B8%AD%E6%96%87%20a.png#detail'),{path:'/project/images/中文 a.png',fragment:'#detail'})
+ assert.deepEqual(resolveWslDocumentLink(file,'/images/a.png'),{path:'/project/images/a.png',fragment:''})
+ assert.deepEqual(resolveWslDocumentLink(file,'file:///shared/a.csv'),{path:'/shared/a.csv',fragment:''})
+ assert.throws(()=>resolveWslDocumentLink(file,'//untrusted/a.png'),/authorized local file/)
+ assert.throws(()=>resolveWslDocumentLink(file,'a%00.png'),/Invalid/)
+ assert.deepEqual(resolveWslDocumentLink({...file,path:'/project/literal%20dir/notes.md'},'next.md'),{path:'/project/literal%20dir/next.md',fragment:''})
+ assert.equal(file.root,'/project')
+})

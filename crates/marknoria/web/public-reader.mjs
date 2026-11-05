@@ -2,6 +2,7 @@ import { installReaderBridge } from './reader-bridge.mjs'
 import { queryOperation } from './query-operation.mjs'
 
 export function publicReader({ origins, state, index, api, renderer = () => null, setView, navigate, contents, selection, save, settings, dispose }) {
+  let imageRequests = 0
   const queryId = id => {
     if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
     return id
@@ -21,15 +22,31 @@ export function publicReader({ origins, state, index, api, renderer = () => null
     contents: checked(async params => { if (typeof params.open !== 'boolean' || typeof contents !== 'function') throw Error('Invalid Contents command'); await contents(params.open); return state() }),
     save: checked(async () => { await save(); return state() }),
     selection: checked((_, signal) => selection(signal)),
+    assetInfo: checked((params, signal) => {
+      if (!Number.isSafeInteger(params.id) || params.id < 0) throw Error('Invalid asset identity')
+      return api(`/api/asset-info?id=${params.id}&revision=${encodeURIComponent(params.revision)}`, signal)
+    }),
+    assetFrame: checked(async (params, signal) => {
+      if (!Number.isSafeInteger(params.id) || params.id < 0 ||
+          !Number.isSafeInteger(params.frame) || params.frame < 0 ||
+          !index().assets[params.id]?.frames[params.frame]) throw Error('Invalid image frame')
+      if (imageRequests >= 2) throw Object.assign(Error('Image frame budget exhausted'), { code: 'BUSY' })
+      imageRequests++
+      try {
+        const blob = await api(`/api/asset?id=${params.id}&frame=${params.frame}`, signal, { imageRevision: params.revision })
+        return { revision: params.revision, id: params.id, frame: params.frame, blob }
+      } finally { imageRequests-- }
+    }),
     projectionWindow: checked((params, signal) => {
       if (renderer() || !Number.isSafeInteger(params.start) || params.start < 0 || !Number.isSafeInteger(params.count) || params.count < 1 || params.count > 5) throw Error('Invalid bounded projection window')
       return api(`/api/projection?revision=${encodeURIComponent(params.revision)}&start=${params.start}&count=${params.count}`, signal)
     }),
     sourceWindow: checked((params, signal) => {
-      if (!state().capabilities.source || params.line != null && (!Number.isSafeInteger(params.line) || params.line < 1) || params.offset != null && (!Number.isSafeInteger(params.offset) || params.offset < 0) || params.line != null && params.offset != null || params.previous != null && typeof params.previous !== 'boolean') throw Error('Invalid bounded source window')
+      if (!state().capabilities.source || params.line != null && (!Number.isSafeInteger(params.line) || params.line < 1) || params.offset != null && (!Number.isSafeInteger(params.offset) || params.offset < 0) || params.line != null && params.offset != null || params.previous != null && typeof params.previous !== 'boolean' || params.end != null && (!Number.isSafeInteger(params.end) || params.offset == null || params.line != null || params.previous === true || params.end < params.offset || params.end-params.offset > 128*1024)) throw Error('Invalid bounded source window')
       const query = new URLSearchParams()
       if (params.line != null) query.set('line',params.line)
       if (params.offset != null) query.set('offset',params.offset)
+      if (params.end != null) query.set('end',params.end)
       query.set('previous',params.previous === true)
       return api(`/api/source?${query}`,signal)
     }),

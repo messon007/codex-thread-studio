@@ -86,6 +86,12 @@ export function codeView(parent, options = {}) {
       return line + view.state.doc.lineAt(position).number - 1
     },
     topLine() { return line + view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number - 1 },
+    async select(from, to) {
+      if (![from,to].every(Number.isSafeInteger) || from < 0 || to < from || to > view.state.doc.length) throw Error('Source selection out of range')
+      view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) })
+      view.focus()
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    },
     async reveal(target) {
       const relative = Math.max(1, Math.min(view.state.doc.lines, target - line + 1))
       view.dispatch({ selection: { anchor: view.state.doc.line(relative).from }, effects: EditorView.scrollIntoView(view.state.doc.line(relative).from, { y: 'start' }) })

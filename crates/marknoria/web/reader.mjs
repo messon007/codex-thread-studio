@@ -6,6 +6,7 @@ import { Virtualizer, observeElementRect, observeElementOffset, elementScroll, d
 import { projectionHtml } from './projection-html.mjs'
 import { diagramController, diagramMetrics } from './diagrams.mjs'
 import { assetController } from './assets.mjs'
+import { imageFrameResponse } from './image-frames.mjs'
 import { notesController } from './notes.mjs'
 import { jqController } from './jq-query.mjs'
 import { tableController } from './tables.mjs'
@@ -121,16 +122,18 @@ const heartbeat = setInterval(() => {
 }, 10)
 
 async function api(path, signal, options = {}) {
+  const { imageRevision, ...requestOptions } = options
   const computing = options.method === 'POST' && ['/api/table-query', '/api/jq-query', '/api/table-chart'].includes(path)
   if (computing) { queryBusy++; bridge?.publish('state', publicState()) }
   try {
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const response = await fetch(new URL(`.${path}`, import.meta.url), { ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers, 'x-reader-token': token, ...(documentId ? { 'x-reader-document': documentId } : {}) }, signal })
+      const response = await fetch(new URL(`.${path}`, import.meta.url), { ...requestOptions, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers, 'x-reader-token': token, ...(documentId ? { 'x-reader-document': documentId } : {}) }, signal })
       if (response.status === 429 && attempt < 3) {
         await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt))
         continue
       }
       if (!response.ok) throw new Error(`Reader request failed (${response.status}): ${(await response.text()).slice(0, 800)}`)
+      if (imageRevision !== undefined) return imageFrameResponse(response, { revision: imageRevision, signal })
       return await response.json()
     }
   } finally {
@@ -348,7 +351,7 @@ function setup() {
   readerAbort = new AbortController()
   if (['pdfjs','epubjs'].includes(index.renderer)) { setupFormat(); return }
   diagrams = diagramController(viewport, article => { virtualizer?.measureElement(article); schedule() }, { documentId, revision: index.revision, token })
-  assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)virtualizer?.measureElement(article);schedule()})
+  assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)virtualizer?.measureElement(article);schedule()},{translate})
   notes = serviceCapabilities.notes ? notesController(index,api,()=>!editor?.dirty,publicSelection,{documentId,translate}) : null
   jq = serviceCapabilities.queries ? jqController(index,api,{translate}) : null
   files.state('ready')
@@ -732,10 +735,10 @@ function publicState() {
     timings: { indexMs: index?.indexMs ?? null, indexPeakRssKiB: index?.peakRssKib ?? null, firstUsefulContentMs: metrics.firstContentMs, maxHeartbeatGapMs: metrics.maxHeartbeatGapMs },
     editorError: editor?.error ? { code: editor.error.code || 'BACKEND', message: editor.error.message } : null,
     name: index?.name ?? null, format: index?.format ?? null, formatState: formatRenderer?.state() ?? null, view,
-    document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length} : null,
+    document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length} : null,
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
-    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), presentation: { version: 1, locale: true, palette: true, fonts: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
@@ -803,7 +806,13 @@ function connectBridge() {
     async navigate(location) {
       if (!location || !index) throw Error('A reading location is required')
       if (formatRenderer) { await formatRenderer.navigate(location); result.publish('state', publicState()); return }
-      if (location.kind === 'line') {
+      if (location.kind === 'source') {
+        if (!publicState().capabilities.source) throw Error('Source is unavailable for this format')
+        const revision = index.revision
+        if (editor?.visible) { await switchView('source'); if (editor.visible) throw Error('Could not leave the current editing page') }
+        if (index.revision !== revision) throw Object.assign(Error('Document revision changed while opening Source'), { code: 'REVISION' })
+        await source.goRange(location.startByte,location.endByte)
+      } else if (location.kind === 'line') {
         if (!Number.isSafeInteger(location.line) || location.line < 1 || location.line > index.sourceLines) throw Error('Source line out of range')
         if (editor?.visible) { if (!await editor.go(location.line)) throw Error('Editor navigation failed') }
         else if (source?.visible) await source.go(location.line)

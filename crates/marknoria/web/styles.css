@@ -148,15 +148,9 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 .reader-shell .page:has(pre[data-document-code]) { padding-block: 0; }
 .reader-shell .pager-icon { display:block; width:14px; height:14px; }
 #source-navigation .source-pager > button { display:grid; place-items:center; width:27px; height:27px; padding:0; }
-figure[data-asset-id] { margin: 12px 0; border: 1px solid var(--reader-border); border-radius: 8px; padding: 10px; }
-.asset-controls { display: flex; gap: 6px; padding-bottom: 8px; }
-.document-image { overflow: visible; min-height: 80px; }
-.document-image img { display: block; max-width: 100%; height: auto; margin-inline: auto; }
-.asset-zoomed .document-image img { max-width: none; width: calc(var(--asset-zoom) * var(--asset-width)); }
-figure[data-asset-id] figcaption { color: var(--reader-muted); font-size: 12px; margin-top: 6px; }
 .reader-shell.no-wrap .page :is(td,th) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reader-shell .placeholder { min-height: 40px; color: var(--reader-faint); font-size: 12px; }
-.reader-shell .page figure { margin-block: 12px; border: 1px solid var(--reader-border); border-radius: 9px; padding: 16px; }
+.reader-shell .page figure:not([data-asset-id]) { margin-block: 12px; border: 1px solid var(--reader-border); border-radius: 9px; padding: 16px; }
 .diagram-canvas { min-height: 80px; overflow: auto; }
 .diagram-canvas img { display: block; max-width: 100%; height: auto; }
 .diagram-canvas.natural img { max-width: none; }

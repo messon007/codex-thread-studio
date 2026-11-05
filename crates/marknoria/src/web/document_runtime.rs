@@ -65,6 +65,27 @@ pub(super) async fn notes(
     .map_err(failure)?
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AssetInfoQuery {
+    id: usize,
+    revision: String,
+}
+pub(super) async fn asset_info(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(query): Query<AssetInfoQuery>,
+) -> Result<Json<crate::core::reader::AssetInfo>, ApiError> {
+    let document = app.documents.select(&headers)?;
+    let index = index(&document)?;
+    if query.revision != index.revision {
+        return Err((StatusCode::CONFLICT, "Document revision changed".into()));
+    }
+    crate::core::reader::projected_asset_info(&index, query.id)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+#[derive(Deserialize)]
 pub(super) struct AssetQuery {
     id: usize,
     #[serde(default)]

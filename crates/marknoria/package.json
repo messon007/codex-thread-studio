@@ -19,7 +19,10 @@
     "check:translation": "node tests/browser/translation-check.mjs",
     "check:table-controls": "node tests/browser/table-controls-check.mjs",
     "check:projection": "node tests/browser/projection-view-check.mjs",
-    "check:reader-assets": "node tests/browser/reader-assets-check.mjs"
+    "check:reader-assets": "node tests/browser/reader-assets-check.mjs",
+    "check:image-view": "node tests/browser/image-view-check.mjs",
+    "check:image-frames": "node tests/server/image-frames-check.mjs",
+    "check:source-ranges": "node tests/server/source-ranges-check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

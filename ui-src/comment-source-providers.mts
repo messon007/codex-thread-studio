@@ -59,6 +59,10 @@ export function createDocumentCommentProvider(): CommentProvider {
     normalizeAnchor: normalizeDocumentAnchor,
     describe(draft, context) {
       const target = fileTarget(draft.source.anchor)
+      if (target.readerReference) {
+        const reference = commentRecord(target.readerReference)
+        return `${fileDisplayName(target.filePath)} · ${commentRecord(reference.location).kind} · ${reference.precision}`
+      }
       const range = lineRangeForTarget(target, context.contentForSource?.(draft.source))
       const label = range.startLine
         ? ` · L${range.startLine}${range.endLine != null && range.endLine > range.startLine ? `–${range.endLine}` : ''}`
@@ -67,6 +71,13 @@ export function createDocumentCommentProvider(): CommentProvider {
     },
     promptAnchor(draft, context) {
       const target = fileTarget(draft.source.anchor)
+      if (target.readerReference) {
+        const reference = commentRecord(target.readerReference)
+        return [target.filePath, `reader v1 ${JSON.stringify(reference.location)}`,
+          `precision ${reference.precision}`, `revision ${reference.revision}`,
+          commentRecord(reference.location).kind === 'queryCell' ? 'transient SQL result; not a source location' : '',
+          reference.quoteTruncated ? 'truncated excerpt' : ''].filter(Boolean).join(' / ')
+      }
       return fileAnnotationAnchor(target, context.contentForSource?.(draft.source))
     },
     promptInstruction(_draft, context) {

@@ -64,6 +64,7 @@ try {
       activateRightWorkspace: tool => { state.activeRightWorkspace = tool },
       hideComposerMenu() {}, closeActionMenus() {}, applyRightRailWidth() {},
       disconnectMarkdownImageObserver() {}, disposeMarkdownImageAssets() {}, hideSelection() {},
+      setSelection(selection, rect) { window.testSelection = { selection, rect } },
       renderMarkdownDocument() { throw Error('Whole-document parsing must not run') },
     }});
     window.controller.bind();
@@ -83,6 +84,30 @@ try {
     await frame.waitForFunction(() => window.readerExperiment?.metrics.firstContentMs != null, null, { timeout: 60_000 })
     const snapshot = await frame.evaluate(() => ({ sourceBytes: readerExperiment.index.sourceBytes, pages: readerExperiment.index.pages.length, tables: readerExperiment.index.tables.length, mounted: document.querySelectorAll('#space *').length, diagrams: readerExperiment.index.diagrams.length, mode: readerExperiment.diagramMetrics.mode, indexMs: readerExperiment.index.indexMs, indexPeakRssKiB: readerExperiment.index.peakRssKib, firstUsefulContentMs: readerExperiment.metrics.firstContentMs, maxHeartbeatGapMs: readerExperiment.metrics.maxHeartbeatGapMs }))
     snapshot.hostFirstUsefulMs = Date.now() - started
+    // Exercise the real outer Studio comment adapter, not only child selection.
+    await page.evaluate(async () => {
+      window.testSelection = null
+      const { createReaderClient } = await import('/reader-assets/host-client.mjs')
+      window.referenceClient = createReaderClient(document.querySelector('.artifact-large-markdown-frame'))
+      await referenceClient.ready()
+      const source = await referenceClient.request('sourceWindow', { line: 1 })
+      const normalized = source.result.text.replaceAll('\r\n', '\n')
+      let end = Math.min(8, normalized.length)
+      if (/[\uD800-\uDBFF]/u.test(normalized[end-1] || '')) end--
+      const selected = window.expectedReference = await referenceClient.request('sourceSelection', { start: source.result.start, end: source.result.end, fromUtf16: 0, toUtf16: end })
+      await referenceClient.request('navigate', { location: selected.location })
+    })
+    await page.waitForFunction(() => window.testSelection?.selection?.source?.anchor?.readerReference?.location?.kind === 'source')
+    const reference = await page.evaluate(() => window.testSelection.selection.source.anchor)
+    const expectedReference = await page.evaluate(() => window.expectedReference)
+    assert.deepEqual(reference.readerReference.location, expectedReference.location)
+    assert.equal(reference.readerReference.documentId, expectedReference.documentId)
+    assert.equal(reference.readerReference.revision, expectedReference.revision)
+    assert.equal(reference.readerReference.precision, 'exact')
+    assert.equal(reference.startOffset, null)
+    assert.equal(reference.endOffset, null)
+    await page.evaluate(() => referenceClient.request('setView', { view: 'preview' }))
+
     await frame.locator('.reader-shell.host-toolbar').waitFor({ state: 'attached' })
     assert.equal(await frame.locator('.reader-header').isVisible(), false)
     assert.equal(await frame.locator('.reader-footer').isVisible(), false)

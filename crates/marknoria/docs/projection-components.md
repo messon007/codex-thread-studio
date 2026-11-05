@@ -55,11 +55,17 @@ surrogate pair. Rectangles are viewport CSS pixels of the host document. The hos
 can pass these references to the shared Notes component.
 
 The v1 parent protocol adds `projectionWindow({start,count})`,
-`sourceWindow({line})` or `sourceWindow({offset,previous})`, and
+`sourceWindow({line})`, `sourceWindow({offset,previous})`, or
+`sourceWindow({offset,end})` (an explicit range of at most 128 KiB), and
 `sourceSelection({start,end,fromUtf16,toUtf16})`. All retain document/revision
 checks and request cancellation. `sourceSelection` converts a source window's
 LF-normalized UTF-16 positions to exact original UTF-8 bytes in Rust, preserving
-BOM/CRLF/Unicode. Original-container PDF/EPUB use their own public components;
+BOM/CRLF/Unicode. `navigate` also accepts the resulting `source` byte range:
+it opens Source, selects that range, and preserves its original bytes in the
+returned selection. Ranges crossing the normal 200-line boundary use an explicit
+bounded range window. Invalid UTF-8 boundaries and ranges over 128 KiB fail;
+there is no silent clamping or byte-to-DOM-offset substitution.
+Original-container PDF/EPUB use their own public components;
 projection windows explicitly reject their placeholders. Binary formats reject
 original UTF-8 source requests. No route grants an additional file.
 

@@ -37,31 +37,59 @@ shortcut integration still need final acceptance.
 
 ## Downstream acceptance remains open
 
-The isolated Studio consumer lives under ignored `target/studio-reader-adoption`,
-based only on frozen Git objects. Its public API adapter passes two unit tests
-that throw on private child DOM/global access. The application compiles against
-the exact verified package below without source or manifest patches, using its
-own public dependency cache and compatible serde_json/sha2 patch lock. Actual
-Studio runtime, UI adoption and downstream CI acceptance remain open.
+The isolated Studio consumer is committed locally at
+`6cb5ea3` on `sync/marknoria-public-reader`, based only on frozen Git objects.
+The original Studio checkout and remote are untouched. Its product adapter uses
+only the public client and facade: no child DOM, diagnostic globals, injected CSS,
+HTML rewriting or weakened CSP. The old embedding/query patches and orphaned
+reader bundle copies are removed. Ordinary Markdown table layout now uses the
+complete public SDK namespace. Application formatting explicitly excludes the
+unchanged vendor source; the normal Cargo matrix includes the SDK's original
+public contract fixtures.
 
-Fixed package `13b26b569df987b6a42bcd401acb48403fa89e10` has two identical
-779-file exports, archive SHA-256
-`934ca3b1c37263e6cbe88ab16d6dff028f338c394649c274ab9b83da708596f9`,
-verified inventory SHA-256
-`107de6d1a351568e69b3e6b2535ab5ceeb6e58256165bba52d0bcf38b3ecdeda`.
-Its gitless consumer passes 9 facade + 1 Markdown tests, builds independent
-headless/HTTP examples, and passes the packaged two-pane embedding checks,
-323 table/comparison checks and 165 static SDK/component checks. These runs use
-the consumer's own public dependency/build caches and no application binaries,
-private credentials or sibling runtime assets.
+It imports exact fixed package `0861a7b6662581991cf31424962e1c4f26766b6d`:
+780 inventory files, archive SHA-256
+`136434e10b88314af6aad4fe407966a539aeb961b906c8c27f6a3c5aef58973f`,
+tree SHA-256
+`93e36a0dc1b4984123114c2250f3919aafc14672402ddeffaf1ac4b7b115f55a`.
+Two clean offline exports match. Eight archive/inventory/Git checks include
+staging every file with `core.autocrlf=true`; the package's scoped `.gitattributes`
+preserves all source/resource/notice bytes. All 781 staged SDK Git blobs,
+including the manifest, were independently checked against that inventory before
+the local Studio commit. The importer has 13 synthetic tests, including failed
+replacement and rollback; a failed rollback retains the previous source.
 
-The independent browser attempt exposed a missing filesystem sanitizer
-dependency: the HTTP reader's alias concealed the absence of
-`web/vendor/purify.mjs` in a fresh source package. The build now creates that
-entry/license from the same lock and verifies all 35 owned static module import
-graphs, including explicit route aliases and root boundaries. The fixed consumer
-above passed the complete packaged browser harness after this correction.
-These package results do not substitute for actual Studio runtime acceptance.
+Studio's local full suite passes 750 UI tests, type checks, 146 application Rust
+tests (one pre-existing ignored) and 10 original public SDK contract tests.
+Actual gateway/workspace tests pass in Chromium and native Wayland WebKitGTK,
+using synthetic documents/configuration and no inherited private credentials.
+They cover a 1,941,749-byte Markdown document with a 24-column/120-row table,
+complete-table SQL count, paging/column selection without viewport jumps,
+Preview/Source/Edit draft preservation, save/undo/redo, conflict/discard protection,
+three browser diagram engines, read-only/project/symlink/token/origin boundaries
+and owned cache cleanup. Backend Chromium is deliberately unavailable. Runtime
+inputs in package `0861a7b` are byte-identical to the tested `978df425` package;
+the later package adds only byte-preserving Git attributes and its contract check.
+The latest exact package also builds and passes the full UI/type/format checks.
+
+In one warm local run, indexing took 298 / 233 ms with worker peak RSS
+65,624 / 62,504 KiB for Markdown / diagrams. Host opening to first useful text
+took 540 / 367 ms; reader-internal content times were 92 / 192 ms, with measured
+opening heartbeat gaps 21 / 20 ms. Chromium mounted 739 / 15 nodes then; WebKit's
+later source-check points mounted 1345 / 1574. These are different measurement
+points, not matched visual snapshots, cold-start guarantees or whole-application
+memory. First text in a diagram document is not SVG readiness; the test separately
+waits for all three rendered figures. The shared host setting now also prevents
+duplicate status/Save/Reload controls, and forced parent clients release their
+listeners after a lost-frame timeout while rejected dirty-close remains usable.
+
+Earlier independent gitless package `13b26b5` passed 9 facade + 1 Markdown tests,
+its packaged two-pane embedding checks, 323 table/comparison checks and 165 static
+SDK/component checks with only its own public dependencies and builds. This
+exposed and fixed the fresh-package sanitizer import missing from the HTTP alias.
+The build now verifies all 35 owned module import graphs. That independent
+consumer evidence remains distinct from Studio runtime adoption and from final
+all-format acceptance.
 
 Still required before closing #4/#5/#6/#7: finish remaining general feature gaps,
 complete the actual fixed Studio import and remove absorbed patches, execute the

@@ -393,3 +393,33 @@ fn sql_notes_retain_verified_snapshot_provenance_after_reopen() {
     let copy = reopened.notes(NoteRequest::Copy { id }).unwrap();
     assert!(copy["text"].as_str().unwrap().contains("snapshot, not a source cell"));
 }
+
+#[test]
+fn projected_images_expose_metadata_and_png_frames_without_cache_paths() {
+    let root = root();
+    // Generated two-pixel RGBA PNG; no external file or image package is needed.
+    let original: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6, 0, 0, 0, 244, 34, 127, 138, 0, 0, 0, 14, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 66, 255, 1, 15, 249, 3, 253, 133, 17, 153, 118, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+    let reader = Reader::from_bytes("pixels.png", original, options(&root)).unwrap();
+    let descriptor = reader.descriptor();
+    assert_eq!(descriptor.assets, 1);
+    assert!(descriptor.capabilities.assets && !descriptor.capabilities.source);
+    let info = reader.asset_info(&descriptor.revision, 0).unwrap();
+    assert_eq!((info.width, info.height), (2, 1));
+    assert!(info.dimensions_exact);
+    assert_eq!(info.alt, "pixels.png");
+    assert_eq!(info.frames.len(), 1);
+    assert_eq!(info.frames[0].frame, 0);
+    assert!(info.pdf_page.is_none());
+    let value = serde_json::to_value(&info).unwrap();
+    let mut keys: Vec<_> = value.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["alt", "dimensionsExact", "frames", "height", "id", "pdfPage", "plays", "revision", "width"]);
+    assert_eq!(value["frames"][0].as_object().unwrap().len(), 2);
+    assert_eq!(reader.original_range(&descriptor.revision, 0, original.len()).unwrap(), original);
+    assert!(reader.asset(&descriptor.revision, 0, 0).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(reader.asset_info(&descriptor.revision, 1).is_err());
+    assert!(reader.asset_info(&"f".repeat(64), 0).is_err());
+    assert!(reader.asset(&descriptor.revision, 0, 1).is_err());
+    reader.close().unwrap();
+    assert_eq!(fs::read_dir(root.path().join("cache")).unwrap().count(), 0);
+}

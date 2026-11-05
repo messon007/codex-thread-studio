@@ -2,6 +2,8 @@
 //! stay private. Hosts authorize one canonical file before constructing its grant.
 mod operations;
 mod types;
+mod assets;
+pub(crate) use assets::asset_info as projected_asset_info;
 pub use crate::core::edit::{Change, Save as SaveRequest};
 pub use crate::core::jq_query::Page as JsonQueryPage;
 pub use crate::core::notes::{Anchor as NoteAnchor, Request as NoteRequest, QueryProvenance};
@@ -377,6 +379,7 @@ impl Reader {
             source_lines: self.index.source_lines,
             projection_pages: self.index.pages.len(),
             tables: self.index.tables.len(),
+            assets: self.index.assets.len(),
             outline_items: self.index.toc.len(),
             index_ms: self.index.index_ms,
             peak_rss_kib: self.index.peak_rss_kib,
@@ -391,6 +394,7 @@ impl Reader {
                 notes: self.options.notes_directory.is_some(),
                 query_notes: self.options.notes_directory.is_some() && self.options.queries,
                 assets: !self.index.assets.is_empty(),
+                asset_info: true,
                 original_bytes: true,
                 html_policy: "sanitize-at-mount",
                 dataset_scope: "complete-input",

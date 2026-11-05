@@ -1,6 +1,20 @@
 import { uiLabels } from './translation.mjs'
 import { pagerIcon } from './icons.mjs'
 
+// Convert only the bounded source window to CodeMirror's LF/UTF-16 DOM units.
+// Original byte coordinates stay unchanged in the public reference.
+export function sourceRangeOffsets(window, start, end) {
+  if (![start,end,window.start,window.end].every(Number.isSafeInteger) || start < window.start || end < start || end > window.end || window.end - window.start > 128 * 1024) throw Error('Source range does not fit this bounded window')
+  const bytes = new TextEncoder().encode(window.text)
+  if (bytes.length !== window.end - window.start) throw Error('Source window byte length changed')
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+  const from = decoder.decode(bytes.subarray(0,start-window.start)).replaceAll('\r\n','\n').length
+  const to = decoder.decode(bytes.subarray(0,end-window.start)).replaceAll('\r\n','\n').length
+  // A CRLF pair is one DOM newline; its middle has no distinct DOM position.
+  for (const boundary of [start-window.start,end-window.start]) if (boundary > 0 && bytes[boundary-1] === 13 && bytes[boundary] === 10) throw Error('A source boundary splits a CRLF newline')
+  return { from, to }
+}
+
 export function sourceController(index, api, preview, anchor, pausePreview, options = {}) {
   const listeners = new AbortController()
   const labels = uiLabels(options.translate, {signal:listeners.signal})
@@ -61,7 +75,9 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       viewport.scrollTop = Math.max(0, (target ?? page.line) - page.line) * lineHeight()
       viewport.scrollLeft = 0
       await code.reveal(target ?? page.line)
+      if (ticket !== generation || !visible) return false
       panel.dataset.ready = 'true'
+      return true
     } catch (error) {
       if (ticket === generation && error.name !== 'AbortError') { labels.clear(range); range.replaceChildren(document.createTextNode(String(error.message).slice(0,800)+' · '),retry) }
     } finally {
@@ -72,6 +88,15 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     line = Math.max(1, Math.min(index.sourceLines, Math.trunc(Number(line)) || 1))
     if (external) return external.go(line)
     await load(`line=${line}`, line)
+  }
+  async function goRange(start, end) {
+    if (external) throw Error('This source renderer cannot restore byte ranges')
+    if (![start,end].every(Number.isSafeInteger) || start < 0 || end < start || end > index.sourceBytes || end-start > 128*1024) throw Error('Source range out of bounds')
+    setVisible(true)
+    if (!await load(`offset=${start}`)) throw Error('Source navigation was cancelled or failed')
+    if (page.end < end && !await load(`offset=${start}&end=${end}`)) throw Error('Source range navigation was cancelled or failed')
+    const { from, to } = sourceRangeOffsets(page,start,end)
+    await code.select(from,to)
   }
   function setVisible(open) {
     if (open) pausePreview()
@@ -109,7 +134,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   return {
     selectionLine() { return code&&page ? page.line+code.view.state.doc.lineAt(code.view.state.selection.main.from).number-1 : null },
     get code() { return code },
-    get visible() { return visible }, get page() { return page }, currentLine, show, go,
+    get visible() { return visible }, get page() { return page }, currentLine, show, go, goRange,
     hide() { if (visible) setVisible(false) },
     attach(externalView) {
       generation += 1

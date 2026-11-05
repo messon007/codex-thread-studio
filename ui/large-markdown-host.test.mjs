@@ -4,7 +4,7 @@ import { createLargeMarkdownHost } from './large-markdown-host.mjs'
 function fixture() {
   const requests=[],states=[],selections=[]
   let listener,closed=0
-  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
+  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true,sourceRangeNavigation:true},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
   const client={ready:async()=>state,async request(method,params,{signal}={}){
     requests.push({method,params,signal})
     if(method==='setView')state={...state,view:params.view}
@@ -44,4 +44,25 @@ test('typed selections preserve scope and precision while converting frame coord
  assert.equal(selection.rect.left,105);assert.equal(selection.rect.top,210)
  assert.equal(selection.startLine,null)
  await host.dispose();emit('selection',{quote:'late'});assert.equal(selections.length,1)
+})
+test('typed reference navigation retains coordinates and refuses stale, draft, and transient targets',async()=>{
+ const {host,requests}=fixture();await host.ready
+ const reference={revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:3,endByte:13}}
+ await host.navigateReference(reference)
+ assert.deepEqual(requests.at(-1),{method:'navigate',params:{location:reference.location},signal:undefined})
+ const count=requests.length
+ await assert.rejects(host.navigateReference({...reference,revision:'b'.repeat(64)}),/changed/)
+ await assert.rejects(host.navigateReference({...reference,precision:'draft'}),/draft/)
+ await assert.rejects(host.navigateReference({...reference,location:{kind:'queryCell',queryId:'old',row:0,column:0}}),/transient/)
+ assert.equal(requests.length,count)
+ await host.dispose()
+})
+test('late foreign document or revision selections never enter Studio actions',async()=>{
+ const {host,emit,selections}=fixture();await host.ready
+ const selection={documentId:'doc',revision:'a'.repeat(64),quote:'quote',location:{kind:'line',line:2},precision:'approximate'}
+ emit('selection',{...selection,documentId:'another'})
+ emit('selection',{...selection,revision:'b'.repeat(64)})
+ assert.equal(selections.length,0)
+ emit('selection',selection);assert.equal(selections.length,1)
+ await host.dispose()
 })

@@ -31,6 +31,7 @@ export interface FileRangeTarget {
   endLine: number | null
   prefix: string
   suffix: string
+  readerReference?: CommentRecord | undefined
 }
 export interface PdfAnchor extends CommentRecord {
   root: string; filePath: string; documentHash: string; page: number

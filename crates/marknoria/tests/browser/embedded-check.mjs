@@ -1,19 +1,37 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 const directory = await mkdtemp(join(await realpath('target'), 'embedded-browser-'))
-const binary = resolve(process.argv[2] || 'target/debug/examples/embedded-host')
+const binary = resolve(process.argv.slice(2).find(value => !value.startsWith('--')) || 'target/debug/examples/embedded-host')
 const text = '\ufeff# Public 中文😀\r\n\r\nParagraph needle.\r\n\r\n## Data\r\n\r\n| name | value |\r\n| --- | --- |\r\n' + Array.from({ length: 120 }, (_, n) => `| row ${n} | ${n} |\r\n`).join('')
-const sources = [join(directory, 'editable.md'), join(directory, 'readonly.md')]
-for (const path of sources) await writeFile(path, text)
+const sources = [join(directory, 'editable.md'), join(directory, 'readonly.md'), join(directory, 'pixels.png')]
+for (const path of sources.slice(0, 2)) await writeFile(path, text)
+await writeFile(sources[2], Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=', 'base64'))
 const children = [], caches = [], urls = [], errors = []
 let browser
 const parent = createServer(async (request, response) => {
-  if (['/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
+  if (request.url === '/contract.mjs') {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(`import { embeddedImageContract } from '/embedded-image-contract.mjs'; import { embeddedSourceContract } from '/embedded-source-contract.mjs'; export const run = async () => ({image:await embeddedImageContract('/image-view.mjs', ${JSON.stringify(urls[2])}), source:await embeddedSourceContract('/host-client.mjs', ${JSON.stringify(urls[1])})});`)
+    return
+  }
+  if (request.url === '/embedded-image-contract.mjs') {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(await readFile('tests/browser/contracts/embedded-image.mjs'))
+    return
+  }
+  if (request.url === '/embedded-source-contract.mjs') {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(await readFile('tests/browser/contracts/embedded-source.mjs'))
+    return
+  }
+
+  if (['/image-view.mjs','/image-view.css','/image-frames.mjs','/assets.mjs','/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
     response.setHeader('Content-Type', request.url.endsWith('.css')?'text/css':'text/javascript'); response.end(await readFile('web' + request.url)); return
   }
   response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><html><body><h1>Public embedding host</h1><div id="readers"></div></body></html>')
@@ -24,7 +42,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
   for (let i = 0; i < sources.length; i++) {
     const cache = join(directory, `cache-${i}`); await mkdir(cache); caches.push(cache)
-    const child = spawn(binary, [sources[i], ...(i === 0 ? ['--write'] : [`--notes=${join(directory,'notes-1')}`]), `--parent=${parentOrigin}`], { env: { ...process.env, READER_CACHE_DIR: cache }, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(binary, [sources[i], ...(i === 0 ? ['--write'] : i === 1 ? [`--notes=${join(directory,'notes-1')}`] : []), `--parent=${parentOrigin}`], { env: { ...process.env, READER_CACHE_DIR: cache }, stdio: ['pipe', 'pipe', 'pipe'] })
     children.push(child); let stdout = '', stderr = ''
     child.stdout.on('data', b => stdout += b); child.stderr.on('data', b => stderr += b)
     const deadline = Date.now() + 30000
@@ -46,12 +64,99 @@ try {
     return Promise.all(clients.map(client => client.ready()))
   }, urls)
   assert.equal(states[0].view, 'preview'); assert.equal(states[0].capabilities.edit, true); assert.equal(states[1].capabilities.edit, false)
+  assert.equal(states[0].capabilities.sourceRangeNavigation,true)
   assert.notEqual(states[0].documentId, states[1].documentId)
   assert.deepEqual(Object.keys(states[0].position).sort(), ['location', 'resourceId', 'revision', 'version', 'view'])
   assert.equal(typeof states[0].timings.indexMs, 'number')
   assert.equal(typeof states[0].timings.indexPeakRssKiB, 'number')
   await page.waitForFunction(() => eventsForTest.some(e => e.i === 0 && e.type === 'state' && e.payload.timings.firstUsefulContentMs != null))
   const command = (method, params = {}, i = 0) => page.evaluate(async ({ method, params, i }) => clients[i].request(method, params), { method, params, i })
+  assert.equal(states[2].document.assets, 1)
+  const imageInfo = await command('assetInfo', { id: 0 }, 2)
+  assert.equal(imageInfo.revision, states[2].revision)
+  assert.deepEqual([imageInfo.width, imageInfo.height, imageInfo.frames.length], [2, 1, 1])
+  assert.equal(imageInfo.dimensionsExact, true)
+  assert.deepEqual(Object.keys(imageInfo.frames[0]).sort(), ['delayMs', 'frame'])
+  assert.equal(imageInfo.alt, 'pixels.png')
+  const imagePayload = await page.evaluate(async () => {
+    const result = await clients[2].request('assetFrame', { id: 0, frame: 0 })
+    const bytes = new Uint8Array(await result.blob.arrayBuffer())
+    return { revision: result.revision, id: result.id, frame: result.frame,
+      type: result.blob.type, size: result.blob.size, signature: [...bytes.subarray(0, 8)] }
+  })
+  assert.equal(imagePayload.revision, states[2].revision)
+  assert.equal(imagePayload.id, 0); assert.equal(imagePayload.frame, 0)
+  assert.equal(imagePayload.type, 'image/png'); assert.ok(imagePayload.size > 0 && imagePayload.size < 1024)
+  assert.deepEqual(imagePayload.signature, [137, 80, 78, 71, 13, 10, 26, 10])
+  assert.equal(await command('assetFrame', { id: 0, frame: 1 }, 2).then(() => false, () => true), true)
+  assert.equal(await command('assetFrame', { id: 0, frame: 0 }).then(() => false, () => true), true)
+  assert.equal(await command('assetInfo', { id: 0 }).then(() => false, () => true), true)
+  assert.equal(await command('assetInfo', { id: 1 }, 2).then(() => false, () => true), true)
+  assert.equal(await command('assetInfo', { id: -1 }, 2).then(() => false, () => true), true)
+  const imageFrame = page.frames().find(frame => frame.url() === urls[2])
+  await imageFrame.locator('figure[data-asset-state="ready"] img').waitFor()
+  assert.equal(await imageFrame.locator('figure img').evaluate(image => image.naturalWidth), 2)
+  const ordinaryImage = await page.evaluate(async owner => {
+    const { mountImageView, readerImageProvider } = await import('/image-view.mjs')
+    const viewport = document.createElement('div'), root = document.createElement('div'), neighbor = document.createElement('span')
+    viewport.style.cssText = 'height:250px;width:600px;overflow:auto'
+    neighbor.textContent = 'Host content'
+    root.append(neighbor); viewport.append(root); document.body.prepend(viewport)
+    let changes = 0
+    const provider = await readerImageProvider(clients[2], owner, 0)
+    const first = mountImageView(root, { ...provider, viewport, onChange() { changes++ } })
+    await first.ready
+    const second = mountImageView(root, { ...provider, viewport })
+    await second.ready
+    if (first.root.querySelectorAll('.asset-controls').length !== 1) throw Error('Image mount crossed its owning figure')
+    const plus = first.root.querySelectorAll('button')[2]
+    plus.click()
+    const result = { naturalWidth: first.root.querySelector('img').naturalWidth,
+      zoom: first.state().zoom, otherZoom: second.state().zoom, controls: root.querySelectorAll('.asset-controls').length }
+    const beforeDispose = changes
+    first.dispose(); plus.click(); second.dispose()
+    result.noLateCallbacks = changes === beforeDispose
+    result.hostRetained = root.firstChild === neighbor && root.children.length === 1
+    result.bitmapsReleased = !first.root.querySelector('img') && !second.root.querySelector('img')
+    viewport.remove()
+    return result
+  }, states[2])
+  assert.deepEqual(ordinaryImage, { naturalWidth: 2, zoom: 1.25, otherZoom: null, controls: 2, noLateCallbacks: true, hostRetained: true, bitmapsReleased: true })
+  const blockedFrames = [], framePattern = new URL('api/asset', urls[2]).href + '?**'
+  await page.route(framePattern, route => { blockedFrames.push(route) })
+  await page.evaluate(() => {
+    window.frameSignals = [new AbortController(), new AbortController()]
+    window.frameRequests = frameSignals.map(controller => clients[2].request('assetFrame', { id: 0, frame: 0 }, { signal: controller.signal }).then(() => 'success', error => error.name))
+  })
+  const frameDeadline = Date.now() + 5000
+  while (blockedFrames.length < 2 && Date.now() < frameDeadline) await pause(10)
+  assert.equal(blockedFrames.length, 2)
+  const frameStatus = () => page.evaluate(() => clients[2].request('assetFrame', { id: 0, frame: 0 }).then(result => ({ frame: result.frame }), error => ({ error: error.code })))
+  assert.equal((await frameStatus()).error, 'BUSY')
+  assert.deepEqual(await page.evaluate(async () => { frameSignals.forEach(controller => controller.abort()); return Promise.all(frameRequests) }), ['AbortError', 'AbortError'])
+  for (const route of blockedFrames) await route.abort().catch(() => {})
+  await page.unroute(framePattern)
+  let recoveredFrame
+  const recoveryDeadline = Date.now() + 3000
+  while (Date.now() < recoveryDeadline) {
+    recoveredFrame = await frameStatus()
+    if (!recoveredFrame.error) break
+    assert.equal(recoveredFrame.error, 'BUSY')
+    await pause(20)
+  }
+  assert.equal(recoveredFrame?.frame, 0)
+  if (process.argv.includes('--webkit')) {
+    const native = await promisify(execFile)('/usr/bin/python3', ['tests/browser/contract-webkit.py', parentOrigin], { timeout: 190000 })
+    const result = JSON.parse(native.stdout)
+    assert.equal(result.image.publicImageProtocol, true)
+    assert.equal(result.image.blobTransport, true)
+    assert.equal(result.image.assertions, 8)
+    assert.equal(result.source.sourceByteRoundTrip, true)
+    assert.equal(result.source.assertions, 8)
+  }
+
+
+
   assert.equal(states[0].document.sourceBytes,Buffer.byteLength(text))
   assert.equal(states[0].outline.total,2)
   assert.equal((await command('contents',{open:true})).outline.open,true)
@@ -72,6 +177,16 @@ try {
   const sourceSelection=await command('sourceSelection',{start:originalSource.result.start,end:originalSource.result.end,fromUtf16:emoji,toUtf16:emoji+2})
   assert.equal(sourceSelection.quote,'😀')
   assert.equal(sourceSelection.location.startByte,Buffer.from(text).indexOf(Buffer.from('😀')))
+  assert.equal((await command('sourceWindow',{offset:sourceSelection.location.startByte,end:sourceSelection.location.endByte})).result.text,'😀')
+  assert.equal(await page.evaluate(()=>clients[0].request('sourceWindow',{offset:0,end:128*1024+1}).then(()=>false,()=>true)),true)
+  const restoredSource = await command('navigate',{location:sourceSelection.location})
+  assert.equal(restoredSource.view,'source')
+  const restoredSelection = await command('selection')
+  assert.equal(restoredSelection.quote,'😀')
+  assert.deepEqual(restoredSelection.location,sourceSelection.location)
+  assert.equal(restoredSelection.precision,'exact')
+  assert.equal(await page.evaluate(()=>clients[0].request('navigate',{location:{kind:'source',startByte:1,endByte:2}}).then(()=>false,()=>true)),true)
+  await command('setView',{view:'preview'})
   assert.equal(await page.evaluate(()=>clients[0].request('projectionWindow',{start:0,count:6}).then(()=>false,()=>true)),true)
   assert.equal(await page.evaluate(()=>clients[0].request('projectionWindow',{start:0,count:1,revision:'b'.repeat(64)}).then(()=>false,()=>true)),true)
   const ordinaryProjection=await page.evaluate(async owner=>{
@@ -265,8 +380,8 @@ try {
   assert.equal(dirtyClose, 'DIRTY')
   assert.equal((await command('state')).dirty, true)
   assert.equal((await readFile(sources[0], 'utf8')).includes(' unsaved'), false)
-  await page.evaluate(() => Promise.all([clients[0].dispose({ force: true }), clients[1].dispose()]))
-  assert.equal(await page.evaluate(() => eventsForTest.filter(e => e.type === 'disposed').length), 2)
+  await page.evaluate(() => Promise.all([clients[0].dispose({ force: true }), clients[1].dispose(), clients[2].dispose()]))
+  assert.equal(await page.evaluate(() => eventsForTest.filter(e => e.type === 'disposed').length), 3)
   assert.equal(await first.locator('.page').count(), 0)
   assert.equal(await second.locator('.page').count(), 0)
   assert.equal(await page.evaluate(() => clients.reduce((sum, client) => sum + client.active, 0)), 0)

@@ -34,6 +34,17 @@ before dispatch, retain its operation lease through completion, and check the
 cancel result; an unknown ID is not a confirmed cancellation. Registries are
 bounded and document-owned, and do not leave background watchdog threads.
 
+`descriptor.assets` counts projected image assets. `asset_info(revision, id)`
+returns preview dimensions, alt text, indexed frame delays/play count and an
+optional one-based original PDF page; it exposes no cache filenames. Request the
+corresponding bounded PNG bytes with `asset(revision, id, frame)`. Inspecting
+metadata does not render lazy PDF pages. Original-container Web PDF/EPUB views
+may have no projected assets and use their separate original-byte/resource APIs.
+Lazy raster PDF layout estimates are marked `dimensionsExact:false`; ordinary
+decoded image previews report exact projected dimensions.
+Metadata has at most 128 frame entries and 1 KiB of alt text, keeping an encoded
+record within 16 KiB. It does not decode image pixels or advance animation.
+
 `ProjectionPage` additionally carries the original optional `table` identity and
 `rowStart`, alongside original byte/line coordinates. This additive v1 metadata
 lets ordinary DOM hosts coalesce table fragments without reconstructing source

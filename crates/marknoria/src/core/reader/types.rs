@@ -174,10 +174,36 @@ pub struct Capabilities {
     pub notes: bool,
     pub query_notes: bool,
     pub assets: bool,
+    pub asset_info: bool,
     pub original_bytes: bool,
     pub html_policy: &'static str,
     pub dataset_scope: &'static str,
     pub budgets: Budgets,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetFrameInfo {
+    pub frame: usize,
+    pub delay_ms: u32,
+}
+
+/// Projected image metadata without internal cache filenames. Dimensions are
+/// those of the bounded preview, not a promise of original image resolution.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetInfo {
+    pub revision: String,
+    pub id: usize,
+    pub alt: String,
+    pub width: u32,
+    pub height: u32,
+    /// Lazy raster PDF rasters retain an estimated layout size until rendered.
+    pub dimensions_exact: bool,
+    pub frames: Vec<AssetFrameInfo>,
+    pub plays: u32,
+    /// Original PDF page numbers are one-based in the public API.
+    pub pdf_page: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -197,6 +223,7 @@ pub struct Descriptor {
     pub source_lines: usize,
     pub projection_pages: usize,
     pub tables: usize,
+    pub assets: usize,
     pub outline_items: usize,
     pub capabilities: Capabilities,
     pub index_ms: f64,

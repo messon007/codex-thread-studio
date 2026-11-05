@@ -30,6 +30,7 @@ try {
     'api/source',
     'api/edit',
     'api/original',
+    'api/asset-info?id=0',
     'api/epub',
     'api/table-query',
     'api/jq-query',

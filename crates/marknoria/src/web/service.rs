@@ -282,7 +282,8 @@ pub(super) async fn operation(
 pub(super) async fn capabilities(State(app): State<App>) -> Json<Value> {
     Json(json!({"apiVersion":crate::core::reader::API_VERSION,
         "bridgeVersion":crate::core::reader::BRIDGE_VERSION,
-        "embedded":app.embedded,"edit":app.editable,"queries":app.queries,"charts":app.queries,
+        "embedded":app.embedded,"edit":app.editable,"queries":app.queries,"charts":app.queries,"assetInfo":true,"assetFrame":true,
+        "assetProfile":{"metadataBytes":16384,"frameBytes":20*1024*1024,"concurrentFrames":2,"frameEncoding":"image/png"},
         "chartProfile":{"datasetScope":"complete-input","valuePrecision":"float64","exactValueText":true,"maxPoints":crate::core::table_query::MAX_CHART_POINTS,"maxBytes":crate::core::MAX_HTML},
         "notes":app.notes_directory.is_some(),"queryNotes":app.notes_directory.is_some() && app.queries,"parentOrigins":app.parent_origins.as_ref(),
         "diagrams":if app.browser_diagrams {"browser"} else {"backend"},

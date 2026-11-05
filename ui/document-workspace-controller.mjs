@@ -19,7 +19,6 @@ import {
   outlineItemForLocation,
 } from './document-outline.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
-import { pdfCommentSource } from './pdf-comment-provider.mjs'
 import { documentCommentSource } from './comment-source-providers.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
@@ -87,6 +86,7 @@ export function createDocumentWorkspaceController({
   let epubReaderGeneration = 0
   let epubReadingStateTimer = null
   let richArtifactReader = null
+  let pdfReaderRequest = null
   let pdfReaderModule = null
   let tableReaderModule = null
   let markdownTableLayoutModule = null
@@ -218,7 +218,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeLargeMarkdown()
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
-  state.artifact = { root, path, kind, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
+  state.artifact = { root, path, kind, readerReference: file.readerReference, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
   const endpoint = kind === 'image'
     ? '/studio/review-image'
     : kind === 'epub' ? '/studio/review-epub'
@@ -290,7 +290,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
         releaseLargeMarkdown(result)
         return
       }
-      state.artifact = { ...result, kind: result.largeMarkdown ? 'large-markdown' : kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      state.artifact = { ...result, readerReference: file.readerReference, kind: result.largeMarkdown ? 'large-markdown' : kind === 'table' ? 'table' : 'text', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
       if (result.largeMarkdown) largeMarkdownFile = state.artifact
       state.artifactView = kind === 'table'
         ? 'table'
@@ -809,6 +809,11 @@ function renderArtifact() {
       content.replaceChildren(largeMarkdownFrame)
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
+        if (snapshot.ready && file.readerReference && largeMarkdownHost) {
+          const reference = file.readerReference
+          delete file.readerReference
+          largeMarkdownHost.navigateReference(reference).catch(showError)
+        }
         file.readerReady = snapshot.ready
         file.readerReadingReady = snapshot.readingReady
         file.readerHasOutline = snapshot.hasOutline
@@ -825,7 +830,8 @@ function renderArtifact() {
         if (state.artifact !== file) return
         setSelection({ quote: selection.quote, itemId: null, turnId: null,
           source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
-            baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine }) }, selection.rect)
+            baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
+            readerReference: selection }) }, selection.rect)
       })
     }
     syncLargeMarkdownTheme()
@@ -867,7 +873,7 @@ function renderArtifact() {
     setArtifactOutline(file, file.outlineItems || [])
     content.className = 'artifact-content artifact-pdf-preview'
     content.innerHTML = '<div class="artifact-pdf-host" data-no-i18n></div>'
-    mountPdfReader(file, content.firstElementChild).catch(showError)
+    mountPdfReader(file, content.firstElementChild).catch(error => { if (error?.name !== 'AbortError' && state.artifact === file) showError(error) })
     renderArtifactSearchStatus()
     return
   }
@@ -989,6 +995,8 @@ function disposeEpubReader() {
 }
 
 function disposeRichArtifactReader() {
+  pdfReaderRequest?.abort()
+  pdfReaderRequest = null
   artifactOutlineLocationCleanup?.()
   artifactOutlineLocationCleanup = null
   richArtifactReader?.destroy?.()
@@ -996,22 +1004,26 @@ function disposeRichArtifactReader() {
 }
 
 async function mountPdfReader(file, parent) {
+  pdfReaderRequest?.abort()
+  const request = pdfReaderRequest = new AbortController()
   pdfReaderModule ||= import('./pdf-reader.mjs')
   const { createPdfReader } = await pdfReaderModule
   if (state.artifact !== file || !parent.isConnected) return
   const reader = await createPdfReader({
-    container: parent, bytes: file.bytes, initialPage: file.page || 1, search: state.artifactSearch,
+    container: parent, bytes: file.bytes, signal: request.signal, initialPage: file.page || 1, search: state.artifactSearch,
     translate: t,
     onPageChange: (page) => {
+      if (state.artifact !== file) return
       file.page = page
       const active = outlineItemForLocation(file.outlineItems, { page })
       if (active) setArtifactOutlineActive(active.id)
     },
     onSelection: (selection) => {
-      if (state.artifact !== file || !selection.quote) return
+      if (state.artifact !== file || !selection?.quote) return
+      const bounds = selection.viewportRect
       setSelection(
-        { quote: selection.quote, itemId: null, turnId: null, source: pdfCommentSource({ root: file.root, filePath: file.path, documentHash: file.hash, page: selection.page, rects: selection.rects }) },
-        selection.rect,
+        { quote: selection.quote, itemId: null, turnId: null, source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path, baseHash: selection.revision, readerReference: selection }) },
+        bounds ? { left: bounds.x, top: bounds.y, right: bounds.x + bounds.width, bottom: bounds.y + bounds.height, width: bounds.width, height: bounds.height } : null,
       )
     },
   })
@@ -1020,6 +1032,11 @@ async function mountPdfReader(file, parent) {
     return
   }
   richArtifactReader = reader
+  if (file.readerReference) {
+    const reference = file.readerReference
+    delete file.readerReference
+    await reader.navigateReference(reference).catch(showError)
+  }
   const outline = reader.outline()
   setArtifactOutline(file, outline, { navigate: (item) => reader.goToPage(item.target?.page) })
   const active = outlineItemForLocation(outline, { page: file.page || 1 })
@@ -1497,7 +1514,7 @@ function formatFileSize(value) {
     const file = state.artifact
     if (file.kind === 'large-markdown') {
       file.readerLine = Number(line)
-      largeMarkdownFrame?.contentWindow?.postMessage({ type: 'marknoria:navigate', line: Number(line) }, location.origin)
+      largeMarkdownHost?.navigateLine(Number(line)).catch(showError)
       return
     }
     if (file.kind === 'text' && state.artifactView === 'preview' && (isMarkdownFile(file.path) || isHtmlFile(file.path))) {

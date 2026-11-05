@@ -174,12 +174,33 @@ export function normalizeAnnotationTarget(value: unknown = {}): FileRangeTarget 
       endLine: validLines ? endLine : null,
       prefix: validRange ? String(target.prefix || '').slice(0, 256) : '',
       suffix: validRange ? String(target.suffix || '').slice(0, 256) : '',
+      ...(target.readerReference ? { readerReference: normalizeReaderReference(target.readerReference) } : {}),
     }
   }
   return {
     kind: 'chatRange',
     itemId: draft.itemId ? String(draft.itemId).slice(0, 256) : null,
     turnId: draft.turnId ? String(draft.turnId).slice(0, 256) : null,
+  }
+}
+
+// Public reader coordinates retain their declared units. They must never be
+// copied into legacy DOM UTF-16 offsets or silently relocated by quote search.
+export function normalizeReaderReference(value: unknown): RecordValue {
+  const input = record(value)
+  const location = record(input.location)
+  const encoded = JSON.stringify(location)
+  if (encoded.length > 32768 || new TextEncoder().encode(encoded).length > 32768
+    || !['source', 'line', 'projection', 'cell', 'queryCell', 'pdf', 'epub', 'epubChapter'].includes(String(location.kind))
+    || !['exact', 'approximate', 'draft'].includes(String(input.precision))
+    || typeof input.documentId !== 'string' || !input.documentId || input.documentId.length > 256
+    || typeof input.revision !== 'string' || !/^[a-f0-9]{64}$/iu.test(input.revision)) {
+    throw new TypeError('Invalid public reader reference')
+  }
+  return {
+    documentId: input.documentId, revision: input.revision,
+    precision: input.precision, location: JSON.parse(encoded) as RecordValue,
+    quoteTruncated: Boolean(input.quoteTruncated),
   }
 }
 

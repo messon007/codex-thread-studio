@@ -419,9 +419,11 @@ async fn find(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SourceQuery {
     line: Option<usize>,
     offset: Option<usize>,
+    end: Option<usize>,
     #[serde(default)]
     previous: bool,
 }
@@ -433,7 +435,12 @@ async fn source_window(State(app): State<App>, Query(query): Query<SourceQuery>,
         let _permit = permit;
         let index = index(&document)?;
         if !index.format.is_text(){return Err((StatusCode::BAD_REQUEST,"Source view applies to text documents; use the extracted page text instead".into()));}
-        let result = read_source(&document.directory, &index, query.line, query.offset, query.previous).map_err(|error| {
+        let window = if let Some(end) = query.end {
+            let start = query.offset.filter(|start| query.line.is_none() && !query.previous && *start <= end && end - *start <= crate::core::source::SOURCE_BYTES)
+                .ok_or_else(|| (StatusCode::BAD_REQUEST,"Invalid bounded source range".into()))?;
+            crate::core::source::read_range(&document.directory, &index, start, end)
+        } else { read_source(&document.directory, &index, query.line, query.offset, query.previous) };
+        let result = window.map_err(|error| {
             if error.kind() == std::io::ErrorKind::InvalidInput { (StatusCode::BAD_REQUEST, error.to_string()) }
             else { failure(error) }
         })?;
@@ -461,6 +468,9 @@ fn assets() -> Router {
         .route("/query-operation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/query-operation.mjs")) }))
         .route("/table-query.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/table-query.mjs")) }))
         .route("/assets.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/assets.mjs")) }))
+        .route("/image-view.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-view.mjs")) }))
+        .route("/image-view.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/image-view.css")) }))
+        .route("/image-frames.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-frames.mjs")) }))
         .route("/presentation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/presentation.mjs")) }))
         .route("/reader-ui.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-ui.mjs")) }))
         .route("/translation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/translation.mjs")) }))
@@ -770,6 +780,7 @@ fn reader_routes() -> Router<App> {
         .route("/api/table-query/schema", get(table_query_runtime::schema))
         .route("/api/table-query/close", post(table_query_runtime::close))
         .route("/api/asset", get(document_runtime::asset))
+        .route("/api/asset-info", get(document_runtime::asset_info))
         .route("/api/notes", post(document_runtime::notes))
         .route("/api/jq-query", post(document_runtime::jq))
         .route("/api/search", get(find))

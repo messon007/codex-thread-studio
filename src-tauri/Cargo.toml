@@ -19,6 +19,7 @@ sha2 = "=0.11.1"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
+tower = { version = "0.5.2", features = ["util"] }
 marknoria = { path = "../crates/marknoria" }
 notify = "8.2.0"
 axum = { version = "0.8.4", features = ["ws"] }
@@ -53,4 +54,3 @@ wry = "0.51.2"
 
 [dev-dependencies]
 tempfile = "=3.27.0"
-tower = { version = "0.5.2", features = ["util"] }

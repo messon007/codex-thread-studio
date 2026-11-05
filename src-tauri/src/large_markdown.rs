@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tower::ServiceExt;
 
 pub const THRESHOLD: u64 = 1024 * 1024;
 const MAX_READERS: usize = 4;
@@ -215,97 +216,44 @@ pub async fn close(
     json_response(StatusCode::OK, &json!({"closed":true}))
 }
 
+fn valid_path(path: &str) -> bool {
+    path.len() <= 4096
+        && !path.contains(['\\', '\0'])
+        && !path.split('/').any(|part| part == "." || part == "..")
+}
+
 fn allowed_path(path: &str) -> bool {
-    if path.len() > 4096
-        || path.contains(['\\', '\0'])
-        || path.split('/').any(|part| part == "." || part == "..")
-    {
-        return false;
-    }
-    matches!(
-        path,
-        "" | "styles.css"
-            | "checkbox.css"
-            | "reader.mjs"
-            | "source.mjs"
-            | "position.mjs"
-            | "editor.mjs"
-            | "theme.js"
-            | "syntax-light.css"
-            | "syntax-dark.css"
-            | "tables.mjs"
-            | "table-query.mjs"
-            | "table-query.css"
-            | "table-view.mjs"
-            | "table-view.css"
-            | "table-layout.mjs"
-            | "table-controls.mjs"
-            | "table-cells.mjs"
-            | "table-cells.css"
-            | "table-plot.mjs"
-            | "table-plot.css"
-            | "jq-query.mjs"
-            | "jq-query.css"
-            | "notes.mjs"
-            | "notes.css"
-            | "assets.mjs"
-            | "icons.mjs"
-            | "files.mjs"
-            | "diagrams.mjs"
-            | "engine.mjs"
-            | "public-reader.mjs"
-            | "reader-bridge.mjs"
-            | "host-client.mjs"
-            | "query-operation.mjs"
-            | "component-styles.mjs"
-            | "clipboard.mjs"
-            | "translation.mjs"
-            | "presentation.mjs"
-            | "reader-ui.mjs"
-            | "document-prose.css"
-            | "projection-html.mjs"
-            | "projection-view.mjs"
-            | "projection-view.css"
-            | "pdf-reader.mjs"
-            | "pdf-reader.css"
-            | "epub-reader.mjs"
-            | "epub-reader.css"
-            | "vendor/purify.mjs"
-            | "vendor/virtual-core.mjs"
-            | "vendor/editor.mjs"
-            | "vendor/epub.mjs"
-            | "vendor/mermaid.min.js"
-            | "vendor/plantuml.js"
-            | "vendor/plantuml-viz-global.js"
-            | "vendor/d2.js"
-            | "api/document"
-            | "api/capabilities"
-            | "api/operations"
-            | "api/selection/source"
-            | "api/window"
-            | "api/projection"
-            | "api/table"
-            | "api/source"
-            | "api/edit"
-            | "api/search"
-            | "api/diagram-source"
-            | "api/renderer"
-            | "api/table-query"
-            | "api/table-query/schema"
-            | "api/table-query/close"
-            | "api/table-chart"
-            | "api/jq-query"
-            | "api/notes"
-            | "api/asset"
-            | "api/original"
-            | "api/epub"
-    ) || path.starts_with("vendor/pdf/")
-        || path.strip_prefix("epub-resource/").is_some_and(|suffix| {
+    valid_path(path)
+        && (matches!(
+            path,
+            "" | "api/document"
+                | "api/capabilities"
+                | "api/operations"
+                | "api/selection/source"
+                | "api/window"
+                | "api/projection"
+                | "api/table"
+                | "api/source"
+                | "api/edit"
+                | "api/search"
+                | "api/diagram-source"
+                | "api/renderer"
+                | "api/table-query"
+                | "api/table-query/schema"
+                | "api/table-query/close"
+                | "api/table-chart"
+                | "api/jq-query"
+                | "api/notes"
+                | "api/asset"
+                | "api/asset-info"
+                | "api/original"
+                | "api/epub"
+        ) || path.strip_prefix("epub-resource/").is_some_and(|suffix| {
             let mut parts = suffix.splitn(3, '/');
             uuid::Uuid::parse_str(parts.next().unwrap_or("")).is_ok()
                 && uuid::Uuid::parse_str(parts.next().unwrap_or("")).is_ok()
                 && parts.next().is_some_and(|name| !name.is_empty())
-        })
+        }))
 }
 
 fn edit_scope(source: &std::path::Path, root: &std::path::Path) -> bool {
@@ -337,6 +285,36 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
         .is_err()
     {
         return json_error(StatusCode::FORBIDDEN, "Reader origin rejected");
+    }
+    if !valid_path(&path) || path == "render.html" {
+        return json_error(StatusCode::NOT_FOUND, "Unknown reader route");
+    }
+    if !path.is_empty() && !path.starts_with("api/") && !path.starts_with("epub-resource/") {
+        if request.method() != Method::GET {
+            return json_error(StatusCode::METHOD_NOT_ALLOWED, "Reader method rejected");
+        }
+        {
+            let mut entries = state.markdown_readers.entries.lock().unwrap();
+            let Some(reader) = entries.get_mut(&id) else {
+                return json_error(StatusCode::GONE, "Document closed or expired; reopen it");
+            };
+            reader.touched = Instant::now();
+        }
+        let prefix = format!("/markdown-reader/{id}/");
+        let Some(raw) = request.uri().path().strip_prefix(&prefix) else {
+            return json_error(StatusCode::BAD_REQUEST, "Invalid reader route prefix");
+        };
+        // The upstream stateless router alone defines its resource inventory.
+        // It has no document, path, query or write endpoints. No host headers,
+        // token or request body enter this asset request.
+        let asset = Request::builder()
+            .uri(format!("/{raw}"))
+            .body(Body::empty())
+            .unwrap();
+        return marknoria::web::reader_assets()
+            .oneshot(asset)
+            .await
+            .unwrap();
     }
     if !allowed_path(&path) {
         return json_error(StatusCode::NOT_FOUND, "Unknown reader route");
@@ -468,15 +446,11 @@ mod tests {
     fn embedded_routes_never_expose_browser_or_renderer_privileges() {
         for path in [
             "",
-            "reader.mjs",
             "api/source",
             "api/edit",
-            "editor.mjs",
-            "vendor/editor.mjs",
             "api/table",
             "api/diagram-source",
-            "engine.mjs",
-            "vendor/mermaid.min.js",
+            "api/asset-info",
         ] {
             assert!(allowed_path(path));
         }
@@ -490,6 +464,38 @@ mod tests {
         ] {
             assert!(!allowed_path(path));
         }
+    }
+
+    #[tokio::test]
+    async fn shared_static_router_owns_modules_without_document_authority() {
+        for path in [
+            "/image-frames.mjs",
+            "/image-view.mjs",
+            "/image-view.css",
+            "/reader.mjs",
+            "/host-client.mjs",
+        ] {
+            let response = marknoria::web::reader_assets()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+        for path in [
+            "/api/source",
+            "/api/asset-info",
+            "/api/open",
+            "/api/files",
+            "/not-a-reader-module.mjs",
+        ] {
+            let response = marknoria::web::reader_assets()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        assert!(!valid_path("../reader.mjs"));
+        assert!(!valid_path("vendor/../reader.mjs"));
     }
 
     #[test]

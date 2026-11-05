@@ -19,7 +19,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (next !== signature) { signature = next; onState(visible) }
   }
   const capture = selection => {
-    if (disposed || !selection?.quote) return
+    if (disposed || !selection?.quote || selection.documentId !== snapshot.documentId || selection.revision !== snapshot.revision) return
     const local = selection.viewportRect, outer = frame.getBoundingClientRect()
     const line = selection.location?.kind === 'line' ? selection.location.line : null
     onSelection({ ...selection, startLine: line, endLine: line,
@@ -60,6 +60,14 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async setOutline(open){publish(await command('contents',{open}))},
     async settings(settings){publish(await command('settings',settings))},
     navigateLine(line){return command('navigate',{location:{kind:'line',line}})},
+    async navigateReference(reference){
+      await ready
+      if(reference.revision!==snapshot.revision)throw Error('The document has changed since this reference was captured')
+      if(reference.location?.kind==='source'&&!snapshot.capabilities?.sourceRangeNavigation)throw Error('This reader package does not support exact source-range navigation')
+      if(reference.precision==='draft')throw Error('An unsaved draft reference cannot be restored after reopening')
+      if(reference.location?.kind==='queryCell')throw Error('This SQL result reference is transient; run the original query again')
+      return command('navigate',{location:reference.location})
+    },
     async search(query){
       request?.abort();const own=++generation
       if(!query.trim()||disposed)return []

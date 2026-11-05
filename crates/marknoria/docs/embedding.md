@@ -96,13 +96,15 @@ mounting its first view.
 | `hello`, `state` | State, identities, revisions, capabilities, view, dirty/busy and approximate reading position |
 | `setView` | `view: preview/source/edit`, checked against granted format capabilities |
 | `contents` | `open:boolean`; uses the same saved-outline refresh and busy handling as the reader's Contents control |
-| `navigate` | `location: line/cell/pdf/epub/epubChapter`; unsupported precise locations return an error intact |
+| `navigate` | `location: source/line/cell/pdf/epub/epubChapter`; exact source byte ranges open Source and select the LF-normalized DOM range; unsupported locations return an error intact |
 | `save` | Saves the current editor page; separate edit and preview revisions remain explicit |
+| `assetInfo` | `id` from `state.document.assets`; returns bounded preview dimensions/frame timing without cache filenames |
+| `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
 | `outline` | `offset` (default 0), at most 256 items, total and revision |
 | `search` | `query`, 1–256 UTF-8 bytes; bounded source lines or complete-document PDF/EPUB search |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
 | `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |
-| `sourceWindow`, `sourceSelection` | Bounded original source by `line` or `offset,previous`; exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
+| `sourceWindow`, `sourceSelection` | Bounded original source by `line`, `offset,previous`, or explicit `offset,end` (at most 128 KiB); exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
 | `tableChart` | Complete source/result projection; `source:{kind:table,table}` or `{kind:query,queryId}`, `x` (nullable), `y`; see [table-components.md](table-components.md) |
 | `sql`, `jq` | Complete-input query, returns a bounded result page and result ID |
 | `notes` | Nested `request` using the public Notes operations; explicit storage grant required |
@@ -113,6 +115,11 @@ mounting its first view.
 | `dispose` | Refuses dirty content with `DIRTY`; `force:true` explicitly discards it, then stops owned DOM listeners, observers, timers, requests and mounted content |
 
 Stateful commands include `documentId` and immutable projection `revision`.
+`capabilities.sourceRangeNavigation` declares exact source-range restoration.
+Hosts retain the reference's revision when reopening a file and explicitly
+refuse or request a stale-location choice if that revision has changed; a new
+session ID does not make old byte offsets valid for new contents. Transient
+SQL result IDs and unsaved draft references are not durable reading positions.
 State also reports document byte/line/page/table counts and
 `outline:{open,available,total}`. An original-container outline's total is null
 until its renderer resolves it. Source search results include a navigation

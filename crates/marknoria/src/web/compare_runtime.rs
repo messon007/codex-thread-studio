@@ -397,11 +397,11 @@ pub(super) async fn serve_reader(mut app: App, path: String, mut request: Reques
         | "presentation.mjs" | "reader-ui.mjs" | "translation.mjs" | "notes.css" | "table-query.css" | "table-view.css" | "table-view.mjs" | "component-styles.mjs" | "table-plot.mjs" | "table-plot.css" | "clipboard.mjs" | "table-cells.css" | "table-cells.mjs" | "tables.mjs" | "table-controls.mjs" | "table-layout.mjs" | "table-query.mjs" | "assets.mjs" | "notes.mjs" | "jq-query.mjs" | "jq-query.css" | "icons.mjs" | "files.mjs" | "diagrams.mjs" | "vendor/virtual-core.mjs"
         | "public-reader.mjs" | "reader-bridge.mjs" | "host-client.mjs" | "query-operation.mjs"
         | "projection-html.mjs" | "projection-view.mjs" | "projection-view.css" | "api/projection"
-        | "document-prose.css"
+        | "document-prose.css" | "image-frames.mjs" | "image-view.mjs" | "image-view.css"
         | "api/capabilities" | "api/operations" | "api/selection/source" | "api/original" | "pdf-reader.mjs" | "pdf-reader.css"
         | "api/epub" | "epub-reader.mjs" | "epub-reader.css" | "vendor/epub.mjs"
         | "vendor/purify.mjs" | "api/document" | "api/window" | "api/table" | "api/source"
-        | "api/search" | "api/diagram" | "api/asset" | "api/notes" | "api/jq-query" | "api/renderer" | "api/table-chart" | "api/table-query" | "api/table-query/schema" | "api/table-query/close") && !path.starts_with("epub-resource/") && !path.strip_prefix("vendor/pdf/").is_some_and(|name| super::pdf_runtime::pdf_asset(name).is_some()) {
+        | "api/search" | "api/diagram" | "api/asset" | "api/asset-info" | "api/notes" | "api/jq-query" | "api/renderer" | "api/table-chart" | "api/table-query" | "api/table-query/schema" | "api/table-query/close") && !path.starts_with("epub-resource/") && !path.strip_prefix("vendor/pdf/").is_some_and(|name| super::pdf_runtime::pdf_asset(name).is_some()) {
         return StatusCode::NOT_FOUND.into_response();
     }
     if path.starts_with("api/") && request.headers().get("x-reader-token")

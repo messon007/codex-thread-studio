@@ -15,6 +15,7 @@ let app = axum::Router::new()
 const { mountProjectionView } = await import('/reader-assets/projection-view.mjs')
 const { mountNotes } = await import('/reader-assets/notes.mjs')
 const { mountPdfReader } = await import('/reader-assets/pdf-reader.mjs')
+const { mountImageView } = await import('/reader-assets/image-view.mjs')
 ```
 
 Module-relative imports, component stylesheet leases and PDF worker/font/CMap

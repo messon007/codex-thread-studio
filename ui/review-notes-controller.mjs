@@ -842,6 +842,10 @@ async function reopenAnnotationSource(id) {
 }
 
 async function reopenDocumentComment(target, excerpt) {
+  if (target.readerReference) {
+    await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath, readerReference: target.readerReference })
+    return
+  }
   await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
   setArtifactView('source')
   const source = $('#artifact-content .artifact-source')

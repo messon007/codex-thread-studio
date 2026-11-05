@@ -28,9 +28,9 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
 
 ## Executed locally on Ubuntu 26.04.1
 
-- Complete Studio UI suite: 759 passed; TypeScript type checks passed.
-- Complete Rust workspace: 147 application tests passed, one pre-existing ignored
-  test, and 11 exact shared SDK contract tests passed.
+- Complete Studio UI suite: 769 passed; TypeScript type checks passed.
+- Complete Rust workspace: 149 application tests passed, one pre-existing ignored
+  test, and 12 exact shared SDK contract tests passed.
 - Strict import synthetic regression: 13 tests passed, including replacement and
   rollback failures; installed 791-file inventory matched the external pin. A
   failed rollback retains the original source in the reported staging directory.
@@ -53,16 +53,16 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
   measurement points, not matched snapshots, cold-start guarantees or total
   application memory. The diagram document's first text is not SVG readiness;
   the test separately waited for all three rendered figures.
-- The current source revision was exported twice offline: identical archive
+- The earlier source revision was exported twice offline: identical archive
   SHA-256 `136434e10b88314af6aad4fe407966a539aeb961b906c8c27f6a3c5aef58973f`.
   Export/inventory/tamper rejection contract: 8 checks passed, including byte-preserving Git staging with
   `core.autocrlf=true`. The package scopes `* -text` to its own `.gitattributes`.
 
 ## Public interface and latest local package
 
-The current pin is MarkNoria `c71f5015294757e9177eb9c5a9ea72c8a1fd3006`.
+The current pin is MarkNoria `a9cf902ded351b518222aaf74c1885864f703d78`.
 Two clean offline exports contain the same 791-file inventory and archive SHA-256
-`0781fb4ca3ab53d90597ba831a9cabde651b44d9bb894c8d112f29f858a2c540`.
+`8cc605ddcd795e6be8aa0f9fceb0d38d2719a69fca9f1b8dc4a94910009e6cac`.
 The eight export contracts include staged Git byte preservation. Studio imports
 that exact archive without modifying any SDK source or generated resource.
 
@@ -88,11 +88,45 @@ rotated-page navigation, bounded canvases, typed text regions, stale-reference
 rejection, abort and disposal. No gateway or AI credential enters that component.
 This ordinary-host test is distinct from full application visual acceptance.
 
+## Shared CSV / TSV / XLSX workspace stage
+
+Ordinary CSV, TSV and XLSX opens now use the public document service and parent
+client, including shared paging, resizing, SQL, complete-input charts and typed
+cell selections. A declared binary source capability prevents offering Source or
+Edit for workbooks. Restored Source views can return to Preview after readiness;
+text tables support the same edit/save/undo flow. Ctrl/Command+O delegates to the
+host. Denied access does not fall back to an alternate loader. The only retained
+fallback is explicit HTTP 501 for unsupported WSL transport.
+
+`scripts/smoke-shared-tables.mjs` generates its own fixtures and compares workbook
+scalars against Studio's locked ExcelJS oracle. The real gateway/workspace passes
+in Chromium 149; the same gateway-served reader frames pass in native Wayland
+WebKitGTK 2.52.6. Each format has 123 records, leading zeros, quoted delimiters,
+multiline values and literal HTML. Workbooks also cover two sheets, dates, boolean
+values and cached/uncached formulas. Complete-input SQL and charts reach the final
+record; cell references retain original row/column identity. Text edit/save/undo
+round trips restore original bytes, and session close removes owned caches.
+Authentication, foreign origin and outside-project access are checked separately.
+
+One warm local debug run measured CSV / TSV / XLSX indexing at 2.0 / 2.5 / 17.2 ms
+and index-worker peak RSS at 55,216 / 55,520 / 60,872 KiB. Workspace opening to
+first actual table rows took 564 / 305 / 325 ms; reader first useful content took
+42 / 31 / 189 ms. Opening heartbeat gaps were 29 / 20 / 24 ms, measured before
+queries/editing. These small synthetic runs are not release/cold-start or large
+input guarantees. Direct Wayland frame coverage is not a full Studio shell test.
+
+The registry owns one reusable maintenance task rather than spawning a timer for
+each rapid reopen. Disposal during an outstanding settings/mode request cannot
+start a late heartbeat. Lifecycle regression tests cover both conditions.
+The public archive's normalized tree SHA-256 is
+`210f8f4595ace9c9abec8c715bf5e99e2f32217af7f24f16df6870f486bb3452`.
+
 ## Remaining acceptance
 
 This is not a completed #48 adoption or #7 feature-union acceptance. Small
-Markdown still uses the existing ordinary document renderer; EPUB/table/image
-entry points have not all migrated. The shared PDF adapter still needs full
+Markdown still uses the existing ordinary document renderer; EPUB/image entry
+points have not migrated. WSL tables retain an explicit unsupported-transport
+fallback and still need shared byte transport. The shared PDF adapter still needs full
 application visual/accessibility acceptance. Remaining work includes authorized Markdown
 image/link resources, full typed selection/Notes/AI adapter integration, remaining
 locale/default-state behavior, common corpus/visual/accessibility/performance

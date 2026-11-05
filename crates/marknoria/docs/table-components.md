@@ -260,3 +260,26 @@ The extended ordinary contracts pass **19 layout**, **20 cells**, **20 plot**,
 WebKit 2.52.6, including maximum columns and exhausted subscription capacity.
 `npm run check:table-layout` runs the standalone layout contract; all component
 checks accept `--webkit` under a native Wayland session.
+
+## Delimited input and workbook scalar compatibility
+
+CSV/TSV detects comma, tab or semicolon using the same consistency, matching-row,
+width and extension-fallback preference as Studio. Detection uses the mature CSV
+parser over at most 256 KiB and 64 nonempty records per candidate. Incomplete
+sample records are excluded; ties retain the extension's default delimiter.
+The complete accepted input is then indexed and queried with that same selected
+delimiter. Sampling does not truncate the dataset. BOM/CRLF, quoted multiline
+records, source bytes and physical source lines remain intact. The additive
+`csvDelimiter` cache field defaults to the format delimiter for old caches; it
+is not a new file authority or a change to original source bytes.
+
+Workbook serial/ISO dates use UTC ISO text with milliseconds, matching Studio's
+Date conversion. Cached formula results remain the displayed/query values;
+uncached formulas remain literal text, including shared formulas resolved by the
+pinned Calamine parser. No formula is executed and hyperlink expressions do not
+become active links. Date parsing/formatting uses the already locked Chrono
+version with allocation support, without clock or system-timezone features.
+Workbook headers/records are each bounded at 128 KiB; aggregate streamed table
+JSON across every sheet is bounded at 128 MiB. Rejected records are checked
+before writing, with a shared budget across sheets. This is separate from the
+original ZIP/expanded-member, cell-count, projection and SQL-result budgets.

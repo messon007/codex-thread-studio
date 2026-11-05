@@ -40,6 +40,33 @@ def loaded(view, event):
         const client = createReaderClient({ src: location.href, contentWindow: window });
         await client.ready();
         await client.request('settings', { toolbar: 'host' });
+        if (__TABLE_CHECK__) {
+          const owner = await client.request('state');
+          const info = await client.request('tableInfo', { table: 0 });
+          if (info.rows !== 123) throw Error('Table record count changed');
+          const total = await client.request('sql', { table: 0, sql: 'SELECT COUNT(*),SUM(CAST(c2 AS INTEGER)),MIN(c3) FROM t' });
+          if (JSON.stringify(total.rows[0]) !== JSON.stringify(['123','7503','001'])) throw Error('Whole-input SQL changed values');
+          await client.request('sqlClose', { id: total.id });
+          const chart = await client.request('tableChart', { source: { kind: 'table', table: 0 }, x: 0, y: 1 });
+          if (chart.points.length !== 123 || chart.points[122].value !== 122) throw Error('Chart used a partial dataset');
+          await client.request('navigate', { location: { kind: 'cell', table: 0, row: 122, column: 2 } });
+          const selected = await client.request('selection');
+          if (selected?.quote !== '001' || selected.precision !== 'exact' || selected.location.row !== 122 || selected.location.column !== 2) throw Error('Original cell reference lost');
+          if (owner.format === 'xlsx') {
+            if (owner.capabilities.source || owner.capabilities.edit || owner.document.tables !== 2) throw Error('Workbook capabilities changed');
+            const second = await client.request('sql', { table: 1, sql: 'SELECT c1 FROM t' });
+            if (second.rows[0][0] !== 'Second-sheet sentinel') throw Error('Worksheet dataset crossed');
+            await client.request('sqlClose', { id: second.id });
+          } else {
+            await client.request('setView', { view: 'source' });
+            const source = await client.request('sourceWindow', { line: 1 });
+            if (!source.result.text.includes('row-122')) throw Error('Original source unavailable');
+          }
+          await client.dispose({ force: true });
+          window.webkit.messageHandlers.result.postMessage(JSON.stringify({ format: owner.format, rows: 123, wholeInputQuery: true, typedCells: true, cleanup: client.active === 0 }));
+          return;
+        }
+
         if (reader.index.tables.length) {
           await reader.jump(reader.index.tables[0].firstPage);
           await wait(() => document.querySelector('.column-choices input'));
@@ -82,7 +109,7 @@ def loaded(view, event):
         window.webkit.messageHandlers.result.postMessage(JSON.stringify({error: String(error)}));
       }
     })()
-    """.replace('__EDIT_CHECK__', 'true' if '--edit' in sys.argv else 'false'), None, None, None)
+    """.replace('__EDIT_CHECK__', 'true' if '--edit' in sys.argv else 'false').replace('__TABLE_CHECK__', 'true' if '--tables' in sys.argv else 'false'), None, None, None)
 
 
 manager.connect('script-message-received::result', received)

@@ -138,9 +138,33 @@ fn xml(source: &str) -> io::Result<roxmltree::Document<'_>> {
 }
 // Retains the streaming-cell approach and exact scalar spellings of the reused
 // table reader; it never constructs a dense Range from untrusted dimensions.
+fn iso_date_text(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|date| {
+            date.with_timezone(&chrono::Utc)
+                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string()
+        })
+        .or_else(|_| {
+            value
+                .parse::<chrono::NaiveDateTime>()
+                .map(|date| date.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+        })
+        .or_else(|_| {
+            value.parse::<chrono::NaiveDate>().map(|date| {
+                date.and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|_| value.to_owned())
+}
+
 fn cell_text(value: &DataRef<'_>) -> String {
     match value {
-        DataRef::String(s) | DataRef::DateTimeIso(s) | DataRef::DurationIso(s) => s.clone(),
+        DataRef::String(s) | DataRef::DurationIso(s) => s.clone(),
+        DataRef::DateTimeIso(s) => iso_date_text(s),
         DataRef::SharedString(s) => (*s).to_owned(),
         DataRef::Int(n) => n.to_string(),
         DataRef::Float(n) => n.to_string(),
@@ -153,13 +177,74 @@ fn cell_text(value: &DataRef<'_>) -> String {
                     .unwrap_or_else(|| v.to_string())
             } else {
                 v.as_datetime()
-                    .map(|d| d.to_string())
+                    .map(|d| d.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
                     .unwrap_or_else(|| v.to_string())
             }
         }
         DataRef::Empty => String::new(),
     }
 }
+fn write_table_record(
+    output: &mut impl Write,
+    number: usize,
+    row: &[String],
+    used: &mut usize,
+    limit: usize,
+) -> io::Result<()> {
+    let record = TableRecord {
+        line: number + 1,
+        cells: row.to_vec(),
+    };
+    let bytes = serde_json::to_vec(&record)?;
+    if bytes.len() > 128 * 1024 {
+        return Err(error("Worksheet row exceeds 128 KiB"));
+    }
+    let next = used
+        .checked_add(bytes.len() + 1)
+        .filter(|next| *next <= limit)
+        .ok_or_else(|| error("Workbook table data exceeds the 128 MiB cache budget"))?;
+    output.write_all(&bytes)?;
+    output.write_all(b"\n")?;
+    *used = next;
+    Ok(())
+}
+
+#[cfg(test)]
+mod table_cache_budget_tests {
+    use super::*;
+    #[test]
+    fn aggregate_budget_covers_multiple_sheets_and_rejects_before_writing() {
+        let row = vec!["中文😀".to_owned()];
+        let record_bytes = serde_json::to_vec(&TableRecord { line: 2, cells: row.clone() }).unwrap().len() + 1;
+        let limit = record_bytes * 2;
+        let mut used = 0;
+        let (mut first, mut second) = (Vec::new(), Vec::new());
+        write_table_record(&mut first, 1, &row, &mut used, limit).unwrap();
+        write_table_record(&mut second, 1, &row, &mut used, limit).unwrap();
+        assert_eq!(used, first.len() + second.len());
+        assert_eq!(used, limit);
+        let original = second.clone();
+        assert!(write_table_record(&mut second, 1, &row, &mut used, limit).is_err());
+        assert_eq!(second, original);
+        assert_eq!(used, limit);
+        let oversized = vec!["x".repeat(128 * 1024)];
+        assert!(write_table_record(&mut second, 1, &oversized, &mut used, usize::MAX).is_err());
+        assert_eq!(second, original);
+        assert_eq!(used, limit);
+    }
+    #[test]
+    fn iso_dates_use_utc_milliseconds_without_reinterpreting_literals() {
+        for (source, expected) in [
+            ("2024-01-02T03:04:05Z", "2024-01-02T03:04:05.000Z"),
+            ("2024-01-02T03:04:05.123+02:00", "2024-01-02T01:04:05.123Z"),
+            ("2024-01-02", "2024-01-02T00:00:00.000Z"),
+            ("001", "001"),
+        ] {
+            assert_eq!(iso_date_text(source), expected);
+        }
+    }
+}
+
 pub(super) fn workbook(builder: &mut Builder<'_>) -> io::Result<()> {
     let path = builder.directory.join("original.bin");
     let checked = archive(&path)?;
@@ -175,6 +260,7 @@ pub(super) fn workbook(builder: &mut Builder<'_>) -> io::Result<()> {
         return Err(error("Workbook exceeds 64 sheets"));
     }
     let mut projected = 0usize;
+    let mut data_bytes = 0usize;
     for (id, label) in names.iter().enumerate() {
         if label.len() > 1024 || label.contains('\0') {
             return Err(error("Invalid worksheet name"));
@@ -206,29 +292,22 @@ pub(super) fn workbook(builder: &mut Builder<'_>) -> io::Result<()> {
         let mut headers = vec![String::new(); width];
         let mut row = vec![String::new(); width];
         let mut current = 0usize;
-        let emit = |number: usize,
+        let mut emit = |number: usize,
                     row: &Vec<String>,
                     out: &mut BufWriter<File>,
                     headers: &mut Vec<String>|
          -> io::Result<()> {
             if number == 0 {
+                if serde_json::to_vec(row)?.len() > 128 * 1024 {
+                    return Err(error("Worksheet header exceeds 128 KiB"));
+                }
                 *headers = row.clone();
                 return Ok(());
             }
-            let record = TableRecord {
-                line: number + 1,
-                cells: row.clone(),
-            };
-            let bytes = serde_json::to_vec(&record)?;
-            if bytes.len() > 128 * 1024 {
-                return Err(error("Worksheet row exceeds 128 KiB"));
-            }
-            out.write_all(&bytes)?;
-            out.write_all(b"\n")?;
-            Ok(())
+            write_table_record(out, number, row, &mut data_bytes, crate::core::MAX_SOURCE as usize)
         };
-        while let Some(cell) = reader.next_cell().map_err(error)? {
-            let (r, c) = cell.get_position();
+        while let Some(cell) = reader.next_cell_with_formula().map_err(error)? {
+            let (r, c) = cell.pos;
             let r = r as usize;
             if r < current {
                 return Err(error("Worksheet cells are out of order"));
@@ -238,7 +317,11 @@ pub(super) fn workbook(builder: &mut Builder<'_>) -> io::Result<()> {
                 row.fill(String::new());
                 current += 1;
             }
-            let text = cell_text(cell.get_value());
+            // Display the stored result when present, otherwise preserve the
+            // formula as literal text. Never evaluate workbook formulas.
+            let text = if matches!(cell.value, DataRef::Empty) {
+                cell.formula.unwrap_or_default()
+            } else { cell_text(&cell.value) };
             if text.len() > 64 * 1024 || text.contains('\0') {
                 return Err(error("Worksheet cell exceeds 64 KiB or contains NUL"));
             }

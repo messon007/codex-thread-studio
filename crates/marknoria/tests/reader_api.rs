@@ -13,6 +13,21 @@ fn options(root: &tempfile::TempDir) -> Options {
 }
 
 #[test]
+fn csv_auto_detection_uses_complete_immutable_input_for_queries() {
+    let root = root();
+    let bytes = "\u{feff}ID;Value;Note\r\n001;2;\"comma, plus\r\n中文😀\"\r\n002;3;plain\r\n".as_bytes();
+    let mut reader = Reader::from_bytes("records.csv", bytes, options(&root)).unwrap();
+    let owner = reader.descriptor();
+    let table = reader.table_schema(&owner.revision, 0).unwrap();
+    assert_eq!(table.columns, ["ID", "Value", "Note"]);
+    assert_eq!(table.source_rows, 2);
+    let operation = reader.operations().begin().unwrap();
+    let result = reader.sql(&owner.revision, 0, "SELECT COUNT(*),SUM(CAST(c2 AS INTEGER)),MIN(c1) FROM t", &operation).unwrap();
+    assert_eq!(result.rows[0], [Some("2".into()), Some("5".into()), Some("001".into())]);
+    assert_eq!(reader.original_range(&owner.revision, 0, bytes.len()).unwrap(), bytes);
+}
+
+#[test]
 fn web_pdf_snapshot_preserves_original_locations_without_native_tools() {
     use marknoria::reader::{DocumentRenderer, PageRect, PdfRegion, ProjectionProfile};
     let root = root();

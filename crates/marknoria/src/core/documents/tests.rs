@@ -260,6 +260,30 @@ fn xlsx_streams_sparse_cells_without_executing_formulas_and_keeps_all_sheets() {
     assert_eq!(fs::read(p).unwrap(), original);
 }
 #[test]
+fn xlsx_dates_and_uncached_formulas_keep_studio_cell_text_semantics() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("types.xlsx");
+    let types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>"#;
+    let workbook = br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Types" sheetId="1" r:id="r1"/></sheets></workbook>"#;
+    let relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#;
+    let package = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="root" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+    let styles = br#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="22"/></cellXfs></styleSheet>"#;
+    let sheet = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c><c r="B1" t="inlineStr"><is><t>Uncached</t></is></c><c r="C1" t="inlineStr"><is><t>Cached</t></is></c><c r="D1" t="inlineStr"><is><t>Code</t></is></c></row><row r="2"><c r="A2" s="1"><v>45293.12783564815</v></c><c r="B2"><f>HYPERLINK("https://forbidden.invalid/track","literal")</f></c><c r="C2"><f>1+1</f><v>2</v></c><c r="D2" t="inlineStr"><is><t>001</t></is></c></row></sheetData></worksheet>"#;
+    zipped(&path, &[("_rels/.rels", package), ("[Content_Types].xml", types), ("xl/workbook.xml", workbook), ("xl/_rels/workbook.xml.rels", relationships), ("xl/styles.xml", styles), ("xl/worksheets/sheet1.xml", sheet)]);
+    let original = fs::read(&path).unwrap();
+    let (cache, index) = index(&path);
+    let result = crate::core::table_query::Queries::default().run(cache.path(), &index, 0,
+        "SELECT c1,c2,c3,c4 FROM t", Arc::new(std::sync::atomic::AtomicBool::new(false))).unwrap();
+    assert_eq!(result.rows[0], [Some("2024-01-02T03:04:05.000Z".into()),
+        Some("HYPERLINK(\"https://forbidden.invalid/track\",\"literal\")".into()), Some("2".into()), Some("001".into())]);
+    crate::core::audit_tables(cache.path(), &index).unwrap();
+    let display = crate::core::read_table(cache.path(), &index, 0, 0, &[0,1,2,3]).unwrap();
+    assert!(display.html.contains("2024-01-02T03:04:05.000Z"));
+    assert!(!display.html.contains("<a "));
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
 fn epub_follows_spine_and_rejects_traversal() {
     let d = tempfile::tempdir().unwrap();
     let p = d.path().join("book.epub");

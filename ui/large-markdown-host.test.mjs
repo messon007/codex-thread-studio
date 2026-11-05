@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createLargeMarkdownHost } from './large-markdown-host.mjs'
-function fixture() {
+function fixture(initialView, capabilities = {}) {
   const requests=[],states=[],selections=[]
   let listener,closed=0
-  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true,sourceRangeNavigation:true},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
+  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true,source:true,sourceRangeNavigation:true,...capabilities},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
   const client={ready:async()=>state,async request(method,params,{signal}={}){
     requests.push({method,params,signal})
     if(method==='setView')state={...state,view:params.view}
@@ -14,7 +14,7 @@ function fixture() {
     return state
   },async dispose({force}){assert.equal(force,true);closed++}}
   const frame={src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
-  const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{createClient(_frame,options){listener=options.onEvent;return client}})
+  const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{initialView,createClient(_frame,options){listener=options.onEvent;return client}})
   return {host,requests,states,selections,emit:(type,value)=>listener(type,value),setState:patch=>{state={...state,...patch};listener('state',state)},closed:()=>closed}
 }
 test('host controls use only the public protocol and preserve dirty/save errors',async()=>{
@@ -65,4 +65,57 @@ test('late foreign document or revision selections never enter Studio actions',a
  assert.equal(selections.length,0)
  emit('selection',selection);assert.equal(selections.length,1)
  await host.dispose()
+})
+test('reader Open shortcut delegates to its Studio host',async()=>{
+ let opens=0,listener
+ const client={ready:async()=>({state:'ready',documentId:'doc',revision:'a'.repeat(64)}),request:async()=>({state:'ready'}),dispose:async()=>{}}
+ const frame={src:'http://127.0.0.1:4000/markdown-reader/test/#token'}
+ const host=createLargeMarkdownHost(frame,()=>{},()=>{},{createClient(_frame,options){listener=options.onEvent;return client},onOpenRequested:()=>{opens++}})
+ await host.ready
+ listener('openRequested',{})
+ assert.equal(opens,1)
+ await host.dispose()
+ listener('openRequested',{})
+ assert.equal(opens,1)
+})
+test('saved Source mode is restored through the public client after initialization',async()=>{
+ const {host,states,requests}=fixture('source')
+ await host.ready
+ assert.equal(states.at(-1).view,'source')
+ assert.deepEqual(requests.filter(value=>value.method==='setView').map(value=>value.params),[{view:'source'}])
+ await host.dispose()
+})
+test('binary capability never restores an unsupported Source or Edit view',async()=>{
+ for(const view of ['source','edit']){
+  const {host,states,requests}=fixture(view,{source:false,edit:false})
+  await host.ready
+  assert.equal(states.at(-1).view,'preview')
+  assert.equal(requests.filter(value=>value.method==='setView').length,0)
+  await host.dispose()
+ }
+})
+test('closing during settings or restored-mode initialization never creates a late heartbeat',async()=>{
+ for(const stage of ['settings','source']){
+  const timers=[],originalInterval=globalThis.setInterval
+  globalThis.setInterval=(...args)=>{const timer=originalInterval(...args);timers.push(timer);return timer}
+  let finish
+  const owner={state:'ready',documentId:'doc',revision:'a'.repeat(64),view:'preview',capabilities:{source:true}}
+  const client={ready:async()=>owner,request:async method=>{
+   if(method===(stage==='settings'?'settings':'setView'))return new Promise(resolve=>{finish=resolve})
+   return owner
+  },dispose:async()=>{}}
+  const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/test/#token'},()=>{},()=>{},{initialView:'source',createClient:()=>client})
+  try{
+   for(let i=0;i<20&&!finish;i++)await Promise.resolve()
+   assert.equal(typeof finish,'function')
+   await host.dispose()
+   finish({...owner,view:stage==='source'?'source':'preview'})
+   await host.ready
+   assert.equal(timers.length,0)
+  }finally{
+   await host.dispose()
+   for(const timer of timers)clearInterval(timer)
+   globalThis.setInterval=originalInterval
+  }
+ }
 })

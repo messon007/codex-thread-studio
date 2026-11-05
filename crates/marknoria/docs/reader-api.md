@@ -121,3 +121,9 @@ Complete-input plots are exposed through `Reader::chart` and typed
 owned cancellation and visible row/transport budgets. See
 [table-components.md](table-components.md) for numeric precision, source/query
 coordinates and the shared Web component.
+
+CSV/TSV auto-detection retains a single selected delimiter across projection,
+complete-input SQL and source auditing. Delimiter detection is bounded to 64
+records / 256 KiB; all accepted data records are then processed. Workbook dates
+and cached/uncached formulas use the documented shared
+[table scalar contract](table-components.md#delimited-input-and-workbook-scalar-compatibility).

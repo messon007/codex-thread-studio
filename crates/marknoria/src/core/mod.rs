@@ -71,6 +71,9 @@ pub struct Index {
     pub text_pages: bool,
     #[serde(default)]
     pub format: document_format::DocumentFormat,
+    /// Detected CSV/TSV separator. Absent in older caches; format defaults apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csv_delimiter: Option<u8>,
     #[serde(default)]
     pub original_bytes: Option<usize>,
     #[serde(default)]
@@ -851,7 +854,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         renderer: None,
         epub_package: None,
         text_pages: false,
-        format, original_bytes: None, assets: vec![],
+        format, csv_delimiter: None, original_bytes: None, assets: vec![],
         version: 5,
         name: path
             .file_name()
@@ -1128,7 +1131,7 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
     let mut anchors = Vec::<Vec<SourceRange>>::new();
     if index.format.delimiter().is_some() {
         let mut csv = csv::ReaderBuilder::new()
-            .delimiter(index.format.delimiter().unwrap())
+            .delimiter(csv_document::indexed_delimiter(index).unwrap())
             .flexible(true)
             .from_reader(source.as_bytes());
         let mut names = csv

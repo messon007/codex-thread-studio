@@ -951,6 +951,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
         .route(
+            "/studio/reader/open",
+            axum::routing::post(large_markdown::open_document),
+        )
+        .route(
             "/studio/markdown/close",
             axum::routing::post(large_markdown::close),
         )

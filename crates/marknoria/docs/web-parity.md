@@ -100,3 +100,37 @@ workflow-scope update still prevents a valid current remote CI conclusion.
 
 At the owner's request, subsequent stages are committed locally; remote pushes
 are deferred until the complete change set and local validation are ready.
+
+## Local follow-up: public images, exact source restoration and Studio PDF
+
+Isolated Studio commit `691f612` consumes the unchanged public package from
+`c71f5015294757e9177eb9c5a9ea72c8a1fd3006`: 791 inventory files, archive SHA-256
+`0781fb4ca3ab53d90597ba831a9cabde651b44d9bb894c8d112f29f858a2c540`.
+Two clean offline exports match; all eight export/Git-byte contracts pass.
+The public image component/PNG Blob protocol passes Chromium and Wayland WebKit
+contracts. Exact source-range navigation retains BOM/CRLF/Unicode byte anchors
+and declares its capability; bounded explicit windows can cross 200 source lines.
+
+Studio now delegates static module inventory to `reader_assets()` while retaining
+its document API/origin/token/grant checks. This removes the duplicate resource
+list that initially omitted the new image module. Typed comments preserve the
+public location/revision/precision instead of reducing references to line numbers.
+Actual Chromium workspace capture verifies this outer adapter; gateway-served
+reader frames pass the existing native Wayland WebKit reading/editing checks.
+These are separate validation scopes, not a full WebKit Studio shell test.
+
+Studio's duplicate PDF renderer is replaced with a thin shared-component adapter.
+Twelve assertions pass in each engine using its actual gateway/static assets and
+authorized original bytes, including zoom/flow, outline/search, typed regions,
+stale references and cleanup. The latest consuming checkout passes 759 UI tests,
+type checks, 147 application Rust tests (one existing ignored) and 11 exact SDK
+contracts; its inventory remains unchanged after building. One warm debug run
+measured host first useful content at 467 ms for each generated document, with
+opening heartbeat gaps 23.3 / 20 ms. These measurements precede selection actions
+and do not establish release or cold-start performance.
+
+No platform-native UI, shared native controller or FFI changes are part of this
+stage. The original Studio checkout remains untouched; both repositories' new
+commits are local. All-format adoption, remaining Notes/storage/AI wiring,
+Markdown resources, visual/accessibility acceptance and current remote/platform
+CI remain open; these checkpoints do not close the synchronization issues.

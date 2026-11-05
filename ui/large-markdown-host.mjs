@@ -13,7 +13,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       lineCount: state.document?.sourceLines, size: state.document?.fileBytes,
       documentId: state.documentId, revision: state.revision, format: state.format,
       status: state.editorError?.message || state.error || '', error: state.error,
-      position: state.position, capabilities: state.capabilities,
+      position: state.position, capabilities: state.capabilities, formatState: state.formatState,
     }
     const next = JSON.stringify(visible)
     if (next !== signature) { signature = next; onState(visible) }
@@ -31,13 +31,19 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     const factory = options.createClient || (await import(new URL('./reader-assets/host-client.mjs',import.meta.url).href)).createReaderClient
     if (disposed) return
     client = factory(frame,{onEvent(type,payload){
+      if (disposed) return
       if (type==='ready'||type==='state') publish(payload)
       else if (type==='selection') capture(payload)
+      else if (type==='openRequested') options.onOpenRequested?.()
       else if (type==='error') options.onError?.(payload)
     }})
     publish(await client.ready())
     if (disposed) { await client.dispose({force:true}); return }
     publish(await client.request('settings',{toolbar:'host',...options.presentation}))
+    if (disposed) return
+    const initialView = options.initialView
+    if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
+    if (disposed) return
     const keepAlive = options.heartbeat || (async()=>{
       const url=new URL(frame.src)
       const response=await fetch(new URL('./api/capabilities',url),{headers:{'x-reader-token':url.hash.slice(1),'x-reader-document':snapshot.documentId}})

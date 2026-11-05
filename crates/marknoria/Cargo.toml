@@ -55,6 +55,7 @@ resvg = { version = "=0.45.1" }
 rusqlite = { version = "=0.41.1", features = ["bundled", "hooks", "limits", "fallible_uint"] }
 csv = "=1.4.0"
 calamine = { version = "=0.38.0", default-features = false, features = ["dates"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["alloc"] }
 zip = { version = "=9.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 quick-xml = "=0.42.0"

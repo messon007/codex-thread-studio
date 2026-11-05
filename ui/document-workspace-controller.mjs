@@ -99,10 +99,11 @@ export function createDocumentWorkspaceController({
   let largeMarkdownHost = null
 
   function releaseLargeMarkdown(file) {
-    if (!file?.largeMarkdown?.id) return
+    const lease = file?.largeMarkdown || file?.reader
+    if (!lease?.id) return
     gatewayFetch('/studio/markdown/close', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: file.largeMarkdown.id }), keepalive: true,
+      body: JSON.stringify({ id: lease.id }), keepalive: true,
     }).catch(() => {})
   }
 
@@ -219,24 +220,43 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
   state.artifact = { root, path, kind, readerReference: file.readerReference, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
-  const endpoint = kind === 'image'
+  let sharedReader = kind === 'table'
+  const endpoint = sharedReader ? '/studio/reader/open' : kind === 'image'
     ? '/studio/review-image'
     : kind === 'epub' ? '/studio/review-epub'
       : kind === 'pdf' ? '/studio/review-pdf'
         : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
           : '/studio/review-file'
   try {
-    const response = await gatewayFetch(endpoint, {
+    let response = await gatewayFetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root, path }),
     })
+    // Preserve the existing authorized WSL adapter until its byte-session
+    // transport is shared. Never fall back on denial, bad input or server errors.
+    if (sharedReader && response.status === 501) {
+      sharedReader = false
+      response = await gatewayFetch(/\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet' : '/studio/review-file', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root, path }),
+      })
+    }
     if (!response.ok) {
       const result = await response.json().catch(() => null)
       const message = result?.error?.message || `HTTP ${response.status}`
       throw new Error(message)
     }
-    if (kind === 'image') {
+    if (sharedReader) {
+      const result = await response.json()
+      if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) {
+        releaseLargeMarkdown(result)
+        return
+      }
+      state.artifact = { ...result, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
+        readerReference: file.readerReference, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      largeMarkdownFile = state.artifact
+      state.artifactView = 'preview'
+    } else if (kind === 'image') {
       const blob = await response.blob()
       if (!blob.type.startsWith('image/')) {
         throw new Error(t('The image response format is invalid'))
@@ -297,7 +317,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
         : isMarkdownFile(result.path) || isHtmlFile(result.path) || structuredTextPreviewKind(result.path) ? 'preview' : 'source'
     }
     if (viewState) {
-      if (['text', 'large-markdown'].includes(state.artifact.kind) && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
+      if (['text', 'large-markdown'].includes(state.artifact.kind) && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readerSourceAvailable === false ? 'preview' : state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
       if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
       state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
       state.artifactOutlineFilter = viewState.outlineFilter || ''
@@ -359,6 +379,7 @@ function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) 
 
 function setArtifactView(view) {
   if (state.artifact?.kind === 'large-markdown') {
+    if (view !== 'preview' && state.artifact.readerSourceAvailable === false) return
     if (view === 'edit' && state.artifact.readOnly) return
     if (['preview', 'source', 'edit'].includes(view)) largeMarkdownHost?.setView(view).catch(showError)
     return
@@ -755,8 +776,9 @@ function renderArtifact() {
   const renderedContent = file.editContent ?? file.content
   $('#artifact-title').textContent = `${fileDisplayName(file.path)}${file.dirty ? ' •' : ''}`
   $('#artifact-view-switch').classList.toggle('hidden', !textReady && !largeMarkdownReady)
-  $('#artifact-preview').disabled = largeMarkdownReady ? !file.readerReadingReady || Boolean(file.saving) : !markdown && !html && !structured
-  $('#artifact-source').disabled = largeMarkdownReady && (!file.readerReadingReady || Boolean(file.saving))
+  $('#artifact-preview').disabled = largeMarkdownReady ? !file.readerReady || Boolean(file.saving) : !markdown && !html && !structured
+  $('#artifact-source').classList.toggle('hidden', largeMarkdownReady && file.readerSourceAvailable === false)
+  $('#artifact-source').disabled = largeMarkdownReady && (!file.readerReady || Boolean(file.saving))
   $('#artifact-edit').disabled = largeMarkdownReady && (!file.readerReady || Boolean(file.saving))
   $('#close-artifact').disabled = largeMarkdownReady && Boolean(file.saving)
   $('#refresh-artifact').disabled = largeMarkdownReady && Boolean(file.saving)
@@ -803,7 +825,6 @@ function renderArtifact() {
       largeMarkdownFrame.src = file.largeMarkdown.url
       largeMarkdownFrame.addEventListener('load', () => {
         syncLargeMarkdownTheme()
-        if (state.artifact === file && state.artifactView === 'edit') largeMarkdownHost?.setView('edit').catch(showError)
         if (state.artifact === file && file.readerLine) largeMarkdownHost?.navigateLine(file.readerLine).catch(showError)
       })
       content.replaceChildren(largeMarkdownFrame)
@@ -814,6 +835,7 @@ function renderArtifact() {
           delete file.readerReference
           largeMarkdownHost.navigateReference(reference).catch(showError)
         }
+        file.readerSourceAvailable = snapshot.capabilities?.source
         file.readerReady = snapshot.ready
         file.readerReadingReady = snapshot.readingReady
         file.readerHasOutline = snapshot.hasOutline
@@ -832,7 +854,7 @@ function renderArtifact() {
           source: documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
             baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
             readerReference: selection }) }, selection.rect)
-      })
+      }, { initialView: state.artifactView, onOpenRequested: () => openResources() })
     }
     syncLargeMarkdownTheme()
     renderArtifactSearchStatus()

@@ -33,17 +33,55 @@ struct Reader {
     root: std::path::PathBuf,
 }
 
+#[derive(Default)]
+struct ReaderMaintenance {
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+impl ReaderMaintenance {
+    fn ensure(&self, entries: &Arc<Mutex<HashMap<String, Reader>>>) {
+        let mut task = self.task.lock().unwrap();
+        if task.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
+        let entries = Arc::downgrade(entries);
+        *task = Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let Some(entries) = entries.upgrade() else {
+                    break;
+                };
+                let expired = take_expired(&mut entries.lock().unwrap());
+                close_readers(expired).await;
+            }
+        }));
+    }
+}
+impl Drop for ReaderMaintenance {
+    fn drop(&mut self) {
+        if let Some(task) = self
+            .task
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            task.abort();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Readers {
     entries: Arc<Mutex<HashMap<String, Reader>>>,
     opening: Arc<tokio::sync::Semaphore>,
     client: reqwest::Client,
+    maintenance: Arc<ReaderMaintenance>,
 }
 
 impl Default for Readers {
     fn default() -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
+            maintenance: Arc::new(ReaderMaintenance::default()),
             opening: Arc::new(tokio::sync::Semaphore::new(1)),
             client: reqwest::Client::builder()
                 .no_proxy()
@@ -109,7 +147,6 @@ impl Readers {
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         let id = uuid::Uuid::new_v4().to_string();
         let token = service.token.clone();
-        let empty = self.entries.lock().unwrap().is_empty();
         self.entries.lock().unwrap().insert(
             id.clone(),
             Reader {
@@ -120,26 +157,7 @@ impl Readers {
                 root,
             },
         );
-        if empty {
-            let entries = Arc::downgrade(&self.entries);
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    let Some(entries) = entries.upgrade() else {
-                        break;
-                    };
-                    let (expired, empty) = {
-                        let mut entries = entries.lock().unwrap();
-                        let expired = take_expired(&mut entries);
-                        (expired, entries.is_empty())
-                    };
-                    close_readers(expired).await;
-                    if empty {
-                        break;
-                    }
-                }
-            });
-        }
+        self.maintenance.ensure(&self.entries);
         Ok(
             json!({"id":id,"url":format!("/markdown-reader/{id}/?embedded=1&diagrams=browser#{token}")}),
         )
@@ -188,6 +206,61 @@ pub async fn try_open(
         "root":root,"path":path,"relativePath":path.strip_prefix(&document_root).unwrap_or(&path),
         "documentRoot":document_root,"size":metadata.len(),"readOnly":read_only,"largeMarkdown":reader,
     })))
+}
+
+/// General shared Web reader entry. The project/shared-directory grant remains
+/// Studio's responsibility; source writes are never granted to binary formats.
+pub async fn open_document(
+    State(state): State<GatewayState>,
+    Json(request): Json<ReviewFileRequest>,
+) -> Response<Body> {
+    #[cfg(windows)]
+    if state.codex.execution_environment() == "wsl" {
+        return json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "Shared reader byte transport for WSL is not implemented yet",
+        );
+    }
+    let shared = match shared_document_directories(&state) {
+        Ok(shared) => shared,
+        Err((status, message)) => return json_error(status, &message),
+    };
+    let resolved = tokio::task::spawn_blocking(move || {
+        resolve_review_path_with_shared(
+            &request,
+            marknoria::reader::Budgets::default().source_bytes,
+            "128 MiB document",
+            &shared,
+        )
+    })
+    .await;
+    let (root, path, metadata, document_root) = match resolved {
+        Ok(Ok(value)) => value,
+        Ok(Err((status, message))) => return json_error(status, &message),
+        Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    };
+    let Some(format) = marknoria::reader::DocumentFormat::for_path(&path) else {
+        return json_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Unsupported shared reader document format",
+        );
+    };
+    let read_only = !path.starts_with(&root) || !format.is_text();
+    match state
+        .markdown_readers
+        .open(path.clone(), root.clone(), !read_only)
+        .await
+    {
+        Ok(reader) => json_response(
+            StatusCode::OK,
+            &json!({
+                "root":root,"path":path,"relativePath":path.strip_prefix(&document_root).unwrap_or(&path),
+                "documentRoot":document_root,"size":metadata.len(),"readOnly":read_only,
+                "format":format,"sourceAvailable":format.is_text(),"reader":reader,
+            }),
+        ),
+        Err((status, message)) => json_error(status, &message),
+    }
 }
 
 #[derive(Deserialize)]
@@ -442,6 +515,60 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn one_maintenance_task_is_owned_by_the_registry_not_each_document() {
+        let entries = Arc::new(Mutex::new(HashMap::new()));
+        let maintenance = ReaderMaintenance::default();
+        maintenance.ensure(&entries);
+        let task = maintenance.task.lock().unwrap().as_ref().unwrap().id();
+        for _ in 0..100 {
+            maintenance.ensure(&entries);
+        }
+        assert_eq!(
+            maintenance.task.lock().unwrap().as_ref().unwrap().id(),
+            task
+        );
+        let aborted = maintenance
+            .task
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .abort_handle();
+        drop(maintenance);
+        for _ in 0..100 {
+            if aborted.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(aborted.is_finished());
+    }
+
+    #[tokio::test]
+    async fn maintenance_restarts_after_its_runtime_task_is_cancelled() {
+        let entries = Arc::new(Mutex::new(HashMap::new()));
+        let maintenance = ReaderMaintenance::default();
+        maintenance.ensure(&entries);
+        let old = maintenance.task.lock().unwrap().as_ref().unwrap().id();
+        maintenance.task.lock().unwrap().as_ref().unwrap().abort();
+        for _ in 0..100 {
+            if maintenance
+                .task
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .is_finished()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        maintenance.ensure(&entries);
+        assert_ne!(maintenance.task.lock().unwrap().as_ref().unwrap().id(), old);
+    }
+
     #[test]
     fn embedded_routes_never_expose_browser_or_renderer_privileges() {
         for path in [

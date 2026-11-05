@@ -197,7 +197,7 @@ fn build_input(
             values.extend(record.cells.into_iter().map(rusqlite::types::Value::Text));
             insert.execute(rusqlite::params_from_iter(values)).map_err(error)?;
         }
-    } else if let Some(delimiter) = index.format.delimiter() {
+    } else if let Some(delimiter) = crate::core::csv_document::indexed_delimiter(index) {
         let mut csv = csv::ReaderBuilder::new()
             .delimiter(delimiter)
             .flexible(true)

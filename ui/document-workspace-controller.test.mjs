@@ -320,3 +320,43 @@ test('Document outline is transient and remains open after chapter navigation', 
   assert.doesNotMatch(navigate, /setArtifactOutlineOpen/u)
   assert.match(source, /function resetArtifactOutline\(\)[\s\S]*state\.artifactOutlineOpen = false/u)
 })
+
+for (const [path, sourceAvailable, readOnly] of [['data.csv',true,false],['data.tsv',true,false],['data.xlsx',false,true]]) {
+  test(`${path} mounts the shared table session with format-aware source/edit controls`, async context => {
+    const requests=[]
+    const result={root:'/project',path,size:2048,readOnly,sourceAvailable,format:path.split('.').at(-1),reader:{id:'table-1',url:'/markdown-reader/table-1/?embedded=1#token'}}
+    const fixture=documentWorkspaceFixture(context,async(url,options)=>{
+      requests.push(url)
+      return new Response(JSON.stringify(url.endsWith('/close')?{}:result))
+    })
+    document.createElement=tag=>tag==='canvas'?{getContext:()=>null}:{setAttribute(){},addEventListener(){},remove(){}}
+    await fixture.controller.open({path})
+    assert.equal(requests[0],'/studio/reader/open')
+    assert.equal(fixture.state.artifact.kind,'large-markdown')
+    assert.equal(fixture.state.artifact.largeMarkdown.id,'table-1')
+    assert.equal(fixture.state.artifactView,'preview')
+    assert.equal(fixture.element('#artifact-source').classList.contains('hidden'),!sourceAvailable)
+    assert.equal(fixture.element('#artifact-edit').classList.contains('hidden'),readOnly)
+    assert.equal(fixture.markdownRenders(),0)
+    fixture.controller.close({restoreMap:false})
+    assert.equal(requests.at(-1),'/studio/markdown/close')
+  })
+}
+test('shared table authorization failures never fall back to another file endpoint',async context=>{
+  const requests=[]
+  const fixture=documentWorkspaceFixture(context,async url=>{requests.push(url);return new Response(JSON.stringify({error:{message:'File not granted'}}),{status:403})})
+  await assert.rejects(fixture.controller.open({path:'data.xlsx'}),/File not granted/)
+  assert.deepEqual(requests,['/studio/reader/open'])
+  assertDocumentError(fixture,'File not granted')
+})
+for (const [path,endpoint] of [['data.csv','/studio/review-file'],['data.xlsx','/studio/review-spreadsheet']]) {
+ test(`${path} preserves the authorized legacy transport only on explicit WSL unavailability`,async context=>{
+  const requests=[]
+  const fixture=documentWorkspaceFixture(context,async url=>{
+    requests.push(url)
+    return new Response(JSON.stringify({error:{message:requests.length===1?'Shared byte transport unavailable':'Legacy grant rejected'}}),{status:requests.length===1?501:403})
+  })
+  await assert.rejects(fixture.controller.open({path}),/Legacy grant rejected/)
+  assert.deepEqual(requests,['/studio/reader/open',endpoint])
+ })
+}

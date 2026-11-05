@@ -21,6 +21,74 @@ fn reader(source: &str, delimiter: u8) -> csv::Reader<&[u8]> {
         .flexible(true)
         .from_reader(source.as_bytes())
 }
+/// Match Studio's consistency/width/fallback preference using the mature CSV
+/// parser. Detection reads at most 256 KiB and 64 nonempty records per candidate.
+/// The complete input is still parsed afterwards; sampling never limits rows.
+pub(crate) fn detect_delimiter(source: &str, fallback: u8) -> u8 {
+    let mut end = source.len().min(256 * 1024);
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    let sample = &source[..end];
+    let truncated = end < source.len();
+    let mut best = (fallback, 0usize, 1usize, 1usize);
+    let mut seen = Vec::new();
+    for delimiter in [fallback, b',', b'\t', b';'] {
+        if seen.contains(&delimiter) {
+            continue;
+        }
+        seen.push(delimiter);
+        let mut csv = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .flexible(true)
+            .has_headers(false)
+            .from_reader(sample.as_bytes());
+        let mut record = csv::StringRecord::new();
+        let mut widths = std::collections::BTreeMap::<usize, usize>::new();
+        let mut total = 0usize;
+        while total < 64 {
+            match csv.read_record(&mut record) {
+                Ok(true) => (),
+                _ => break,
+            }
+            if truncated && csv.position().byte() as usize >= sample.len() {
+                break;
+            }
+            if record.iter().all(|cell| cell.trim().is_empty()) {
+                continue;
+            }
+            total += 1;
+            if record.len() > 1 {
+                *widths.entry(record.len()).or_default() += 1;
+            }
+        }
+        let Some((width, count)) = widths
+            .into_iter()
+            .max_by_key(|(width, count)| (*count, *width))
+        else {
+            continue;
+        };
+        let consistency = (count * best.2).cmp(&(best.1 * total));
+        if consistency.is_gt()
+            || consistency.is_eq()
+                && (count, width, delimiter == fallback) > (best.1, best.3, best.0 == fallback)
+        {
+            best = (delimiter, count, total, width);
+        }
+    }
+    best.0
+}
+
+pub(crate) fn indexed_delimiter(index: &Index) -> Option<u8> {
+    index
+        .format
+        .delimiter()
+        .map(|fallback| match index.csv_delimiter {
+            Some(value @ (b',' | b'\t' | b';')) => value,
+            _ => fallback,
+        })
+}
+
 pub(crate) fn cell(value: &str) -> String {
     let visible: String = value
         .chars()
@@ -74,7 +142,7 @@ pub(crate) fn build(
         return Err(error("CSV requires UTF-8 text without NUL bytes"));
     }
     let format = crate::core::document_format::DocumentFormat::for_path(path).unwrap();
-    let delimiter = format.delimiter().unwrap();
+    let delimiter = detect_delimiter(source, format.delimiter().unwrap());
     let mut scan = reader(source, delimiter);
     let mut names: Vec<String> = scan
         .headers()
@@ -133,6 +201,7 @@ pub(crate) fn build(
     };
     let mut index = Index {
         format,
+        csv_delimiter: Some(delimiter),
         version: 5,
         name,
         revision: Sha256::digest(source.as_bytes())
@@ -272,6 +341,34 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delimiter_detection_is_bounded_and_shared_by_projection_sql_and_audit() {
+        for (name, source, delimiter) in [
+            ("sample.csv", "\u{feff}ID;Value;Code\r\n\"x,y\";2;001\r\nrow;3;002\r\n", b';'),
+            ("sample.csv", "ID\tValue\tCode\nrow\t2\t001\n", b'\t'),
+            ("sample.tsv", "ID,Value,Code\nrow,2,001\n", b','),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(name);
+            fs::write(&path, source).unwrap();
+            let index = crate::core::build_index(&path, directory.path()).unwrap();
+            assert_eq!(index.csv_delimiter, Some(delimiter));
+            assert_eq!(index.tables[0].columns, ["ID", "Value", "Code"]);
+            crate::core::audit_tables(directory.path(), &index).unwrap();
+            let result = crate::core::table_query::Queries::default().run(directory.path(), &index, 0,
+                "SELECT c2,c3 FROM t ORDER BY _row", std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))).unwrap();
+            assert_eq!(result.rows[0], [Some("2".into()), Some("001".into())]);
+            let window = crate::core::read_table(directory.path(), &index, 0, 0, &[0,1,2]).unwrap();
+            assert!(window.html.contains("001"));
+            assert_eq!(fs::read_to_string(path).unwrap(), source);
+        }
+        assert_eq!(detect_delimiter("Single column\nno separators\n", b'\t'), b'\t');
+        assert_eq!(detect_delimiter(&"中".repeat(100_000), b','), b',');
+        assert_eq!(detect_delimiter(&format!("{}\nA;B\n1;2\n", "x".repeat(256*1024+1)), b','), b',');
+        // Old caches without this additive field retain their format default.
+        let old = Index { format: crate::core::document_format::DocumentFormat::Tsv, ..Default::default() };
+        assert_eq!(indexed_delimiter(&old), Some(b'\t'));
+    }
     #[test]
     fn long_csv_display_names_keep_format_identity_and_raw_query_values() {
         let d = tempfile::tempdir().unwrap();

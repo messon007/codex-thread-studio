@@ -27,8 +27,12 @@ let service = marknoria::web::Service::start_with_options(grant, options).await?
 
 These are fixed service-lifetime grants, at most 257 distinct canonical directories.
 Close the service when the host revokes a grant. Resolution checks both the
-normalized requested path and canonical target against these roots, including
-encoded Unicode/spaces and symlinks. HTTP images are not fetched. Inline PNG,
+requested path and canonical final target against these roots, including encoded
+Unicode/spaces and symlinks. Unix request paths resolve directory aliases first,
+accepting macOS `/var` → `/private/var` without allowing an outside file symlink
+back into a grant, or an inside file symlink escaping it. Windows retains its
+URL-normalized lexical grant check before filesystem access, including UNC paths.
+HTTP images are not fetched. Inline PNG,
 JPEG, GIF, WebP and SVG images need no folder grant; SVG is decoded to inert PNG
 by the existing supervised image worker, with external SVG resources disabled.
 Standalone browser/server mode uses its existing authorized server root.

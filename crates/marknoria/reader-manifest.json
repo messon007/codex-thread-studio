@@ -31,7 +31,7 @@
     "docs/image-components.md": "f2422817ee1b9a889807e4165da3b64f7c86be7703c9a692283ee3a1d68bb03f",
     "docs/jq-components.md": "3171ff64e8f4866a6a72569fe37724f3a79f5e31d5d6af27bdf50a34a50d1441",
     "docs/markdown-profile.md": "0593167114c0aa00f369cdeaadcbd9950404f1dcdca290f03e68eda2b9acb648",
-    "docs/markdown-references.md": "31922c3cb090c6d1424204c9c02bd41b844b4c6b9de8f3a47018513aa56b55dd",
+    "docs/markdown-references.md": "17688c70f81bb753b03cb8e6463eea10647d62bd7e4eed26eb554e5f645b9e5c",
     "docs/notes-components.md": "f2f2a266c7466376a235344520ce4afa19a273b6dc1223867b900db550222504",
     "docs/projection-components.md": "c56897594903bc6f8bc21682f5368f4df719f97c14221811ed7648d41cafed0e",
     "docs/reader-api.md": "ada9ab56f9e115f3417e5369203d23f499aefbf419011db4d30647b4282946f9",
@@ -473,7 +473,7 @@
     "src/web/mod.rs": "cd41f50d722f5d56047048869f3e8aa72d0cdd7dee20d614555da0eb197ce145",
     "src/web/panes.rs": "c62485fded7de18b45aeb19c736de637d0b74e2f147177c998caf44a9b995b90",
     "src/web/pdf_runtime.rs": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
-    "src/web/references.rs": "31cc4886077569df4b0666169a6fcdb015bac7f9a6ae4545b0b1866ce3446b03",
+    "src/web/references.rs": "5ef16e884e4befb0f2f8c97ac4b5fa1e2d1ea9bea95255286aba940e30a04e80",
     "src/web/selected_files.rs": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
     "src/web/service.rs": "c178f30413077a6a64b59ea5a3fa5c4a42b68436f2fe47df6ff6fa8efe8c7d58",
     "src/web/table_chart_runtime.rs": "1d8365d7176d4d9b67326c2ad1534515bddeafa5bf217b4eb6a5c80656d3b3ca",
@@ -861,7 +861,7 @@
     },
     "pdfjs-dist": "6.4.299"
   },
-  "revision": "29e86cf542ee908fdab0c283c4b9145eddcd2c17",
+  "revision": "384876c0391e2d64bbf512fc46af5dec41f7a00e",
   "sourceFiles": {
     ".gitattributes": {
       "sha256": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
@@ -924,7 +924,7 @@
       "source": "docs/markdown-profile.md"
     },
     "docs/markdown-references.md": {
-      "sha256": "31922c3cb090c6d1424204c9c02bd41b844b4c6b9de8f3a47018513aa56b55dd",
+      "sha256": "17688c70f81bb753b03cb8e6463eea10647d62bd7e4eed26eb554e5f645b9e5c",
       "source": "docs/markdown-references.md"
     },
     "docs/notes-components.md": {
@@ -1192,7 +1192,7 @@
       "source": "src/web/pdf_runtime.rs"
     },
     "src/web/references.rs": {
-      "sha256": "31cc4886077569df4b0666169a6fcdb015bac7f9a6ae4545b0b1866ce3446b03",
+      "sha256": "5ef16e884e4befb0f2f8c97ac4b5fa1e2d1ea9bea95255286aba940e30a04e80",
       "source": "src/web/references.rs"
     },
     "src/web/selected_files.rs": {
@@ -1770,6 +1770,6 @@
     "python": "3.14.4",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   },
-  "treeSha256": "d14d97f967fe311bf66575754936d606230468f7490da8748a062901bb004965",
+  "treeSha256": "d8bb84f1512004395a0291901a44a40dffaa66fc49d5c5677828c444932d6feb",
   "version": 1
 }

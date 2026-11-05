@@ -2,13 +2,16 @@
 
 The reviewed pin is `scripts/marknoria-release.json`; the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
-`29e86cf542ee908fdab0c283c4b9145eddcd2c17`, 814 inventory files, archive SHA-256
-`84be9077b930a4cc4beb83c448d01897722f843dc926687e2157226fd6ff550e`, tree SHA-256
-`d14d97f967fe311bf66575754936d606230468f7490da8748a062901bb004965`.
+`384876c0391e2d64bbf512fc46af5dec41f7a00e`, 814 inventory files, archive SHA-256
+`fe301649a8bb387c618f03bb6eb5b2d3cdb5fe14f2bae5c096d9363f7b54f87c`, tree SHA-256
+`d8bb84f1512004395a0291901a44a40dffaa66fc49d5c5677828c444932d6feb`.
 Two clean offline exports match; eight archive/inventory/Git-byte checks pass.
-This source revision updates acceptance documentation and an npm check alias
-relative to the runtime-tested `87df867` package. Imported runtime source and
-generated resources are identical.
+The shared JavaScript source and generated resources remain identical to the
+runtime-tested `87df867` package. This revision also fixes Unix resource-directory
+aliases while preserving Windows authorization before requested filesystem I/O.
+The actual three-platform CI exposed that macOS path issue and a Windows-only
+owned-runtime/Arc return mismatch in Studio; both now have targeted corrections.
+Current platform results must be tied to this new consuming commit.
 
 No private MarkNoria checkout, token, build output, assets or installed executable
 is needed. The SDK's MIT allowlist and original third-party licenses/provenance

@@ -54,6 +54,24 @@ pub(super) struct Resources {
     image_loader: Option<ImageLoader>,
     entries: Mutex<HashMap<String, Entry>>,
 }
+fn requested_in_roots(requested: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| {
+        #[cfg(windows)]
+        {
+            // URL paths omit Windows' verbatim prefix. Compare like forms,
+            // before any filesystem access that could initiate a UNC request.
+            url::Url::from_file_path(root).ok().and_then(|url| url.to_file_path().ok())
+                .is_some_and(|root| requested.to_string_lossy().to_lowercase().starts_with(
+                    &(root.to_string_lossy().trim_end_matches(['\\', '/'])
+                        .to_lowercase() + "\\"),
+                ))
+        }
+        #[cfg(not(windows))]
+        {
+            requested.starts_with(root)
+        }
+    })
+}
 impl Resources {
     pub fn new(roots: Vec<PathBuf>) -> Self {
         Self {
@@ -135,28 +153,17 @@ impl Resources {
         if requested
             .components()
             .any(|part| matches!(part, std::path::Component::ParentDir))
-            || !roots.iter().any(|root| {
-                let root = url::Url::from_file_path(root)
-                    .ok()
-                    .and_then(|url| url.to_file_path().ok());
-                root.is_some_and(|root| {
-                    #[cfg(windows)]
-                    {
-                        requested.to_string_lossy().to_lowercase().starts_with(
-                            &(root
-                                .to_string_lossy()
-                                .trim_end_matches(['\\', '/'])
-                                .to_lowercase()
-                                + "\\"),
-                        )
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        requested.starts_with(root)
-                    }
-                })
-            })
         {
+            return Err(denied());
+        }
+        // Unix directory aliases (macOS /var -> /private/var) do not resolve
+        // the final file symlink. On Windows preserve the original lexical
+        // authorization before filesystem access, including UNC/SMB paths.
+        #[cfg(not(windows))]
+        let requested = requested
+            .parent().ok_or_else(denied)?.canonicalize().map_err(|_| denied())?
+            .join(requested.file_name().ok_or_else(denied)?);
+        if !requested_in_roots(&requested, &roots) {
             return Err(denied());
         }
         let path = requested.canonicalize()?;
@@ -445,12 +452,67 @@ pub(super) async fn image(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_request_path_gate_rejects_unc_before_filesystem_resolution() {
+        let roots = vec![PathBuf::from(r"\\?\C:\project")];
+        // Exercise the pure pre-I/O predicate: never connect to this host.
+        let remote = url::Url::parse("file://ungranted-host/share/image.png")
+            .unwrap().to_file_path().unwrap();
+        assert!(!requested_in_roots(&remote, &roots));
+        assert!(!requested_in_roots(Path::new(r"C:\project-other\image.png"), &roots));
+        assert!(requested_in_roots(Path::new(r"C:\PROJECT\image.png"), &roots));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn directory_aliases_preserve_both_file_boundaries_and_revocation() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let source = root.join("source.md");
+        let image = root.join("picture.png");
+        std::fs::write(&source, "# Project").unwrap();
+        std::fs::write(&image, b"owned fixture").unwrap();
+        let directory_alias = outside.path().join("project-alias");
+        std::os::unix::fs::symlink(&root, &directory_alias).unwrap();
+        let target = url::Url::from_file_path(directory_alias.join("picture.png"))
+            .unwrap().to_string();
+        let current = Arc::new(Mutex::new(vec![root.clone()]));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = {
+            let current = current.clone();
+            let calls = calls.clone();
+            RootProvider::new(move || {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(current.lock().unwrap().clone())
+            })
+        };
+        let resources = Resources::new(vec![]).with_provider(Some(provider));
+        assert_eq!(resources.local(&source, &target).unwrap(), image);
+        current.lock().unwrap().clear();
+        assert!(resources.local(&source, &target).is_err());
+        *current.lock().unwrap() = vec![root.clone()];
+        let hidden = outside.path().join("outside.png");
+        std::fs::write(&hidden, b"outside fixture").unwrap();
+        std::os::unix::fs::symlink(&hidden, root.join("escape.png")).unwrap();
+        assert!(resources.local(&source, "escape.png").is_err());
+        let return_link = outside.path().join("return.png");
+        std::os::unix::fs::symlink(&image, &return_link).unwrap();
+        assert!(resources.local(&source,
+            url::Url::from_file_path(return_link).unwrap().as_str()).is_err());
+        let unavailable = outside.path().join("missing-directory").join("file.png");
+        let error = resources.local(&source,
+            url::Url::from_file_path(unavailable).unwrap().as_str()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(calls.load(Ordering::Relaxed), 5);
+    }
     #[test]
     fn dynamic_roots_use_one_current_policy_snapshot_per_resolution() {
         let project = tempfile::tempdir().unwrap();
         let shared = tempfile::tempdir().unwrap();
         let source = project.path().join("source.md");
         std::fs::write(&source, "# Project").unwrap();
+        let source = source.canonicalize().unwrap();
         let asset = shared.path().join("picture.png");
         std::fs::write(&asset, b"owned fixture").unwrap();
         let target = url::Url::from_file_path(&asset).unwrap().to_string();
@@ -486,6 +548,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let source = root.path().join("source.md");
         std::fs::write(&source, "# Test").unwrap();
+        let source = source.canonicalize().unwrap();
         let image = root.path().join("中文 pic.png");
         std::fs::write(&image, b"test").unwrap();
         let hidden = outside.path().join("private.png");

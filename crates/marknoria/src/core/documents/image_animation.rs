@@ -34,6 +34,9 @@ fn loops(count: image::metadata::LoopCount) -> u32 {
     }
 }
 pub(crate) fn decode(bytes: &[u8], mime: &str) -> Result<Option<Vec<u8>>, String> {
+    decode_resolution(bytes,mime,false)
+}
+pub(crate) fn decode_resolution(bytes: &[u8], mime: &str, source: bool) -> Result<Option<Vec<u8>>, String> {
     if bytes.is_empty() || bytes.len() > 25 * 1024 * 1024 {
         return Err("Animation source exceeds 25 MiB".into());
     }
@@ -62,6 +65,7 @@ pub(crate) fn decode(bytes: &[u8], mime: &str) -> Result<Option<Vec<u8>>, String
                 plays,
                 deadline,
                 orientation,
+                source,
             )
         }
         "image/webp" => {
@@ -80,6 +84,7 @@ pub(crate) fn decode(bytes: &[u8], mime: &str) -> Result<Option<Vec<u8>>, String
                 plays,
                 deadline,
                 orientation,
+                source,
             )
         }
         "image/png" => {
@@ -99,6 +104,7 @@ pub(crate) fn decode(bytes: &[u8], mime: &str) -> Result<Option<Vec<u8>>, String
                 plays,
                 deadline,
                 orientation,
+                source,
             )
         }
         _ => Ok(None),
@@ -110,6 +116,7 @@ fn collect(
     plays: u32,
     deadline: Instant,
     orientation: image::metadata::Orientation,
+    source:bool,
 ) -> Result<Option<Vec<u8>>, String> {
     current(deadline)?;
     super::dimensions(original.0, original.1)?;
@@ -134,7 +141,7 @@ fn collect(
         let mut image = image::DynamicImage::ImageRgba8(buffer);
         image.apply_orientation(orientation);
         oriented_original = (image.width(), image.height());
-        let preview = if oriented_original.0 > EDGE || oriented_original.1 > EDGE {
+        let preview = if !source && (oriented_original.0 > EDGE || oriented_original.1 > EDGE) {
             image
                 .resize(EDGE, EDGE, image::imageops::FilterType::Triangle)
                 .into_rgba8()
@@ -307,7 +314,8 @@ mod tests {
             (1, 1),
             0,
             Instant::now(),
-            image::metadata::Orientation::NoTransforms
+            image::metadata::Orientation::NoTransforms,
+            false
         )
         .unwrap_err()
         .contains("time budget"));
@@ -328,6 +336,7 @@ mod tests {
             1,
             Instant::now() + Duration::from_secs(3),
             image::metadata::Orientation::Rotate90,
+            false,
         )
         .unwrap()
         .unwrap();
@@ -347,12 +356,16 @@ mod tests {
             1,
             Instant::now() + Duration::from_secs(3),
             image::metadata::Orientation::NoTransforms,
+            false,
         )
         .unwrap()
         .unwrap();
         assert_eq!((u32_at(&output, 8), u32_at(&output, 12)), (2000, 10));
         assert_eq!(u32_at(&output, 16), 768);
         assert!(u32_at(&output, 20) <= 10);
+        let source_frames=image::Frames::new(Box::new((0..2).map(|_|Ok(image::Frame::new(image::RgbaImage::new(2000,10))))));
+        let source=collect(source_frames,(2000,10),1,Instant::now()+Duration::from_secs(3),image::metadata::Orientation::NoTransforms,true).unwrap().unwrap();
+        assert_eq!((u32_at(&source,16),u32_at(&source,20)),(2000,10));
         let frames = image::Frames::new(Box::new(
             (0..8).map(|_| Ok(image::Frame::new(image::RgbaImage::new(768, 768)))),
         ));
@@ -361,7 +374,8 @@ mod tests {
             (768, 768),
             0,
             Instant::now() + Duration::from_secs(3),
-            image::metadata::Orientation::NoTransforms
+            image::metadata::Orientation::NoTransforms,
+            false
         )
         .unwrap_err()
         .contains("16 MiB"));

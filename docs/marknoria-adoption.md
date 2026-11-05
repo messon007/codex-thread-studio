@@ -281,3 +281,39 @@ Small Markdown/raw-HTML compatibility, original-image profiles, remaining common
 entry points/Notes, durable AI draft references, WSL transport and the final
 cross-product/remote gates remain open. New commits remain local until the whole
 task is ready for the owner's requested combined push.
+
+
+## Ordinary document entries — common reader batch
+
+The unchanged 800-file SDK is now pinned to
+`3b9558c6a2b59c8612a7b76e7a56d5b1208945d0` (archive SHA-256
+`57ad4df7fe76e8eff46679379377fb00cea42fd47b42b781ffcb9b7cf8562fdd`, tree
+`60647a9e605f73efd691c60edf2cc452f1c09894154511bd7512c5589fd1062a`).
+Every ordinary reviewable file opens through `/studio/reader/open`, sharing the
+reader, source/edit capability controls, host Notes and typed selections. Only
+explicit HTTP 501 retains the existing authorized WSL adapter; denial and errors
+never retry a different file endpoint. Chat and still-supported WSL callers keep
+their existing components until their transport is adopted.
+
+Fresh text/code/structured documents now use the common v1 **Preview** default,
+including former Source-default entries. Explicit/restored Source/Edit remains
+available with exact original bytes. PDF session descriptors preserve page,
+global zoom and flow; old PDF comments reopen their stored page. New PDF
+comments keep the public typed page/region reference. Read-only renderer work
+can be cancelled by closing/switching a document, while editable busy operations
+keep the existing close protection. Removing a frame synchronously disconnects
+its local protocol client and independently closes its owned service.
+
+Local Ubuntu 26.04.1 verification: 81 targeted host/controller/session tests,
+UI generated-module check/type checks, fixed inventory verification and actual
+application build pass. `scripts/smoke-reader-resources.mjs --common-entries
+--webkit` passes the existing resource/grant/dirty-save checks plus 15 ordinary
+entries: small Markdown, plain text, Python/C/C++/Rust, JSON/JSONL, YAML/TOML,
+XML/HTML/INI, PNG and PDF. Chromium 149 exercises the actual gateway/workspace;
+Wayland WebKit 2.52.6 executes the same original-source/default/capability
+checks in actual gateway-served readers. Markdown raw images and tables work;
+PDF page 7/100%/paged state restores; source bytes remain unchanged and owned
+caches empty after close. The compact fixture helper reports functional check
+elapsed time, not release first-content performance. Existing EPUB and table
+adoption evidence applies to their retained shared branch; final cross-format,
+WSL, durable AI SQL drafts, shell visuals/accessibility and remote CI remain open.

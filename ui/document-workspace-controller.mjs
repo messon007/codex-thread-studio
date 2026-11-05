@@ -155,7 +155,11 @@ export function createDocumentWorkspaceController({
     const signature=JSON.stringify(settings)
     if(signature===readerPresentationSignature)return
     readerPresentationSignature=signature
-    largeMarkdownHost.settings(settings).catch(error=>{readerPresentationSignature='';showError(error)})
+    const host = largeMarkdownHost
+    host.settings(settings).catch(error=>{
+      if (largeMarkdownHost !== host) return
+      readerPresentationSignature='';showError(error)
+    })
   }
 
   function bind() {
@@ -243,15 +247,16 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   disposeMarkdownImageAssets(state.artifact)
   const requestId = randomId()
   state.artifact = { root, path, kind, readerReference: file.readerReference, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
-  let sharedReader = kind === 'table' || kind === 'epub'
-  const endpoint = sharedReader ? '/studio/reader/open' : kind === 'image'
-    ? '/studio/review-image'
+  // All ordinary document entries use the same public reader and Notes owner.
+  // Only the explicitly unavailable WSL byte transport retains the old adapter.
+  let sharedReader = true
+  const legacyEndpoint = kind === 'image' ? '/studio/review-image'
     : kind === 'epub' ? '/studio/review-epub'
       : kind === 'pdf' ? '/studio/review-pdf'
         : kind === 'table' && /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet'
           : '/studio/review-file'
   try {
-    let response = await gatewayFetch(endpoint, {
+    let response = await gatewayFetch('/studio/reader/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root, path }),
@@ -260,7 +265,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
     // transport is shared. Never fall back on denial, bad input or server errors.
     if (sharedReader && response.status === 501) {
       sharedReader = false
-      response = await gatewayFetch(kind === 'epub' ? '/studio/review-epub' : /\.xlsx$/iu.test(path) ? '/studio/review-spreadsheet' : '/studio/review-file', {
+      response = await gatewayFetch(legacyEndpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root, path }),
       })
     }
@@ -351,7 +356,10 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
     }
     if (viewState) {
       if (['text', 'large-markdown'].includes(state.artifact.kind) && ['preview', 'source', 'edit'].includes(viewState.view)) state.artifactView = state.artifact.readerSourceAvailable === false ? 'preview' : state.artifact.readOnly && viewState.view === 'edit' ? 'source' : viewState.view
-      if (state.artifact.kind === 'pdf') state.artifact.page = viewState.page || 1
+      if (state.artifact.kind === 'pdf' || state.artifact.format === 'pdf') {
+        state.artifact.page = viewState.page || 1
+        state.artifact.pdfPresentation = viewState.pdfPresentation
+      }
       state.artifactOutlineOpen = Boolean(viewState.outlineOpen)
       state.artifactOutlineFilter = viewState.outlineFilter || ''
       state.artifactOutlineCollapsed = new Set(viewState.outlineCollapsed || [])
@@ -886,6 +894,10 @@ function renderArtifact() {
             scheduleEpubReadingState(file)
           }
         }
+        if (file.format === 'pdf' && snapshot.formatState?.ready) {
+          file.page = snapshot.formatState.page
+          file.pdfPresentation = { zoom: snapshot.formatState.zoom, continuous: snapshot.formatState.continuous }
+        }
         file.readerSourceAvailable = snapshot.capabilities?.source
         file.readerReady = snapshot.ready
         file.readerReadingReady = snapshot.readingReady
@@ -907,8 +919,10 @@ function renderArtifact() {
         initialReference: file.readerReference,
         presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
           flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,
-          typography: readingTypography() } } : undefined,
-        initialLocation: file.format === 'epub' && !file.readerReference && file.readingState?.cfi ? {kind:'epub',cfi:file.readingState.cfi} : undefined,
+          typography: readingTypography() } } : file.format === 'pdf' && file.pdfPresentation ? { pdf: file.pdfPresentation } : undefined,
+        initialLocation: file.readerReference ? undefined : file.format === 'epub' && file.readingState?.cfi
+          ? {kind:'epub',cfi:file.readingState.cfi}
+          : file.format === 'pdf' && file.page ? {kind:'pdf',pages:[{page:file.page,rects:[{x:0,y:0,width:1,height:0.000001}]}]} : undefined,
       })
       delete file.readerReference
     }

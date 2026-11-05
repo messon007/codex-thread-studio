@@ -30,12 +30,27 @@ pub struct Reference {
     pub end_byte: usize,
     pub offset: u64,
     pub bytes: usize,
+    #[serde(default)]
+    pub occurrence: usize,
+    #[serde(default)]
+    pub approximate: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchor {
+    pub name: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub page: usize,
 }
 
 pub(super) struct Collector {
     output: BufWriter<File>,
     pub references: Vec<Reference>,
     bytes: usize,
+    anchors: Vec<Anchor>,
+    table_depth: usize,
 }
 impl Collector {
     pub fn new(directory: &Path) -> io::Result<Self> {
@@ -43,6 +58,8 @@ impl Collector {
             output: BufWriter::new(File::create(directory.join("references.bin"))?),
             references: vec![],
             bytes: 0,
+            anchors: vec![],
+            table_depth: 0,
         })
     }
     pub fn capture<'a>(
@@ -50,11 +67,56 @@ impl Collector {
         mut event: Event<'a>,
         span: Range<usize>,
     ) -> io::Result<(Event<'a>, Range<usize>)> {
+        track_table(&event, &mut self.table_depth);
+        if let Event::Html(source) | Event::InlineHtml(source) = &event {
+            event = match super::markdown_html::web_fragment(
+                source,
+                self.references.len(),
+                self.table_depth > 0,
+            )? {
+                Some(fragment) => {
+                    if self.anchors.len() + fragment.anchors.len() > MAX_REFERENCES {
+                        return Err(super::invalid("HTML anchor budget exceeded"));
+                    }
+                    for (occurrence, reference) in fragment.references.into_iter().enumerate() {
+                        self.capture_target(
+                            reference.kind,
+                            &reference.target,
+                            &span,
+                            occurrence,
+                            true,
+                        )?;
+                    }
+                    self.anchors
+                        .extend(fragment.anchors.into_iter().map(|name| Anchor {
+                            name,
+                            start_byte: span.start,
+                            end_byte: span.end,
+                            page: 0,
+                        }));
+                    Event::Html(fragment.html.into())
+                }
+                None => literal(source),
+            };
+            return Ok((event, span));
+        }
         let (kind, target) = match &mut event {
             Event::Start(Tag::Image { dest_url, .. }) => (Kind::Image, dest_url),
             Event::Start(Tag::Link { dest_url, .. }) => (Kind::Link, dest_url),
             _ => return Ok((event, span)),
         };
+        let id = self.capture_target(kind, target, &span, 0, false)?;
+        *target = format!("{PREFIX}{id}").into();
+        Ok((event, span))
+    }
+    fn capture_target(
+        &mut self,
+        kind: Kind,
+        target: &str,
+        span: &Range<usize>,
+        occurrence: usize,
+        approximate: bool,
+    ) -> io::Result<usize> {
         let inline = target
             .get(..5)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"));
@@ -76,16 +138,30 @@ impl Collector {
             end_byte: span.end,
             offset: self.bytes as u64,
             bytes: target.len(),
+            occurrence,
+            approximate,
         });
         self.output.write_all(target.as_bytes())?;
         self.bytes += target.len();
-        *target = format!("{PREFIX}{id}").into();
-        Ok((event, span))
+        Ok(id)
     }
-    pub fn finish(mut self) -> io::Result<Vec<Reference>> {
+    pub fn finish(mut self) -> io::Result<(Vec<Reference>, Vec<Anchor>)> {
         self.output.flush()?;
-        Ok(self.references)
+        Ok((self.references, self.anchors))
     }
+}
+
+fn track_table(event: &Event<'_>, depth: &mut usize) {
+    match event {
+        Event::Start(Tag::Table(_)) => *depth += 1,
+        Event::End(pulldown_cmark::TagEnd::Table) => *depth = depth.saturating_sub(1),
+        _ => {}
+    }
+}
+fn literal<'a>(source: &str) -> Event<'a> {
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, std::iter::once(Event::Text(source.into())));
+    Event::Html(html.into())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -98,6 +174,8 @@ pub struct ReferenceInfo {
     pub start_byte: usize,
     pub end_byte: usize,
     pub target: Option<String>,
+    pub occurrence: usize,
+    pub precision: &'static str,
 }
 
 pub fn info(directory: &Path, index: &super::Index, id: usize) -> io::Result<ReferenceInfo> {
@@ -112,6 +190,12 @@ pub fn info(directory: &Path, index: &super::Index, id: usize) -> io::Result<Ref
         inline: reference.inline,
         start_byte: reference.start_byte,
         end_byte: reference.end_byte,
+        occurrence: reference.occurrence,
+        precision: if reference.approximate {
+            "approximate"
+        } else {
+            "exact"
+        },
         target: if reference.inline {
             None
         } else {
@@ -180,8 +264,10 @@ pub(super) fn event_weight(event: &Event<'_>) -> usize {
 pub(super) struct Auditor<'a> {
     directory: &'a Path,
     index: &'a super::Index,
-    ids: std::collections::HashMap<(usize, usize, Kind), usize>,
+    ids: std::collections::HashMap<(usize, usize, Kind, usize), usize>,
     seen: Vec<bool>,
+    anchors_seen: Vec<bool>,
+    table_depth: usize,
 }
 impl<'a> Auditor<'a> {
     pub fn new(directory: &'a Path, index: &'a super::Index) -> Self {
@@ -194,12 +280,19 @@ impl<'a> Auditor<'a> {
                 .enumerate()
                 .map(|(id, reference)| {
                     (
-                        (reference.start_byte, reference.end_byte, reference.kind),
+                        (
+                            reference.start_byte,
+                            reference.end_byte,
+                            reference.kind,
+                            reference.occurrence,
+                        ),
                         id,
                     )
                 })
                 .collect(),
             seen: vec![false; index.references.len()],
+            anchors_seen: vec![false; index.anchors.len()],
+            table_depth: 0,
         }
     }
     pub fn event<'b>(
@@ -207,17 +300,74 @@ impl<'a> Auditor<'a> {
         mut event: Event<'b>,
         span: &Range<usize>,
     ) -> io::Result<Event<'b>> {
+        track_table(&event, &mut self.table_depth);
+        if let Event::Html(source) | Event::InlineHtml(source) = &event {
+            let base = self
+                .index
+                .references
+                .iter()
+                .position(|reference| {
+                    reference.approximate
+                        && reference.start_byte == span.start
+                        && reference.end_byte == span.end
+                })
+                .unwrap_or(0);
+            return match super::markdown_html::web_fragment(source, base, self.table_depth > 0)? {
+                Some(fragment) => {
+                    for (occurrence, reference) in fragment.references.iter().enumerate() {
+                        let id = *self
+                            .ids
+                            .get(&(span.start, span.end, reference.kind, occurrence))
+                            .ok_or_else(|| {
+                                super::invalid("Raw reference source mapping mismatch")
+                            })?;
+                        if id != base + occurrence
+                            || !self.index.references[id].approximate
+                            || target(self.directory, self.index, id)? != reference.target
+                        {
+                            return Err(super::invalid("Raw reference differs from source"));
+                        }
+                        self.seen[id] = true;
+                    }
+                    let anchors = self
+                        .index
+                        .anchors
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, anchor)| {
+                            anchor.start_byte == span.start && anchor.end_byte == span.end
+                        })
+                        .collect::<Vec<_>>();
+                    if anchors.len() != fragment.anchors.len()
+                        || anchors
+                            .iter()
+                            .zip(&fragment.anchors)
+                            .any(|((_, anchor), name)| anchor.name != *name)
+                    {
+                        return Err(super::invalid("HTML anchor differs from source"));
+                    }
+                    for (id, _) in anchors {
+                        self.anchors_seen[id] = true;
+                    }
+                    Ok(Event::Html(fragment.html.into()))
+                }
+                None => Ok(literal(source)),
+            };
+        }
         let (kind, url) = match &mut event {
             Event::Start(Tag::Image { dest_url, .. }) => (Kind::Image, dest_url),
             Event::Start(Tag::Link { dest_url, .. }) => (Kind::Link, dest_url),
             _ => return Ok(event),
         };
-        let id = *self.ids.get(&(span.start, span.end, kind)).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Reference source mapping mismatch",
-            )
-        })?;
+        let id = *self
+            .ids
+            .get(&(span.start, span.end, kind, 0))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Reference source mapping mismatch",
+                )
+            })?;
         if target(self.directory, self.index, id)? != url.as_ref() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -229,7 +379,17 @@ impl<'a> Auditor<'a> {
         Ok(event)
     }
     pub fn finish(self) -> io::Result<()> {
-        if self.seen.iter().all(|seen| *seen) {
+        if self.index.anchors.iter().any(|anchor| {
+            anchor.page
+                != self
+                    .index
+                    .pages
+                    .partition_point(|page| page.start <= anchor.start_byte)
+                    .saturating_sub(1)
+        }) {
+            return Err(super::invalid("HTML anchor page differs from source"));
+        }
+        if self.seen.iter().chain(&self.anchors_seen).all(|seen| *seen) {
             Ok(())
         } else {
             Err(io::Error::new(
@@ -242,8 +402,104 @@ impl<'a> Auditor<'a> {
 
 #[cfg(test)]
 mod tests {
+    mod fixtures {
+        include!("../../tests/support/references.rs");
+    }
     use super::*;
     use crate::core::{ProjectionProfile, build_index, build_index_with_profile, read_page};
+    #[test]
+    fn a_web_table_with_no_uri_or_anchor_still_audits_its_projection_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("empty-image.md");
+        std::fs::write(&file,"| Picture |\n|---|\n| <img alt=\"missing\" srcset=\"https://example.invalid/never.png 2x\"> |\n").unwrap();
+        let cache = root.path().join("web");
+        let index = build_index_with_profile(&file, &cache, ProjectionProfile::Web).unwrap();
+        assert!(index.references.is_empty() && index.anchors.is_empty() && index.web_markdown);
+        crate::core::audit_tables(&cache, &index).unwrap();
+    }
+    #[test]
+    fn web_image_profile_keeps_source_pixels_and_indexed_preview_stays_bounded() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("quality.png");
+        fixtures::source_image().save(&path).unwrap();
+        let cache = root.path().join("web");
+        let web = build_index_with_profile(&path, &cache, ProjectionProfile::Web).unwrap();
+        assert_eq!((web.assets[0].width, web.assets[0].height), (4096, 1024));
+        let frame = crate::core::documents::asset(&cache, &web, 0, 0).unwrap();
+        let pixels = image::open(frame).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(2000, 500).0, [0, 0, 0, 255]);
+        assert_eq!(pixels.get_pixel(2001, 500).0, [255, 255, 255, 255]);
+        assert_eq!(pixels.get_pixel(21, 20).0, [0, 0, 0, 255]);
+        let indexed = build_index(&path, &root.path().join("indexed")).unwrap();
+        assert_eq!(
+            (indexed.assets[0].width, indexed.assets[0].height),
+            (2048, 512)
+        );
+        assert_eq!(indexed.revision, web.revision);
+    }
+    #[test]
+    fn raw_html_resources_are_transactional_and_keep_fragment_precision_and_occurrences() {
+        let root = tempfile::tempdir().unwrap();
+        let source = fixtures::raw_html_document();
+        let file = root.path().join("raw.md");
+        std::fs::write(&file, &source).unwrap();
+        let cache = root.path().join("web");
+        let mut index = build_index_with_profile(&file, &cache, ProjectionProfile::Web).unwrap();
+        assert_eq!(index.references.len(), 11);
+        assert_eq!(info(&cache, &index, 2).unwrap().precision, "exact");
+        let first = info(&cache, &index, 3).unwrap();
+        let second = info(&cache, &index, 4).unwrap();
+        assert_eq!(first.precision, "approximate");
+        assert_eq!(second.precision, "approximate");
+        assert_eq!(
+            (first.start_byte, first.end_byte),
+            (second.start_byte, second.end_byte)
+        );
+        assert_eq!((first.occurrence, second.occurrence), (0, 1));
+        assert!(source[first.start_byte..first.end_byte].contains("<div><img"));
+        assert!(
+            index
+                .anchors
+                .iter()
+                .any(|anchor| anchor.name == "custom-heading")
+        );
+        assert!(
+            index
+                .anchors
+                .iter()
+                .any(|anchor| anchor.name == "custom-anchor")
+        );
+        let html = (0..index.pages.len())
+            .map(|id| read_page(&cache, &index, id).unwrap())
+            .collect::<String>();
+        assert!(
+            html.contains("data-image-reference=\"3\"")
+                && html.contains("data-image-reference=\"7\"")
+        );
+        assert!(html.contains("data-document-anchor=\"source-view\""));
+        assert!(
+            !html.contains(" id=\"source-view\"") && !html.contains("data-image-reference=\"999\"")
+        );
+        assert!(
+            !html.contains(" onerror=")
+                && !html.contains(" onclick=")
+                && !html.contains(" srcset=")
+        );
+        assert!(!html.contains("href=\"javascript:") && !html.contains("<script>"));
+        assert!(
+            !index
+                .references
+                .iter()
+                .enumerate()
+                .any(|(id, _)| target(&cache, &index, id).unwrap() == "not-accepted.png")
+        );
+        crate::core::audit_tables(&cache, &index).unwrap();
+        index.references[4].occurrence = 0;
+        assert!(crate::core::audit_tables(&cache, &index).is_err());
+        let legacy = build_index(&file, &root.path().join("native")).unwrap();
+        assert!(legacy.references.is_empty() && legacy.anchors.is_empty());
+        assert_eq!(std::fs::read(&file).unwrap(), source.as_bytes());
+    }
 
     #[test]
     fn web_references_keep_bom_crlf_ranges_and_include_table_images_without_reading_targets() {

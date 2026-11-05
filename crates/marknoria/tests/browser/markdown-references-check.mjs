@@ -16,13 +16,17 @@ await writeFile(join(workspace, 'shape.svg'), '<svg xmlns="http://www.w3.org/200
 for (let i = 0; i < 5; i++) await writeFile(join(workspace, `extra-${i}.png`), png)
 const source = '\ufeff# Resources 中文😀\r\n\r\n![local](中文%20pic.png)\r\n\r\n![inline](data:image/png;base64,' + png.toString('base64') + ')\r\n\r\n[sibling](sibling.md) [jump](#section-two) [external](https://example.invalid/reference)\r\n\r\n![outside](../private.png) ![remote](https://example.invalid/never-fetch.png)\r\n\r\n## Section two\r\n\r\n| Picture | Meaning |\r\n|---|---|\r\n| ![table](shape.svg) | SVG |\r\n\r\n' + Array.from({length:5},(_,i)=>`![extra ${i}](extra-${i}.png)\r\n\r\n`).join('')
 const sourcePath = join(workspace, 'source.md'); await writeFile(sourcePath, source)
+const corpusDirectory=join(directory,'corpus');await mkdir(corpusDirectory)
+const corpus=JSON.parse((await promisify(execFile)(resolve(process.env.MARKNORIA_CORPUS_BINARY || 'target/debug/examples/reader-corpus'),[corpusDirectory])).stdout)
 const children = [], caches = [], urls = []
 const parent = createServer(async (request, response) => {
   if (request.url === '/contract.mjs') {
     response.setHeader('Content-Type', 'text/javascript')
-    response.end(`import {markdownReferencesContract} from '/markdown-references-contract.mjs';export const run=()=>markdownReferencesContract(${JSON.stringify(urls.slice(0,2))})`)
+    response.end(`import {markdownReferencesContract} from '/markdown-references-contract.mjs';import {rawResourcesContract} from '/raw-resources-contract.mjs';export const run=async()=>({basic:await markdownReferencesContract(${JSON.stringify(urls.slice(0,2))}),raw:await rawResourcesContract(${JSON.stringify(urls.slice(3,6))})})`)
   } else if (request.url === '/markdown-references-contract.mjs') {
     response.setHeader('Content-Type', 'text/javascript'); response.end(await readFile('tests/browser/contracts/markdown-references.mjs'))
+  } else if (request.url === '/raw-resources-contract.mjs') {
+    response.setHeader('Content-Type','text/javascript');response.end(await readFile('tests/browser/contracts/raw-resources.mjs'))
   } else if (/^\/[a-z-]+\.(mjs|css)$/.test(request.url) || request.url === '/vendor/purify.mjs') {
     try { response.setHeader('Content-Type', request.url.endsWith('.css') ? 'text/css' : 'text/javascript'); response.end(await readFile('web' + request.url)) }
     catch { response.writeHead(404); response.end() }
@@ -35,10 +39,12 @@ const parentOrigin = `http://127.0.0.1:${parent.address().port}`
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 let browser
 try {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 7; i++) {
     const cache = join(directory, 'cache-' + i); await mkdir(cache); caches.push(cache)
-    const binary = resolve(i === 2 ? process.env.MARKNORIA_SERVER_BINARY || 'target/debug/marknoria-server' : process.env.MARKNORIA_EMBEDDED_BINARY || 'target/debug/examples/embedded-host')
-    const args = i === 2 ? [sourcePath, '--root', workspace] : [sourcePath, `--parent=${parentOrigin}`, ...(i === 1 ? [`--reference-root=${workspace}`] : [])]
+    const standalone=i===2||i===6, root=i>=3?corpusDirectory:workspace
+    const input=i===3||i===6?corpus.rawMarkdown:i===4?corpus.sourceImage:i===5?corpus.resolutionMarkdown:sourcePath
+    const binary = resolve(standalone ? process.env.MARKNORIA_SERVER_BINARY || 'target/debug/marknoria-server' : process.env.MARKNORIA_EMBEDDED_BINARY || 'target/debug/examples/embedded-host')
+    const args = standalone ? [input, '--root', root] : [input, `--parent=${parentOrigin}`, ...([1,3,5].includes(i) ? [`--reference-root=${root}`] : [])]
     const child = spawn(binary, args, { env: { ...process.env, READER_CACHE_DIR: cache }, stdio: ['pipe', 'pipe', 'pipe'] })
     children.push(child)
     let stdout = '', stderr = ''
@@ -53,8 +59,17 @@ try {
   page.on('pageerror', error => errors.push(String(error)))
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:') && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) external.push(request.url()) })
   await page.goto(parentOrigin)
-  const contract = await page.evaluate(async () => (await import('/contract.mjs')).run())
+  const {basic:contract,raw:rawContract} = await page.evaluate(async () => (await import('/contract.mjs')).run())
   assert.equal(contract.remountCleanup, true)
+  assert.equal(rawContract.sourceResolution,true)
+  await page.goto(urls[6])
+  await page.locator('[data-image-reference="9"] [data-asset-state="ready"] img').waitFor()
+  await page.locator('[data-image-reference="10"] [data-asset-state="ready"] img').waitFor()
+  await page.locator('[data-link-reference="0"]').click()
+  await page.locator('[data-document-anchor="custom-heading"]').waitFor()
+  assert.equal(await page.evaluate(()=>window.bad),undefined)
+  await page.locator('[data-link-reference="8"]').click()
+  assert.equal(await page.evaluate(()=>window.bad),undefined)
   // Test actual virtual reader DOM as well as the ordinary component above.
   await page.goto(urls[2])
   await page.locator('[data-image-reference="0"] [data-asset-state="ready"] img').waitFor()
@@ -79,7 +94,8 @@ try {
   let webkit
   if (process.argv.includes('--webkit')) {
     webkit = JSON.parse((await promisify(execFile)('/usr/bin/python3', ['tests/browser/contract-webkit.py', parentOrigin], { timeout: 190000 })).stdout)
-    assert.equal(webkit.remountCleanup, true)
+    assert.equal(webkit.basic.remountCleanup, true)
+    assert.equal(webkit.raw.sourceResolution,true)
   }
   // Force actual cache eviction, then reject frames tied to the old snapshot.
   const embedded = new URL(urls[1]), scopedHeaders = { 'x-reader-token': embedded.hash.slice(1) }
@@ -103,12 +119,12 @@ try {
   const next = await readyResource(0)
   assert.notEqual(previous.imageRevision,next.imageRevision)
   assert.equal((await fetch(new URL(`/api/reference-image?id=0&revision=${owned.index.revision}&imageRevision=${previous.imageRevision}&frame=0`,embedded),{headers:scopedHeaders})).status,409)
-  console.log(JSON.stringify({ ok: true, browserVersion: browser.version(), contract, standalone: true, snapshotEviction:true, webkit, artifacts: directory }))
+  console.log(JSON.stringify({ ok: true, browserVersion: browser.version(), contract, rawContract, standalone: true, snapshotEviction:true, webkit, artifacts: directory }))
 } finally {
   await browser?.close()
   for (const [i, child] of children.entries()) if (child.exitCode == null && child.signalCode == null) {
     const exited = once(child, 'exit')
-    if (i === 2) child.kill('SIGINT'); else child.stdin.end('\n')
+    if (i === 2 || i===6) child.kill('SIGINT'); else child.stdin.end('\n')
     await exited
     assert.equal(child.exitCode, 0)
   }

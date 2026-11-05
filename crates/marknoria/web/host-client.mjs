@@ -66,5 +66,8 @@ export function createReaderClient(frame, { origin = new URL(frame.src, location
     }
     throw Error('Reader did not become ready')
   }
-  return { request, ready, dispose, get active() { return pending.size } }
+  // The owner may remove a frame while independently closing its service.
+  // Disconnect only releases this client's listeners, retries and pending calls;
+  // it does not acknowledge reader/service disposal or grant new authority.
+  return { request, ready, dispose, disconnect: cleanup, get active() { return pending.size } }
 }

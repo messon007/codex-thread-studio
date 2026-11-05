@@ -9,7 +9,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     const visible = {
       initialized, ready: initialized && state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
       editable: Boolean(state.capabilities?.edit), view: state.view, dirty: Boolean(state.dirty),
-      busy: Boolean(state.busy), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
+      busy: Boolean(state.busy && state.capabilities?.edit), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
       lineCount: state.document?.sourceLines, size: state.document?.fileBytes, name: state.name,
       documentId: state.documentId, revision: state.revision, format: state.format,
       status: state.editorError?.message || state.error || '', error: state.error,
@@ -76,7 +76,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
   }
   return {
     ready,
-    get busy(){return Boolean(snapshot.busy)}, get dirty(){return Boolean(snapshot.dirty)},
+    get busy(){return Boolean(snapshot.busy && snapshot.capabilities?.edit)}, get dirty(){return Boolean(snapshot.dirty)},
     async setView(view){publish(await command('setView',{view}))},
     async save(){publish(await command('save',{}));return true},
     async setOutline(open){publish(await command('contents',{open}))},
@@ -107,7 +107,8 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       // The surrounding Studio discard prompt is authoritative. Backend close
       // separately awaits service cleanup; no credentials enter the child.
       const closing=client?.dispose({force:true})
-      void closing?.catch(error=>options.onError?.(error))
+      void closing?.catch(()=>{})
+      client?.disconnect?.()
       return closing
     },
   }

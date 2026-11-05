@@ -15,10 +15,11 @@ This is source evidence, not proof of an actual updated Studio window.
 | BOM, CRLF, Unicode | Original bytes retained; exact source selections tested | Byte/UTF-16 heading offsets recorded separately |
 | Footnotes/math | Not enabled by this profile | Not enabled in the frozen options |
 | Raw HTML | Bounded safe inline/block/table tags; unsafe/unsupported fragments remain literal | Unsafe HTML emitted, then host sanitization |
-| Markdown images/local resources | Inert image alternative text | Host resource adapter |
+| Markdown images/local resources | Web syntax/raw HTML use the shared Rust resource authority and image component; indexed/native retain their inert alternative text | Host resource adapter |
 
-The safe HTML subset is now implemented, but full HTML style/anchor/resource
-parity and actual Studio adoption remain work; the rows are not silently counted
+The safe HTML subset, Web raw resources and explicit internal anchors are now
+implemented, but full HTML styles and actual common-entry Studio adoption remain
+work; the rows are not silently counted
 as equivalent. Hosts must never compensate by inserting untrusted HTML
 without the shared sanitizer or by granting a document's entire parent folder.
 Diagram handling remains the separately bounded shared engine.
@@ -71,12 +72,20 @@ links allow HTTP(S), mailto and fragments with control characters rejected and
 opener isolation added. Limited title/table-span/alignment/list-start/time/detail
 attributes retain their semantics. Comments/doctypes are not document UI.
 
-Scripts, frames, images/resources, SVG/MathML, forms and other unsupported tags
+In the indexed/native profile, scripts, frames, images/resources, SVG/MathML,
+forms and other unsupported tags
 retain the existing literal inert fallback for their fragment. Existing per-page
 128 KiB HTML/16,384-event bounds also limit token/output work. CSS/resources are
 not authorized by safe HTML rendering; the shared DOM sanitizer/CSP remains
 mandatory. This subset is not a claim that every frozen Studio HTML style or
 local-resource behavior is already accepted.
+
+The Web profile uses that same tokenizer transactionally to create raw image/link
+slots and safe internal explicit-anchor mappings. Raw references declare the
+enclosing source fragment plus occurrence and approximate precision; Markdown
+syntax remains exact. Source IDs never replace reader widgets. See the bounded
+[reference profile and shared corpus](markdown-references.md). This does not add
+heading-slug dialects absent from the frozen baseline.
 
 Parser-owned row sentinels attach exact Markdown source ranges before final
 projection. Raw attributes/comments cannot forge these sentinels. A raw table

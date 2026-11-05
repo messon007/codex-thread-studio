@@ -87,7 +87,22 @@ impl Resources {
         if target.len() > references::MAX_LINK_BYTES || target.chars().any(char::is_control) {
             return Err(denied());
         }
-        let base = url::Url::from_file_path(source).map_err(|_| denied())?;
+        let normalized = target.replace('\\', "/");
+        let (base, target) = if normalized.starts_with('/') && !normalized.starts_with("//") {
+            let root = roots
+                .iter()
+                .find(|root| source.starts_with(root))
+                .ok_or_else(denied)?;
+            (
+                url::Url::from_directory_path(root).map_err(|_| denied())?,
+                normalized.trim_start_matches('/'),
+            )
+        } else {
+            (
+                url::Url::from_file_path(source).map_err(|_| denied())?,
+                normalized.as_str(),
+            )
+        };
         let target = base.join(target).map_err(|_| denied())?;
         if target.scheme() != "file" {
             return Err(denied());
@@ -432,6 +447,17 @@ mod tests {
                 .local(&source, "%E4%B8%AD%E6%96%87%20pic.png?view=1#part")
                 .unwrap(),
             image.canonicalize().unwrap()
+        );
+        assert_eq!(
+            resources.local(&source, "/中文%20pic.png").unwrap(),
+            image.canonicalize().unwrap()
+        );
+        let nested = root.path().join("images");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("picture.png"), b"test").unwrap();
+        assert_eq!(
+            resources.local(&source, "images\\picture.png").unwrap(),
+            nested.join("picture.png").canonicalize().unwrap()
         );
         assert!(
             resources

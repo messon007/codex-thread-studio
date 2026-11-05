@@ -3887,7 +3887,7 @@ function leaveSessionWorkspace() {
   if (tool === 'document') snapshot.document = {
     file: { root: file.root, path: file.path, sourceSessionKey: file.sourceSessionKey, epubCfi: file.readingState?.cfi || '' },
     returnTool: file.returnTool,
-    viewState: { view: state.artifactView, page: file.page, scrollTop: $('#artifact-content').scrollTop, scrollLeft: $('#artifact-content').scrollLeft,
+    viewState: { view: state.artifactView, page: file.page, pdfPresentation: file.pdfPresentation, scrollTop: $('#artifact-content').scrollTop, scrollLeft: $('#artifact-content').scrollLeft,
       outlineOpen: state.artifactOutlineOpen, outlineFilter: state.artifactOutlineFilter, outlineCollapsed: [...state.artifactOutlineCollapsed],
       search: state.artifactSearch, searchOpen: state.artifactSearchOpen },
   }

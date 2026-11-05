@@ -99,6 +99,43 @@ struct Projection {
     tokens: usize,
     table_structure: bool,
     scopes: Vec<(Scope, bool)>,
+    web_base: Option<usize>,
+    references: Vec<RawReference>,
+    anchors: Vec<String>,
+    target_bytes: usize,
+    resource_budget: bool,
+}
+pub(super) struct RawReference {
+    pub kind: super::references::Kind,
+    pub target: String,
+}
+pub(super) struct WebFragment {
+    pub html: String,
+    pub references: Vec<RawReference>,
+    pub anchors: Vec<String>,
+}
+impl Projection {
+    fn reference(&mut self, kind: super::references::Kind, target: &str) -> Option<usize> {
+        let base = self.web_base?;
+        let inline = target
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"));
+        if base + self.references.len() >= super::references::MAX_REFERENCES
+            || self.target_bytes.saturating_add(target.len()) > super::references::MAX_TARGET_BYTES
+            || (!inline || kind == super::references::Kind::Link)
+                && target.len() > super::references::MAX_LINK_BYTES
+        {
+            self.resource_budget = true;
+            return None;
+        }
+        let id = base + self.references.len();
+        self.target_bytes += target.len();
+        self.references.push(RawReference {
+            kind,
+            target: target.into(),
+        });
+        Some(id)
+    }
 }
 impl TokenSink for Projection {
     type Handle = ();
@@ -113,6 +150,29 @@ impl TokenSink for Projection {
         match token {
             Token::TagToken(tag) => {
                 let name = tag.name.as_ref();
+                let attribute = |key: &str| {
+                    tag.attrs
+                        .iter()
+                        .find(|attr| attr.name.ns.is_empty() && attr.name.local.as_ref() == key)
+                        .map(|attr| attr.value.as_ref())
+                };
+                if self.web_base.is_some() && name == "img" {
+                    if tag.kind == TagKind::StartTag {
+                        let alt: String =
+                            attribute("alt").unwrap_or("").chars().take(256).collect();
+                        if let Some(target) = attribute("src") {
+                            if let Some(id) = self.reference(super::references::Kind::Image, target)
+                            {
+                                let title: String =
+                                    attribute("title").unwrap_or("").chars().take(256).collect();
+                                self.output.push_str(&format!("<span class=\"markdown-reference-image\" data-image-reference=\"{id}\" title=\"{}\"><span class=\"markdown-reference-alt\">[image: {}]</span></span>",escape(&title),escape(&alt)));
+                            }
+                        } else {
+                            self.output.push_str(&format!("[image: {}]", escape(&alt)));
+                        }
+                    }
+                    return TokenSinkResult::Continue;
+                }
                 if !allowed(name) {
                     self.unsupported = true;
                     return TokenSinkResult::Continue;
@@ -143,6 +203,36 @@ impl TokenSink for Projection {
                 } else {
                     self.output.push('<');
                     self.output.push_str(name);
+                    if self.web_base.is_some() {
+                        if let Some(anchor) = attribute("id")
+                            .or_else(|| if name == "a" { attribute("name") } else { None })
+                        {
+                            if !anchor.is_empty()
+                                && anchor.len() <= 256
+                                && !anchor.chars().any(char::is_control)
+                            {
+                                self.anchors.push(anchor.to_owned());
+                                self.output.push_str(&format!(
+                                    " data-document-anchor=\"{}\"",
+                                    escape(anchor)
+                                ));
+                                if self.anchors.len() > super::references::MAX_REFERENCES {
+                                    self.resource_budget = true;
+                                }
+                            }
+                        }
+                        if name == "a" {
+                            if let Some(target) = attribute("href") {
+                                if let Some(id) =
+                                    self.reference(super::references::Kind::Link, target)
+                                {
+                                    self.output.push_str(&format!(
+                                        " href=\"#\" data-link-reference=\"{id}\""
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     for attr in tag.attrs {
                         if !attr.name.ns.is_empty() {
                             continue;
@@ -153,7 +243,10 @@ impl TokenSink for Projection {
                             continue;
                         }
                         let keep = key == "title"
-                            || (name == "a" && key == "href" && href(value))
+                            || (self.web_base.is_none()
+                                && name == "a"
+                                && key == "href"
+                                && href(value))
                             || (matches!(name, "th" | "td")
                                 && matches!(key, "rowspan" | "colspan")
                                 && value.parse::<usize>().is_ok_and(|n| (1..=512).contains(&n)))
@@ -208,6 +301,41 @@ pub(super) fn cell_fragment(source: &str) -> Option<String> {
 }
 pub(super) fn scopes(source: &str) -> Vec<(Scope, bool)> {
     tokenize(source).map(|sink| sink.scopes).unwrap_or_default()
+}
+
+// The tokenizer does not expose attribute byte offsets. Callers retain the
+// enclosing parser span and a per-fragment occurrence, with approximate precision.
+// References are returned only after the entire fragment has been accepted.
+pub(super) fn web_fragment(
+    source: &str,
+    base: usize,
+    cell: bool,
+) -> std::io::Result<Option<WebFragment>> {
+    let mut tokenizer = Tokenizer::new(
+        Projection {
+            web_base: Some(base),
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    let mut input = BufferQueue::new();
+    input.push_back(StrTendril::from_slice(source));
+    let _ = tokenizer.feed(&mut input);
+    tokenizer.end();
+    let sink = tokenizer.sink;
+    if sink.resource_budget {
+        return Err(super::invalid(
+            "HTML references exceed their count/target budget",
+        ));
+    }
+    Ok((!sink.unsupported
+        && sink.output.len() <= super::MAX_HTML
+        && (!cell || !sink.table_structure))
+        .then_some(WebFragment {
+            html: sink.output,
+            references: sink.references,
+            anchors: sink.anchors,
+        }))
 }
 
 #[cfg(test)]

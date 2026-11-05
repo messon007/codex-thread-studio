@@ -278,7 +278,7 @@ function readingAnchor() {
   return tables.items[item]?.page ?? 0
 }
 
-async function jump(sourcePage, heading = null, row = null) {
+async function jump(sourcePage, heading = null, row = null, anchor = null) {
   if (stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
   if (editor?.visible) {
     const target = heading == null ? index.pages[sourcePage]?.line : index.toc.find(item => item.id === heading)?.line
@@ -316,7 +316,7 @@ async function jump(sourcePage, heading = null, row = null) {
     if (stopped || ticket !== navigation || !index || !tables || !virtualizer) return
     const article = nodes.get(page)
     const tableRow = row ?? index.pages[sourcePage]?.rowStart
-    const target = heading == null
+    const target = anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
       ? (tableRow > Number(article?.dataset.rowStart || 0) ? article?.querySelectorAll('tbody tr')[tableRow - Number(article.dataset.rowStart)] : article)
       : document.getElementById(`heading-${heading}`)
     const diagramsReady = article && target && [...article.querySelectorAll('figure[data-diagram-state]')].every(figure => !(figure.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) || ['rendered', 'error'].includes(figure.dataset.diagramState))
@@ -354,6 +354,19 @@ function renderToc(instance) {
   tocSpace.replaceChildren(fragment)
 }
 
+async function navigateFragment(fragment) {
+  const anchor = index.anchors?.find(anchor => anchor.name === fragment)
+  if (anchor) return jump(anchor.page,null,null,fragment)
+  const counts = new Map()
+  const heading = index.toc.find(heading => {
+    const slug = heading.label.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu,'').replace(/\s/gu,'-')
+    const count = counts.get(slug) || 0; counts.set(slug,count+1)
+    return fragment === `heading-${heading.id}` || fragment === slug+(count?'-'+count:'')
+  })
+  if (!heading) throw Error('Document fragment target is unavailable')
+  await jump(heading.page,heading.id)
+}
+
 function setup() {
   if(window.readerExperiment){started=performance.now();Object.assign(metrics,{firstContentMs:null,firstAssetMs:null,maxHeartbeatGapMs:0});heartbeatAt=started}
   readerAbort = new AbortController()
@@ -372,15 +385,7 @@ function setup() {
     onLink: async value => {
       const target = value.target
       if (target?.startsWith('#')) {
-        const fragment = decodeURIComponent(target.slice(1))
-        const counts = new Map()
-        const heading = index.toc.find(heading => {
-          const slug = heading.label.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu,'').replace(/\s/gu,'-')
-          const count = counts.get(slug) || 0; counts.set(slug,count+1)
-          return fragment === `heading-${heading.id}` || fragment === slug+(count?'-'+count:'')
-        })
-        if (!heading) throw Error('Heading link target is unavailable')
-        await jump(heading.page,heading.id)
+        await navigateFragment(decodeURIComponent(target.slice(1)))
       } else if (embedded) {
         if (!bridge?.connected) throw Error('The host has not connected its link handler')
         bridge.publish('linkRequested',value)
@@ -828,7 +833,7 @@ function boundedQuote(text) {
 function connectBridge() {
   const lifetime = new AbortController()
   let selectionTimer = null, selectionRequest = null, selectionGeneration = 0
-  const result = publicReader({ origins: serviceCapabilities.parentOrigins || [], state: publicState, index: () => index, renderer: () => formatRenderer, api,
+  const result = publicReader({ origins: serviceCapabilities.parentOrigins || [], state: publicState, index: () => index, renderer: () => formatRenderer, api, navigateFragment,
     contents: showContents,
     async setView(view) {
       if (!index || editor?.busy || switching) throw Error('Reader is busy')

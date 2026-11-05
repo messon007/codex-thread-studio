@@ -395,8 +395,11 @@ export function mountTableView(article, options) {
       content.querySelector('tbody')?.rows[row - current.rowStart]?.cells[
         state.columns.indexOf(column)
       ]
-    target?.focus({ preventScroll: true })
     if (target) {
+      // Navigation must select independently of browser focus events. WebKit
+      // may decline to focus a cell in a background embedded document.
+      cells.select(target)
+      target.focus({ preventScroll: true })
       const bounds = target.getBoundingClientRect(),
         area = content.getBoundingClientRect()
       content.scrollLeft +=

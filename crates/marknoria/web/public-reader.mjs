@@ -1,7 +1,7 @@
 import { installReaderBridge } from './reader-bridge.mjs'
 import { queryOperation } from './query-operation.mjs'
 
-export function publicReader({ origins, state, index, api, renderer = () => null, setView, navigate, contents, selection, save, settings, dispose }) {
+export function publicReader({ origins, state, index, api, renderer = () => null, setView, navigate, navigateFragment, contents, selection, save, settings, dispose }) {
   let imageRequests = 0
   const queryId = id => {
     if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
@@ -19,6 +19,10 @@ export function publicReader({ origins, state, index, api, renderer = () => null
   return installReaderBridge({ origins, state, onDispose: dispose, commands: {
     setView: checked(async params => { if (!['preview', 'source', 'edit'].includes(params.view)) throw Error('Invalid reader view'); await setView(params.view); return state() }),
     navigate: checked(async params => { await navigate(params.location); return state() }),
+    navigateFragment: checked(async params => {
+      if (typeof params.fragment !== 'string' || !params.fragment.length || new TextEncoder().encode(params.fragment).length>8192 || typeof navigateFragment !== 'function') throw Error('Invalid or unsupported document fragment')
+      await navigateFragment(params.fragment);return state()
+    }),
     contents: checked(async params => { if (typeof params.open !== 'boolean' || typeof contents !== 'function') throw Error('Invalid Contents command'); await contents(params.open); return state() }),
     save: checked(async () => { await save(); return state() }),
     selection: checked((_, signal) => selection(signal)),

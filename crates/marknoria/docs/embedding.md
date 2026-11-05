@@ -108,6 +108,7 @@ mounting its first view.
 | `assetInfo` | `id` from `state.document.assets`; returns bounded preview dimensions/frame timing without cache filenames |
 | `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
 | `referenceInfo`, `referenceImageInfo`, `referenceImageFrame` | Markdown target/source metadata and bounded image snapshots; explicit directory grants, image revisions and host navigation events are described in [markdown-references.md](markdown-references.md) |
+| `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
 | `outline` | `offset` (default 0), at most 256 items, total and revision |
 | `search` | `query`, 1–256 UTF-8 bytes; bounded source lines or complete-document PDF/EPUB search |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
@@ -248,6 +249,13 @@ accepted work, stops maintenance and removes owned caches; cleanup errors are
 returned. Dropping sends the same shutdown signal, but hosts should await `close`
 before destroying their runtime. Host-owned note storage persists. Complete-input
 query budgets remain separate from visible DOM paging, with no silent row limit.
+
+The parent client's synchronous `disconnect()` releases its listeners, hello
+retries and pending requests when a host removes its iframe. It is idempotent
+and rejects pending calls immediately. It does not acknowledge reader shutdown:
+owners must still close the underlying service. Normally await `dispose()`;
+when removing a frame immediately, begin `dispose({force:true})`, observe its
+rejection, disconnect, and independently await the owning service's close.
 
 Browser diagrams use local locked resources and do not start an extra backend
 Chromium. Backend rendering remains available. Diagram SVG caching is bounded and

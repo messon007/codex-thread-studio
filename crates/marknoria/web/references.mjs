@@ -132,7 +132,9 @@ export function mountReferences(root, { owner, viewport, provider, onLink, onCha
       if (hasReference) {
         result = await provider.info({id,signal:lifetime.signal})
         if (result.reference?.revision !== identity.revision || result.reference.id !== id || result.reference.kind !== 'link' || new TextEncoder().encode(JSON.stringify(result)).length > 262144) throw Error('Invalid or stale link reference')
-        result = {...result,target:result.reference.target,precision:'exact'}
+        const precision = result.reference.precision ?? 'exact'
+        if (!['exact','approximate'].includes(precision)) throw Error('Invalid reference precision')
+        result = {...result,target:result.reference.target,precision}
       } else {
         const target = link.getAttribute('href') || ''
         if (new TextEncoder().encode(target).length > 8192 || !/^(https?:|mailto:|#)/i.test(target)) throw Error('Unsupported rendered link')

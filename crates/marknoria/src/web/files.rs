@@ -45,7 +45,7 @@ pub struct Document {
 
 pub struct Documents {
     owner_cancelled: Option<Arc<AtomicBool>>,
-    projection: crate::core::ProjectionProfile,
+    pub(super) projection: crate::core::ProjectionProfile,
     pub root: PathBuf,
     selected_directory: Option<PathBuf>,
     current: Mutex<Option<Arc<Document>>>,

@@ -426,6 +426,18 @@ try {
   assert.equal(detachedCleanup.failure, 'TIMEOUT')
   assert.match(detachedCleanup.after, /disposed/)
   assert.equal(detachedCleanup.pending, 0)
+  const disconnected = await page.evaluate(async url => {
+    const { createReaderClient } = await import('/host-client.mjs')
+    const client = createReaderClient({src:url,contentWindow:{postMessage(){}}})
+    const pending = client.request('hello').then(()=>null,error=>error.message)
+    client.disconnect()
+    const count = client.active
+    client.disconnect()
+    return {count,failure:await pending,after:await client.request('state').then(()=>null,error=>error.message)}
+  }, urls[0])
+  assert.equal(disconnected.count,0)
+  assert.match(disconnected.failure,/disposed/)
+  assert.match(disconnected.after,/disposed/)
   assert.deepEqual(errors, [])
   await browser.close(); browser = null
   for (const child of children) { const exit = once(child, 'exit'); child.stdin.end('\n'); await exit; assert.equal(child.exitCode, 0) }

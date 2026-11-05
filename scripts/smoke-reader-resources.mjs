@@ -6,6 +6,7 @@ import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { resolve, join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pdfFixture } from '../crates/marknoria/tests/browser/pdf-fixture.mjs'
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), output=join(root,'target/reader-resources-smoke')
 await mkdir(output,{recursive:true})
 const directory=await mkdtemp(join(output,'run-')), project=join(directory,'project'), shared=join(directory,'shared'), cache=join(directory,'reader-cache')
@@ -15,6 +16,25 @@ await writeFile(join(project,'project.png'),png);await writeFile(join(shared,'sh
 const source=join(project,'resources.md'), sibling=join(project,'sibling.csv')
 const original='# Resources\n\n![project](project.png) ![inline](data:image/png;base64,'+png.toString('base64')+')\n\n![shared](../shared/shared.png) [sibling](sibling.csv) [external](https://example.invalid/reference)\n\n'+'Bounded reading content.\n\n'.repeat(50000)
 await writeFile(source,original);await writeFile(sibling,'Name,Value\nLinked document,42\n')
+const commonFiles = [
+ ['small.md','# Common sentinel 中文\n\n<img src="project.png" alt="raw resource">\n\n| Name | Value |\n|---|---|\n| sentinel | 42 |\n'],
+ ['plain.txt','Common sentinel 中文 😀\r\nSecond line\r\n'],
+ ['script.py','def sentinel():\n    return "中文 😀"\n'],
+ ['main.c','int sentinel(void) { return 42; }\n'],
+ ['main.cpp','auto sentinel = "中文";\n'],
+ ['lib.rs','fn sentinel() -> usize { 42 }\n'],
+ ['data.json','{"sentinel":"中文 😀","value":42}\n'],
+ ['data.jsonl','{"sentinel":"中文"}\n{"sentinel":"second"}\n'],
+ ['config.yaml','sentinel: 中文\nvalue: 42\n'],
+ ['config.toml','sentinel = "中文"\nvalue = 42\n'],
+ ['data.xml','<root><sentinel>中文</sentinel></root>\n'],
+ ['page.html','<h1>Common sentinel 中文</h1><p>Readable content</p>\n'],
+ ['config.ini','[sentinel]\nvalue=42\n']
+]
+if(process.argv.includes('--common-entries')) {
+ for(const [path,text] of commonFiles)await writeFile(join(project,path),text)
+ await writeFile(join(project,'book.pdf'),pdfFixture())
+}
 const environment={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',XDG_CONFIG_HOME:join(directory,'config'),XDG_DATA_HOME:join(directory,'data'),XDG_CACHE_HOME:join(directory,'cache'),READER_CACHE_DIR:cache,READER_CHROMIUM:'/intentionally-unavailable-chromium'}
 for(const key of ['XDG_RUNTIME_DIR','WAYLAND_DISPLAY','GDK_BACKEND','DBUS_SESSION_BUS_ADDRESS','WEBKIT_DISABLE_COMPOSITING_MODE'])if(process.env[key])environment[key]=process.env[key]
 const child=spawn(process.env.STUDIO_REMOTE_BINARY || join(root,'target/release/codex-thread-studio'),['--serve','--listen','127.0.0.1:0'],{env:environment,stdio:['ignore','pipe','pipe']})
@@ -89,11 +109,52 @@ try{
  assert.equal(await page.locator('#artifact-title').textContent(),'sibling.csv')
  const linkedFrame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(element=>element.contentFrame())
  await linkedFrame.getByText('Linked document',{exact:true}).waitFor()
- await page.evaluate(()=>controller.close({restoreMap:false}))
+ const commonEntries=[]
+ if(process.argv.includes('--common-entries')) {
+  for(const [name,text] of [...commonFiles,['project.png',null],['book.pdf',null]]) {
+   const started=Date.now(), path=join(project,name)
+   await page.evaluate(({root,path})=>controller.open({root,path},{allowDetachedRoot:true}),{root:project,path})
+   await page.waitForFunction(()=>testState.artifact?.readerReady&&testState.artifact.readerReadingReady)
+   const entry=await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.commonClient=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));return commonClient.ready()})
+   assert.equal(entry.view,'preview');assert.equal(entry.capabilities.notes,true)
+   await page.locator('#artifact-notes-tools button[aria-label="Notes"]').waitFor()
+   const request=(method,params={})=>page.evaluate(({method,params})=>commonClient.request(method,params),{method,params})
+   assert.equal(entry.capabilities.source,text!==null)
+   if(text!==null) {
+    assert.equal((await request('sourceWindow',{line:1})).result.text,text)
+    assert.equal((await request('setView',{view:'source'})).view,'source')
+    assert.equal((await request('setView',{view:'preview'})).view,'preview')
+   }
+   if(name==='small.md') {
+    const commonFrame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(element=>element.contentFrame())
+    await commonFrame.locator('[data-image-reference="0"] [data-asset-state="ready"] img').waitFor()
+    assert.equal((await request('tableInfo',{table:0})).rows,1)
+   }
+   if(name==='book.pdf') {
+    await request('settings',{pdf:{zoom:1,continuous:false}})
+    await request('navigate',{location:{kind:'pdf',pages:[{page:7,rects:[{x:0,y:0,width:1,height:0.000001}]}]}})
+    await page.waitForFunction(()=>testState.artifact.page===7&&testState.artifact.pdfPresentation?.zoom===1)
+    await page.evaluate(({root,path})=>controller.open({root,path},{allowDetachedRoot:true,viewState:{page:7,pdfPresentation:{zoom:1,continuous:false}}}),{root:project,path})
+    await page.waitForFunction(()=>testState.artifact?.readerReady&&testState.artifact.page===7&&testState.artifact.pdfPresentation?.zoom===1&&testState.artifact.pdfPresentation?.continuous===false)
+   }
+   let entryWebkit
+   if(process.argv.includes('--webkit')) {
+    const response=await post('/studio/reader/open',{root:project,path});assert.equal(response.status,200)
+    const extra=await response.json()
+    try {
+     entryWebkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-entry-webkit.py'),new URL(extra.reader.url,url).href,JSON.stringify({name,text})],{env:environment,timeout:110000})).stdout)
+     assert.equal(entryWebkit.commonEntry,true)
+    } finally { assert.equal((await post('/studio/markdown/close',{id:extra.reader.id})).status,200) }
+   }
+   commonEntries.push({name,entryCheckMs:Date.now()-started,webkit:entryWebkit})
+  }
+  for(const [path,text] of commonFiles)assert.equal(await readFile(join(project,path),'utf8'),text)
+ }
+ assert.equal(await page.evaluate(()=>controller.close({restoreMap:false})),true)
  const until=Date.now()+10000;while((await readdir(cache)).length&&Date.now()<until)await pause(30)
  assert.deepEqual(await readdir(cache),[]);assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>fixtureErrors),[])
  assert.match(await readFile(source,'utf8'),/^Studio policy draft\.\n# Resources/)
- console.log(JSON.stringify({ok:true,actualStudioWorkspace:true,publicResources:true,dynamicRevocation:true,draftPreservedAndSaved:true,hostLinks:true,webkit,browserVersion:browser.version(),artifacts:directory}))
+ console.log(JSON.stringify({ok:true,actualStudioWorkspace:true,publicResources:true,dynamicRevocation:true,draftPreservedAndSaved:true,hostLinks:true,commonEntries,webkit,browserVersion:browser.version(),artifacts:directory}))
 }finally{
  await browser?.close()
  if(child.exitCode==null&&child.signalCode==null){const exited=once(child,'exit');child.kill('SIGTERM');await exited}

@@ -30,8 +30,11 @@ fn frame(original: (u32, u32), width: u32, height: u32, pixels: Vec<u8>) -> Vec<
     bytes
 }
 pub(super) fn decode(bytes: &[u8], mime: &str) -> Result<Vec<u8>, String> {
+    decode_resolution(bytes,mime,false)
+}
+pub(super) fn decode_resolution(bytes: &[u8], mime: &str, source: bool) -> Result<Vec<u8>, String> {
     if mime == "image/svg+xml" {
-        return svg(bytes);
+        return svg(bytes,source);
     }
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
@@ -49,7 +52,7 @@ pub(super) fn decode(bytes: &[u8], mime: &str) -> Result<Vec<u8>, String> {
         image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
     decoded.apply_orientation(orientation);
     let original = (decoded.width(), decoded.height());
-    let preview = if original.0 > EDGE || original.1 > EDGE {
+    let preview = if !source && (original.0 > EDGE || original.1 > EDGE) {
         decoded.resize(EDGE, EDGE, image::imageops::FilterType::Triangle)
     } else {
         decoded
@@ -65,7 +68,7 @@ pub(super) fn decode(bytes: &[u8], mime: &str) -> Result<Vec<u8>, String> {
     }
     Ok(frame(original, width, height, pixels))
 }
-fn svg(bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn svg(bytes: &[u8], source:bool) -> Result<Vec<u8>, String> {
     if bytes.len() > 2 * 1024 * 1024 || bytes.iter().filter(|byte| **byte == b'<').count() > 16384 {
         return Err("SVG exceeds its source/element budget".into());
     }
@@ -94,9 +97,11 @@ fn svg(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if original.0 == 0 || original.1 == 0 || original.0 > 1_000_000 || original.1 > 1_000_000 {
         return Err("Invalid SVG dimensions".into());
     }
-    let scale = (EDGE as f32 / size.width()).min(EDGE as f32 / size.height()).min(1.0);
-    let width = ((size.width() * scale).ceil().max(1.0) as u32).min(EDGE);
-    let height = ((size.height() * scale).ceil().max(1.0) as u32).min(EDGE);
+    if source { dimensions(original.0,original.1)?; }
+    let scale = if source {1.0} else {(EDGE as f32 / size.width()).min(EDGE as f32 / size.height()).min(1.0)};
+    let width = (size.width() * scale).ceil().max(1.0) as u32;
+    let height = (size.height() * scale).ceil().max(1.0) as u32;
+    let (width,height)=if source {(width,height)} else {(width.min(EDGE),height.min(EDGE))};
     let mut pixels =
         tiny_skia::Pixmap::new(width, height).ok_or("Cannot allocate image preview")?;
     resvg::render(

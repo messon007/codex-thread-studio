@@ -236,6 +236,12 @@ export function mountTableCells(
   button.addEventListener('click', copySelected, options)
   return {
     selection,
+    select(target) {
+      const cell=cellFor(target)
+      if (!cell) return null
+      select(cell)
+      return selection()
+    },
     update() {
       // Ordinary DOM hosts use the same projected-window budget as the service.
       // Validate bounded text/node work before mutating focus attributes.

@@ -216,6 +216,7 @@ pub(super) struct Builder<'a> {
     text_bytes: usize,
     asset_bytes: u64,
     started: Instant,
+    source_images:bool,
 }
 impl<'a> Builder<'a> {
     fn new(
@@ -245,6 +246,7 @@ impl<'a> Builder<'a> {
             text_bytes: 0,
             asset_bytes: 0,
             started,
+            source_images:false,
         })
     }
     fn source(&mut self, text: &str) -> io::Result<(usize, usize)> {
@@ -446,11 +448,11 @@ impl<'a> Builder<'a> {
         } else {
             "image/svg+xml"
         };
-        let animation = image_decode::animation::decode(bytes, mime).map_err(error)?;
+        let animation = if self.source_images { image_decode::animation::decode_resolution(bytes,mime,true) } else { image_decode::animation::decode(bytes,mime) }.map_err(error)?;
         let raw = if let Some(animation) = animation {
             animation
         } else {
-            image_decode::decode(bytes, mime).map_err(error)?
+            if self.source_images { image_decode::decode_resolution(bytes,mime,true) } else { image_decode::decode(bytes,mime) }.map_err(error)?
         };
         let value = |at: usize| u32::from_le_bytes(raw[at..at + 4].try_into().unwrap());
         let (width, height) = (value(16), value(20));
@@ -479,6 +481,7 @@ impl<'a> Builder<'a> {
                 }
             }
             let encoded = encode_png(width, height, rgba)?;
+            if self.source_images && encoded.len()>20*1024*1024 { return Err(error("Full-resolution image frame exceeds the 20 MiB transport budget")); }
             self.asset_bytes += encoded.len() as u64;
             if self.asset_bytes > 128 * 1024 * 1024 {
                 return Err(error("Image cache exceeds 128 MiB"));
@@ -543,6 +546,9 @@ pub fn build(
     format: DocumentFormat,
     started: Instant,
 ) -> io::Result<Index> {
+    build_resolution(path,directory,format,started,false)
+}
+pub(super) fn build_resolution(path:&Path,directory:&Path,format:DocumentFormat,started:Instant,source_images:bool) -> io::Result<Index> {
     let file = File::open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > crate::core::MAX_SOURCE {
         return Err(error("Expected a regular document of at most 128 MiB"));
@@ -553,6 +559,7 @@ pub fn build(
         return Err(error("Document exceeds 128 MiB"));
     }
     let mut builder = Builder::new(path, directory, format, &bytes, started)?;
+    builder.source_images=source_images;
     match format {
         DocumentFormat::Image => {
             let id = builder.image(&bytes, &name(path))?;

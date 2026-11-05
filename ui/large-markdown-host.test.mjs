@@ -242,3 +242,26 @@ test('reader links retain owner identity, reject stale events and report host fa
  await new Promise(resolve=>setTimeout(resolve,0))
  assert.equal(links.length,2)
 })
+
+test('read-only renderer work stays cancellable while editable operations retain close protection',async()=>{
+ for(const edit of [false,true]) {
+  const {host,states,setState,closed}=fixture(undefined,{edit,source:edit})
+  await host.ready
+  setState({busy:true})
+  assert.equal(host.busy,edit)
+  assert.equal(states.at(-1).busy,edit)
+  await host.dispose()
+  assert.equal(closed(),1)
+ }
+})
+
+test('removing a reader disconnects local transport without reporting expected late close errors',async()=>{
+ let disconnects=0
+ const errors=[]
+ const client={ready:async()=>({state:'ready',capabilities:{}}),request:async()=>({state:'ready'}),dispose:()=>Promise.reject(Error('Detached frame')),disconnect(){disconnects++}}
+ const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/reader/#token'},()=>{},()=>{},{createClient:()=>client,onError:error=>errors.push(error)})
+ await host.ready
+ await assert.rejects(host.dispose(),/Detached frame/)
+ assert.equal(disconnects,1)
+ assert.deepEqual(errors,[])
+})

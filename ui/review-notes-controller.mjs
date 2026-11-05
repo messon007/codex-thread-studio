@@ -943,9 +943,8 @@ function commentProviderContext(index = 0) {
 }
 
 async function reopenPdfComment(anchor) {
-  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
-  state.artifact.page = anchor.page
-  await richArtifactReader?.goToPage?.(anchor.page)
+  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath }, { viewState: { page: anchor.page } })
+  if (state.artifact?.kind === 'pdf') await richArtifactReader?.goToPage?.(anchor.page)
 }
 
 async function reopenTableComment(anchor) {

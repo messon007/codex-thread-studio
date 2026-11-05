@@ -31,7 +31,7 @@ function fixture() {
 
 test('session switch restores document descriptor, reading position and backend-isolated tools', async () => {
   const f = fixture()
-  f.state.artifact = { root: '/project', path: 'book.pdf', page: 7, bytes: new Uint8Array(100) }
+  f.state.artifact = { root: '/project', path: 'book.pdf', page: 7, pdfPresentation: { zoom: 1, continuous: false }, bytes: new Uint8Array(100) }
   f.$('#artifact-rail').classList.remove('hidden')
   f.$('#artifact-content').scrollTop = 130
   assert.equal(f.leaveSessionWorkspace(), true)
@@ -42,6 +42,7 @@ test('session switch restores document descriptor, reading position and backend-
   f.select('codex:a')
   assert.equal(f.restoreSessionWorkspace(), true)
   assert.equal(f.calls[0].options.viewState.page, 7)
+  assert.deepEqual(f.calls[0].options.viewState.pdfPresentation, { zoom: 1, continuous: false })
   assert.equal(f.calls[0].options.viewState.scrollTop, 130)
   assert.equal('bytes' in f.calls[0].file, false)
   assert.equal(f.restoreSessionWorkspace(), false)

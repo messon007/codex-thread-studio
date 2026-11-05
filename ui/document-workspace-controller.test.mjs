@@ -69,6 +69,12 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
   return { state, controller, element, errors, markdownRenders: () => markdownRenders, selectThread: (key) => { threadKey = key } }
 }
 
+// Retain regression coverage for callers using the explicit WSL 501 adapter.
+function legacyDocumentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
+  return documentWorkspaceFixture(context, (url, options) => url === '/studio/reader/open'
+    ? Promise.resolve(new Response('{}', { status: 501 })) : gatewayFetch(url, options), overrides)
+}
+
 function assertDocumentError(fixture, message, markdownRenders = 0) {
   assert.equal(fixture.state.artifact.loading, false)
   assert.equal(fixture.state.artifact.error, message)
@@ -81,7 +87,7 @@ function assertDocumentError(fixture, message, markdownRenders = 0) {
 test('large Markdown uses one retained frame without whole-document rendering and closes its lease', async (context) => {
   const closed = []
   const result = { root: '/project', path: 'large.md', size: 32 * 1024 * 1024, readOnly: true, largeMarkdown: { id: 'reader-1', url: '/markdown-reader/reader-1/?embedded=1#token' } }
-  const fixture = documentWorkspaceFixture(context, async (url, options) => {
+  const fixture = legacyDocumentWorkspaceFixture(context, async (url, options) => {
     if (url.endsWith('/close')) { closed.push(JSON.parse(options.body).id); return new Response('{}') }
     return new Response(JSON.stringify(result))
   })
@@ -125,7 +131,7 @@ test('late large Markdown metadata releases its service after the document close
 
 test('document network failures clear Loading and display the error', async (context) => {
   const failure = new Error('Network connection closed')
-  const fixture = documentWorkspaceFixture(context, async () => { throw failure })
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => { throw failure })
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), failure)
   assertDocumentError(fixture, failure.message)
@@ -133,7 +139,7 @@ test('document network failures clear Loading and display the error', async (con
 
 test('document response decoding failures clear Loading and display the error', async (context) => {
   const failure = new SyntaxError('Invalid JSON response')
-  const fixture = documentWorkspaceFixture(context, async () => ({ ok: true, json: async () => { throw failure } }))
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => ({ ok: true, json: async () => { throw failure } }))
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), failure)
   assertDocumentError(fixture, failure.message)
@@ -141,7 +147,7 @@ test('document response decoding failures clear Loading and display the error', 
 
 test('binary document response failures clear Loading and display the error', async (context) => {
   const failure = new Error('Document download interrupted')
-  const fixture = documentWorkspaceFixture(context, async () => ({ ok: true, arrayBuffer: async () => { throw failure } }))
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => ({ ok: true, arrayBuffer: async () => { throw failure } }))
 
   await assert.rejects(fixture.controller.open({ path: 'large.pdf' }), failure)
   assertDocumentError(fixture, failure.message)
@@ -149,7 +155,7 @@ test('binary document response failures clear Loading and display the error', as
 
 test('Markdown rendering failures display an error without retrying the renderer', async (context) => {
   const result = { root: '/project', path: 'large.md', content: '# Document', size: 10, lineCount: 1 }
-  const fixture = documentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)))
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)))
 
   await fixture.controller.open({ path: 'large.md' })
   assertDocumentError(fixture, 'Unexpected Markdown rendering', 1)
@@ -158,7 +164,7 @@ test('Markdown rendering failures display an error without retrying the renderer
 
 test('oversized documents display the server rejection without Markdown rendering', async (context) => {
   const message = 'file exceeds the 5 MiB review limit'
-  const fixture = documentWorkspaceFixture(context, async () => new Response(JSON.stringify({ error: { message } }), { status: 413 }))
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify({ error: { message } }), { status: 413 }))
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), { message })
   assertDocumentError(fixture, message)
@@ -168,7 +174,7 @@ test('document opening waits for asynchronous Markdown parsing while keeping con
   let resolveRendering
   let cancelled = 0
   const result = { root: '/project', path: 'large.md', content: '# Document', size: 10, lineCount: 1 }
-  const fixture = documentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)), {
+  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)), {
     renderMarkdownDocument: () => new Promise(resolve => { resolveRendering = resolve }),
     cancelMarkdownDocument: () => { cancelled += 1 },
   })
@@ -187,7 +193,7 @@ test('document opening waits for asynchronous Markdown parsing while keeping con
 
 test('late Markdown results cannot replace a newer document', async (context) => {
   let resolveFirst
-  const fixture = documentWorkspaceFixture(context, async (url, options) => {
+  const fixture = legacyDocumentWorkspaceFixture(context, async (url, options) => {
     const { path } = JSON.parse(options.body)
     return new Response(JSON.stringify({ root: '/project', path, content: path, size: 10, lineCount: 1 }))
   }, {
@@ -216,7 +222,7 @@ test('late document failures cannot overwrite a newer request', async (context) 
   let rejectFirst
   const pending = new Promise((resolve, reject) => { rejectFirst = reject })
   let requests = 0
-  const fixture = documentWorkspaceFixture(context, () => ++requests === 1 ? pending : Promise.reject(new Error('Second request failed')))
+  const fixture = legacyDocumentWorkspaceFixture(context, () => ++requests === 1 ? pending : Promise.reject(new Error('Second request failed')))
   const first = fixture.controller.open({ path: 'first.md' })
   await assert.rejects(fixture.controller.open({ path: 'second.md' }), { message: 'Second request failed' })
   const current = fixture.state.artifact
@@ -321,8 +327,10 @@ test('Document outline is transient and remains open after chapter navigation', 
   assert.match(source, /function resetArtifactOutline\(\)[\s\S]*state\.artifactOutlineOpen = false/u)
 })
 
-for (const [path, sourceAvailable, readOnly] of [['data.csv',true,false],['data.tsv',true,false],['data.xlsx',false,true]]) {
-  test(`${path} mounts the shared table session with format-aware source/edit controls`, async context => {
+for (const [path, sourceAvailable, readOnly] of [['data.csv',true,false],['data.tsv',true,false],['data.xlsx',false,true],
+  ...['small.md','plain.txt','script.py','main.c','lib.cpp','lib.rs','data.json','data.jsonl','config.yaml','config.toml','data.xml','page.html'].map(path=>[path,true,false]),
+  ['photo.jpg',false,true],['book.pdf',false,true]]) {
+  test(`${path} mounts the common reader in Preview with format-aware source/edit controls`, async context => {
     const requests=[]
     const result={root:'/project',path,size:2048,readOnly,sourceAvailable,format:path.split('.').at(-1),reader:{id:'table-1',url:'/markdown-reader/table-1/?embedded=1#token'}}
     const fixture=documentWorkspaceFixture(context,async(url,options)=>{
@@ -349,7 +357,7 @@ test('shared table authorization failures never fall back to another file endpoi
   assert.deepEqual(requests,['/studio/reader/open'])
   assertDocumentError(fixture,'File not granted')
 })
-for (const [path,endpoint] of [['data.csv','/studio/review-file'],['data.xlsx','/studio/review-spreadsheet']]) {
+for (const [path,endpoint] of [['data.csv','/studio/review-file'],['data.xlsx','/studio/review-spreadsheet'],['small.md','/studio/review-file'],['photo.jpg','/studio/review-image'],['book.pdf','/studio/review-pdf'],['book.epub','/studio/review-epub']]) {
  test(`${path} preserves the authorized legacy transport only on explicit WSL unavailability`,async context=>{
   const requests=[]
   const fixture=documentWorkspaceFixture(context,async url=>{
@@ -398,4 +406,25 @@ for(const mode of ['failure','closed','changed'])test(`EPUB ${mode} during readi
   assert.equal(fixture.state.artifact,null)
  }else await assert.rejects(pending,mode==='failure'?/State storage failed/:/book has changed/)
  assert.deepEqual(closed,['new-epub'])
+})
+
+for (const status of [400,401,403,500]) for (const path of ['small.md','photo.jpg','book.pdf']) {
+ test(`${path} HTTP ${status} never falls back to a legacy read`,async context=>{
+  const requests=[]
+  const fixture=documentWorkspaceFixture(context,async url=>{requests.push(url);return new Response(JSON.stringify({error:{message:'Denied'}}),{status})})
+  await assert.rejects(fixture.controller.open({path}),/Denied/)
+  assert.deepEqual(requests,['/studio/reader/open'])
+ })
+}
+for (const view of ['source','edit']) test(`common entry restores explicit ${view} instead of fresh Preview`,async context=>{
+ const result={root:'/project',path:'script.py',format:'text',sourceAvailable:true,readOnly:false,reader:{id:'source-1',url:'/markdown-reader/source-1/#token'}}
+ const fixture=documentWorkspaceFixture(context,async()=>new Response(JSON.stringify(result)))
+ document.createElement=tag=>tag==='canvas'?{getContext:()=>null}:{setAttribute(){},addEventListener(){},remove(){}}
+ const previous=globalThis.requestAnimationFrame
+ globalThis.requestAnimationFrame=()=>0
+ context.after(()=>{if(previous)globalThis.requestAnimationFrame=previous;else delete globalThis.requestAnimationFrame})
+ await fixture.controller.open({path:'script.py'},{viewState:{view}})
+ assert.equal(fixture.state.artifactView,view)
+ assert.equal(fixture.state.artifact.readerSourceAvailable,true)
+ assert.equal(fixture.markdownRenders(),0)
 })

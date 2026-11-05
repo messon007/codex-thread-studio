@@ -42,7 +42,11 @@ rejected, oversized or aborted bodies. Busy frame requests retry with a bounded,
 cancellable delay. These image limits do not replace the original-container PDF
 renderer's separate canvas/pixel/selection profile.
 
-Dimensions and 100% refer to the bounded projected preview. Original-container
+Dimensions and 100% refer to the declared image resolution profile. Web image
+documents and Markdown resources preserve source resolution within the existing
+16-megapixel, 20-MiB-frame and animation/cache budgets; oversized full-resolution
+output fails explicitly instead of silently reducing pixel detail. The default
+indexed/native profile retains its existing previews. Original-container
 bytes remain a separate explicit core/service capability. Lazy raster PDF layout
 estimates are marked dimensionsExact:false; Web PDF/EPUB use their dedicated
 original-container components. A projected image frame is not an invented source

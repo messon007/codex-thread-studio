@@ -81,6 +81,10 @@ pub struct Index {
     pub assets: Vec<documents::Asset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<references::Reference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<references::Anchor>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub web_markdown: bool,
     pub version: u8,
     pub name: String,
     pub revision: String,
@@ -93,6 +97,7 @@ pub struct Index {
     pub index_ms: f64,
     pub peak_rss_kib: Option<usize>,
 }
+fn is_false(value:&bool) -> bool { !*value }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -376,7 +381,7 @@ impl Writer<'_> {
             if matches!(event, Event::Start(Tag::Table(_))) {table_depth+=1;}
             let in_table = columns>0 || table_depth>0;
             if matches!(event, Event::End(TagEnd::Table)) {table_depth=table_depth.saturating_sub(1);}
-            if self.web_references && (matches!(event, Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event, Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) {
+            if self.web_references && (matches!(event, Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event, Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) {
                 references::projected(event)
             } else if in_table {inert_cell_event(event)} else {inert_event(event)}
         });
@@ -558,7 +563,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
     if profile == ProjectionProfile::Web && format == document_format::DocumentFormat::Epub {
         return documents::web_epub(path, directory, started);
     }
-    if !format.is_text() { return documents::build(path, directory, format, started); }
+    if !format.is_text() { return if profile==ProjectionProfile::Web { documents::build_resolution(path,directory,format,started,true) } else { documents::build(path, directory, format, started) }; }
     let file = File::open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > MAX_SOURCE {
         return Err(invalid("Expected a regular UTF-8 file of at most 128 MiB"));
@@ -870,7 +875,10 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
     writer.file.flush()?;
     writer.diagram_file.flush()?;
     drop(events);
-    let references = references.map(references::Collector::finish).transpose()?.unwrap_or_default();
+    let (references,mut html_anchors) = references.map(references::Collector::finish).transpose()?.unwrap_or_default();
+    for anchor in &mut html_anchors {
+        anchor.page=writer.pages.partition_point(|page|page.start<=anchor.start_byte).saturating_sub(1);
+    }
     for (heading, offset) in toc.iter_mut().zip(heading_offsets) {
         heading.page = writer
             .pages
@@ -881,7 +889,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         renderer: None,
         epub_package: None,
         text_pages: false,
-        format, csv_delimiter: None, original_bytes: None, assets: vec![], references,
+        format, csv_delimiter: None, original_bytes: None, assets: vec![], references, anchors:html_anchors, web_markdown:profile==ProjectionProfile::Web,
         version: 5,
         name: path
             .file_name()
@@ -1228,7 +1236,8 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
     } else {
         let bom = if source.starts_with('\u{feff}') { 3 } else { 0 };
         let (parse_source, _) = bare_plantuml(&source[bom..], options);
-        let mut references = (!index.references.is_empty()).then(|| references::Auditor::new(directory,index));
+        let web_references=index.web_markdown || !index.references.is_empty() || !index.anchors.is_empty();
+        let mut references = web_references.then(|| references::Auditor::new(directory,index));
         for (event, span) in Parser::new_ext(&parse_source, options).into_offset_iter()
             .map(|(event, span)| (event, span.start + bom..span.end + bom)) {
             let event = match &mut references { Some(references) => references.event(event,&span)?, None => event };
@@ -1256,7 +1265,7 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
                     let mut html = String::new();
                     let events = markdown::audit_autolinks(table.drain(..).collect())?;
                     html::push_html(&mut html, events.into_iter().map(|event| {
-                        if !index.references.is_empty() && (matches!(event,Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event,Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) { references::projected(event) }
+                        if web_references && (matches!(event,Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event,Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) { references::projected(event) }
                         else { inert_cell_event(event) }
                     }));
                     let mut digest = Sha256::new();

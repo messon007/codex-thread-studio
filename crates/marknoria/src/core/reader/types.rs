@@ -189,8 +189,9 @@ pub struct AssetFrameInfo {
     pub delay_ms: u32,
 }
 
-/// Projected image metadata without internal cache filenames. Dimensions are
-/// those of the bounded preview, not a promise of original image resolution.
+/// Image metadata without internal cache filenames. Dimensions describe delivered
+/// pixels: source resolution for accepted Web images, bounded previews for the
+/// indexed profile, or an explicitly estimated lazy PDF raster.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetInfo {

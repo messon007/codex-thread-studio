@@ -1,6 +1,10 @@
 # Fixed public reader adoption
 
-The reviewed pin is `scripts/marknoria-release.json`; the unchanged SDK inventory
+The current pin and functional followup evidence are in
+[studio-issue-followups.md](studio-issue-followups.md). The PR #55 baseline
+record below is historical; the current source revision is `5e5d4de`.
+
+The PR #55 baseline used the pin in `scripts/marknoria-release.json`;  the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
 `bc4ba04d280cbe45b9235fbc8be684a0a00cb2fb`, 815 inventory files, archive SHA-256
 `c0ccfb5681e6597f96312fe54f6a49278d16915b97e86af43dfdf510091782cf`, tree SHA-256

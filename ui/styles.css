@@ -459,7 +459,8 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .composer-images { margin: 0 0 7px; padding: 2px; display: flex; gap: 7px; overflow-x: auto; scrollbar-width: thin; }
 .composer-image { width: 72px; height: 58px; position: relative; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .composer-image img { width: 100%; height: 100%; display: block; object-fit: cover; }
-.composer-image button { width: 19px; height: 19px; position: absolute; top: 3px; right: 3px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 55%); border-radius: 50%; background: rgb(20 27 31 / 76%); color: #fff; cursor: pointer; font: var(--ui-font-emphasis) var(--ui-font-secondary)/1 var(--ui-font-family); }
+.composer-image button { box-sizing: border-box; width: 22px; height: 22px; padding: 0; position: absolute; top: 3px; right: 3px; display: grid; place-items: center; border: 0; border-radius: 5px; background: rgb(20 27 31 / 76%); color: #fff; cursor: pointer; }
+.composer-image button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
 .composer-image button:hover { background: var(--red); }
 .composer-image small { max-width: calc(100% - 6px); position: absolute; right: 3px; bottom: 3px; left: 3px; overflow: hidden; padding: 2px 4px; border-radius: 4px; background: rgb(20 27 31 / 72%); color: #fff; font-size: var(--ui-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .composer-message-queue { margin: 0 2px 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
@@ -691,11 +692,11 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .artifact-heading p { max-width: 100%; margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: var(--ui-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .artifact-header-actions { min-width: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
 .artifact-header-actions .segmented-control { margin-right: 4px; }
-#artifact-notes-tools { display: inline-flex; align-items: center; }
-#artifact-notes-tools:empty { display: none; }
-#artifact-notes-tools > button { min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--ui-font-compact); }
-#artifact-notes-tools > button:hover { background: var(--panel-strong); color: var(--text); }
-#artifact-notes-tools > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+:is(#artifact-notes-tools, #artifact-query-tools) { display: inline-flex; align-items: center; }
+:is(#artifact-notes-tools, #artifact-query-tools):empty { display: none; }
+:is(#artifact-notes-tools, #artifact-query-tools) > button { min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--ui-font-compact); }
+:is(#artifact-notes-tools, #artifact-query-tools) > button:hover { background: var(--panel-strong); color: var(--text); }
+:is(#artifact-notes-tools, #artifact-query-tools) > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
 .artifact-header-actions .artifact-action-icon.active { border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); background: var(--brand-soft); color: var(--brand); }
 .segmented-control { height: 30px; padding: 2px; display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
@@ -1453,3 +1454,5 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 
 /* Cover initialization without hiding/suspending the WebKit child frame. */
 .artifact-rail.reader-initializing #artifact-loading { position: absolute; inset: var(--app-header-height) 0 28px; z-index: 4; background: var(--panel); }
+
+#artifact-reader-shell { --reader-panel: var(--panel); --reader-soft: var(--panel-soft); --reader-text: var(--text); --reader-muted: var(--muted); --reader-faint: var(--faint); --reader-border: var(--border); --reader-brand: var(--brand); --reader-brand-soft: var(--brand-soft); }

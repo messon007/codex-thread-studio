@@ -1,6 +1,6 @@
 # Shared Web reader acceptance
 
-Status: local implementation/evidence, **not whole-goal approval**. This concerns
+Status: **Astra independent technical acceptance passed**. Studio adoption is merged into main in PR #55. This concerns
 browser/WebView reading and its actual Rust dependencies. GTK/AppKit/WinUI,
 native controllers and FFI are outside synchronization. The original Studio
 checkout is untouched; adoption uses `sync/marknoria-public-reader`. Historical
@@ -12,13 +12,13 @@ components. Immutable source/resource hashes are in `reader-manifest.json`;
 Studio separately pins the reviewed archive in `scripts/marknoria-release.json`.
 Ordinary builds/CI do not read a private checkout, its assets or credentials.
 
-| Acceptance area | Current implementation / evidence | Remaining gate |
+| Acceptance area | Current implementation / evidence | Acceptance / limits |
 | --- | --- | --- |
-| Functional union / public API | Shared parsing, queries, PDF/EPUB, cells/charts, Notes, original resources, typed references; original public Rust fixtures and real two-product tests below | Independent whole-goal review |
-| Ordinary entry / defaults | Every ordinary Studio file uses the SDK; fresh Preview, capability-gated Source/Edit, explicit unsupported errors; 15-format gateway corpus in both engines | Current downstream platform CI |
+| Functional union / public API | Shared parsing, queries, PDF/EPUB, cells/charts, Notes, original resources, typed references; original public Rust fixtures and real two-product tests below | Accepted and merged in Studio PR #55 |
+| Ordinary entry / defaults | Every ordinary Studio file uses the SDK; fresh Preview, capability-gated Source/Edit, explicit unsupported errors; 15-format gateway corpus in both engines | Documented Windows/WSL2 entry passed; WSL1 is outside the supported requirement |
 | Locale / shortcuts / visual / accessibility | Finite scoped host dictionary, live labels with literal data preserved; actual full Studio shell and standalone four-format scenes, screenshots, named controls, overlays and search | Control-name checks are not a full screen-reader audit |
-| Release performance | Separate index time/RSS, content timing, heartbeat and DOM; first-open and browser-cache reopen measurements below | Fresh platform cache still produces a 1.84 s WebKit gap; first locale update while Notes is open also has an unresolved interaction spike |
-| Fixed delivery | MIT allowlist, provenance, locked isolated resource build, unchanged import; two clean offline exports and eight archive/inventory/Git-byte checks | Final pin, remote CI/review/merge, Astra approval |
+| Release performance | Separate index time/RSS, content timing, heartbeat and DOM; first-open and browser-cache reopen measurements below | Known cold-start and first-locale risks; no pre-agreed absolute latency threshold. Existing resource budgets remain enforced |
+| Fixed delivery | MIT allowlist, provenance, locked isolated resource build, unchanged import; two clean offline exports and eight archive/inventory/Git-byte checks | Fixed pin, six platform checks and Astra acceptance passed; merged in PR #55 |
 
 ## Formats and actions
 
@@ -105,7 +105,7 @@ With a **fresh private platform `XDG_CACHE_HOME`**, Wayland Markdown still took
 90 ms gap and diagrams 47 ms / 34 ms gap. Earlier isolated experiments identified
 a GStreamer registry cache dependency, not the exact blocking call. Font/GPU/media
 toggles did not fix it. No prewarming/copied registry is presented as a product
-fix; **cold responsiveness is not passed**.
+fix. This remains a measured cold-start limitation; no absolute latency ceiling was agreed for this scene.
 
 A separate bounded interaction follow-up first opens English Notes and drains
 both realms' paint/timer work before switching locale. Its heartbeat maximum
@@ -116,14 +116,48 @@ focus/style/rectangle probes do not explain the complete pause and can perturb
 timings. An unwrapped paint-drained sample also observed 398 ms. The cause remains
 unattributed; it is not assigned to Contents, screenshot capture or a particular
 synchronous call. Subsequent cumulative maxima cannot establish repeat-switch
-latency. This is a second unpassed performance item, separate from cold startup.
+latency. This is a separate first-use performance risk; regression against the frozen Studio baseline has not been established.
 
 WSL's exact portable read-only adapter passes seven formats on Linux, including
 reauthorization, stable identities and cleanup. This is **not actual Windows/WSL
 execution**. WSL EPUB remains explicitly unsupported as in its previous transport.
 
-Remote results must identify the tested consuming commit. The latest upstream
-run `41943906410` did not start jobs: GitHub reported failed payments/spending
-limits. Old downstream platform passes do not validate this candidate. Current
-CI/review/merge, unresolved cold-cache responsiveness and Astra's whole-goal
-approval remain open. Do not close #2/#4/#5/#6/#7 from local feature passes alone.
+Remote results identify the tested consuming commit: Studio `c058956` passed
+Windows, macOS and Ubuntu in both push run `42029624553` and PR run `42029636607`.
+These include the independent fixed SDK and Windows atomic replacement checks.
+Astra accepted public core and embedding/components; #4 and #5 are closed. Final
+technical candidate `f2ec4f8204a04fd4fc2598cab867e402bce0d666` passed all three
+operating systems in push run `42037000119` and PR run `42037012109`. Windows ran
+the production gateway on Ubuntu 24.04/WSL2, kernel
+`6.18.54.1-microsoft-standard-WSL2`, user `reader-test`, UID 1000. Original
+BOM/Unicode/CRLF bytes (88 bytes/SHA-256), exact Source, explicit identity,
+read-only capabilities, cached image revocation, stable reopen identity, expired
+lease and cache cleanup all passed. This real WSL2 case covers one Markdown with
+project/shared images; it does not replace Linux's seven-format adapter evidence.
+
+An earlier WSL1 probe failed a byte-count check. Studio requires WSL2; the extra
+WSL1 observation is not evidence that the supported backend fails, nor a new WSL1
+support obligation. No validation was weakened or SDK/native code changed for
+this check. Private upstream CI still reports a GitHub billing/spending block;
+public consumer CI did execute.
+
+A bounded fresh-cache QA comparison measured native window launch to content at
+3753 ms normally and 1936 ms with system GStreamer plugins disabled only in the
+QA subprocess. Reader first-content/heartbeat were about 98 ms in both runs;
+the changed startup cost occurred outside that reader timing window. First
+Chinese Notes update still produced 382/383 ms gaps. JSC sampling found Fontconfig
+work under a forced reading-position layout, but suppressing redundant theme
+requests did not improve that gap. The speculative production change was removed.
+Neither diagnostic is a product fix or a performance waiver.
+
+Astra rechecked the original acceptance criteria: they require performance
+measurement and explicit unknowns, but specify no absolute cold-start/locale
+latency ceiling. The two observed delays remain risks, not newly invented merge
+gates; no resource budget is relaxed. After the actual WSL2 pass, Astra independently
+accepted #7's functional union/actual adoption and #6's fixed delivery/platform
+compatibility. No blocking code/test defect remains. Studio [PR #55](https://github.com/messon007/codex-thread-studio/pull/55) was merged
+as `eeb397ae7c6adcc2f713904f2be9d1b9cd6f0d1d`. Remote main contains the final
+adoption commit `e5ce8ba301ee9fe323ebf1c90ca6e29ea435ffce`, with an identical source
+tree. That documentation-only final commit also passed all six platform checks
+in runs `42039044877` and `42039056520`. Parent closure records are in #2 and
+Studio #48. The original Studio checkout remains untouched.

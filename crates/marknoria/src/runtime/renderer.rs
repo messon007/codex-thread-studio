@@ -755,4 +755,16 @@ mod raster_tests {
         assert_eq!(&png[..4], b"\x89PNG");
         assert!(png.len() > 100);
     }
+
+    #[test]
+    fn rasterizes_svg_text_with_the_maintained_font_stack() {
+        let png = super::rasterize(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="48"><rect width="240" height="48" fill="white"/><text x="8" y="34" font-family="DejaVu Sans, Liberation Sans, Noto Sans, Arial, Helvetica, sans-serif" font-size="24" fill="black">MarkNoria SVG</text></svg>"##,
+            240,
+        ).unwrap();
+        let pixels = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(), (240, 48));
+        assert!(pixels.pixels().filter(|pixel| pixel[0] < 100 && pixel[3] > 0).count() > 100,
+            "SVG text disappeared after the font dependency update");
+    }
 }

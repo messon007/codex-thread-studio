@@ -9,8 +9,8 @@
     ".cargo/config.toml": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
     ".gitattributes": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
     ".gitignore": "765a82b9f33eb96e723eaa39a0b8f565f69fa0c4a2153112b705ae54cc54db90",
-    "Cargo.lock": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
-    "Cargo.toml": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
+    "Cargo.lock": "58a64cd70f342262a360e2da5307461645dece0e21289949e013468a3dcc7ba4",
+    "Cargo.toml": "3bfad278c7083cb9cbbbfed8bffeca9a0a788dfe4a99f403e23a6388e16b09bc",
     "DISTRIBUTION.md": "6e0a159fde75d39c2da05ebbdf762a568acbcec50b8eadc5930ad2a753912e03",
     "LICENSE": "cf3d3312057275ec7758d30a1ee308b7f45ead216b695f16bd36299aa0e9b523",
     "README.md": "361e42f6f8d6e7b9e2885a3f88a83f5047e6d3430e00284d69ab1f04912193d5",
@@ -39,7 +39,7 @@
     "docs/reader-assets.md": "d66eb4db3945514c6a48277f11eae94dec63b99d799801df0fdf201bfa7a5001",
     "docs/table-components.md": "4a3209e064bc2050a53e148a32cf9d86c6034e71bf4b9bf26697a4250da71a15",
     "docs/translation.md": "8d6efb70648384b972adc1e3154252254282c12fe0e7c16dac55a74df51e5adf",
-    "docs/web-parity.md": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
+    "docs/web-parity.md": "d24f1f17125d17e26b8dbec8042ce0336a4a29c48e333bc3657f104fcb83d758",
     "examples/embedded-host.rs": "712dc746b14cd3a19585cb7abcfa0f6a2f6f443200317a25ef5cb0451fd3525e",
     "examples/reader-assets-host.rs": "172e770c6d9b4c3d3fc4ab2ca2bedfad9168dd621a012c90683325e09855d050",
     "examples/reader-corpus.rs": "c335b6ed1bc62ebc53d234e073413ede69aa73942d81fa6d4b2428c4c35efbc5",
@@ -464,8 +464,8 @@
     "src/runtime/diagram_origin.rs": "0ce58adf39bffd51dcaf3a0b801212967c88372c062a7d7b1747cbd4eae132d2",
     "src/runtime/mod.rs": "584b9eff014acec9a149eaa356487dddc2923dae181e6a2cfedef6828a851da8",
     "src/runtime/process.rs": "9da4473e9dd5a44cb32e7a75190cade7154a7a6b1fb69fc9abd7c5692ec69d6a",
-    "src/runtime/renderer.rs": "b8e9bdc2dbdf5d81e1ff467930ec89a518ab773cab52266ac1401edcfdd5b2b7",
-    "src/web/compare_runtime.rs": "c6d2ab3a9605347066d8801c1244091c024967331744dae8677f51cdc9f98586",
+    "src/runtime/renderer.rs": "0e1b27760351de7f6a3563705ed781c30a1ad7e94750f378ff352bbcf18f98df",
+    "src/web/compare_runtime.rs": "291d3cdcf576ed13337ca1316d27d4f260ae4a450082c7ba1d0c4659f2be5cf0",
     "src/web/document_runtime.rs": "69978b0d21465f8848bd354bdf7ac5b9dd5d8424ea84cef607007e7ea4b6585a",
     "src/web/edit_runtime.rs": "50af343c073096f0e5a7189fa7e8ecb3d321f28baa95d9853661b191cf29afbe",
     "src/web/epub_runtime.rs": "94aab795b88ea06bf951177f05c8616224e3e5e3727dd313f393f998092f1ab8",
@@ -605,13 +605,13 @@
     "web/table-plot.css": "fdcfa21d643580b1557e5a0b87072b121c9ed49a2c8149318c0a959a2b4c9bc1",
     "web/table-plot.mjs": "c6d29511afdcf114a191651629654ba504a011e48b9db86ef50cad7ffb8addb5",
     "web/table-query.css": "73ebcbcdcce2194b0dcf5bafdd8e1009113e172d5c1810116fa4a782c54d7f60",
-    "web/table-query.mjs": "0d46cd40333f1f5f2c7a805173cd1aa2d9f7f31de814ec3c8b49e0b6c7273324",
+    "web/table-query.mjs": "99df0ee0f2ccf7f600397262bece6510c0624ee49bd9152b2cf1774ffb1e6cae",
     "web/table-view.css": "7f050a5ee7ee9f58a6bfe964058881368ae7b3f82a0f7585bfcadf96c9ea6060",
     "web/table-view.mjs": "ebad752af5c1d7dd720410fa0682dfd001b78fba62dcc53c5c79794b9d5013bf",
     "web/tables.mjs": "31d33c0f025d54636b6a47a0f31f631a013f859f8494af743d25ab28bfdbfd4f",
     "web/theme.js": "97bbb1ff814b706f96fec950ef64808879ae97736be0a4124a87e87157fef5ba",
     "web/translation.mjs": "1fa3835794ab920721930ef66431e0fc7e71d771e95256c7552a695a5bb23165",
-    "web/ui-messages.mjs": "d679b54a2a5f87a0e05ebd08fda6113dc208e6698b391ca8e9653e9ea2b5713b",
+    "web/ui-messages.mjs": "13f5ba5e78477a89295c3e23f554227438051fb227d18a08e936a1597fed5f06",
     "web/vendor/codemirror-legacy-MIT.txt": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
     "web/vendor/editor.mjs": "efdbb6ab59c8464c03a24aa97e761d9bc69413dbb4d024457633570a700a191c",
     "web/vendor/epub-BSD-2-Clause.txt": "8663e726f4194e1a34913b223c2e4745ed06f3ec645a66a41ab70b735070b692",
@@ -829,10 +829,10 @@
     "provenance": "third-party/README.md"
   },
   "locks": {
-    "cargoSha256": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
+    "cargoSha256": "58a64cd70f342262a360e2da5307461645dece0e21289949e013468a3dcc7ba4",
     "derivation": "Web-only root; Cargo canonical subset; original versions/checksums verified",
     "npmSha256": "dae41cbd5a726314fdebf6a7927ec7049d69aaa517e776ba46b7473808db3ead",
-    "upstreamCargoSha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3"
+    "upstreamCargoSha256": "fdf8a847ebe8d1f2f91c5e35e04933c2148f83120d500ddbec2028888709d556"
   },
   "resources": {
     "@codemirror/commands": "6.11.1",
@@ -862,7 +862,7 @@
     },
     "pdfjs-dist": "6.4.299"
   },
-  "revision": "bc4ba04d280cbe45b9235fbc8be684a0a00cb2fb",
+  "revision": "5e5d4de6e2ffec368494bc52d0ecffe5068b765a",
   "sourceFiles": {
     ".cargo/config.toml": {
       "sha256": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
@@ -877,11 +877,11 @@
       "source": "distribution/public-gitignore.txt"
     },
     "Cargo.lock": {
-      "sha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3",
+      "sha256": "fdf8a847ebe8d1f2f91c5e35e04933c2148f83120d500ddbec2028888709d556",
       "source": "Cargo.lock"
     },
     "Cargo.toml": {
-      "sha256": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
+      "sha256": "3bfad278c7083cb9cbbbfed8bffeca9a0a788dfe4a99f403e23a6388e16b09bc",
       "source": "distribution/public-Cargo.toml"
     },
     "DISTRIBUTION.md": {
@@ -957,7 +957,7 @@
       "source": "docs/translation.md"
     },
     "docs/web-parity.md": {
-      "sha256": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
+      "sha256": "d24f1f17125d17e26b8dbec8042ce0336a4a29c48e333bc3657f104fcb83d758",
       "source": "docs/web-parity.md"
     },
     "examples/embedded-host.rs": {
@@ -1157,11 +1157,11 @@
       "source": "src/runtime/process.rs"
     },
     "src/runtime/renderer.rs": {
-      "sha256": "b8e9bdc2dbdf5d81e1ff467930ec89a518ab773cab52266ac1401edcfdd5b2b7",
+      "sha256": "0e1b27760351de7f6a3563705ed781c30a1ad7e94750f378ff352bbcf18f98df",
       "source": "src/runtime/renderer.rs"
     },
     "src/web/compare_runtime.rs": {
-      "sha256": "c6d2ab3a9605347066d8801c1244091c024967331744dae8677f51cdc9f98586",
+      "sha256": "291d3cdcf576ed13337ca1316d27d4f260ae4a450082c7ba1d0c4659f2be5cf0",
       "source": "src/web/compare_runtime.rs"
     },
     "src/web/document_runtime.rs": {
@@ -1721,7 +1721,7 @@
       "source": "web/table-query.css"
     },
     "web/table-query.mjs": {
-      "sha256": "0d46cd40333f1f5f2c7a805173cd1aa2d9f7f31de814ec3c8b49e0b6c7273324",
+      "sha256": "99df0ee0f2ccf7f600397262bece6510c0624ee49bd9152b2cf1774ffb1e6cae",
       "source": "web/table-query.mjs"
     },
     "web/table-view.css": {
@@ -1745,7 +1745,7 @@
       "source": "web/translation.mjs"
     },
     "web/ui-messages.mjs": {
-      "sha256": "d679b54a2a5f87a0e05ebd08fda6113dc208e6698b391ca8e9653e9ea2b5713b",
+      "sha256": "13f5ba5e78477a89295c3e23f554227438051fb227d18a08e936a1597fed5f06",
       "source": "web/ui-messages.mjs"
     }
   },
@@ -1775,6 +1775,6 @@
     "python": "3.14.4",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   },
-  "treeSha256": "7e77bf278fbf8f82ebe10347253c831d2522f1a58cad684eeed30cd63f6e8720",
+  "treeSha256": "724a1fe22ea458d49f870658cf3079f399ff5b5c932a430b27904a72b53da8c4",
   "version": 1
 }

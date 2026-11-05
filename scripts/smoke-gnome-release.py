@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO / 'scripts/test-support'))
 from private_wayland import isolated_environment, OwnedMutterInput
 from private_file_portal import FilePortal
 from memory_sampler import ProcessMemory
+from native_accessibility import Client
 from private_codex_exit import instrument as instrument_exit
 from private_codex_lag import instrument as instrument_lag
 
@@ -94,6 +95,7 @@ def run(root, all_diagrams=False, language=False, backends=False, git_review=Fal
     child = subprocess.Popen([str(native), str(document)], cwd=root,
                              env=dict(os.environ), stdout=log, stderr=log)
     memory = ProcessMemory(child.pid, gateway, include_web_content=True)
+    accessibility = Client(child, iterate=portal.iterate)
     step = 'startup'
 
     def until(name, test, seconds=25):
@@ -183,6 +185,20 @@ def run(root, all_diagrams=False, language=False, backends=False, git_review=Fal
             and a.get_state_set().contains(Atspi.StateType.SENSITIVE)
             and a.get_state_set().contains(Atspi.StateType.SHOWING)))
         action(item, 'click')
+
+    def main_menu_action(name, chinese=False):
+        # GtkMenuButton has a named wrapper without Action; Client selects the
+        # actionable inner node and verifies it belongs to the owned process.
+        accessibility.click('主菜单' if chinese else 'Main menu')
+        menu = until('native shell action menu', lambda: find(
+            lambda a: a.get_role_name() == 'menu' and showing(a)))
+        item = until('enabled menu item: ' + name, lambda: find(
+            lambda a: within(a, menu) and a.get_role_name() == 'menu item'
+            and a.get_name() == name and showing(a)
+            and a.get_state_set().contains(Atspi.StateType.SENSITIVE)))
+        action(item, 'click')
+        until('closed shell menu after: ' + name, lambda: find(
+            lambda a: a == menu and showing(a)) is None)
 
     def source(editable):
         return find(lambda a: a.get_role_name() == 'text'
@@ -341,7 +357,7 @@ def run(root, all_diagrams=False, language=False, backends=False, git_review=Fal
             lambda a: a.get_role_name() == 'dialog' and a.get_name() == 'Settings') is None)
 
     def git_controls():
-        click('Git Review')
+        main_menu_action('Git Review')
         search = until('native Git filter', lambda: find(
             lambda a: a.get_role_name() in ['entry', 'text'] and a.get_name() == 'Filter files'
             and a.get_state_set().contains(Atspi.StateType.SHOWING)))
@@ -606,7 +622,7 @@ def run(root, all_diagrams=False, language=False, backends=False, git_review=Fal
         named_menu('zh')
         comparison_language('zh')
         if git_review:
-            click('Git 审查')
+            main_menu_action('Git 审查', chinese=True)
             until('Chinese Git accessible search name',lambda:find(
                 lambda a:a.get_role_name() in ['entry','text'] and a.get_name()=='筛选文件'
                 and a.get_state_set().contains(Atspi.StateType.SHOWING)))
@@ -670,7 +686,7 @@ def run(root, all_diagrams=False, language=False, backends=False, git_review=Fal
 
     def comparison_language(locale):
         chinese = locale == 'zh'
-        click('比较 Markdown 文件' if chinese else 'Compare Markdown files')
+        main_menu_action('比较 Markdown 文件' if chinese else 'Compare Markdown files', chinese=chinese)
         for name in (['上一处更改', '下一处更改', '阅读器', '打开两个 Markdown 文件进行比较']
                      if chinese else ['Previous change', 'Next change', 'Reader', 'Open two Markdown files to compare']):
             until('comparison interface: '+name, lambda name=name: find(

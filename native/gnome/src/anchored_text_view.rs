@@ -12,6 +12,7 @@ mod imp {
         pub children: RefCell<Vec<(glib::WeakRef<gtk::Widget>, i32)>>,
         pub width: Cell<i32>,
         pub below_text: RefCell<Option<TextLayer>>,
+        caret_object: RefCell<Option<(glib::WeakRef<gtk::Widget>, glib::SignalHandlerId)>>,
         #[cfg(debug_assertions)]
         pub updates: Cell<u64>,
         #[cfg(debug_assertions)]
@@ -71,6 +72,14 @@ mod imp {
         }
     }
     impl WidgetImpl for AnchoredTextView {
+        fn map(&self) {
+            self.parent_map();
+            self.update_caret_object();
+        }
+        fn unmap(&self) {
+            self.set_caret_object(None);
+            self.parent_unmap();
+        }
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             #[cfg(debug_assertions)]
             let started = std::time::Instant::now();
@@ -112,11 +121,92 @@ mod imp {
                 }
             }
             self.parent_size_allocate(width, height, baseline);
+            self.update_caret_object();
             #[cfg(debug_assertions)]
             self.record(2, started.elapsed().as_micros());
         }
     }
     impl AnchoredTextView {
+        pub fn update_caret_object(&self) {
+            let view = self.obj();
+            let buffer = view.buffer();
+            if !view.is_mapped() || !view.has_focus() {
+                self.set_caret_object(None);
+                return;
+            }
+            // Inspect just the insertion slot and its predecessor, including
+            // EOF immediately after an anchor. Never walk the document/children.
+            let at = buffer.iter_at_mark(&buffer.get_insert());
+            let anchor = at.child_anchor();
+            let mut previous = at;
+            let anchors = [
+                anchor,
+                previous
+                    .backward_char()
+                    .then(|| previous.child_anchor())
+                    .flatten(),
+            ];
+            if anchors.iter().all(Option::is_none) {
+                self.set_caret_object(None);
+                return;
+            }
+            let metrics = view.pango_context().metrics(None, None);
+            let line_height =
+                (metrics.ascent().saturating_add(metrics.descent()) / gtk::pango::SCALE).max(1);
+            let child = anchors
+                .into_iter()
+                .flatten()
+                .flat_map(|anchor| anchor.widgets())
+                .find(|child| {
+                    child.parent().as_ref() == Some(view.upcast_ref())
+                        && child.is_mapped()
+                        && child.height() > line_height.saturating_mul(2)
+                });
+            self.set_caret_object(child);
+        }
+        fn set_caret_object(&self, child: Option<gtk::Widget>) {
+            let view = self.obj();
+            if let Some(child) = child.as_ref() {
+                // The insert endpoint can remain beside an anchor during range
+                // selection. Suppress its paint, but leave the range outline
+                // to flow_object_selection rather than showing an object cue.
+                if view.buffer().selection_bounds().is_none() {
+                    child.add_css_class("studio-anchor-caret-object");
+                } else {
+                    child.remove_css_class("studio-anchor-caret-object");
+                }
+            }
+            let current = self
+                .caret_object
+                .borrow()
+                .as_ref()
+                .and_then(|(weak, _)| weak.upgrade());
+            if current.as_ref() == child.as_ref()
+                && (child.is_some() || self.caret_object.borrow().is_none())
+            {
+                return;
+            }
+            if let Some((weak, handler)) = self.caret_object.borrow_mut().take() {
+                if let Some(old) = weak.upgrade() {
+                    old.disconnect(handler);
+                    old.remove_css_class("studio-anchor-caret-object");
+                }
+            }
+            if let Some(child) = child {
+                // A table can be detached/reused before the owning view unmaps.
+                let weak = view.downgrade();
+                let handler = child.connect_unmap(move |_| {
+                    if let Some(view) = weak.upgrade() {
+                        view.imp().set_caret_object(None);
+                    }
+                });
+                self.caret_object
+                    .replace(Some((child.downgrade(), handler)));
+                view.add_css_class("studio-anchor-caret");
+            } else {
+                view.remove_css_class("studio-anchor-caret");
+            }
+        }
         #[cfg(debug_assertions)]
         fn record(&self, offset: usize, elapsed: u128) {
             self.timings[offset].set(self.timings[offset].get().saturating_add(elapsed));
@@ -139,7 +229,17 @@ glib::wrapper! {
 }
 impl AnchoredTextView {
     pub fn new(buffer: &gtk::TextBuffer) -> Self {
-        glib::Object::builder().property("buffer", buffer).build()
+        let view: Self = glib::Object::builder().property("buffer", buffer).build();
+        let weak = view.downgrade();
+        buffer.connect_mark_set(move |buffer, _, mark| {
+            if *mark == buffer.get_insert() || *mark == buffer.selection_bound() {
+                if let Some(view) = weak.upgrade().filter(|v| v.buffer() == *buffer) {
+                    view.imp().update_caret_object();
+                }
+            }
+        });
+        view.connect_has_focus_notify(|view| view.imp().update_caret_object());
+        view
     }
     /// GTK supplies buffer coordinates, before native text/selection painting.
     pub fn set_below_text(&self, draw: TextLayer) {
@@ -164,5 +264,79 @@ impl AnchoredTextView {
     #[cfg(debug_assertions)]
     pub fn layout_timings(&self) -> [u128; 6] {
         std::array::from_fn(|i| self.imp().timings[i].get())
+    }
+}
+
+// Opt-in anchor adapter. GtkTextView allocates child anchors at their minimum
+// requisition; a scroller's natural height alone is therefore insufficient.
+mod natural_height_imp {
+    use super::*;
+    use std::cell::OnceCell;
+
+    #[derive(Default)]
+    pub struct NaturalHeightChild {
+        pub child: OnceCell<gtk::Widget>,
+    }
+    #[glib::object_subclass]
+    impl ObjectSubclass for NaturalHeightChild {
+        const NAME: &'static str = "StudioNaturalHeightChild";
+        type Type = super::NaturalHeightChild;
+        type ParentType = gtk::Widget;
+    }
+    impl ObjectImpl for NaturalHeightChild {
+        fn dispose(&self) {
+            if let Some(child) = self.child.get().filter(|child| child.parent().is_some()) {
+                child.unparent();
+            }
+        }
+    }
+    impl WidgetImpl for NaturalHeightChild {
+        fn request_mode(&self) -> gtk::SizeRequestMode {
+            self.child
+                .get()
+                .map_or(gtk::SizeRequestMode::ConstantSize, |child| {
+                    child.request_mode()
+                })
+        }
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            let Some(child) = self.child.get() else {
+                return (0, 0, -1, -1);
+            };
+            let measured = child.measure(orientation, for_size);
+            if orientation == gtk::Orientation::Vertical {
+                let (_, natural, _, baseline) = measured;
+                (natural, natural, baseline, baseline)
+            } else {
+                measured
+            }
+        }
+        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if let Some(child) = self.child.get() {
+                child.allocate(width, height, baseline, None);
+            }
+        }
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            if let Some(child) = self.child.get() {
+                self.obj().snapshot_child(child, snapshot);
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct NaturalHeightChild(ObjectSubclass<natural_height_imp::NaturalHeightChild>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible,gtk::Buildable,gtk::ConstraintTarget;
+}
+impl NaturalHeightChild {
+    /// Promote a child's measured vertical natural size for a minimum-sized
+    /// anchor. The child must supply its own content bounds (for example a
+    /// ScrolledWindow max-content-height). GTK retains resize/reflow ownership.
+    pub fn new(child: &impl IsA<gtk::Widget>) -> Self {
+        let result: Self = glib::Object::new();
+        let child = child.as_ref();
+        result.imp().child.set(child.clone()).unwrap();
+        child.set_parent(&result);
+        result
     }
 }

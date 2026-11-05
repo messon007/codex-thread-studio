@@ -14,6 +14,122 @@ fixes belong in shared components; UI-specific behavior stays in the native
 frontend. The [closing audit](gnome-native-acceptance.md#reuse-and-static-analysis-review)
 records the checked implementation boundary and static-analysis results.
 
+## Current acceptance state: failed user acceptance
+
+The user rejected the native candidate as unusable and explicitly assessed this
+attempt as a failed delivery. The implementation inventory and green automated
+checks below do not establish a usable desktop application. Concrete reproduction
+and correction of the usability failures are required; this is not merely a wait
+for the remaining physical-device checklist. The user identified interface design
+as the primary problem. The review below records reproduced defects; additional
+user workflows remain subject to independent review.
+
+The native application is an independent version developed on
+`feat/ubuntu-26-04-gnome-native`. The main branch retains the Web Desktop version;
+merging the native version into main is not a deliverable or an acceptance gate.
+The current work is diagnosis, focused repairs and independent review of ordinary
+user workflows. Earlier qualification records retain only their stated scope.
+
+## Interface redesign review
+
+A fresh visual review ran the preserved `88a9cc9f` candidate in an owned GNOME
+Wayland session at 1600×1000 with a disposable profile and mock providers.
+The actual conversation and document screenshots establish these problems:
+
+- Navigation has a second header and three stacked filter/search boxes.
+- The empty composer has no visible input hint. Its expanding model selector
+  and numerous equal-weight buttons dominate the input area and wrap in split view.
+- Opening a document automatically hides the session sidebar even at 1600px;
+  the existing cutoff is 1700px rather than a measure of usable content.
+- A three-row table reserves a 320px minimum viewport, leaving empty space;
+  its untouched columns do not share the available width.
+
+The redesign uses the existing Web Desktop navigation/conversation/document
+structure and Apple's [layout](https://developer.apple.com/design/human-interface-guidelines/layout)
+and [toolbar](https://developer.apple.com/design/human-interface-guidelines/toolbars)
+principles: clear hierarchy, aligned regions, related controls grouped together
+and progressive disclosure. GTK/libadwaita retain native interaction, theme,
+keyboard focus and accessible controls.
+
+Review the built interface at both ordinary and wide window sizes. Confirm that
+navigation remains reachable, the empty input is discoverable, typing/IME keeps
+focus and exact text, primary and secondary actions remain available, and window
+controls stay at the window edge. Inspect small-table sizing and a real large
+report, plus light/dark/high-contrast behavior. Screenshots and successful unit
+checks are supporting evidence, not a renewed acceptance claim.
+
+## First interface repair iteration — 2026-11-06
+
+Three explicitly selected `gpt-6.1-sol` workers made bounded changes; the main
+controller reviewed the code and actual GNOME captures. The first small-table
+patch was rejected because only one of three rows was visible. GTK TextView
+allocates embedded children from their minimum requisition, so a reusable
+natural-height anchor adapter now promotes the bounded natural request. Small
+tables fit their rows; multi-page tables retain a stable 440px viewport.
+
+The apparent dark scrollbar strip was reproduced in the previous candidate and
+identified as an oversized caret beside a tall child anchor. Moving the accessible
+caret from offset 609 to 606 removed it with the table toolbar fixed at y=429.
+The repair changes only caret painting at tall anchors and supplies a thin object
+boundary cue. Native cursor visibility, movement, selection and source marks stay
+intact; text positions retain normal caret rendering.
+
+Local development-build evidence, not final release or user acceptance:
+
+- `cargo fmt` and native all-target Clippy pass; existing warnings remain.
+- The portable `scripts/smoke-gnome-interface.py` drives an owned GNOME session
+  without application hooks and produces eleven PNGs for controller review.
+  Normal/wide layouts, keyboard input and retained drafts, three fully visible
+  table rows, and 51-row forward/back paging pass. The table toolbar remains at
+  y=429 across first, final and restored pages. Both Ctrl+Shift+Home/End selections
+  cover all 609 accessible characters; source copy includes row 51 (1,324 bytes).
+  The controller inspected the corrected object-caret, range-selection and dark
+  captures in `interface-after-caret-75wzwz1s`; the oversized strip is absent.
+- Installed `smoke-gnome-release.py --language --backends --git` passes in
+  `release-ui-2u2nbq2t`, including Chinese/English comparison and composer labels,
+  backend save, Git, editing/undo/save, source copy and owned provider cleanup.
+  Menu entry checks reuse the shared actionable accessibility helper.
+- Installed large-reader checks pass on a copy of the actual 7,372,970-byte
+  `tests.review.md` and 32 MiB LF/CRLF tables: outline/source destinations,
+  bounded editing, table paging and column filtering retain their checks.
+  This earlier run precedes the painting-only caret change; its scope and
+  development profile remain explicit. No user document was modified and no
+  model turn was sent.
+
+The isolated local artifacts live below `/tmp/studio-native-quality`. Their JSON
+records identify exact packages and narrower checks. The optimized frontend
+builds successfully with `--release --locked --offline`
+in the one `/media/rui/studio-native-quality-build` cache. The single review
+package now contains that frontend (SHA-256
+`783138c6fd8c7ab4d3c9a2094de9428315b7239040d8682b088d06c2937e84fd`).
+Its independent eleven-image run passes in `interface-optimized-aauql1it`; the
+controller inspected normal/wide conversation and document layouts, dark mode,
+table paging and range/object caret captures. All three small-table rows fit the
+216px viewport, paging retains y=429, and the keyboard/source-copy assertions
+pass on this optimized build. See the [startup guide](gnome-native-desktop-check.md).
+The matching optimized installed core check (`--language --backends --git`)
+also passes in `release-ui-_bat5q3g`, including source/edit/save, undo/redo,
+draft retention, bilingual controls and Git. The matching installed large-reader
+check passes in `release-large-bwmd2tz7` on the actual 7,372,970-byte report copy
+and 32 MiB LF/CRLF tables. Outline destinations, bounded source/edit, explicit
+save, paging and column-filter retention pass; the source original is unchanged,
+no model turn is sent and no WebContent process is observed. Sampled native peak
+RSS is 371,924 KiB with gateway peak 30,492 KiB. These are scoped workflow and
+host observations, not a new whole-application or speed guarantee.
+
+The optimized supervision regression also passes in `release-supervision-0m0uutor`:
+More actions → Turn supervision, exact continuation, queue hold/release, draft
+preservation and Stop cleanup retain all assertions. Session release passes in
+both English (`session-release-y05fot_b`) and Chinese (`session-release-qbi269_c`),
+including acknowledgment scope/expiry, late-event guards and retained sources,
+drafts and queues without inference or interrupt. Its blocked-control assertion
+requires disabled Send and either absent or disabled idle Stop, matching the
+intentional interface contract. The complete eleven captures and focused
+geometry/keyboard reports are preserved in the review bundle's `interface-review/`.
+
+Physical device behavior and user acceptance remain unestablished. Main still
+contains only Web Desktop; this independent native branch is not a merge proposal.
+
 ## Implemented application areas
 
 | Area | Native implementation and existing evidence |

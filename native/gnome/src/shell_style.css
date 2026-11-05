@@ -1,0 +1,135 @@
+/* Shell chrome only. Keep reader/source styles and user font roles separate.
+ * Adwaita variables follow system light/dark/high-contrast colors and the
+ * appearance provider's later window-scoped contrast overrides. */
+.studio-shell {
+    background-color: var(--window-bg-color);
+    color: var(--window-fg-color);
+}
+
+.studio-shell .studio-sidebar,
+.studio-shell .studio-header {
+    background-color: var(--window-bg-color);
+    color: var(--window-fg-color);
+}
+
+.studio-shell .studio-header {
+    min-height: 40px;
+    padding: 0 8px;
+    box-shadow: none;
+}
+
+/* Use native interaction states; lighten secondary controls only at rest. */
+.studio-shell .studio-header button,
+.studio-shell .studio-composer-actions button,
+.studio-shell .studio-sidebar dropdown > button {
+    min-height: 24px;
+    min-width: 24px;
+    padding: 4px 8px;
+    border-radius: 8px;
+}
+
+.studio-shell .studio-header button.image-button,
+.studio-shell .studio-composer-actions button.image-button {
+    padding: 4px;
+}
+
+.studio-shell .studio-composer-actions button:not(.suggested-action):not(.destructive-action),
+.studio-shell .studio-sidebar dropdown > button {
+    font-weight: inherit;
+}
+
+.studio-shell .studio-composer-actions button:not(.suggested-action):not(.destructive-action):not(:hover):not(:active):not(:checked),
+.studio-shell .studio-sidebar dropdown > button:not(:hover):not(:active):not(:checked) {
+    background-color: transparent;
+    box-shadow: none;
+}
+
+.studio-shell .studio-sidebar searchentry {
+    min-height: 24px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background-color: var(--view-bg-color);
+    color: var(--view-fg-color);
+}
+
+/* Construction owns inter-widget spacing and outer reading gutters. */
+.studio-shell .studio-session-row {
+    border-radius: 8px;
+}
+
+.studio-shell .studio-transcript {
+    background-color: var(--view-bg-color);
+    color: var(--view-fg-color);
+    padding: 8px 0;
+}
+
+.studio-shell .studio-transcript > row {
+    padding: 0;
+}
+
+.studio-shell .studio-message,
+.studio-shell .studio-user-message,
+.studio-shell .studio-assistant-message {
+    background-color: transparent;
+    color: var(--view-fg-color);
+    box-shadow: none;
+}
+
+/* Retain native heading/dim-label roles without reducing widget opacity. */
+.studio-shell .studio-message-meta {
+    font-size: 0.9em;
+}
+
+.studio-shell .studio-composer {
+    background-color: var(--view-bg-color);
+    color: var(--view-fg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: none;
+}
+
+/* Limit text-node styling to the composer editor, never transcript readers. */
+.studio-shell .studio-composer textview,
+.studio-shell .studio-composer textview > text {
+    background-color: transparent;
+    color: var(--view-fg-color);
+}
+
+.studio-shell .studio-composer-actions {
+    padding: 0;
+}
+
+/* Add a group cue while retaining each control's native keyboard focus ring. */
+.studio-shell .studio-composer:focus-within {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+/* Lightweight reference grouping; inherit user typography and native focus. */
+.studio-shell .studio-composer-references .studio-reference-chip {
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--window-bg-color);
+    color: var(--view-fg-color);
+}
+
+.studio-shell .studio-composer-references .studio-reference-chip button {
+    min-height: 16px;
+    min-width: 16px;
+    padding: 4px;
+    border-radius: 6px;
+}
+
+/* Painting only: keep cursor-visible and native keyboard/accessibility marks.
+ * Suppress inflated anchor carets even at a range's insertion endpoint; the
+ * separate boundary cue is enabled only without a range selection. */
+.studio-shell .studio-anchor-caret {
+    caret-color: transparent;
+    -gtk-secondary-caret-color: transparent;
+}
+
+.studio-shell .studio-anchor-caret-object:not(.studio-flow-object-selected) {
+    outline: 1px solid var(--accent-color);
+    outline-offset: -1px;
+}

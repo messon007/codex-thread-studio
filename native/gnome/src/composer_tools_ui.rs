@@ -114,6 +114,7 @@ impl Tools {
             .margin_start(8)
             .margin_end(8)
             .build();
+        chips.add_css_class("studio-composer-references");
         let widget = gtk::ScrolledWindow::builder()
             .child(&chips)
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -398,7 +399,7 @@ impl Tools {
         self.widget.set_visible(!items.is_empty());
         for item in items {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            row.add_css_class("card");
+            row.add_css_class("studio-reference-chip");
             row.set_margin_start(4);
             row.set_margin_end(4);
             let label = gtk::Label::builder()

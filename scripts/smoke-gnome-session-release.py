@@ -75,7 +75,10 @@ def run(native, root, language):
         return node and client.sensitive(node) == value
 
     def blocked_controls():
-        return sensitive('Send', False) and sensitive('Stop', False)
+        # Idle Stop is intentionally hidden by the redesigned composer. A
+        # released session must still expose disabled Send and no usable Stop.
+        stop = control('Stop')
+        return sensitive('Send', False) and (stop is None or not client.sensitive(stop))
 
     def select(title):
         row = client.wait('session '+title, lambda: client.find(lambda n: client.showing(n) and n.get_role_name() == 'label' and n.get_name().endswith(title)))

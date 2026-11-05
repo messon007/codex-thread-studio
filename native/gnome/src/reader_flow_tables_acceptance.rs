@@ -185,7 +185,12 @@ impl Reader {
             .get(&0)
             .cloned()
             .ok_or("Indexed factory was not used")?;
-        if flow.objects.first() != Some(table.widget.upcast_ref()) {
+        let anchor = flow
+            .objects
+            .first()
+            .filter(|anchor| anchor.is::<crate::anchored_text_view::NaturalHeightChild>())
+            .ok_or("Indexed table anchor is missing its natural-height adapter")?;
+        if table.widget.parent().as_ref() != Some(anchor) {
             return Err("Indexed anchor did not reuse the production table widget".into());
         }
         self.preview_scroll.set_child(Some(&flow.widget));

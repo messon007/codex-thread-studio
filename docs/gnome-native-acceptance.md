@@ -9,6 +9,19 @@ The application UI is GTK4/libadwaita. Website and sanitized HTML/EPUB content
 have isolated, lazy GTK4 WebKit surfaces; Markdown, conversation and application
 controls do not use an HTML frontend. Existing Tauri/server entry points remain.
 
+## Acceptance reset after user rejection
+
+The user reports that the native version is unusable and rejects the prior
+attempt. Acceptance therefore remains failed while actual usability problems are
+diagnosed and repaired. Passing the mapped tests below is historical evidence
+for those checks, not proof of satisfactory end-to-end use. Review ordinary
+startup, session selection, conversation input, scrolling and document interaction
+before making another delivery claim; record observed failures and verify each
+repair without substituting a fixture success for the reported experience.
+
+This is an independent native version on its own development branch. Main keeps
+the Web Desktop application. Native-to-main integration is not an acceptance gate.
+
 ## Functional requirements
 
 The numbers below refer to the product's functional requirements. Evidence links

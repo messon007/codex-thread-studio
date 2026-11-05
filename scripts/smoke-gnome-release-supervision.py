@@ -43,6 +43,21 @@ def run(prefix, root):
         for value in reversed(values):
             owned.call('NotifyKeyboardKeysym', owned.GLib.Variant('(ub)', (value, False)))
 
+    def open_supervision():
+        desktop.click('More actions')
+        desktop.click('Turn supervision')
+
+    def close_supervision():
+        # Supervision is nested inside More actions. Dismiss the child first,
+        # then the parent if GTK leaves it open, using normal keyboard input.
+        keys([0xff1b])
+        desktop.wait('supervision popover closed', lambda: not desktop.find(lambda n:
+            n.get_name() in ('Supervise this turn', 'Stop supervision') and desktop.showing(n)))
+        if desktop.find(lambda n: n.get_name() == 'Turn supervision' and desktop.showing(n)):
+            keys([0xff1b])
+        desktop.wait('composer options popover closed', lambda: not desktop.find(lambda n:
+            n.get_name() == 'Turn supervision' and desktop.showing(n)))
+
     def composer():
         return desktop.wait('native composer', lambda: desktop.find(lambda n:
             n.get_role_name() == 'text' and n.get_name().startswith('Write a message.')
@@ -76,10 +91,10 @@ def run(prefix, root):
             n.get_name() == 'Stop' and desktop.showing(n) and desktop.sensitive(n)))
         owned.focus_only_window()
         assert not any(r.get('method') == 'thread/start' for r in runtime.requests(root)), 'Supervision started without opt-in'
-        desktop.click('Turn supervision')
+        open_supervision()
         desktop.click('Supervise this turn')
         desktop.wait('native supervision waiting', lambda: desktop.text('Waiting') and desktop.text('0/5'))
-        keys([0xff1b])
+        close_supervision()
         enqueue(QUEUED)
         desktop.edit(composer(), DRAFT)
         flag('release-source-1')
@@ -87,10 +102,10 @@ def run(prefix, root):
             (root / 'evaluation-held-1').exists() and desktop.text('Turn supervision · Evaluating · 0/5'))
         assert len(source_starts()) == 1 and [m['text'] for m in queue()] == [QUEUED], 'Installed queue escaped evaluation'
         assert desktop.contents(composer()) == DRAFT
-        desktop.click('Turn supervision')
+        open_supervision()
         desktop.wait('named Stop action', lambda: desktop.find(lambda n:
             n.get_name() == 'Stop supervision' and desktop.showing(n) and desktop.sensitive(n)))
-        keys([0xff1b])
+        close_supervision()
         flag('release-evaluation-1')
         desktop.wait('exact automatic continuation', lambda: (root / 'source-held-2').exists())
         assert len(source_starts()) == 2
@@ -105,7 +120,7 @@ def run(prefix, root):
         desktop.edit(composer(), 'Installed Stop source')
         desktop.click('Send')
         desktop.wait('fourth source accepted', lambda: (root / 'source-held-4').exists())
-        desktop.click('Turn supervision')
+        open_supervision()
         next_action = desktop.wait('new turn opt-in action', lambda: desktop.find(lambda n:
             n.get_name() == 'Supervise this turn' and desktop.showing(n) and desktop.sensitive(n)))
         # A completion toast from the preceding task remains legitimate. The
@@ -115,12 +130,12 @@ def run(prefix, root):
             and 'Supervision complete' in n.get_name()), 'Previous terminal status leaked into a newer turn'
         desktop.click('Supervise this turn')
         desktop.wait('new supervisor waiting', lambda: desktop.text('Waiting') and desktop.text('0/5'))
-        keys([0xff1b])
+        close_supervision()
         enqueue(PAUSED)
-        desktop.click('Turn supervision')
+        open_supervision()
         desktop.click('Stop supervision')
         desktop.wait('explicit supervision stop', lambda: desktop.text('Supervision stopped'))
-        keys([0xff1b])
+        close_supervision()
         desktop.wait('queue paused by Stop', lambda: desktop.text('Supervision stopped by user')
             and desktop.find(lambda n: n.get_name() == 'Resume' and desktop.showing(n)
                 and desktop.sensitive(n) and 'button' in n.get_role_name()))
@@ -177,7 +192,7 @@ def main():
     bundle = Path(args.bundle).resolve()
     if args.private_root:
         return run(bundle, Path(args.private_root))
-    base = Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke'
+    base = Path(os.environ.get('STUDIO_NATIVE_QA_DIR') or Path(__file__).resolve().parents[1] / 'target/gnome-native-smoke')
     base.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='release-supervision-', dir=base))
     prefix = root / 'installed native 中文 % test'

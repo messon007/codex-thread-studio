@@ -482,6 +482,7 @@ pub fn factory_observed(
         let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let clamp = crate::appearance_ui::reading_clamp(&row);
         row.add_css_class("studio-content");
+        row.add_css_class("studio-message");
         item.set_child(Some(&clamp));
     });
     if let Some(visibility) = visibility.clone() {
@@ -524,11 +525,19 @@ pub fn factory_observed(
         while let Some(child) = row.first_child() {
             row.remove(&child);
         }
+        row.remove_css_class("studio-user-message");
+        row.remove_css_class("studio-assistant-message");
+        if data.item.role == "You" {
+            row.add_css_class("studio-user-message");
+        } else if data.item.role == "Assistant" {
+            row.add_css_class("studio-assistant-message");
+        }
         row.set_margin_top(if data.part == Part::Header { 18 } else { 4 });
         row.set_margin_bottom(6);
         let content: gtk::Widget = match data.part {
             Part::Header => {
-                let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+                header.add_css_class("studio-message-meta");
                 let name = gtk::Label::builder()
                     .label(&data.item.role)
                     .xalign(0.0)

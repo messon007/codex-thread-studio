@@ -61,6 +61,7 @@ impl Runtime {
             diagrams: RefCell::new(Vec::new()),
             dark: RefCell::new(None),
         });
+        runtime.css();
         ACTIVE.with(|r| r.replace(Rc::downgrade(&runtime)));
         let weak = Rc::downgrade(&runtime);
         runtime
@@ -75,10 +76,14 @@ impl Runtime {
         runtime
     }
     fn css(&self) {
+        // Keep shell defaults available before settings arrive; user typography
+        // and contrast overrides remain last on every appearance reload.
+        let mut css = include_str!("shell_style.css").to_owned();
         let Some(plan) = self.plan.borrow().clone() else {
+            self.provider.load_from_string(&css);
             return;
         };
-        let mut css = plan.css;
+        css.push_str(&plan.css);
         css.push_str(".studio-flow-object-selected { outline:2px solid @accent_bg_color; outline-offset:-2px; }\n");
         if plan.contrast {
             let (bg, fg) = if adw::StyleManager::default().is_dark() {

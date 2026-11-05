@@ -270,8 +270,13 @@ impl Reader {
             // TextView can validate its buffer after unrooting. Detach an
             // expired table anchor before GTK makes its ColumnView inert;
             // otherwise it can measure recycled cells with no factory child.
-            if let Some(parent) = table.widget.parent().and_downcast::<gtk::TextView>() {
-                parent.remove(&table.widget);
+            let anchor = table
+                .widget
+                .parent()
+                .filter(|parent| parent.is::<crate::anchored_text_view::NaturalHeightChild>())
+                .unwrap_or_else(|| table.widget.clone().upcast());
+            if let Some(parent) = anchor.parent().and_downcast::<gtk::TextView>() {
+                parent.remove(&anchor);
             }
             table.rows.remove_all();
         }
@@ -3093,7 +3098,7 @@ impl Reader {
                     reader.flow_tables.borrow_mut().insert(id, table.clone());
                     table.defer_rows();
                     table.load(row);
-                    Ok(table.widget.clone().upcast())
+                    Ok(crate::anchored_text_view::NaturalHeightChild::new(&table.widget).upcast())
                 })
             }),
             selection_tables: Some({
@@ -4016,6 +4021,15 @@ impl DiagramUi {
     }
 }
 
+const TABLE_MAX_HEIGHT: i32 = 440;
+const TABLE_PAGE_SIZE: usize = 50;
+
+// Classify by the whole table, never the current page's row count. A short
+// final page must not shrink its TextView anchor and clamp the outer scroll.
+fn table_viewport_height(total: usize, page_size: usize) -> Option<i32> {
+    (total > page_size).then_some(TABLE_MAX_HEIGHT)
+}
+
 struct TableUi {
     widget: gtk::Box,
     view: gtk::ColumnView,
@@ -4037,6 +4051,7 @@ struct TableUi {
     start: Cell<usize>,
     size: Cell<usize>,
     total: Cell<usize>,
+    page_height: Cell<Option<i32>>,
     columns: RefCell<Vec<usize>>,
     widths: Rc<RefCell<HashMap<usize, i32>>>,
     reader: std::rc::Weak<Reader>,
@@ -4047,10 +4062,14 @@ struct TableUi {
 
 impl TableUi {
     fn defer_rows(self: &Rc<Self>) {
-        // A stable bounded viewport preserves outer text/anchor geometry while
-        // GTK row factories are detached. The immutable row page stays in Rust.
-        self.scroll.set_propagate_natural_height(false);
-        self.view.set_model(None::<&gtk::SelectionModel>);
+        // Multi-page tables start detached: measuring every offscreen table's
+        // first page would eagerly bind factories throughout a report. Reserve
+        // only the bounded viewport until the table is actually visible.
+        if self.page_height.get().is_some() && self.rows.n_items() == 0 {
+            self.view.set_model(None::<&gtk::SelectionModel>);
+        }
+        // Small tables need their first natural layout before detaching; an
+        // empty model cannot reserve the intrinsic height of a text anchor.
         let weak = Rc::downgrade(self);
         let visibility = crate::viewport::Visibility::new(
             &self.scroll,
@@ -4067,6 +4086,15 @@ impl TableUi {
             return;
         }
         if !visible {
+            if self.view.columns().n_items() == 0 || self.scroll.height() <= 0 {
+                return;
+            }
+            // Preserve the actual viewport, including its header/scrollbar,
+            // while offscreen factories are detached. Only single-page tables
+            // return to intrinsic sizing; paged anchors keep a stable viewport.
+            self.scroll
+                .set_height_request(self.page_height.get().unwrap_or(self.scroll.height()));
+            self.scroll.set_propagate_natural_height(false);
             let restoring = self.restore.borrow_mut().take();
             if restoring.is_none() {
                 self.scroll_memory.set(Some((
@@ -4081,6 +4109,10 @@ impl TableUi {
             return;
         }
         self.view.set_model(Some(&self.model));
+        self.scroll
+            .set_height_request(self.page_height.get().unwrap_or(-1));
+        self.scroll
+            .set_propagate_natural_height(self.page_height.get().is_none());
         let Some((horizontal, vertical)) = self.scroll_memory.get() else {
             return;
         };
@@ -4121,7 +4153,7 @@ impl TableUi {
         update.queue(&self.scroll);
     }
     fn new(reader: &Rc<Reader>, id: usize) -> Rc<Self> {
-        let (columns, generation, revision) = {
+        let (columns, total, generation, revision) = {
             let state = reader.state.borrow();
             let columns = state
                 .index
@@ -4131,6 +4163,11 @@ impl TableUi {
                 .unwrap_or_default();
             (
                 columns,
+                state
+                    .index
+                    .as_ref()
+                    .and_then(|index| index.tables.get(id))
+                    .map_or(0, |table| table.rows),
                 state.generation,
                 state
                     .index
@@ -4169,11 +4206,12 @@ impl TableUi {
         view.set_show_column_separators(true);
         view.set_show_row_separators(true);
         view.set_reorderable(false);
+        let page_height = table_viewport_height(total, TABLE_PAGE_SIZE);
         let scroll = gtk::ScrolledWindow::builder()
             .child(&view)
-            .min_content_height(320)
-            .max_content_height(440)
-            .propagate_natural_height(true)
+            .height_request(page_height.unwrap_or(-1))
+            .max_content_height(TABLE_MAX_HEIGHT)
+            .propagate_natural_height(page_height.is_none())
             .build();
         widget.append(&scroll);
         let table = Rc::new(Self {
@@ -4195,8 +4233,9 @@ impl TableUi {
             active: Cell::new(true),
             serial: Cell::new(0),
             start: Cell::new(0),
-            size: Cell::new(50),
+            size: Cell::new(TABLE_PAGE_SIZE),
             total: Cell::new(0),
+            page_height: Cell::new(page_height),
             columns: RefCell::new(columns),
             widths: Rc::default(),
             reader: Rc::downgrade(reader),
@@ -4278,10 +4317,20 @@ impl TableUi {
             }
         }
     }
-    fn apply(&self, page: TablePage) {
+    fn apply(self: &Rc<Self>, page: TablePage) {
+        let first_deferred_page =
+            self.view.columns().n_items() == 0 && self.visibility.borrow().is_some();
         self.start.set(page.start);
         self.size.set(page.page_size);
         self.total.set(page.total);
+        self.page_height
+            .set(table_viewport_height(page.total, page.page_size));
+        if self.view.model().is_some() || self.page_height.get().is_some() {
+            self.scroll
+                .set_height_request(self.page_height.get().unwrap_or(-1));
+            self.scroll
+                .set_propagate_natural_height(self.page_height.get().is_none());
+        }
         crate::table_columns_ui::row_status(
             &self.label,
             if page.total == 0 { 0 } else { page.start + 1 },
@@ -4428,9 +4477,15 @@ impl TableUi {
                 }
                 column.set_resizable(true);
                 let original = page.columns[position];
-                column.set_fixed_width(self.widths.borrow().get(&original).copied().unwrap_or(210));
+                let width = self.widths.borrow().get(&original).copied();
+                // Share spare space between untouched columns; their base widths
+                // still provide horizontal overflow for wide tables. Explicit
+                // user widths remain exact across paging and column selection.
+                column.set_expand(width.is_none());
+                column.set_fixed_width(width.unwrap_or(210));
                 let widths = self.widths.clone();
                 column.connect_fixed_width_notify(move |column| {
+                    column.set_expand(false);
                     widths.borrow_mut().insert(original, column.fixed_width());
                 });
                 self.view.append_column(&column);
@@ -4447,5 +4502,29 @@ impl TableUi {
         }
         self.previous.set_sensitive(page.start > 0);
         self.next.set_sensitive(page.end < page.total);
+        if first_deferred_page {
+            // Initial visibility may have been observed before rows arrived.
+            // Recheck after GTK lays out this page, including offscreen tables.
+            self.defer_rows();
+        }
+    }
+}
+
+#[cfg(test)]
+mod table_height_tests {
+    use super::{table_viewport_height, TABLE_MAX_HEIGHT, TABLE_PAGE_SIZE};
+
+    #[test]
+    fn viewport_classification_uses_total_rows_at_the_page_boundary() {
+        // Policy boundaries only: rendered anchor/scroll stability requires GTK.
+        for total in [0, 3, 50] {
+            assert_eq!(table_viewport_height(total, TABLE_PAGE_SIZE), None);
+        }
+        for total in [51, 1000] {
+            assert_eq!(
+                table_viewport_height(total, TABLE_PAGE_SIZE),
+                Some(TABLE_MAX_HEIGHT)
+            );
+        }
     }
 }

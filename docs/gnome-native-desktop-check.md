@@ -1,45 +1,38 @@
 # Native GNOME desktop check
 
-Development branch: `feat/ubuntu-26-04-gnome-native`. The current optimized
-gateway source is `6b540c0`, with unchanged verified engines and a rebuilt
-frontend enabling portable math-font embedding in both profiles. Its package
-manifest SHA-256 is
-`88a9cc9fcddcafe2ac50c3fb56b7558c01b9741607afcbe8648e4993b7ff5a7b`.
-Automated evidence is listed in the
+Development branch: `feat/ubuntu-26-04-gnome-native`. This is an independent
+native version; main retains Web Desktop. The first interface repair has a
+new optimized frontend over the unchanged verified gateway and engines.
+The original `88a9cc9f` candidate/archive is retained for comparison, but is
+not the repaired interface. This review package is not a user-accepted release.
+
+Automated results and their scope are in the
 [acceptance review](gnome-native-acceptance.md) and
-[current inventory](gnome-native-status.md).
+[current inventory](gnome-native-status.md#first-interface-repair-iteration--2026-11-06).
+`INTERFACE-REVIEW.json` identifies the source files, build profile and executable
+hash; `SHA256SUMS` covers the complete package.
 
 ## Start on the build machine
 
 Use an Ubuntu 26.04 GNOME Wayland login. Close the other Studio/server instance,
 because the native application shares its existing Studio profile and stores.
-From the repository root:
+The single current review bundle is on the external disk:
 
 ```sh
-./target/gnome-native-candidate-20261105-main/codex-thread-studio-gnome
+/media/rui/studio-native-quality-build/package/codex-thread-studio-gnome
 ```
 
-The native executable and gateway remain siblings in the qualified package.
+No `GDK_BACKEND=x11` override is needed. Keep the native executable, gateway and
+engine resources together; copying only the frontend is insufficient.
 
-## Install the portable bundle
+## Install the review bundle elsewhere
 
-Copy these two files from the build machine's `target/` into an empty working
-directory on the Ubuntu 26.04 x86_64 machine:
-
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz`
-- `codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz.sha256`
-
-The archive name uses the package manifest prefix, not a Git commit ID.
-
-The build-machine `target/` entries are symlinks to the external disk. Use
-`cp -L` locally or `scp` to copy the archive bytes and checksum.
-
-From that directory:
+Copy the complete `/media/rui/studio-native-quality-build/package/` directory to
+an empty directory on an Ubuntu 26.04 x86_64 machine. If copying locally, use
+`cp -aL` so external symlinks are copied as bytes. From the copied directory:
 
 ```sh
-sha256sum -c codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz.sha256
-tar -xzf codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz
-cd release-package
+sha256sum -c SHA256SUMS
 bash ./install-runtime-deps.sh
 bash ./install.sh
 ~/.local/bin/codex-thread-studio-gnome

@@ -580,6 +580,7 @@ fn build(
         .default_width(1280)
         .default_height(850)
         .build();
+    window.add_css_class("studio-shell");
     let toast = adw::ToastOverlay::new();
     let write_feedback = crate::write_feedback::Queue::new(&window, &toast);
     let appearance = crate::appearance_ui::Runtime::install();
@@ -607,6 +608,7 @@ fn build(
     factory.connect_setup(|_, object| {
         let item = object.downcast_ref::<gtk::ListItem>().unwrap();
         let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        row.add_css_class("studio-session-row");
         row.set_margin_top(10);
         row.set_margin_bottom(10);
         row.set_margin_start(12);
@@ -656,8 +658,7 @@ fn build(
     list.add_css_class("navigation-sidebar");
     list.set_single_click_activate(true);
     let sidebar_header = adw::HeaderBar::new();
-    sidebar_header.set_show_start_title_buttons(false);
-    sidebar_header.set_show_end_title_buttons(false);
+    sidebar_header.add_css_class("studio-header");
     sidebar_header.set_title_widget(Some(&gtk::Label::new(None).ui_text("label", "Sessions")));
     let new = icon_button("list-add-symbolic", "New session", "win.new-session");
     sidebar_header.pack_start(&new);
@@ -667,16 +668,23 @@ fn build(
         "win.refresh",
     ));
     let backend = gtk::DropDown::from_strings(&["Starting gateway…"]);
+    crate::adaptive::string_selector(&backend, 14);
+    backend.add_css_class("flat");
     backend.set_sensitive(false);
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search sessions or paths")
         .build();
     crate::i18n_ui::bind(&search, "placeholder-text", "Search sessions or paths");
-    let controls = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let controls = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    controls.set_margin_top(6);
     controls.set_margin_start(12);
     controls.set_margin_end(12);
     controls.set_margin_bottom(12);
-    controls.append(&backend);
+    controls.append(&search);
+    let filters = crate::adaptive::toolbar(4);
+    filters.add_css_class("studio-sidebar-filters");
+    filters.set_align(0.0);
+    filters.append(&backend);
     let scope = gtk::DropDown::from_strings(&[
         "All sessions",
         "Pinned sessions",
@@ -684,9 +692,10 @@ fn build(
         "Active sessions",
         "Attention",
     ]);
-    crate::i18n_ui::choices(&scope);
-    controls.append(&scope);
-    controls.append(&search);
+    crate::adaptive::ui_string_selector(&scope, 16, None);
+    scope.add_css_class("flat");
+    filters.append(&scope);
+    controls.append(&filters);
     let more = gtk::Button::with_label("Load more sessions");
     crate::i18n_ui::bind(&more, "label", "Load more sessions");
     more.set_visible(false);
@@ -701,10 +710,12 @@ fn build(
     );
     sidebar_box.append(&more);
     let sidebar = adw::ToolbarView::new();
+    sidebar.add_css_class("studio-sidebar");
     sidebar.add_top_bar(&sidebar_header);
     sidebar.set_content(Some(&sidebar_box));
 
     let header = adw::HeaderBar::new();
+    header.add_css_class("studio-header");
     let router_back = gtk::Button::builder()
         .icon_name("go-previous-symbolic")
         .tooltip_text("Return to Router")
@@ -744,12 +755,6 @@ fn build(
         "win.terminal",
     ));
     header.pack_end(&icon_button("folder-symbolic", "Files", "win.files"));
-    header.pack_end(&icon_button("vcs-branch-symbolic", "Git Review", "win.git"));
-    header.pack_end(&icon_button(
-        "view-dual-symbolic",
-        "Compare Markdown files",
-        "win.compare",
-    ));
     let menu = gio::Menu::new();
     update_menu(&menu);
     header.pack_end(&crate::action_menu::button(&menu).ui_text("tooltip-text", "Main menu"));
@@ -838,6 +843,7 @@ fn build(
         Some(items_factory),
     );
     transcript_view.add_css_class("background");
+    transcript_view.add_css_class("studio-transcript");
     let transcript_scroll = gtk::ScrolledWindow::builder()
         .child(&transcript_view)
         .vexpand(true)
@@ -874,11 +880,52 @@ fn build(
         .propagate_natural_height(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
+    // Keep the hint outside the TextBuffer, so it cannot be sent, selected or
+    // intercept pointer/keyboard input. Preedit also suppresses it before the
+    // IME has committed anything to the buffer.
+    let composer_input = gtk::Overlay::new();
+    composer_input.set_child(Some(&composer_scroll));
+    let placeholder = gtk::Label::builder()
+        .xalign(0.0)
+        .valign(gtk::Align::Start)
+        .wrap(true)
+        .margin_top(12)
+        .margin_start(12)
+        .margin_end(12)
+        .can_target(false)
+        .focusable(false)
+        .accessible_role(gtk::AccessibleRole::Presentation)
+        .build()
+        .ui_text(
+            "label",
+            "Write a message. Ctrl+Enter sends; Enter starts a new line.",
+        );
+    placeholder.add_css_class("dim-label");
+    placeholder.add_css_class("studio-composer-placeholder");
+    composer_input.add_overlay(&placeholder);
+    let composing = Rc::new(Cell::new(false));
+    let hint = placeholder.downgrade();
+    let preedit = composing.clone();
+    composer.buffer().connect_changed(move |buffer| {
+        if let Some(hint) = hint.upgrade() {
+            hint.set_visible(buffer.char_count() == 0 && !preedit.get());
+        }
+    });
+    let hint = placeholder.downgrade();
+    composer.connect_preedit_changed(move |view, text| {
+        composing.set(!text.is_empty());
+        if let Some(hint) = hint.upgrade() {
+            hint.set_visible(text.is_empty() && view.buffer().char_count() == 0);
+        }
+    });
     let model = gtk::DropDown::from_strings(&["Default model"]);
-    crate::adaptive::string_selector(&model, 22);
-    model.set_hexpand(true);
+    crate::adaptive::string_selector(&model, 18);
+    model.set_hexpand(false);
+    model.add_css_class("flat");
     let effort = gtk::DropDown::from_strings(&["Default effort", "low", "medium", "high", "xhigh"]);
-    crate::adaptive::string_selector(&effort, 12);
+    crate::adaptive::string_selector(&effort, 10);
+    effort.set_hexpand(false);
+    effort.add_css_class("flat");
     let fast = gtk::ToggleButton::builder()
         .label("Fast")
         .build()
@@ -887,10 +934,17 @@ fn build(
     crate::i18n_ui::bind(&send, "label", "Send");
     send.add_css_class("suggested-action");
     send.set_sensitive(false);
-    let stop = gtk::Button::with_label("Stop");
-    crate::i18n_ui::bind(&stop, "label", "Stop");
-    let queue_button = gtk::Button::with_label("Queue");
-    crate::i18n_ui::bind(&queue_button, "label", "Queue");
+    let stop = gtk::Button::builder()
+        .icon_name("media-playback-stop-symbolic")
+        .visible(false)
+        .build()
+        .ui_text("tooltip-text", "Stop");
+    crate::i18n_ui::accessible_label(&stop, "Stop");
+    let queue_button = gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .visible(false)
+        .build();
+    crate::i18n_ui::accessible_label(&queue_button, "Queue");
     crate::i18n_ui::bind(
         &queue_button,
         "tooltip-text",
@@ -917,27 +971,61 @@ fn build(
         .visible(false)
         .build();
     stop.set_sensitive(false);
-    let actions = crate::adaptive::toolbar(8);
-    actions.set_margin_start(8);
-    actions.set_margin_end(8);
-    actions.set_margin_bottom(8);
-    actions.append(&image_button);
+    for button in [&image_button, &stop, &queue_button, &continue_button] {
+        button.add_css_class("flat");
+    }
+    fast.add_css_class("flat");
+    supervision_menu.button.add_css_class("flat");
+    crate::i18n_ui::accessible_label(&image_button, "Attach images (PNG, JPEG, WebP, GIF)");
+    let options = crate::adaptive::toolbar(4);
+    options.add_css_class("studio-composer-options");
+    options.set_align(0.0);
+    options.set_hexpand(true);
+    options.append(&image_button);
     let router_file_button = gtk::Button::builder()
         .icon_name("text-x-generic-symbolic")
         .visible(false)
         .build()
         .ui_text("tooltip-text", "Attach reference files to Router");
-    actions.append(&router_file_button);
-    actions.append(&model);
-    actions.append(&effort);
-    actions.append(&fast);
-    actions.append(&supervision_menu.button);
+    router_file_button.add_css_class("flat");
+    crate::i18n_ui::accessible_label(&router_file_button, "Attach reference files to Router");
+    options.append(&router_file_button);
+    options.append(&model);
+    options.append(&effort);
+    let more_options = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .build()
+        .ui_text("tooltip-text", "More actions");
+    crate::i18n_ui::accessible_label(&more_options, "More actions");
+    more_options.add_css_class("flat");
+    let extra_options = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    extra_options.set_margin_top(12);
+    extra_options.set_margin_bottom(12);
+    extra_options.set_margin_start(12);
+    extra_options.set_margin_end(12);
+    extra_options.append(&fast);
+    crate::i18n_ui::bind(&supervision_menu.button, "label", "Turn supervision");
+    extra_options.append(&supervision_menu.button);
+    let options_popover = gtk::Popover::new();
+    options_popover.set_child(Some(&extra_options));
+    more_options.set_popover(Some(&options_popover));
+    options.append(&more_options);
+    let actions = crate::adaptive::toolbar(4);
+    actions.add_css_class("studio-composer-actions");
     actions.append(&stop);
     actions.append(&queue_button);
     actions.append(&continue_button);
     actions.append(&send);
-    let composer_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    composer_box.append(&composer_scroll);
+    let footer = crate::adaptive::toolbar(8);
+    footer.add_css_class("studio-composer-actions");
+    footer.set_margin_start(8);
+    footer.set_margin_end(8);
+    footer.set_margin_bottom(8);
+    footer.append(&options);
+    footer.append(&actions);
+    let composer_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    composer_box.add_css_class("studio-composer");
+    composer_box.append(&composer_input);
     let shell_hint=gtk::Label::builder().label("Shell commands use your local user access and do not inherit model sandbox permissions.").xalign(0.0).wrap(true).margin_start(12).margin_end(12).visible(false).build();
     shell_hint.add_css_class("caption");
     shell_hint.add_css_class("dim-label");
@@ -964,7 +1052,7 @@ fn build(
         .ui_text("tooltip-text", "Choose a Router target");
     router_target.add_css_class("flat");
     composer_box.append(&router_target);
-    composer_box.append(&actions);
+    composer_box.append(&footer);
     composer_box.add_css_class("card");
     let composer_clamp = crate::appearance_ui::reading_clamp(&composer_box);
     composer_clamp.set_margin_top(12);
@@ -1001,14 +1089,14 @@ fn build(
     content_box.append(&status_line);
     content_box.append(&queue.widget);
     content_box.append(&composer_clamp);
-    let content = adw::ToolbarView::new();
+    let conversation = adw::ToolbarView::new();
     let finder = crate::session_search_ui::Search::new();
-    content.add_top_bar(&finder.widget);
-    content.set_content(Some(&content_box));
+    conversation.add_top_bar(&finder.widget);
+    conversation.set_content(Some(&content_box));
     let workspace = gtk::Paned::new(gtk::Orientation::Horizontal);
     let compare =
         crate::compare_ui::Compare::new(&window, documents.clone(), sender.clone(), &toast);
-    workspace.set_start_child(Some(&content));
+    workspace.set_start_child(Some(&conversation));
     let tools = gtk::Stack::new();
     tools.set_hhomogeneous(false);
     tools.set_vhomogeneous(false);
@@ -1038,21 +1126,24 @@ fn build(
     workspace.set_shrink_start_child(false);
     workspace.set_shrink_end_child(false);
     workspace.set_position(600);
+    // Keep the conversation/workspace titlebar alongside the sidebar titlebar.
+    // It spans the optional document pane too, so native window controls remain
+    // at the window edge and the app menu survives document-only layouts.
+    let content = adw::ToolbarView::new();
+    content.add_top_bar(&header);
+    content.set_content(Some(&workspace));
     let split = adw::OverlaySplitView::builder()
         .sidebar(&sidebar)
-        .content(&workspace)
+        .content(&content)
         .min_sidebar_width(240.0)
-        .max_sidebar_width(340.0)
-        .sidebar_width_fraction(0.25)
+        .max_sidebar_width(300.0)
+        .sidebar_width_fraction(0.175)
         .build();
     let breakpoint =
         adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 800sp").unwrap());
     breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
     window.add_breakpoint(breakpoint);
-    let shell = adw::ToolbarView::new();
-    shell.add_top_bar(&header);
-    shell.set_content(Some(&split));
-    toast.set_child(Some(&shell));
+    toast.set_child(Some(&split));
     window.set_content(Some(&toast));
     let translation = crate::translation_ui::Runtime::new(&window, sender.clone());
     let ui = Rc::new(Ui {
@@ -1155,7 +1246,7 @@ fn build(
         epub,
         browser,
         workspace,
-        conversation: content,
+        conversation,
         tools,
         tool_navigation: RefCell::default(),
         terminal,
@@ -1212,6 +1303,23 @@ fn build(
 
 fn update_menu(menu: &gio::Menu) {
     menu.remove_all();
+    let workspace_menu = gio::Menu::new();
+    for (label, action) in [
+        ("New session", "new-session"),
+        ("Toggle session sidebar", "sidebar"),
+        ("Find in conversation (Ctrl+Shift+F)", "find-conversation"),
+        ("Open document", "open-document"),
+        ("Files", "files"),
+        ("Terminal", "terminal"),
+        ("Git Review", "git"),
+        ("Compare Markdown files", "compare"),
+    ] {
+        workspace_menu.append(
+            Some(&crate::language::tr(label)),
+            Some(&format!("win.{action}")),
+        );
+    }
+    menu.append_section(None, &workspace_menu);
     menu.append(
         Some(&crate::language::tr("Connections & accounts")),
         Some("win.connections"),
@@ -1309,6 +1417,7 @@ fn icon_button(icon: &str, tooltip: &str, action: &str) -> gtk::Button {
         .action_name(action)
         .build();
     crate::i18n_ui::bind(&button, "tooltip-text", tooltip);
+    crate::i18n_ui::accessible_label(&button, tooltip);
     if icon == "vcs-branch-symbolic" {
         button.set_child(Some(&gtk::Image::from_gicon(&gio::ThemedIcon::from_names(
             &[icon, "view-list-symbolic"],
@@ -3214,8 +3323,10 @@ impl Ui {
             1100
         };
         self.conversation.set_visible(!document || width >= minimum);
+        // At desktop widths preserve explicit sidebar visibility. The previous
+        // 1700px cutoff hid navigation even in a 1600px three-pane workspace.
         self.split
-            .set_collapsed(width < 800 || (document && width < 1700));
+            .set_collapsed(width < 800 || (document && width < 1400));
         if document && self.split.is_collapsed() {
             self.split.set_show_sidebar(false);
         }
@@ -4285,6 +4396,7 @@ impl Ui {
         );
         self.stop
             .set_sensitive(state.ready && state.active_turn.is_some());
+        self.stop.set_visible(state.active_turn.is_some());
         let key = state
             .selected
             .as_ref()
@@ -4346,6 +4458,7 @@ impl Ui {
                     && !state.session_mutation,
             );
             self.stop.set_sensitive(active && !router.stopping);
+            self.stop.set_visible(active || router.stopping);
             self.stop
                 .set_tooltip_text(Some("Stop the latest routed request in this conversation"));
             self.queue_button.set_sensitive(
@@ -4363,6 +4476,14 @@ impl Ui {
                         || entry.is_some_and(|entry| !entry.messages.is_empty())),
             );
         }
+        // Queue is relevant while a turn/send or existing queue needs it; an
+        // idle disabled action need not compete with the primary Send button.
+        self.queue_button.set_visible(
+            self.queue_button.is_sensitive()
+                || state.active_turn.is_some()
+                || state.sending
+                || entry.is_some_and(|entry| !entry.messages.is_empty()),
+        );
     }
 
     fn submit(self: &Rc<Self>) {

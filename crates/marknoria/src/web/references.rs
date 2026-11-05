@@ -515,6 +515,11 @@ mod tests {
         let source = source.canonicalize().unwrap();
         let asset = shared.path().join("picture.png");
         std::fs::write(&asset, b"owned fixture").unwrap();
+        // Windows retains lexical authorization before filesystem access, so
+        // use its canonical grant spelling rather than a possible temp alias.
+        // Unix deliberately keeps the raw URL to exercise directory aliases.
+        #[cfg(windows)]
+        let asset = asset.canonicalize().unwrap();
         let target = url::Url::from_file_path(&asset).unwrap().to_string();
         let current = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));

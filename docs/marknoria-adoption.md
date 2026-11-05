@@ -2,15 +2,23 @@
 
 The reviewed pin is `scripts/marknoria-release.json`; the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
-`384876c0391e2d64bbf512fc46af5dec41f7a00e`, 814 inventory files, archive SHA-256
-`fe301649a8bb387c618f03bb6eb5b2d3cdb5fe14f2bae5c096d9363f7b54f87c`, tree SHA-256
-`d8bb84f1512004395a0291901a44a40dffaa66fc49d5c5677828c444932d6feb`.
+`bc4ba04d280cbe45b9235fbc8be684a0a00cb2fb`, 815 inventory files, archive SHA-256
+`c0ccfb5681e6597f96312fe54f6a49278d16915b97e86af43dfdf510091782cf`, tree SHA-256
+`7e77bf278fbf8f82ebe10347253c831d2522f1a58cad684eeed30cd63f6e8720`.
 Two clean offline exports match; eight archive/inventory/Git-byte checks pass.
 The shared JavaScript source and generated resources remain identical to the
 runtime-tested `87df867` package. This revision also fixes Unix resource-directory
 aliases while preserving Windows authorization before requested filesystem I/O.
 The actual three-platform CI exposed that macOS path issue and a Windows-only
 owned-runtime/Arc return mismatch in Studio; both now have targeted corrections.
+Windows CI also exposed a delivery omission: the existing upstream MSVC UTF-8
+policy was absent from the package/outer consumer. It is now included and adopted
+unchanged as `.cargo/config.toml`; `.cargo/audit.toml` is preserved. This keeps
+Unicode grammar symbol names correct without modifying registry grammars or
+skipping tests. Path dependency Cargo config is not inherited from the dependency;
+other consumers must merge its flags into their own outer workspace/environment.
+The dynamic-root Windows fixture now uses a canonical URI spelling under its
+pre-I/O lexical grant policy; Unix raw directory aliases remain tested.
 Current platform results must be tied to this new consuming commit.
 
 No private MarkNoria checkout, token, build output, assets or installed executable

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -37,6 +38,10 @@ with tempfile.TemporaryDirectory(prefix='reader-export-contract-', dir=args.temp
     manifest = json.loads((root / 'reader-manifest.json').read_text())
     assert all(not name.startswith(('native/', 'ffi/', 'src/native/', 'node_modules/', 'target/'))
                for name in manifest['files'])
+    assert tomllib.loads((root / '.cargo/config.toml').read_text()) == {
+        'env': {f'{kind}_{arch}_pc_windows_msvc': '/utf-8'
+                for kind in ['CFLAGS', 'CXXFLAGS']
+                for arch in ['x86_64', 'aarch64', 'i686']}}
     checks += 1
     readme = root / 'README.md'
     original = readme.read_bytes()

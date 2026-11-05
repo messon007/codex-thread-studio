@@ -1,18 +1,19 @@
 {
-  "allowlistSha256": "c26fd8d6db7b6ec5c720e3ef786c82af597b4ff863be6c06e0d433ed4de2d209",
+  "allowlistSha256": "526291cbf2832ea8a23bb91f1ce117d02b51c649c779f7cae9dafa14238aa51c",
   "apiVersion": 1,
   "bridgeVersion": 1,
   "buildPlatform": "linux-x86_64",
   "capabilitiesApiVersion": 1,
-  "exporterSha256": "a60b88039294dbeabf5618acd650d52f4ce0b5e2b6e59e4c613621e0f63ed4a0",
+  "exporterSha256": "1c58afeece88edd61cc92ef50dde1bd058f659d770ad7fd5b2582ba7316155f4",
   "files": {
+    ".cargo/config.toml": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
     ".gitattributes": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
     ".gitignore": "765a82b9f33eb96e723eaa39a0b8f565f69fa0c4a2153112b705ae54cc54db90",
     "Cargo.lock": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
     "Cargo.toml": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
     "DISTRIBUTION.md": "6e0a159fde75d39c2da05ebbdf762a568acbcec50b8eadc5930ad2a753912e03",
     "LICENSE": "cf3d3312057275ec7758d30a1ee308b7f45ead216b695f16bd36299aa0e9b523",
-    "README.md": "f986d421f87ee58b5d0f7dddf299a0cf09cd73074d5eae30c5fcdd2f2b167f34",
+    "README.md": "361e42f6f8d6e7b9e2885a3f88a83f5047e6d3430e00284d69ab1f04912193d5",
     "assets/diagrams/engine.mjs": "b8e8fae1ae28136b57c97368c5e50f573f2573459bb00b18a94be73b5873d995",
     "assets/diagrams/render.html": "eb91203b6d413b0410763dc75e3adc86487840fe0a295d515cd8d4ff23be0ef9",
     "assets/vendor/d2-MPL-2.0.txt": "97933e571f92c0b21e09a59fe67d7ce9a77d3eac5efe5f341756d5f93d191775",
@@ -473,7 +474,7 @@
     "src/web/mod.rs": "cd41f50d722f5d56047048869f3e8aa72d0cdd7dee20d614555da0eb197ce145",
     "src/web/panes.rs": "c62485fded7de18b45aeb19c736de637d0b74e2f147177c998caf44a9b995b90",
     "src/web/pdf_runtime.rs": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
-    "src/web/references.rs": "5ef16e884e4befb0f2f8c97ac4b5fa1e2d1ea9bea95255286aba940e30a04e80",
+    "src/web/references.rs": "2fe69806ec4bfe839c1f43704667841ad4cf2038753441b4c965424d7c94eba4",
     "src/web/selected_files.rs": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
     "src/web/service.rs": "c178f30413077a6a64b59ea5a3fa5c4a42b68436f2fe47df6ff6fa8efe8c7d58",
     "src/web/table_chart_runtime.rs": "1d8365d7176d4d9b67326c2ad1534515bddeafa5bf217b4eb6a5c80656d3b3ca",
@@ -538,7 +539,7 @@
     "tests/server/host-image-check.mjs": "938299b28866365888be778df8ef6913c485b39d416cb2591e86f9e70b4246a0",
     "tests/server/image-frames-check.mjs": "599314972adfd67b0d000ea5ea0fd7cc40c08365d79a65a5eff4dabb91cb6c5c",
     "tests/server/public-core-check.mjs": "fc85cd71e1220a218047395aa4b295e8bb9c9fcff869a9557fd688715241bb23",
-    "tests/server/reader-export-check.py": "0c637de51f66267147204aa8966c966cc12fc3ee5b29ec94b9b83577495f5c2d",
+    "tests/server/reader-export-check.py": "becc794123779e0c0922d59406f95b6a67809826677fab692dc9c6a00747744e",
     "tests/server/source-ranges-check.mjs": "9ed010c9cbfe85ad56aa4dabc13bd2ed2c499b34873dc7e8330077c6b9df619c",
     "tests/server/web-imports-check.mjs": "8c41b68d2f89b8c51a83d092c052ed2c6b14cd2a1c360a63c3db7092a8d88928",
     "tests/support/markdown.rs": "13d2d954bc646f19eb2fab6510658de0eb04cbc45edc01a33634821bfd025296",
@@ -861,8 +862,12 @@
     },
     "pdfjs-dist": "6.4.299"
   },
-  "revision": "384876c0391e2d64bbf512fc46af5dec41f7a00e",
+  "revision": "bc4ba04d280cbe45b9235fbc8be684a0a00cb2fb",
   "sourceFiles": {
+    ".cargo/config.toml": {
+      "sha256": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
+      "source": ".cargo/config.toml"
+    },
     ".gitattributes": {
       "sha256": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
       "source": "distribution/public-gitattributes.txt"
@@ -888,7 +893,7 @@
       "source": "distribution/LICENSE-MIT.txt"
     },
     "README.md": {
-      "sha256": "f986d421f87ee58b5d0f7dddf299a0cf09cd73074d5eae30c5fcdd2f2b167f34",
+      "sha256": "361e42f6f8d6e7b9e2885a3f88a83f5047e6d3430e00284d69ab1f04912193d5",
       "source": "distribution/README-reader.md"
     },
     "assets/diagrams/engine.mjs": {
@@ -1192,7 +1197,7 @@
       "source": "src/web/pdf_runtime.rs"
     },
     "src/web/references.rs": {
-      "sha256": "5ef16e884e4befb0f2f8c97ac4b5fa1e2d1ea9bea95255286aba940e30a04e80",
+      "sha256": "2fe69806ec4bfe839c1f43704667841ad4cf2038753441b4c965424d7c94eba4",
       "source": "src/web/references.rs"
     },
     "src/web/selected_files.rs": {
@@ -1452,7 +1457,7 @@
       "source": "tests/server/public-core-check.mjs"
     },
     "tests/server/reader-export-check.py": {
-      "sha256": "0c637de51f66267147204aa8966c966cc12fc3ee5b29ec94b9b83577495f5c2d",
+      "sha256": "becc794123779e0c0922d59406f95b6a67809826677fab692dc9c6a00747744e",
       "source": "tests/server/reader-export-check.py"
     },
     "tests/server/source-ranges-check.mjs": {
@@ -1770,6 +1775,6 @@
     "python": "3.14.4",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   },
-  "treeSha256": "d8bb84f1512004395a0291901a44a40dffaa66fc49d5c5677828c444932d6feb",
+  "treeSha256": "7e77bf278fbf8f82ebe10347253c831d2522f1a58cad684eeed30cd63f6e8720",
   "version": 1
 }

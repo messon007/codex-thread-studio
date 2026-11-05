@@ -28,6 +28,15 @@ cargo build --locked --example embedded-host --bin marknoria-server
 cargo run --locked --example embedded-host -- /authorized/document.md
 ```
 
+Windows MSVC builds need `/utf-8` for the bundled C/C++ grammar symbol names.
+The included `.cargo/config.toml` supplies target-specific flags for builds run
+from this package root. A path dependency's Cargo config is **not** inherited by
+its consumer: `--manifest-path` does not change Cargo's configuration search.
+Merge these flags into the consuming workspace's root `.cargo/config.toml` or
+its target-specific `CFLAGS`/`CXXFLAGS` environment. Preserve existing flags and
+settings; do not overwrite the host's configuration. This policy does not change
+Linux, macOS or MinGW builds.
+
 Host code calls `marknoria::reader::worker_entry()` before normal startup so its
 own supervised workers work without another MarkNoria installation. See
 `docs/reader-api.md` and `docs/embedding.md` for grants, defaults, capabilities,

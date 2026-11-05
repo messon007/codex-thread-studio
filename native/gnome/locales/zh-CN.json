@@ -921,5 +921,6 @@
   "None": "无",
   "Selected": "已选择",
   "Use full access": "使用完全访问权限",
-  "The question could not be included. You can still save the response.": "无法包含这次提问，但仍可保存回复。"
+  "The question could not be included. You can still save the response.": "无法包含这次提问，但仍可保存回复。",
+  "Turn supervision is active in this or another session. Open More actions to manage it.": "当前或其他会话中有正在运行的监工任务。打开“更多操作”进行管理。"
 }

@@ -1840,6 +1840,7 @@
   "Turn navigation": "对话轮次导航",
   "Turn navigation for the current session": "当前会话的 Turn 导航",
   "Turn supervision": "任务监工",
+  "Turn supervision is active in this or another session. Open More actions to manage it.": "当前或其他会话中有正在运行的监工任务。打开“更多操作”进行管理。",
   "Turn {index}": "Turn {index}",
   "Turning off Browser ends its private browsing session": "关闭浏览器将结束其私密浏览会话",
   "Turns in this page": "当前页的对话轮次",

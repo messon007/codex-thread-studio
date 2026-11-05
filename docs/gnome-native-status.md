@@ -99,9 +99,9 @@ Local development-build evidence, not final release or user acceptance:
 The isolated local artifacts live below `/tmp/studio-native-quality`. Their JSON
 records identify exact packages and narrower checks. The optimized frontend
 builds successfully with `--release --locked --offline`
-in the one `/media/rui/studio-native-quality-build` cache. The single review
-package now contains that frontend (SHA-256
-`783138c6fd8c7ab4d3c9a2094de9428315b7239040d8682b088d06c2937e84fd`).
+in the one `/media/rui/studio-native-quality-build` cache. That first-iteration
+frontend has SHA-256
+`783138c6fd8c7ab4d3c9a2094de9428315b7239040d8682b088d06c2937e84fd`.
 Its independent eleven-image run passes in `interface-optimized-aauql1it`; the
 controller inspected normal/wide conversation and document layouts, dark mode,
 table paging and range/object caret captures. All three small-table rows fit the
@@ -129,6 +129,38 @@ geometry/keyboard reports are preserved in the review bundle's `interface-review
 
 Physical device behavior and user acceptance remain unestablished. Main still
 contains only Web Desktop; this independent native branch is not a merge proposal.
+
+## Status visibility after simplifying the composer
+
+Independent review of `88e10dd` found two concrete regressions: collapsing More
+actions concealed the effective Fast tier, and switching away from a supervised
+session concealed the global running-supervision cue. The follow-up keeps the
+advanced controls in the popover and groups compact status cues beside it. Fast
+uses the existing effective tier and verified session options; OpenCode/loading
+states hide it. The supervision image uses the existing global holding state and
+clears when no supervised work remains. Both cues retain native semantics and
+localized tooltips; no new backend state or store is introduced.
+
+The optimized installed regression `release-supervision-fgu5vt4m` exercises a
+restored Fast session with overflow closed, switches to Native child while the
+evaluator is held, then returns to the source. It verifies Fast hide/restore,
+continued global supervision visibility and removal on completion, alongside all
+existing exact continuation, queue, draft, Stop and owned-cleanup assertions.
+The subsequent catalog update supplies the descriptive cue's Chinese tooltip.
+The final localized optimized frontend is
+`24fda61458cdd556a87c0bf0bb99edf4e6792ffdb49d1f16f5e93729b21479f3`.
+Its installed supervision rerun passes in `release-supervision-bb6cau4w`; the
+matching eleven-capture interface run passes in `interface-status-cues-kbbq36a5`.
+The controller inspected the new Fast cue in normal, split and dark conversation
+captures. The interface fixture now restores Fast from the actual private store
+and requires its visible label while overflow is closed. Formatting, Python
+syntax and the generated Chinese catalog check pass. Other first-iteration
+workflow evidence above retains its original source/package scope.
+
+
+The previous optimized package also passed `release-map-n972bmwa`: actual main
+menu keyboard navigation, settings-dialog focus/dismissal, Map changes/undo and
+pane close with zero model turns. Its source identity remains `88e10dd`.
 
 ## Implemented application areas
 

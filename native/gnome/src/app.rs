@@ -354,6 +354,7 @@ struct Ui {
     supervision: RefCell<crate::supervision_state::Book>,
     supervision_menu: Rc<crate::supervision_ui::Menu>,
     supervision_status: gtk::Label,
+    supervision_cue: gtk::Image,
     supervision_options: RefCell<HashMap<u64, supervision_controller::OptionsRead>>,
     favorites: RefCell<Option<Rc<crate::favorites_ui::Favorites>>>,
     annotations: RefCell<Option<Rc<crate::annotations_ui::Panel>>>,
@@ -367,6 +368,7 @@ struct Ui {
     inline_math: Rc<crate::inline_math::Renderer>,
     settings: RefCell<Option<Rc<crate::settings_ui::Settings>>>,
     fast: gtk::ToggleButton,
+    fast_cue: gtk::Label,
     session_list: gtk::ListView,
     pin: gtk::ToggleButton,
     scope: gtk::DropDown,
@@ -1009,7 +1011,31 @@ fn build(
     let options_popover = gtk::Popover::new();
     options_popover.set_child(Some(&extra_options));
     more_options.set_popover(Some(&options_popover));
-    options.append(&more_options);
+    let fast_cue = gtk::Label::builder()
+        .visible(false)
+        .css_classes(["caption", "accent"])
+        .build()
+        .ui_text("label", "Fast")
+        .ui_text("tooltip-text", "Fast service tier for the next turn");
+    let supervision_cue = gtk::Image::builder()
+        .icon_name("system-run-symbolic")
+        .accessible_role(gtk::AccessibleRole::Img)
+        .visible(false)
+        .build()
+        .ui_text(
+            "tooltip-text",
+            "Turn supervision is active in this or another session. Open More actions to manage it.",
+        );
+    supervision_cue.add_css_class("accent");
+    crate::i18n_ui::accessible_label(&supervision_cue, "Turn supervision");
+    // Keep state cues alongside their disclosure button when the toolbar wraps.
+    // The button's accessible name stays "More actions" in every state.
+    let options_state = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    options_state.set_valign(gtk::Align::Center);
+    options_state.append(&more_options);
+    options_state.append(&fast_cue);
+    options_state.append(&supervision_cue);
+    options.append(&options_state);
     let actions = crate::adaptive::toolbar(4);
     actions.add_css_class("studio-composer-actions");
     actions.append(&stop);
@@ -1169,6 +1195,7 @@ fn build(
         supervision: RefCell::default(),
         supervision_menu,
         supervision_status,
+        supervision_cue,
         supervision_options: RefCell::default(),
         favorites: RefCell::new(None),
         annotations: RefCell::new(None),
@@ -1186,6 +1213,7 @@ fn build(
         inline_math,
         settings: RefCell::new(None),
         fast,
+        fast_cue,
         session_list: list,
         pin,
         scope,
@@ -4338,6 +4366,16 @@ impl Ui {
         let enabled = state.options.effective_tier(&state.session_tier) == "fast";
         self.fast.set_visible(!open_code);
         self.fast.set_active(enabled);
+        // Session changes clear verification/options before their replies arrive;
+        // do not display the previous session's inherited tier while loading.
+        self.fast_cue.set_visible(
+            !open_code
+                && state.selected.is_some()
+                && state.options_loaded
+                && state.history_verified
+                && !state.loading
+                && enabled,
+        );
         self.fast
             .set_sensitive(controls && (state.fast_models.contains(effective_model) || enabled));
         let images_loading = state.selected.as_ref().is_some_and(|thread| {

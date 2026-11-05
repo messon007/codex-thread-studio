@@ -53,10 +53,23 @@ def run(prefix, root):
         keys([0xff1b])
         desktop.wait('supervision popover closed', lambda: not desktop.find(lambda n:
             n.get_name() in ('Supervise this turn', 'Stop supervision') and desktop.showing(n)))
-        if desktop.find(lambda n: n.get_name() == 'Turn supervision' and desktop.showing(n)):
+        if desktop.find(lambda n: n.get_name() == 'Turn supervision' and 'button' in n.get_role_name() and desktop.showing(n)):
             keys([0xff1b])
         desktop.wait('composer options popover closed', lambda: not desktop.find(lambda n:
-            n.get_name() == 'Turn supervision' and desktop.showing(n)))
+            n.get_name() == 'Turn supervision' and 'button' in n.get_role_name() and desktop.showing(n)))
+
+    def cue(name, role):
+        return desktop.find(lambda n: n.get_name() == name and n.get_role_name() == role and desktop.showing(n))
+
+    def select_session(title):
+        label = desktop.wait('sidebar session ' + title, lambda: desktop.find(lambda n:
+            n.get_name() == title and n.get_role_name() == 'label' and desktop.showing(n)))
+        row = label
+        while row and row.get_role_name() != 'list item':
+            row = row.get_parent()
+        assert row is not None
+        selection = row.get_parent().get_selection_iface()
+        assert selection and desktop.api.Selection.select_child(selection, row.get_index_in_parent())
 
     def composer():
         return desktop.wait('native composer', lambda: desktop.find(lambda n:
@@ -100,6 +113,17 @@ def run(prefix, root):
         flag('release-source-1')
         desktop.wait('owned evaluator and visible progress', lambda:
             (root / 'evaluation-held-1').exists() and desktop.text('Turn supervision · Evaluating · 0/5'))
+        desktop.wait('Fast shown with overflow closed', lambda: cue('Fast', 'label'))
+        desktop.wait('active supervision shown with overflow closed', lambda: cue('Turn supervision', 'image'))
+        select_session('Native child')
+        desktop.wait('child options loaded without inherited Fast', lambda:
+            desktop.find(lambda n: n.get_name() == 'Send' and desktop.showing(n) and desktop.sensitive(n))
+            and not cue('Fast', 'label'))
+        assert cue('Turn supervision', 'image'), 'Background supervision cue disappeared on another session'
+        select_session('Native target')
+        desktop.wait('target draft and Fast restored', lambda:
+            desktop.contents(composer()) == DRAFT and cue('Fast', 'label'))
+        assert cue('Turn supervision', 'image')
         assert len(source_starts()) == 1 and [m['text'] for m in queue()] == [QUEUED], 'Installed queue escaped evaluation'
         assert desktop.contents(composer()) == DRAFT
         open_supervision()
@@ -114,6 +138,7 @@ def run(prefix, root):
         flag('release-source-2')
         desktop.wait('queued follow-up after complete', lambda: len(source_starts()) == 3 and source_completed('target-turn-3') and not queue())
         desktop.wait('both owned evaluators cleaned', lambda: (root / 'utility-cleaned-2').exists())
+        desktop.wait('completed supervision cue cleared', lambda: not cue('Turn supervision', 'image'))
         assert desktop.contents(composer()) == DRAFT
 
         # The previous terminal status must not describe this new running turn.
@@ -175,6 +200,7 @@ def run(prefix, root):
     assert not any(token in (root / 'app.log').read_text() for token in ['CRITICAL', 'panicked', 'Gtk-WARNING'])
     result = dict(ok=True, installedPair=True, noApplicationHooks=True, noGatewayOverride=True,
         defaultOff=True, coldTargetOptIn=True, visibleProgress=True, actualUtilityEvaluation=True,
+        closedOverflowFastCue=True, backgroundSupervisionCue=True, cuesFollowSessionAndCompletion=True,
         exactContinuation=True, queueHeld=True, queueReleasedAfterComplete=True, draftPreserved=True,
         durableRouterHandoff=True, staleTerminalStatusAbsent=True, stopPausesQueue=True,
         noResumeAfterStop=True, sourceTurns=4, utilityEvaluations=2, utilityCleanup=2,

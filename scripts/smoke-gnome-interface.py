@@ -20,6 +20,7 @@ import json
 import os
 import re
 import resource
+import sqlite3
 from pathlib import Path
 import shutil
 import subprocess
@@ -72,6 +73,8 @@ def main():
     root = Path(tempfile.mkdtemp(prefix='interface-' + args.phase + '-', dir=base))
     outputs = load('quality_outputs', REPO / 'scripts/smoke-gnome-outputs.py')
     outputs.runtime.create_profile(root)
+    with sqlite3.connect(root / 'config/codex-thread-studio/studio.sqlite3') as database:
+        database.execute("UPDATE session_turn_options SET service_tier='fast' WHERE session_key='codex:target'")
     (root / 'home/Pictures').mkdir(parents=True)
     (root / 'config/user-dirs.dirs').write_text('XDG_PICTURES_DIR="$HOME/Pictures"\n')
     prefs = root / 'config/codex-thread-studio/settings.json'
@@ -151,6 +154,7 @@ def inspect(root, bundle, phase):
                             return
                         time.sleep(.1)
                     raise RuntimeError('GNOME screenshot timed out: '+name)
+                client.wait('effective Fast visible without opening overflow', lambda: client.find(lambda n: n.get_name() == 'Fast' and n.get_role_name() == 'label' and client.showing(n)))
                 shot('conversation-'+phase)
                 (root/'conversation-accessibility.json').write_text(json.dumps(client.describe(),ensure_ascii=False,indent=2))
                 composer=client.wait('composer',lambda:client.find(lambda n:n.get_name().startswith('Write a message.') and n.get_role_name()=='text' and client.showing(n)))
@@ -273,7 +277,7 @@ def inspect(root, bundle, phase):
                 if requests.exists():
                     assert not any(json.loads(line)['path'].endswith(('/prompt_async', '/command'))
                                    for line in requests.read_text().splitlines()), 'Interface review unexpectedly sent an OpenCode prompt'
-                result = dict(checksPassed=True, visualReviewRequired=True,
+                result = dict(checksPassed=True, visualReviewRequired=True, effectiveFastCue=True,
                               bundle=str(bundle), phase=phase, artifacts=str(root), screenshots=shots,
                               scope='Actual native package; private generated profiles/data and mock providers only. Checks passed; PNG review is still required for UI acceptance.')
                 (root/'interface.json').write_text(json.dumps(result,indent=2))

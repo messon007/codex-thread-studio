@@ -107,6 +107,8 @@ impl Ui {
         let key = self.composer_key().unwrap_or_default();
         let book = self.supervision.borrow();
         let active = book.entries.values().any(display::Entry::holding);
+        // This global cue survives navigation away from the supervised source.
+        self.supervision_cue.set_visible(active);
         if active {
             self.supervision_menu
                 .button

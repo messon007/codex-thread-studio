@@ -442,10 +442,17 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
         instructions,
         'SELECT c1 FROM t  →  positional aliases c1, c2, …\nSELECT * FROM data  →  named columns\n_row: original record · _line: source line\nValues remain text. Use CAST(c2 AS REAL) for numeric comparisons.\n\n'
       )
+      const quoting = document.createElement('span')
+      const contains = document.createElement('span')
+      const membership = document.createElement('span')
+      labels.set(quoting, 'Use single quotes for text; double quotes name columns.')
+      labels.set(contains, "Contains text: LIKE '%text%' uses wildcards; instr(c1, 'text') > 0 matches a literal substring.")
+      labels.set(membership, "Match a list: c1 IN ('first', 'second'). IN c1 does not search within text.")
       help.replaceChildren(
         instructions,
         value.columns.map((name, i) => `c${i + 1} ↔ "${name.replaceAll('"', '""')}"`).join('\n'),
-        "\n\nSELECT c1, c2 FROM t WHERE c1 LIKE '%text%'\nSELECT c1, SUM(CAST(c2 AS REAL)) FROM t GROUP BY c1"
+        '\n\n', quoting, '\n', contains, '\n', membership,
+        "\n\nSELECT * FROM t WHERE c1 LIKE '%text%'\nSELECT * FROM t WHERE instr(c1, 'text') > 0\nSELECT * FROM t WHERE c1 IN ('first', 'second')\nSELECT c1, SUM(CAST(c2 AS REAL)) FROM t GROUP BY c1"
       )
       const loading = load(0, value.defaultSql)
       editor.focus()

@@ -6376,7 +6376,7 @@ function renderComposerImages() {
   container.classList.toggle('hidden', !images.length)
   container.innerHTML = images.map((image) => `<figure class="composer-image" title="${escapeHtml(`${image.name} · ${formatImageSize(image.size)}`)}">
     <img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.name)}" />
-    <button type="button" data-remove-composer-image="${escapeHtml(image.id)}" title="${t('Remove image')}" aria-label="${t('Remove image')}">×</button>
+    <button type="button" data-remove-composer-image="${escapeHtml(image.id)}" title="${t('Remove image')}" aria-label="${t('Remove image')}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10m0-10-10 10" /></svg></button>
     <small>${escapeHtml(image.name)}</small>
   </figure>`).join('')
 }

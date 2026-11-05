@@ -3,7 +3,7 @@ import { fileDisplayName } from './document-review.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { documentCommentSource } from './comment-source-providers.mjs'
 import { getLocale, onLanguageChange, t } from './i18n.mjs'
-import { createLargeMarkdownHost, createReaderNotesHost } from './large-markdown-host.mjs'
+import { createLargeMarkdownHost, createReaderNotesHost, createReaderJqHost } from './large-markdown-host.mjs'
 
 // Candidate resolution only; the WSL transport rechecks canonical file grants.
 export function resolveWslDocumentLink(file, target) {
@@ -81,6 +81,7 @@ export function createDocumentWorkspaceController({
   let largeMarkdownFile = null
   let largeMarkdownHost = null
   let readerNotesHost = null
+  let readerJqHost = null
 
   function releaseLargeMarkdown(file) {
     const lease = file?.largeMarkdown || file?.reader
@@ -92,6 +93,7 @@ export function createDocumentWorkspaceController({
   }
 
   function disposeLargeMarkdown() {
+    readerJqHost?.dispose(); readerJqHost = null
     readerNotesHost?.dispose(); readerNotesHost = null
     if (largeMarkdownFile?.format === 'epub' && largeMarkdownFile.readingState) {
       clearTimeout(epubReadingStateTimer); epubReadingStateTimer = null
@@ -500,9 +502,13 @@ function renderArtifact() {
         translate: hostTranslate, onError: showError,
         onAction: openCommentForSelection ? selection => openCommentForSelection(commentSelection(selection)) : undefined,
       })
+      readerJqHost = createReaderJqHost($('#artifact-reader-shell'), $('#artifact-query-tools'), {
+        translate: hostTranslate, onError: showError,
+      })
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
         void readerNotesHost?.update(snapshot, largeMarkdownHost).catch(showError)
+        readerJqHost?.update(snapshot, largeMarkdownHost)
         if (snapshot.initialized && largeMarkdownFrame) {
           largeMarkdownFrame.inert = false
           largeMarkdownFrame.tabIndex = 0

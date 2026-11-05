@@ -307,3 +307,33 @@ test('AI excerpt prefixes honor the persisted UTF-8 budget before SQL verificati
  assert.equal(verified.quoteTruncated,true);assert.equal(captured.querySnapshot.quote,verified.quote)
  controller.dispose()
 })
+
+test('jq host uses the shared component and captured owner, and removes late/obsolete controls',async()=>{
+ const {createReaderJqHost}=await import('./large-markdown-host.mjs')
+ const {readerJqProvider}=await import('../crates/marknoria/web/jq-query.mjs')
+ class Control extends EventTarget { setAttribute(){} remove(){this.removed=true} }
+ const buttons=[],mounts=[],requests=[],pending=[]
+ const root={ownerDocument:{body:{},createElement(){return new Control()}}}
+ const toolbar={append(button){buttons.push(button)}}
+ let defer=true
+ const module={readerJqProvider,mountJqQuery(_root,options){const record={options,disposed:false};mounts.push(record);return {dispose(){record.disposed=true}}}}
+ const adapter=createReaderJqHost(root,toolbar,{load:()=>defer?new Promise(resolve=>pending.push(resolve)):Promise.resolve(module)})
+ const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),name:'data.jsonl',size:2*1024*1024,capabilities:{queries:true}}
+ const host={async request(method,params){requests.push({method,params});return {}}}
+ try{
+  adapter.update(owner,host);buttons[0].dispatchEvent(new Event('click'))
+  adapter.update({...owner,documentId:'two',revision:'b'.repeat(64)},host)
+  pending[0](module);await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(mounts.length,0);assert.equal(buttons[0].removed,true)
+  defer=false;buttons[1].dispatchEvent(new Event('click'));await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(mounts.length,1);assert.equal(mounts[0].options.autoRun,false)
+  await mounts[0].options.provider.run({filter:'.id',slurp:false})
+  assert.equal(requests[0].method,'jq');assert.equal(requests[0].params.documentId,'two');assert.equal(requests[0].params.revision,'b'.repeat(64))
+  adapter.update({...owner,name:'plain.xml'},host)
+  assert.equal(mounts[0].disposed,true);assert.equal(buttons[1].removed,true)
+  buttons[1].dispatchEvent(new Event('click'));await new Promise(resolve=>setImmediate(resolve));assert.equal(mounts.length,1)
+  adapter.update({...owner,size:200},host);buttons[2].dispatchEvent(new Event('click'));await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(mounts[1].options.autoRun,true)
+ }finally{adapter.dispose()}
+ assert.equal(mounts.at(-1).disposed,true)
+})

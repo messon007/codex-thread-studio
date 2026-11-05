@@ -82,6 +82,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async save(){publish(await command('save',{}));return true},
     async setOutline(open){publish(await command('contents',{open}))},
     async settings(settings){publish(await command('settings',settings))},
+    request(method, params, { signal } = {}) { return command(method, params, signal) },
     querySnapshot(selection, { signal } = {}) {
       return command('querySnapshot',{documentId:selection.documentId,revision:selection.revision,location:selection.location,quote:selection.quote,quoteTruncated:selection.quoteTruncated === true},signal)
     },
@@ -186,5 +187,45 @@ export function createReaderNotesHost(root, toolbar, options = {}) {
       if (disposed) return
       disposed = true; ++generation; binding?.dispose(); binding = null; selected = null
     },
+  }
+}
+
+// Host toolbar entry; all query UI, budgets and cancellation stay in the SDK.
+export function createReaderJqHost(root, toolbar, options = {}) {
+  let disposed = false, generation = 0, key = '', button = null, dialog = null, controls = null
+  const lifetime = new AbortController()
+  const load = options.load || (() => import(new URL('./reader-assets/jq-query.mjs', import.meta.url).href))
+  const close = () => { const owned = dialog; dialog = null; void Promise.resolve(owned?.dispose()).catch(() => {}) }
+  const label = () => { if (button) button.title = options.translate?.('Query JSON with jq') || 'Query JSON with jq' }
+  options.translate?.subscribe?.(label, { signal: lifetime.signal })
+  return {
+    update(owner, host) {
+      if (disposed) return
+      const enabled = owner.initialized && owner.ready && owner.capabilities?.queries && /\.(json|jsonl|ndjson)$/iu.test(owner.name || '')
+      const next = enabled ? owner.documentId + ':' + owner.revision : ''
+      if (next === key) return
+      key = next
+      const own = ++generation
+      close(); controls?.abort(); controls = null; button?.remove(); button = null
+      if (!next) return
+      controls = new AbortController()
+      const control = button = root.ownerDocument.createElement('button')
+      control.type = 'button'; control.textContent = 'jq'; control.setAttribute('aria-label', 'jq'); label()
+      control.addEventListener('click', async () => {
+        control.disabled = true
+        try {
+          const { mountJqQuery, readerJqProvider } = await load()
+          if (disposed || own !== generation) return
+          close()
+          dialog = mountJqQuery(root.ownerDocument.body, {
+            provider: readerJqProvider(host, owner), revision: owner.revision,
+            translate: options.translate, presentationRoot: root, autoRun: Number.isSafeInteger(owner.size) && owner.size <= 1024 * 1024,
+          })
+        } catch (error) { if (!disposed && own === generation) options.onError?.(error) }
+        finally { if (!disposed && own === generation) control.disabled = false }
+      }, { signal: controls.signal })
+      toolbar.append(control)
+    },
+    dispose() { if (disposed) return; disposed = true; generation++; lifetime.abort(); controls?.abort(); close(); button?.remove(); button = null },
   }
 }

@@ -1,6 +1,9 @@
 // Finite shared control vocabulary for host-owned translation dictionaries.
 // Document text, filenames, query values and backend errors never enter this list.
 export const readerMessageKeys = Object.freeze([
+  "Use single quotes for text; double quotes name columns.",
+  "Contains text: LIKE '%text%' uses wildcards; instr(c1, 'text') > 0 matches a literal substring.",
+  "Match a list: c1 IN ('first', 'second'). IN c1 does not search within text.",
   " / {pages}",
   "(unnamed)",
   "/ {pages}",

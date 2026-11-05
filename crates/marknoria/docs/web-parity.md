@@ -207,3 +207,82 @@ The current remote issues explicitly limit synchronization to Web desktop and
 its Rust dependencies; GTK/AppKit/WinUI/FFI are not adoption or CI gates. Remote
 Web-host CI/review/merge remain open. This stage changes no native UI or FFI and
 all new commits remain local at the owner's request.
+
+## Local follow-up: host-owned document Notes
+
+Isolated Studio commit `9e1cc83` imports unchanged fixed package
+`7638fd367430884e0a2bb52e9467f8ad738da5e7`: 791 inventory files, archive SHA-256
+`180bcc579b727b1f1c15c1d25f275c39b700ff0eaac08df21ce22ac6271d1613`,
+tree SHA-256
+`45855b3ed4125ac751ac4329f3d5ebdc9a892e1b7ce0e60cd88aaea5682e257b`.
+Two clean offline exports match; eight export/inventory/Git-byte checks pass.
+
+The additive `settings({notes:'host'})` capability delegates UI ownership while
+retaining only explicitly granted Notes storage. Switching back recreates the
+child UI over the same records. A disabled service gains no storage authority.
+The actual public embedding check verifies both ownership and durable SQL Notes;
+the required Rust desktop-feature suite and npm build pass.
+
+Studio configures a document Notes store in its own application state directory
+and mounts the shared component in an explicit toolbar slot. Each binding captures
+its owner/revision/transport, maps frame selection bounds, rejects stale actions
+and disposes pending imports/UI. The additional Ask AI action calls Studio's
+existing comment workflow. Session/chat comments and favorites remain host-owned;
+this new store holds document Notes. No AI or gateway credential enters the SDK.
+
+The actual Chromium workspace verifies cell comments/favorites, a complete-input
+SQL aggregate favorite, durable provenance after result closure, copied snapshot
+labels, comment-only clearing, separate document stores, and persistence across
+edit/save/undo and a new reader session. Native Wayland WebKitGTK reader frames
+explicitly require Notes/query/ownership capabilities and verify durable SQL Notes
+through the scoped service for CSV, TSV and XLSX. Tests cannot skip that check when
+a capability is absent. The actual Notes dialog fits its viewport, and its local
+synthetic screenshot was inspected; screenshots remain outside version control.
+
+The workflow exposed a shared SQL initialization race: an early edit could be
+overwritten by the arriving default SQL. Input is now disabled until schema
+initialization; 27 component assertions pass in each engine. Studio's controls
+also remain unready until initial settings/location restoration finishes, covered
+by a delayed-location regression. EPUB and large Markdown/diagram workflows pass
+after the integration, including source bytes, references, save and cleanup.
+
+The consuming suites pass 780 UI tests, type/format checks, 149 application Rust
+tests (one existing ignored) and 12 unchanged public SDK contracts. Building
+preserves the fixed inventory. These checks do not establish full Studio-shell
+WebKit visual/accessibility or release performance acceptance. Ordinary PDF/image/
+small-Markdown Notes entry points, durable SQL references for AI drafts, Markdown
+local resources, remaining locale/defaults and the final common/remote gates stay
+open. This stage changes no native UI or FFI. All new commits remain local.
+
+## Local follow-up: bounded Markdown references
+
+Rust Web parsing now records Markdown-syntax image/link targets with exact
+original UTF-8 ranges, including BOM/CRLF. Private URI storage keeps large data
+images out of HTML/index transport. Trusted hosts explicitly grant resource
+directories; opening one file still grants no siblings. Lazy local/inline images
+use supervised decoding and the same compact image component in ordinary and
+virtual DOM. Link callbacks retain owner/revision/source identity. Public API,
+profiles and migration examples are in [markdown-references.md](markdown-references.md).
+
+Actual Chromium 149 and native Wayland WebKitGTK 2.52.6 each pass 25 shared
+contract assertions. Coverage includes scoped access, inline images, PNG Blob
+transport, stale identities, ordinary host links, compact controls, remount and
+cleanup, the 32-image mount budget and deferred-image recovery. The actual
+standalone reader also renders local/inline/table SVG images, navigates headings
+and opens an authorized sibling. HTTP token/Origin/revision checks and actual
+four-snapshot LRU eviction reject stale image frames; all owned caches are
+removed on close. The existing embedding regression, 22 image-component
+assertions in both engines, frame transport and isolated storage checks pass.
+The required Rust desktop-feature suite passes, including 132 library tests and
+12 public API tests; headless checking and the 38-module npm build also pass.
+
+Testing found and corrected a full-table audit using the interactive page event
+budget, small SVGs being enlarged to the 2048-pixel preview edge, and deferred
+images retaining their waiting flag after leaving the viewport. The indexed
+Markdown projection keeps its inert image fallback. No platform UI, native
+controller or FFI files change.
+
+This is upstream/local acceptance, not Studio adoption or completion of #7.
+Raw-HTML image compatibility, every heading slug dialect, original-image quality
+profiles, release performance and the previously listed common/remote gates
+remain open. No push or issue closure is implied.

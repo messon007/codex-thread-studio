@@ -54,6 +54,11 @@ cannot repaint disposed figures. Styles and translation are scoped; alt/caption
 text remains literal. Animation pause/resume, zoom and lifecycle code are shared
 with the main reader, rather than copied into the host adapter.
 
+`compact:true` keeps an inline image at its content size and reveals the same
+controls on hover or keyboard focus, positioned within the explicit reading
+viewport. Markdown [reference images](markdown-references.md) use this mode;
+the default standalone figure layout remains unchanged.
+
 `node tests/server/image-frames-check.mjs` tests stream bounds and cancellation.
 `node tests/browser/image-view-check.mjs` runs the ordinary component contract;
 `--webkit` selects native Wayland WebKitGTK and `--compact` uses a 480x480 viewport.

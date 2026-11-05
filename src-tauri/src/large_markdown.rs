@@ -1,6 +1,7 @@
 use crate::{
-    json_error, json_response, resolve_review_path_with_shared, review_language,
-    shared_document_directories, GatewayState, ReviewFileRequest,
+    canonical_shared_document_directories, json_error, json_response,
+    resolve_review_path_with_shared, review_language, shared_document_directories, GatewayState,
+    ReviewFileRequest,
 };
 use axum::{
     body::{to_bytes, Body},
@@ -124,6 +125,7 @@ impl Readers {
         source: std::path::PathBuf,
         root: std::path::PathBuf,
         editable: bool,
+        shared_directories: Arc<Mutex<Vec<String>>>,
     ) -> Result<serde_json::Value, (StatusCode, String)> {
         let _permit = self.opening.clone().try_acquire_owned().map_err(|_| {
             (
@@ -158,7 +160,17 @@ impl Readers {
         } else {
             None
         };
-        let mut options = ServiceOptions::default().diagrams(DiagramMode::Browser);
+        let mut options = ServiceOptions::default()
+            .diagrams(DiagramMode::Browser)
+            .reference_root(&root)
+            .map_err(|error| (StatusCode::FORBIDDEN, error.to_string()))?
+            .reference_roots_provider(move || {
+                let configured = shared_directories
+                    .lock()
+                    .map_err(|_| std::io::Error::other("Shared directory policy unavailable"))?
+                    .clone();
+                Ok(canonical_shared_document_directories(&configured))
+            });
         if let Some(directory) = &self.notes_directory {
             options = options.notes_directory(directory.clone());
         }
@@ -220,7 +232,12 @@ pub async fn try_open(
     let read_only = !path.starts_with(&root);
     let reader = state
         .markdown_readers
-        .open(path.clone(), root.clone(), !read_only)
+        .open(
+            path.clone(),
+            root.clone(),
+            !read_only,
+            state.shared_document_directories.clone(),
+        )
         .await?;
     Ok(Some(json!({
         "root":root,"path":path,"relativePath":path.strip_prefix(&document_root).unwrap_or(&path),
@@ -268,7 +285,12 @@ pub async fn open_document(
     let read_only = !path.starts_with(&root) || !format.is_text();
     match state
         .markdown_readers
-        .open(path.clone(), root.clone(), !read_only)
+        .open(
+            path.clone(),
+            root.clone(),
+            !read_only,
+            state.shared_document_directories.clone(),
+        )
         .await
     {
         Ok(reader) => json_response(
@@ -339,6 +361,8 @@ fn allowed_path(path: &str) -> bool {
                 | "api/notes"
                 | "api/asset"
                 | "api/asset-info"
+                | "api/reference"
+                | "api/reference-image"
                 | "api/original"
                 | "api/epub"
         ) || path.strip_prefix("epub-resource/").is_some_and(|suffix| {
@@ -598,6 +622,8 @@ mod tests {
             "api/table",
             "api/diagram-source",
             "api/asset-info",
+            "api/reference",
+            "api/reference-image",
         ] {
             assert!(allowed_path(path));
         }
@@ -618,6 +644,7 @@ mod tests {
         for path in [
             "/image-frames.mjs",
             "/image-view.mjs",
+            "/references.mjs",
             "/image-view.css",
             "/reader.mjs",
             "/host-client.mjs",

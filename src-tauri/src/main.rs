@@ -3579,11 +3579,15 @@ fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<
 
 fn shared_document_directories(state: &GatewayState) -> Result<Vec<PathBuf>, (StatusCode, String)> {
     let configured = configured_shared_document_directories(state)?;
-    Ok(configured
+    Ok(canonical_shared_document_directories(&configured))
+}
+
+fn canonical_shared_document_directories(configured: &[String]) -> Vec<PathBuf> {
+    configured
         .iter()
         .filter_map(|directory| fs::canonicalize(directory).ok())
         .filter(|directory| directory.is_dir())
-        .collect())
+        .collect()
 }
 
 fn configured_shared_document_directories(

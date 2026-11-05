@@ -1,5 +1,5 @@
 use crate::runtime::cache::cache_directory;
-use crate::runtime::process::supervise;
+use crate::runtime::process::supervise_owned;
 use super::{ApiError, App, Progress, failure, renderer};
 use axum::{
     Json,
@@ -39,10 +39,12 @@ pub struct Document {
     pub operations: crate::core::reader::Operations,
     pub reserved_operations: Mutex<std::collections::HashMap<String, (std::time::Instant, crate::core::reader::Operation)>>,
     pub cancelled: Arc<AtomicBool>,
+    owner_cancelled: Option<Arc<AtomicBool>>,
     cache: Mutex<Option<tempfile::TempDir>>,
 }
 
 pub struct Documents {
+    owner_cancelled: Option<Arc<AtomicBool>>,
     projection: crate::core::ProjectionProfile,
     pub root: PathBuf,
     selected_directory: Option<PathBuf>,
@@ -81,6 +83,9 @@ pub fn confined_path(root: &Path, relative: &str) -> io::Result<PathBuf> {
 }
 
 impl Document {
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed) || self.owner_cancelled.as_ref().is_some_and(|owner| owner.load(Ordering::Relaxed))
+    }
     pub(super) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
         self.operations.close();
@@ -106,6 +111,7 @@ impl Document {
 impl Documents {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            owner_cancelled: None,
             projection: crate::core::ProjectionProfile::Web,
             root,
             selected_directory: None,
@@ -125,6 +131,10 @@ impl Documents {
 
     pub fn with_projection(mut self, projection: crate::core::ProjectionProfile) -> Self {
         self.projection = projection;
+        self
+    }
+    pub(super) fn with_owner_cancellation(mut self, owner: Arc<AtomicBool>) -> Self {
+        self.owner_cancelled = Some(owner);
         self
     }
 
@@ -181,6 +191,7 @@ impl Documents {
             operations: Default::default(),
             reserved_operations: Default::default(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            owner_cancelled: self.owner_cancelled.clone(),
             cache: Mutex::new(Some(cache)),
         });
         let worker = document.clone();
@@ -189,7 +200,7 @@ impl Documents {
             .name("markdown-index".into())
             .spawn(move || {
                 let permit = loop {
-                    if worker.cancelled.load(Ordering::Relaxed) {
+                    if worker.is_cancelled() {
                         return;
                     }
                     if let Ok(permit) = index_work.clone().try_acquire_owned() {
@@ -258,7 +269,7 @@ fn index_document(document: &Document, source: &Path) {
         }
         let mut child = command.spawn()
             .map_err(|error| format!("Cannot start the document worker for {}: {error}", source.display()))?;
-        supervise(child.as_mut(), &document.cancelled)?;
+        supervise_owned(child.as_mut(), &document.cancelled, document.owner_cancelled.as_deref())?;
         let bytes =
             fs::read(document.directory.join("index.json")).map_err(|error| format!("Cannot read the completed document index: {error}"))?;
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())

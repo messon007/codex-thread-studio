@@ -3,6 +3,7 @@
 mod operations;
 mod types;
 mod assets;
+#[cfg(feature = "web")]
 pub(crate) use assets::asset_info as projected_asset_info;
 pub use crate::core::edit::{Change, Save as SaveRequest};
 pub use crate::core::jq_query::Page as JsonQueryPage;
@@ -23,6 +24,7 @@ use std::{
 };
 pub use types::*;
 pub use crate::core::{DocumentRenderer, ProjectionProfile};
+pub use crate::core::references::{Kind as ReferenceKind, ReferenceInfo};
 
 fn finish_hash(hash: Sha256) -> String {
     hash.finalize()
@@ -380,6 +382,7 @@ impl Reader {
             projection_pages: self.index.pages.len(),
             tables: self.index.tables.len(),
             assets: self.index.assets.len(),
+            references: self.index.references.len(),
             outline_items: self.index.toc.len(),
             index_ms: self.index.index_ms,
             peak_rss_kib: self.index.peak_rss_kib,
@@ -395,6 +398,7 @@ impl Reader {
                 query_notes: self.options.notes_directory.is_some() && self.options.queries,
                 assets: !self.index.assets.is_empty(),
                 asset_info: true,
+                reference_info: self.options.projection == ProjectionProfile::Web,
                 original_bytes: true,
                 html_policy: "sanitize-at-mount",
                 dataset_scope: "complete-input",
@@ -589,6 +593,17 @@ impl Reader {
     }
     pub fn close_jq(&mut self, id: &str) {
         self.jq.close(id);
+    }
+    /// Parser-owned reference metadata. Inline image data remains in the owned
+    /// snapshot, outside the index/DOM/message transport budget.
+    pub fn reference(&self, revision: &str, id: usize) -> io::Result<ReferenceInfo> {
+        self.check(revision)?;
+        core::references::info(self.directory()?, &self.index, id)
+    }
+    /// Resolving a target is not authority to open that path or fetch that URL.
+    pub fn reference_target(&self, revision: &str, id: usize) -> io::Result<String> {
+        self.check(revision)?;
+        core::references::target(self.directory()?, &self.index, id)
     }
     pub fn notes(&self, mut request: core::notes::Request) -> io::Result<serde_json::Value> {
         self.directory()?;

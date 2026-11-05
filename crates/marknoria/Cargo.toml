@@ -24,7 +24,7 @@ required-features = ["web"]
 
 [features]
 default = ["web"]
-web = ["dep:axum", "dep:tokio", "dep:tower", "dep:futures-util"]
+web = ["dep:axum", "dep:tokio", "dep:tower", "dep:futures-util", "dep:url", "dep:data-url"]
 diagram-png = []
 
 [workspace]
@@ -61,6 +61,8 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 quick-xml = "=0.42.0"
 gif = "=0.14.2"
 base64 = "=0.22.1"
+url = { version = "=2.5.8", optional = true }
+data-url = { version = "=0.3.2", optional = true }
 roxmltree = "=0.20.0"
 jsonc-parser = { version = "=0.34.0", default-features = false }
 jaq-core = "=3.1.0"

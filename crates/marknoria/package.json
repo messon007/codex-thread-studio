@@ -8,6 +8,8 @@
     "build:shared": "node scripts/build.mjs --shared-only",
     "build:web": "node scripts/build.mjs --web-only",
     "check:notes-component": "node tests/browser/notes-component-check.mjs",
+    "check:markdown-references": "node tests/browser/markdown-references-check.mjs",
+    "check:reference-policy": "node tests/browser/reference-policy-check.mjs",
     "check:jq-component": "node tests/browser/jq-query-check.mjs",
     "check:embedded:jq": "node tests/browser/embedded-jq-check.mjs",
     "check:query-component": "node tests/browser/table-query-component-check.mjs",

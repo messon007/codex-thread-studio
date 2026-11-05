@@ -1,5 +1,5 @@
 {
-  "allowlistSha256": "c708aa87ab6b4807c1a0cc2fdb89158f387c214f6ff180a5b963bf04137040f3",
+  "allowlistSha256": "2e3be975bfb0c519fbd087c076360fda55f143eb50a9778f4e78a73ed4d72485",
   "apiVersion": 1,
   "bridgeVersion": 1,
   "buildPlatform": "linux-x86_64",
@@ -8,8 +8,8 @@
   "files": {
     ".gitattributes": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
     ".gitignore": "765a82b9f33eb96e723eaa39a0b8f565f69fa0c4a2153112b705ae54cc54db90",
-    "Cargo.lock": "09e3f6336b26429cbf2440503a8c9831754301b6058d8c045f0befe91d1139d8",
-    "Cargo.toml": "174a53f393656089755981fa9fc2e1d45374bd3695f8a027c190b224d3e812ef",
+    "Cargo.lock": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
+    "Cargo.toml": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
     "DISTRIBUTION.md": "6e0a159fde75d39c2da05ebbdf762a568acbcec50b8eadc5930ad2a753912e03",
     "LICENSE": "cf3d3312057275ec7758d30a1ee308b7f45ead216b695f16bd36299aa0e9b523",
     "README.md": "f986d421f87ee58b5d0f7dddf299a0cf09cd73074d5eae30c5fcdd2f2b167f34",
@@ -27,18 +27,19 @@
     "assets/vendor/purify.mjs": "60c5d5ccbb466de3de3ba863461a92bf134f8c156cef7992da43e0f659bc5cbd",
     "crates/syntax/Cargo.toml": "b0cab109ce632f2288d81e43e35cb71402993187b560f1043a3b0a254bbbe306",
     "crates/syntax/src/lib.rs": "f5a0ac91aca63d13d1e5ebed7d8151b4e2edd3625ea96e6c9d171096fdd8fcea",
-    "docs/embedding.md": "612c98a836c80fc53a18711bdf88c5e072ba7b409a4d4ac47b1213ae2719cdc4",
-    "docs/image-components.md": "0ca722dba65d07ddb30db92b68ecd298ae3fc9d4b6fe4cc0ac4887bc9d740b07",
+    "docs/embedding.md": "335ec1d105e2ad84edeedaeb44fca2f54ef02dca516d2bd57d7aef50e403ffd3",
+    "docs/image-components.md": "1a813e379922b43ebfc9c086f8e060e349e90bfa60b6ae13f5ccaba3951cd112",
     "docs/jq-components.md": "3171ff64e8f4866a6a72569fe37724f3a79f5e31d5d6af27bdf50a34a50d1441",
     "docs/markdown-profile.md": "26664232234bf0496871740653f73be57fe7a23b1dffcdd418cb93fb0d9c8442",
+    "docs/markdown-references.md": "59e9fcdf97d3eaf51c7d182396389b3b771df5a7068b18db82db5cd1933be423",
     "docs/notes-components.md": "de13aae37e655719ce6ef58f282066dc905ec8cb6451e15e81e0d868314f5e15",
     "docs/projection-components.md": "c56897594903bc6f8bc21682f5368f4df719f97c14221811ed7648d41cafed0e",
-    "docs/reader-api.md": "e0006c481b8efb2a982f06a7c1d7c3deadbfc4fe319e9ca546ebf66007f766bc",
+    "docs/reader-api.md": "3559123d0938f13761605dbc82fdba2ab2c46cd06a99119cf134454b93772b19",
     "docs/reader-assets.md": "b03b8923b8d2b7157b8ee425dd3fb0c6d98f5c19c338f2202a4f6a3b2db24e11",
     "docs/table-components.md": "4a3209e064bc2050a53e148a32cf9d86c6034e71bf4b9bf26697a4250da71a15",
     "docs/translation.md": "77b1fbcbdaa4f4ab11c6884a3981593e3967c00148b750443b9b680d6d0c19dd",
-    "docs/web-parity.md": "c53cace5eb0e19940b035f910d3842cdde724af594546b8f4940798d1cb4f4b1",
-    "examples/embedded-host.rs": "cbcfeba831f1bbc10d8f9d6c3e84c1d6ea8d7286703bba4ecb0458a217193e97",
+    "docs/web-parity.md": "56edaf6cf2e6940717cebdd1b5ce87f417a13901580091186920300baeb83759",
+    "examples/embedded-host.rs": "1876586d1f491d3b0468a56e663e0c1f29a244253412afc62bf0e38c52823b0c",
     "examples/reader-assets-host.rs": "172e770c6d9b4c3d3fc4ab2ca2bedfad9168dd621a012c90683325e09855d050",
     "examples/reader-corpus.rs": "120361bc1825b01f9838b22f29c61405ed721e73b3c97e27caef26357ba273b0",
     "examples/reader-host.rs": "19b04a4e3d027caa6a8468c463ecdc86eb586136fbd212cdfce07c79c68d656c",
@@ -416,7 +417,7 @@
     "licenses/npm/w3c-keyname/LICENSE": "869c30f368eb08735e779027b9f4bc9fea2f39624351856aebe42741f0bc0884",
     "licenses/npm/w3c-keyname/README.md": "59c6a9d986798d0b7e96a6fe8fc5381aa48f0512950d7edcb59c8a96baf338c3",
     "package-lock.json": "3c9ff112de0b48a8b62e39bbeed4b5f3e9b97947a40257d152c6f372284523ff",
-    "package.json": "7f746675ecf7ef3469197ecd2af2b93d6a7918df22cf59694ca1222ad9e5c948",
+    "package.json": "3ec5b664d5a7161f03c34143b1664feeb0154878957c36c9f73620c8b5d40d45",
     "scripts/build.mjs": "e008efcee31c7083be0bd72bcb86e222ee8b584700eaedac2495d6df423ed6dd",
     "scripts/d2-resource.mjs": "e405beea6e162a9fe6d4cf844f8c34cea1b2f369c1b07152abc88b832e8001bd",
     "scripts/pdf-assets.mjs": "4a5fddd06eb6a40c663edd19ae98e7e148ab6188a45791179285694e13681a34",
@@ -430,25 +431,26 @@
     "src/core/documents/archive.rs": "20d3c9791ba0de089fcaeda2ac6c2c336a6875c967224edb82f54a7742a3196b",
     "src/core/documents/html.rs": "910b65c5a62f1f68b06a52359f2810f24849bc2d246e69f06efd9db57cfe506d",
     "src/core/documents/image_animation.rs": "b745c87e487503100c3536a2e27def151d15077dea328b95d48e191f2fd1c26e",
-    "src/core/documents/image_decode.rs": "b8a466a30f3051c396be2aa575eb0a3a3f83c742386e000ff0d48f3186ec8b54",
+    "src/core/documents/image_decode.rs": "b17a533f6845f404f1ea517105ea33a358539c0c0ef185724abc69d69e3c40b6",
     "src/core/documents/mod.rs": "c3f395dfbf14dacaca3a5f87cb9bd9aee61547b0be1bc28b858fe6ab493c7e5a",
     "src/core/documents/pdf.rs": "7e552662fa3558dd18bb1e8e89f75d591d13087c972f3027d6a71027e5f16081",
     "src/core/documents/structured.rs": "8611c5f724101a38dd0b85ed6d42c6511b148f51b703fec4daca3f386a9c27b5",
     "src/core/documents/svg_resources.rs": "4d83eea67d7e31e9dd68238dadfa43cf0e3d8bf3538086f9428f7abd65358c8b",
-    "src/core/documents/tests.rs": "f7d416093514b0df3b16294c1852ba83d6299c80368dc68d3386739fc566007f",
+    "src/core/documents/tests.rs": "579fc9f933b069303bb54e71b4617a33bdf34439f990e81816f30e8b7c68e907",
     "src/core/edit.rs": "202fab0575a60f5c7d33d143e187269a2dfecc7d376ccd059f1c5b8d002b7cdf",
     "src/core/highlight.rs": "3f412d0dcc48f412e620337fc1b15fa4f0330550e2a0ae577c1b5bd0fc525a04",
     "src/core/highlight/budget.rs": "25e8ea50f54d90892b0a5a1ad5155c26fdf4509ccaf25dcea980b24c1816da4c",
     "src/core/highlight/engine.rs": "46850be8635926c724e3f1eb811ca6011687f60de7329823c6f64605138f9c7e",
     "src/core/jq_query.rs": "c6bf8eec54c49c3f6a976cafa4817795e622c2a0d8c9989faaeb655c2cd8f753",
-    "src/core/markdown.rs": "858773577871d89620481e70af8b571533a5403fb9b9817ce743771d34587d77",
+    "src/core/markdown.rs": "eb494833b02cd6cc9c8a09f5a8b19e0ea11ff38fc44afb0bc479dade906d88e3",
     "src/core/markdown_html.rs": "c1132d364b1c0e44a69f583ecbfb34d0e5c70c1ea924833f4600c8e76ceb5d77",
-    "src/core/mod.rs": "bacf04dcb1fe311d1aac6e4e7f959e28d8cf51b0c5789c13bb04392d6333cd39",
+    "src/core/mod.rs": "1c522379f4fb3e90e94b53d0bba6743e680cd25bdbb59a903f06b3da7338a391",
     "src/core/notes.rs": "2f982541cb05c88b3020b30a329b40df2433d92458ba1661634307dec8454adc",
     "src/core/reader/assets.rs": "c07fb0cf08a6a2b4d940bd53880e798a8ab4821c86ddcb4cfea2c501fabb526a",
-    "src/core/reader/mod.rs": "c36faee37f503afcc770ae35850e37487b7d01ce31bf00df09fa1940b2136c6d",
+    "src/core/reader/mod.rs": "da7e9b2cdc0c38f0ff421f822d1ac492e123e39cefc790de06b3b8c283e78fa1",
     "src/core/reader/operations.rs": "12326a2b0029f54784958ceb2b57f0b179a0f0ae8c5e690d9c8f50b09602b09a",
-    "src/core/reader/types.rs": "ecad6cace2a6f13f33944e4cab9d2280ca92f8a1cccf11147f711458f037d3a9",
+    "src/core/reader/types.rs": "10294c899abdec0e459e018b5ed620f465df3753d3e616443570f35f9516d58c",
+    "src/core/references.rs": "2e26905af127c9bfa4f0132ae5cea282d5b22e11188a880530aa82951b6d79a9",
     "src/core/source.rs": "37dc7def249db1816d15b8a790e1f3ac9aba5e0e6b6ed8641a6faa1f32c30142",
     "src/core/table_query.rs": "97169011769dca538513ba3ea2dfd250c2ef76c7639142d45d7d1ac126be8570",
     "src/core/table_query/chart.rs": "880f6abb92b96e904ae0a25d52b5d84c51444006726398cea7016018b18b868a",
@@ -458,19 +460,20 @@
     "src/runtime/config.rs": "30f38b122e882eb739122350ea3c77558ef3f58d9cd893a314581ec27d67e3b0",
     "src/runtime/diagram_origin.rs": "0ce58adf39bffd51dcaf3a0b801212967c88372c062a7d7b1747cbd4eae132d2",
     "src/runtime/mod.rs": "584b9eff014acec9a149eaa356487dddc2923dae181e6a2cfedef6828a851da8",
-    "src/runtime/process.rs": "17310c3dd3d867190dd3fadb9bfc9e63587f6fdeb29145f04e83321d06ce78e4",
+    "src/runtime/process.rs": "9da4473e9dd5a44cb32e7a75190cade7154a7a6b1fb69fc9abd7c5692ec69d6a",
     "src/runtime/renderer.rs": "b8e9bdc2dbdf5d81e1ff467930ec89a518ab773cab52266ac1401edcfdd5b2b7",
     "src/web/compare_runtime.rs": "c6d2ab3a9605347066d8801c1244091c024967331744dae8677f51cdc9f98586",
     "src/web/document_runtime.rs": "321fb10c3f8ae83fc9f296d47b4c97ae16d124985d8735e340e584057295b777",
     "src/web/edit_runtime.rs": "50af343c073096f0e5a7189fa7e8ecb3d321f28baa95d9853661b191cf29afbe",
     "src/web/epub_runtime.rs": "94aab795b88ea06bf951177f05c8616224e3e5e3727dd313f393f998092f1ab8",
-    "src/web/files.rs": "b011e71e20f1ee31c8126db3cc8862fd164ed4145ca57b8298c71b8ed4432b1a",
+    "src/web/files.rs": "04802836f91b9ce4ff580b9d87444d9a96d0bfdee87e0898915f55b2311bff45",
     "src/web/main.rs": "1dab474f624af823c775e442b2ece90bf2b92ce14fa8add440956980e4d7816d",
-    "src/web/mod.rs": "d3df7b6c6724dec7c3e0214ce6df617f98fbb129da000727a5c714e28173afce",
+    "src/web/mod.rs": "92b71f9bba1196b5c7b42891140f8c0e5d21ad4d6b3245c4f9436857e9436a88",
     "src/web/panes.rs": "c62485fded7de18b45aeb19c736de637d0b74e2f147177c998caf44a9b995b90",
     "src/web/pdf_runtime.rs": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
+    "src/web/references.rs": "850ac77f6dcb918aac95a8d2ca7c8831a2ae910d40f887b57e23d02c08409af0",
     "src/web/selected_files.rs": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
-    "src/web/service.rs": "66e5d41133f3e89bb860208af4a155d38c2d72502c474a9c649c5593f108d853",
+    "src/web/service.rs": "c68ab6114b55ad432fe3c1976271ccd8dc0f9a8be0aa53838c8c5b75fa86828f",
     "src/web/table_chart_runtime.rs": "1d8365d7176d4d9b67326c2ad1534515bddeafa5bf217b4eb6a5c80656d3b3ca",
     "src/web/table_query_runtime.rs": "df9a0d157f7094cfc7086c95ac50a8f004d26f47a72f041ac3fd545ebcc6a6b1",
     "tests/browser/contract-webkit.py": "d3f333a2336c169c09ec8e4546b6307d05bce422a6f105fbf2738321c2f6cf59",
@@ -479,8 +482,9 @@
     "tests/browser/contracts/embedded-image.mjs": "5d308b6c8ab19aa05139eefe870700472a91676737d6f9d823da26d3ec969d34",
     "tests/browser/contracts/embedded-source.mjs": "adc29afeb35c2f203a279dda0aeb9c203a35d4f788a7c7242d608c12f3b2d458",
     "tests/browser/contracts/epub-reader.mjs": "9e3e10d09cfccba1531c6035ccdfb55cc01dd34364812d0629c685a855553f66",
-    "tests/browser/contracts/image-view.mjs": "01102bf0ac9b66c48e686fdecf66ee6c05d7160496efc8502e1562d9f60504e2",
+    "tests/browser/contracts/image-view.mjs": "004c55ad7a2ded807b0869dbc1c38fc6c3b18522835072e3fc4e52ae5dac3f1b",
     "tests/browser/contracts/jq-query.mjs": "543516169b0beb843f7627a294da0762961c6ae9f90e62ed652988977a0c6539",
+    "tests/browser/contracts/markdown-references.mjs": "fddb7703f617c1cf9e85a280add960825ddc26ff093eebd35754b9634350b2c0",
     "tests/browser/contracts/markdown.mjs": "3ab756e98e07efe5bc1dca52feb565945e8c9fbf8c0fd7a12a6df6902ff7a8be",
     "tests/browser/contracts/notes.mjs": "3d563e7430f313391cafd581953e68e71d7137ec6d26b1d1aa3f5a8d0c303ad8",
     "tests/browser/contracts/pdf-reader.mjs": "1acc477d614fc4d6279ac647ed82a25e3ac18ae037c46e26cc572db0b5fbff66",
@@ -501,11 +505,13 @@
     "tests/browser/image-view-check.mjs": "a1803dde3d3027fb09f6e5b0b1bf73cce1a09a69859925bef12ad247a0975c03",
     "tests/browser/jq-query-check.mjs": "de579dec7b2dbbb3a27a942ba1b0f6cec5696992410b4a8d9bcdb06c78c9f68e",
     "tests/browser/markdown-engines-check.mjs": "d0e3c557982116f5737fde8ec5b5a8147b31f706576074eafbdc5992277997ec",
+    "tests/browser/markdown-references-check.mjs": "7ccfdfbfc9231962c5fecfe0bc5e89fd136d28e62366426bc08ab6f3885c97d1",
     "tests/browser/notes-component-check.mjs": "139951b8d2c0f1a4cd374d4619f2ed2c0772c2551ecc9d7589e1c6af297b21d4",
     "tests/browser/pdf-fixture.mjs": "31eed014b55c4cb8412c62cedfa5da07bd253f12ed7ee7b762b80e2876f67056",
     "tests/browser/presentation-check.mjs": "f9de034c3028399f190e45d1c1e764ecb48aa8f2d123230fa9797dd419ab19f9",
     "tests/browser/projection-view-check.mjs": "89be6a7490f8f691bf528ca778859ce3f1bcffd3d1b732bcd4159149ffed58e4",
     "tests/browser/reader-assets-check.mjs": "dc665f9f1a93b232c36a3c31c08709e1d6f427cec8fdedba0ae549507c844650",
+    "tests/browser/reference-policy-check.mjs": "fb0e308460484acdbd6fbd788b8fff1bdf505ca3b1ae3d7133cb286101b7a460",
     "tests/browser/table-cells-check.mjs": "e6d8ed7ceca580725ce9b6f613efa16ca29f27a7751d0542ae6f03f8a346012e",
     "tests/browser/table-controls-check.mjs": "b4a4712e15c19984b375532c4ac321aac8e22993b03931eae8019444677ea3c1",
     "tests/browser/table-fixture.mjs": "c7695a83bcb6aa64bb3d948a32e722fae3297744d368239ad429cf6eeb4778d4",
@@ -517,7 +523,7 @@
     "tests/browser/translation-check.mjs": "25c50205ed357ea71e5bb70c5352c9e1d3847006ef026ec66629133f05fe07c8",
     "tests/desktop/table-check.js": "7596720ed6a79004bc7da260daf1df0697765fa19d1295e5a1be81c353f7bc89",
     "tests/markdown_profile.rs": "1aaa59e77bebeb6dfd82aed419a8552d8cd833ad02337ff0111de4f9636639aa",
-    "tests/reader_api.rs": "fb4186626f0e26f7ecc76fffa30f518dad642d61db7d83188254e7e19654b93e",
+    "tests/reader_api.rs": "24e675e45b725594a74bd32844ca9a1592de08079271ba1f73d15be58885d374",
     "tests/server/image-frames-check.mjs": "599314972adfd67b0d000ea5ea0fd7cc40c08365d79a65a5eff4dabb91cb6c5c",
     "tests/server/public-core-check.mjs": "fc85cd71e1220a218047395aa4b295e8bb9c9fcff869a9557fd688715241bb23",
     "tests/server/reader-export-check.py": "0c637de51f66267147204aa8966c966cc12fc3ee5b29ec94b9b83577495f5c2d",
@@ -545,16 +551,16 @@
     "web/compare.mjs": "7993d0e48f2003e20bc1dcebd71e823154ef970fadb13ed99eb7a68b6935e8f1",
     "web/component-styles.mjs": "1d903be91d7dcf9d07fc2e0ec3d2de6b746d21db0066a00e608c2adb6aec5c1b",
     "web/diagrams.mjs": "2af5abd48d73e574059c230105898b45eebfec4be6d0a9b3528c27ebefc59d2d",
-    "web/document-prose.css": "f6d05e1f63847c95230df2ccc350628a8ec497e61ba0ccf85f8fb60768631069",
+    "web/document-prose.css": "1c048c9bc96e4e3c19f6f1824f249aa4f9984086bbfc8e6902aa6272434b7408",
     "web/editor.mjs": "3c983374b2720f02786e78fd533293fda4c3fda5865fb5239ad30842dc864c49",
     "web/epub-reader.css": "b674d9042fac57f1778bc66a878f2fdeb6c2bb92d6a4dc3a4a26bc2013b1b5ee",
     "web/epub-reader.mjs": "0f8ba3177b1256a050dadb27e0c29b5eeb99c6df20e3249e02e210a13d6ea8ad",
-    "web/files.mjs": "8b829647fa03430002a7223883626d120ef17f55766cd071a13539be92e03f68",
+    "web/files.mjs": "6727cc98346714530020cbdc90c7ed290e80435967d5e2ca7eb1caeec814dc16",
     "web/host-client.mjs": "51fc8c7f3a86bf0bfb1417f16d25f95cc8860ba73e51fd278d36833f8fee1f05",
     "web/icons.mjs": "673206b23d9975878444a673b09bb9826361c08fd76bd58842f9b1b0519c50ac",
     "web/image-frames.mjs": "898099ddf70f21dab43c61496565b6ef122d36ac1d14d530bcd053b022c2feef",
-    "web/image-view.css": "2f84fd5033057916532857d9db94685f965ce2cb632004916c90c7c863072cce",
-    "web/image-view.mjs": "53b8e4c35fc6b37f8eb56ad3cb6c5df49adae9a531e31c31a56954aefcce630d",
+    "web/image-view.css": "172e8815853169b9f7ab269613bda2014016f989a1a5e8b81148f6cf3e04844d",
+    "web/image-view.mjs": "263b514d6672eeff6805745f1d0c6f15de33747d51693d9ee656e4a033c5ae21",
     "web/index.html": "9f9cb90a8442a27a7d89a7002bd27ce2fc61375855dfb6b2013103f95530d9a1",
     "web/jq-query.css": "d3e17316a936cc5581545767e3fecf6f183de0be7916fd15f537a676787f8974",
     "web/jq-query.mjs": "f860f8d0e788addddb21e906ad1c41e0cf67b75946a6dd47139795a50f1a8b5e",
@@ -567,12 +573,13 @@
     "web/projection-html.mjs": "f85c95dad8a57cd65e074f8e208421a4eef268c2941dbf93ada02bad53532176",
     "web/projection-view.css": "f5ddc9a12a5d5e61f22c1815de98bb56ccceabe3598e0b5fbbaae2a22fda10d3",
     "web/projection-view.mjs": "20a2853200ef7e6e97bc2a0e331f99122d4b819c705e1ad9106c6225965835ea",
-    "web/public-reader.mjs": "453cbd20206c738d01f54205c035b26c11fadc53141a328e6c4ea7c37dff28f3",
+    "web/public-reader.mjs": "6b8e1ceeab0e9c460cf1d61486937dd6e09b8fbb89d5730e295e848edcab15a8",
     "web/query-operation.mjs": "057e41d900c5d96e4049ba03bcb3b3b2ac359195bff723e10a4d66a6445d900f",
     "web/reader-bridge.mjs": "811f78777959802a07dd4614208570ba61294e600885cede303d6b8415f2ae4a",
     "web/reader-tools.mjs": "841845cda27f6fb76bd3ed60d7cb632509445c5714f1b1f88921d17521d844ce",
     "web/reader-ui.mjs": "090dc0d1c18b9aa860633eec1715c88a2353de26cfa2bd5a026ce11fc6103413",
-    "web/reader.mjs": "5963bc578c19354f7b477ee30d8af30ce3f32cfc5e0250f82c6934cb4db4e017",
+    "web/reader.mjs": "658bdc3adbcbfd6b5ec9204a93153f434a632d77cbf3ae44817f67f8b1d35b3d",
+    "web/references.mjs": "5618576958d4b760a2e5f50be45930675b097cc647540d8d44c8ec9124e27b77",
     "web/source.mjs": "083122af375de50620a419bc9f9c2977e0dc92e803199a091b41e34d54558ef7",
     "web/styles.css": "c31bab20bf9fa247405979d6a8469db8febdb332be672e028fb8fb88c6e48055",
     "web/table-cells.css": "ab3174211e27049476f48f03fe654886659f8f1db21e1d4fafb2bdb35d7884ad",
@@ -805,10 +812,10 @@
     "provenance": "third-party/README.md"
   },
   "locks": {
-    "cargoSha256": "09e3f6336b26429cbf2440503a8c9831754301b6058d8c045f0befe91d1139d8",
+    "cargoSha256": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
     "derivation": "Web-only root; Cargo canonical subset; original versions/checksums verified",
     "npmSha256": "3c9ff112de0b48a8b62e39bbeed4b5f3e9b97947a40257d152c6f372284523ff",
-    "upstreamCargoSha256": "c23dcf635c5b38795f09546bffd06f4cd8eabd6a5e84ed950634a3018f19cc2d"
+    "upstreamCargoSha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3"
   },
   "resources": {
     "@codemirror/commands": "6.11.1",
@@ -837,7 +844,7 @@
     },
     "pdfjs-dist": "6.4.299"
   },
-  "revision": "7638fd367430884e0a2bb52e9467f8ad738da5e7",
+  "revision": "160b934e257a987e60530e68b5cdd82ebd0649ab",
   "sourceFiles": {
     ".gitattributes": {
       "sha256": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
@@ -848,11 +855,11 @@
       "source": "distribution/public-gitignore.txt"
     },
     "Cargo.lock": {
-      "sha256": "c23dcf635c5b38795f09546bffd06f4cd8eabd6a5e84ed950634a3018f19cc2d",
+      "sha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3",
       "source": "Cargo.lock"
     },
     "Cargo.toml": {
-      "sha256": "174a53f393656089755981fa9fc2e1d45374bd3695f8a027c190b224d3e812ef",
+      "sha256": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
       "source": "distribution/public-Cargo.toml"
     },
     "DISTRIBUTION.md": {
@@ -884,11 +891,11 @@
       "source": "crates/syntax/src/lib.rs"
     },
     "docs/embedding.md": {
-      "sha256": "612c98a836c80fc53a18711bdf88c5e072ba7b409a4d4ac47b1213ae2719cdc4",
+      "sha256": "335ec1d105e2ad84edeedaeb44fca2f54ef02dca516d2bd57d7aef50e403ffd3",
       "source": "docs/embedding.md"
     },
     "docs/image-components.md": {
-      "sha256": "0ca722dba65d07ddb30db92b68ecd298ae3fc9d4b6fe4cc0ac4887bc9d740b07",
+      "sha256": "1a813e379922b43ebfc9c086f8e060e349e90bfa60b6ae13f5ccaba3951cd112",
       "source": "docs/image-components.md"
     },
     "docs/jq-components.md": {
@@ -899,6 +906,10 @@
       "sha256": "26664232234bf0496871740653f73be57fe7a23b1dffcdd418cb93fb0d9c8442",
       "source": "docs/markdown-profile.md"
     },
+    "docs/markdown-references.md": {
+      "sha256": "59e9fcdf97d3eaf51c7d182396389b3b771df5a7068b18db82db5cd1933be423",
+      "source": "docs/markdown-references.md"
+    },
     "docs/notes-components.md": {
       "sha256": "de13aae37e655719ce6ef58f282066dc905ec8cb6451e15e81e0d868314f5e15",
       "source": "docs/notes-components.md"
@@ -908,7 +919,7 @@
       "source": "docs/projection-components.md"
     },
     "docs/reader-api.md": {
-      "sha256": "e0006c481b8efb2a982f06a7c1d7c3deadbfc4fe319e9ca546ebf66007f766bc",
+      "sha256": "3559123d0938f13761605dbc82fdba2ab2c46cd06a99119cf134454b93772b19",
       "source": "docs/reader-api.md"
     },
     "docs/reader-assets.md": {
@@ -924,11 +935,11 @@
       "source": "docs/translation.md"
     },
     "docs/web-parity.md": {
-      "sha256": "c53cace5eb0e19940b035f910d3842cdde724af594546b8f4940798d1cb4f4b1",
+      "sha256": "56edaf6cf2e6940717cebdd1b5ce87f417a13901580091186920300baeb83759",
       "source": "docs/web-parity.md"
     },
     "examples/embedded-host.rs": {
-      "sha256": "cbcfeba831f1bbc10d8f9d6c3e84c1d6ea8d7286703bba4ecb0458a217193e97",
+      "sha256": "1876586d1f491d3b0468a56e663e0c1f29a244253412afc62bf0e38c52823b0c",
       "source": "examples/embedded-host.rs"
     },
     "examples/reader-assets-host.rs": {
@@ -948,7 +959,7 @@
       "source": "package-lock.json"
     },
     "package.json": {
-      "sha256": "7f746675ecf7ef3469197ecd2af2b93d6a7918df22cf59694ca1222ad9e5c948",
+      "sha256": "3ec5b664d5a7161f03c34143b1664feeb0154878957c36c9f73620c8b5d40d45",
       "source": "distribution/public-package.json"
     },
     "scripts/build.mjs": {
@@ -1004,7 +1015,7 @@
       "source": "src/core/documents/image_animation.rs"
     },
     "src/core/documents/image_decode.rs": {
-      "sha256": "b8a466a30f3051c396be2aa575eb0a3a3f83c742386e000ff0d48f3186ec8b54",
+      "sha256": "b17a533f6845f404f1ea517105ea33a358539c0c0ef185724abc69d69e3c40b6",
       "source": "src/core/documents/image_decode.rs"
     },
     "src/core/documents/mod.rs": {
@@ -1024,7 +1035,7 @@
       "source": "src/core/documents/svg_resources.rs"
     },
     "src/core/documents/tests.rs": {
-      "sha256": "f7d416093514b0df3b16294c1852ba83d6299c80368dc68d3386739fc566007f",
+      "sha256": "579fc9f933b069303bb54e71b4617a33bdf34439f990e81816f30e8b7c68e907",
       "source": "src/core/documents/tests.rs"
     },
     "src/core/edit.rs": {
@@ -1048,7 +1059,7 @@
       "source": "src/core/jq_query.rs"
     },
     "src/core/markdown.rs": {
-      "sha256": "858773577871d89620481e70af8b571533a5403fb9b9817ce743771d34587d77",
+      "sha256": "eb494833b02cd6cc9c8a09f5a8b19e0ea11ff38fc44afb0bc479dade906d88e3",
       "source": "src/core/markdown.rs"
     },
     "src/core/markdown_html.rs": {
@@ -1056,7 +1067,7 @@
       "source": "src/core/markdown_html.rs"
     },
     "src/core/mod.rs": {
-      "sha256": "bacf04dcb1fe311d1aac6e4e7f959e28d8cf51b0c5789c13bb04392d6333cd39",
+      "sha256": "1c522379f4fb3e90e94b53d0bba6743e680cd25bdbb59a903f06b3da7338a391",
       "source": "src/core/mod.rs"
     },
     "src/core/notes.rs": {
@@ -1068,7 +1079,7 @@
       "source": "src/core/reader/assets.rs"
     },
     "src/core/reader/mod.rs": {
-      "sha256": "c36faee37f503afcc770ae35850e37487b7d01ce31bf00df09fa1940b2136c6d",
+      "sha256": "da7e9b2cdc0c38f0ff421f822d1ac492e123e39cefc790de06b3b8c283e78fa1",
       "source": "src/core/reader/mod.rs"
     },
     "src/core/reader/operations.rs": {
@@ -1076,8 +1087,12 @@
       "source": "src/core/reader/operations.rs"
     },
     "src/core/reader/types.rs": {
-      "sha256": "ecad6cace2a6f13f33944e4cab9d2280ca92f8a1cccf11147f711458f037d3a9",
+      "sha256": "10294c899abdec0e459e018b5ed620f465df3753d3e616443570f35f9516d58c",
       "source": "src/core/reader/types.rs"
+    },
+    "src/core/references.rs": {
+      "sha256": "2e26905af127c9bfa4f0132ae5cea282d5b22e11188a880530aa82951b6d79a9",
+      "source": "src/core/references.rs"
     },
     "src/core/source.rs": {
       "sha256": "37dc7def249db1816d15b8a790e1f3ac9aba5e0e6b6ed8641a6faa1f32c30142",
@@ -1116,7 +1131,7 @@
       "source": "src/runtime/mod.rs"
     },
     "src/runtime/process.rs": {
-      "sha256": "17310c3dd3d867190dd3fadb9bfc9e63587f6fdeb29145f04e83321d06ce78e4",
+      "sha256": "9da4473e9dd5a44cb32e7a75190cade7154a7a6b1fb69fc9abd7c5692ec69d6a",
       "source": "src/runtime/process.rs"
     },
     "src/runtime/renderer.rs": {
@@ -1140,7 +1155,7 @@
       "source": "src/web/epub_runtime.rs"
     },
     "src/web/files.rs": {
-      "sha256": "b011e71e20f1ee31c8126db3cc8862fd164ed4145ca57b8298c71b8ed4432b1a",
+      "sha256": "04802836f91b9ce4ff580b9d87444d9a96d0bfdee87e0898915f55b2311bff45",
       "source": "src/web/files.rs"
     },
     "src/web/main.rs": {
@@ -1148,7 +1163,7 @@
       "source": "src/web/main.rs"
     },
     "src/web/mod.rs": {
-      "sha256": "d3df7b6c6724dec7c3e0214ce6df617f98fbb129da000727a5c714e28173afce",
+      "sha256": "92b71f9bba1196b5c7b42891140f8c0e5d21ad4d6b3245c4f9436857e9436a88",
       "source": "src/web/mod.rs"
     },
     "src/web/panes.rs": {
@@ -1159,12 +1174,16 @@
       "sha256": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
       "source": "src/web/pdf_runtime.rs"
     },
+    "src/web/references.rs": {
+      "sha256": "850ac77f6dcb918aac95a8d2ca7c8831a2ae910d40f887b57e23d02c08409af0",
+      "source": "src/web/references.rs"
+    },
     "src/web/selected_files.rs": {
       "sha256": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
       "source": "src/web/selected_files.rs"
     },
     "src/web/service.rs": {
-      "sha256": "66e5d41133f3e89bb860208af4a155d38c2d72502c474a9c649c5593f108d853",
+      "sha256": "c68ab6114b55ad432fe3c1976271ccd8dc0f9a8be0aa53838c8c5b75fa86828f",
       "source": "src/web/service.rs"
     },
     "src/web/table_chart_runtime.rs": {
@@ -1200,12 +1219,16 @@
       "source": "tests/browser/contracts/epub-reader.mjs"
     },
     "tests/browser/contracts/image-view.mjs": {
-      "sha256": "01102bf0ac9b66c48e686fdecf66ee6c05d7160496efc8502e1562d9f60504e2",
+      "sha256": "004c55ad7a2ded807b0869dbc1c38fc6c3b18522835072e3fc4e52ae5dac3f1b",
       "source": "tests/browser/contracts/image-view.mjs"
     },
     "tests/browser/contracts/jq-query.mjs": {
       "sha256": "543516169b0beb843f7627a294da0762961c6ae9f90e62ed652988977a0c6539",
       "source": "tests/browser/contracts/jq-query.mjs"
+    },
+    "tests/browser/contracts/markdown-references.mjs": {
+      "sha256": "fddb7703f617c1cf9e85a280add960825ddc26ff093eebd35754b9634350b2c0",
+      "source": "tests/browser/contracts/markdown-references.mjs"
     },
     "tests/browser/contracts/markdown.mjs": {
       "sha256": "3ab756e98e07efe5bc1dca52feb565945e8c9fbf8c0fd7a12a6df6902ff7a8be",
@@ -1287,6 +1310,10 @@
       "sha256": "d0e3c557982116f5737fde8ec5b5a8147b31f706576074eafbdc5992277997ec",
       "source": "tests/browser/markdown-engines-check.mjs"
     },
+    "tests/browser/markdown-references-check.mjs": {
+      "sha256": "7ccfdfbfc9231962c5fecfe0bc5e89fd136d28e62366426bc08ab6f3885c97d1",
+      "source": "tests/browser/markdown-references-check.mjs"
+    },
     "tests/browser/notes-component-check.mjs": {
       "sha256": "139951b8d2c0f1a4cd374d4619f2ed2c0772c2551ecc9d7589e1c6af297b21d4",
       "source": "tests/browser/notes-component-check.mjs"
@@ -1306,6 +1333,10 @@
     "tests/browser/reader-assets-check.mjs": {
       "sha256": "dc665f9f1a93b232c36a3c31c08709e1d6f427cec8fdedba0ae549507c844650",
       "source": "tests/browser/reader-assets-check.mjs"
+    },
+    "tests/browser/reference-policy-check.mjs": {
+      "sha256": "fb0e308460484acdbd6fbd788b8fff1bdf505ca3b1ae3d7133cb286101b7a460",
+      "source": "tests/browser/reference-policy-check.mjs"
     },
     "tests/browser/table-cells-check.mjs": {
       "sha256": "e6d8ed7ceca580725ce9b6f613efa16ca29f27a7751d0542ae6f03f8a346012e",
@@ -1352,7 +1383,7 @@
       "source": "tests/markdown_profile.rs"
     },
     "tests/reader_api.rs": {
-      "sha256": "fb4186626f0e26f7ecc76fffa30f518dad642d61db7d83188254e7e19654b93e",
+      "sha256": "24e675e45b725594a74bd32844ca9a1592de08079271ba1f73d15be58885d374",
       "source": "tests/reader_api.rs"
     },
     "tests/server/image-frames-check.mjs": {
@@ -1464,7 +1495,7 @@
       "source": "web/diagrams.mjs"
     },
     "web/document-prose.css": {
-      "sha256": "f6d05e1f63847c95230df2ccc350628a8ec497e61ba0ccf85f8fb60768631069",
+      "sha256": "1c048c9bc96e4e3c19f6f1824f249aa4f9984086bbfc8e6902aa6272434b7408",
       "source": "web/document-prose.css"
     },
     "web/editor.mjs": {
@@ -1480,7 +1511,7 @@
       "source": "web/epub-reader.mjs"
     },
     "web/files.mjs": {
-      "sha256": "8b829647fa03430002a7223883626d120ef17f55766cd071a13539be92e03f68",
+      "sha256": "6727cc98346714530020cbdc90c7ed290e80435967d5e2ca7eb1caeec814dc16",
       "source": "web/files.mjs"
     },
     "web/host-client.mjs": {
@@ -1496,11 +1527,11 @@
       "source": "web/image-frames.mjs"
     },
     "web/image-view.css": {
-      "sha256": "2f84fd5033057916532857d9db94685f965ce2cb632004916c90c7c863072cce",
+      "sha256": "172e8815853169b9f7ab269613bda2014016f989a1a5e8b81148f6cf3e04844d",
       "source": "web/image-view.css"
     },
     "web/image-view.mjs": {
-      "sha256": "53b8e4c35fc6b37f8eb56ad3cb6c5df49adae9a531e31c31a56954aefcce630d",
+      "sha256": "263b514d6672eeff6805745f1d0c6f15de33747d51693d9ee656e4a033c5ae21",
       "source": "web/image-view.mjs"
     },
     "web/index.html": {
@@ -1552,7 +1583,7 @@
       "source": "web/projection-view.mjs"
     },
     "web/public-reader.mjs": {
-      "sha256": "453cbd20206c738d01f54205c035b26c11fadc53141a328e6c4ea7c37dff28f3",
+      "sha256": "6b8e1ceeab0e9c460cf1d61486937dd6e09b8fbb89d5730e295e848edcab15a8",
       "source": "web/public-reader.mjs"
     },
     "web/query-operation.mjs": {
@@ -1572,8 +1603,12 @@
       "source": "web/reader-ui.mjs"
     },
     "web/reader.mjs": {
-      "sha256": "5963bc578c19354f7b477ee30d8af30ce3f32cfc5e0250f82c6934cb4db4e017",
+      "sha256": "658bdc3adbcbfd6b5ec9204a93153f434a632d77cbf3ae44817f67f8b1d35b3d",
       "source": "web/reader.mjs"
+    },
+    "web/references.mjs": {
+      "sha256": "5618576958d4b760a2e5f50be45930675b097cc647540d8d44c8ec9124e27b77",
+      "source": "web/references.mjs"
     },
     "web/source.mjs": {
       "sha256": "083122af375de50620a419bc9f9c2977e0dc92e803199a091b41e34d54558ef7",
@@ -1662,6 +1697,6 @@
     "python": "3.14.4",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   },
-  "treeSha256": "45855b3ed4125ac751ac4329f3d5ebdc9a892e1b7ce0e60cd88aaea5682e257b",
+  "treeSha256": "1bcb291c74e370b33ced8bae160924914337a94bfe710519d7caafe0b7f0f7ff",
   "version": 1
 }

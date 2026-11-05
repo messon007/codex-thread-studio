@@ -4,13 +4,13 @@ import { IMAGE_FRAME_BYTES } from './image-frames.mjs'
 
 export function mountImageView(
   root,
-  { owner, metadata, frame, viewport = root, translate, onChange = () => {} }
+  { owner, metadata, frame, viewport = root, translate, onChange = () => {}, compact = false }
 ) {
   if (
     root?.nodeType !== 1 ||
     viewport?.nodeType !== 1 ||
     typeof frame !== 'function' ||
-    typeof onChange !== 'function' ||
+    typeof onChange !== 'function' || typeof compact !== 'boolean' ||
     typeof owner?.documentId !== 'string' ||
     !owner.documentId ||
     owner.documentId.length > 256 ||
@@ -59,6 +59,12 @@ export function mountImageView(
     caption = document.createElement('figcaption')
   figure.dataset.assetId = metadata.id
   figure.setAttribute('data-marknoria-image', '')
+  const controlsLifetime = new AbortController()
+  if (compact) {
+    figure.dataset.controlsCompact = ''
+    figure.tabIndex = 0
+    figure.setAttribute('aria-label',metadata.alt || 'Image')
+  }
   image.className = 'document-image'
   caption.textContent = metadata.alt
   figure.append(image, caption)
@@ -113,8 +119,23 @@ export function mountImageView(
       }
     )
     controller.mount(figure)
+    if (compact) {
+      const placeControls = () => {
+        if (!figure.matches(':hover,:focus-within')) return
+        const controls = figure.querySelector('.asset-controls'), area = viewport.getBoundingClientRect(), box = figure.getBoundingClientRect()
+        if (!controls) return
+        const left = Math.max(0,area.left), right = Math.min(innerWidth,area.right), top = Math.max(0,area.top), bottom = Math.min(innerHeight,area.bottom)
+        controls.style.maxWidth = `${Math.max(0,right-left-8)}px`
+        const width = controls.offsetWidth, height = controls.offsetHeight
+        controls.style.left = `${Math.max(left+4,Math.min(right-width-4,box.left))-box.left}px`
+        controls.style.top = `${Math.max(top+4,Math.min(bottom-height-4,box.top-height-4))-box.top}px`
+      }
+      for (const type of ['pointerenter','focusin']) figure.addEventListener(type,placeControls,{signal:controlsLifetime.signal})
+      viewport.addEventListener('scroll',placeControls,{passive:true,signal:controlsLifetime.signal})
+    }
   } catch (error) {
     figure.remove()
+    controlsLifetime.abort()
     releaseStyle()
     throw error
   }
@@ -126,6 +147,7 @@ export function mountImageView(
       if (disposed) return
       disposed = true
       controller.dispose()
+      controlsLifetime.abort()
       rejectReady(new DOMException('Image view disposed', 'AbortError'))
       figure.remove()
       releaseStyle()

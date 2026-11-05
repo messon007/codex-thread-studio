@@ -8,6 +8,7 @@ pub mod jq_query;
 pub mod edit;
 pub mod highlight;
 pub mod reader;
+pub mod references;
 pub mod notes;
 pub mod source;
 pub mod table_query;
@@ -78,6 +79,8 @@ pub struct Index {
     pub original_bytes: Option<usize>,
     #[serde(default)]
     pub assets: Vec<documents::Asset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<references::Reference>,
     pub version: u8,
     pub name: String,
     pub revision: String,
@@ -332,6 +335,7 @@ struct Writer<'a> {
     code_spans: VecDeque<Range<usize>>,
     nested_row_spans: VecDeque<Range<usize>>,
     tables: Vec<Table>,
+    web_references: bool,
 }
 
 impl Writer<'_> {
@@ -372,7 +376,9 @@ impl Writer<'_> {
             if matches!(event, Event::Start(Tag::Table(_))) {table_depth+=1;}
             let in_table = columns>0 || table_depth>0;
             if matches!(event, Event::End(TagEnd::Table)) {table_depth=table_depth.saturating_sub(1);}
-            if in_table {inert_cell_event(event)} else {inert_event(event)}
+            if self.web_references && (matches!(event, Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event, Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) {
+                references::projected(event)
+            } else if in_table {inert_cell_event(event)} else {inert_event(event)}
         });
         if columns > 0 {
             push_markdown_html(&mut rendered, safe_events);
@@ -590,6 +596,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         code_spans: VecDeque::new(),
         nested_row_spans: VecDeque::new(),
         tables: Vec::new(),
+        web_references: profile == ProjectionProfile::Web,
     };
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
@@ -598,19 +605,25 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
     let bom = if source.starts_with('\u{feff}') { 3 } else { 0 };
     let (parse_source, bare) = bare_plantuml(&source[bom..], options);
     let bare: Vec<_> = bare.into_iter().map(|span| span.start + bom..span.end + bom).collect();
+    let mut references = if profile == ProjectionProfile::Web { Some(references::Collector::new(directory)?) } else { None };
     let mut events = Parser::new_ext(&parse_source, options)
         .into_offset_iter()
-        .map(|(event, span)| (event, span.start + bom..span.end + bom))
+        .map(|(event, span)| {
+            let span = span.start + bom..span.end + bom;
+            match &mut references { Some(references) => references.capture(event,span), None => Ok((event,span)) }
+        })
         .peekable();
     let mut pending = Vec::new();
     let mut pending_span = 0..0;
+    let mut pending_weight = 0usize;
     let mut depth = 0usize;
     let mut toc = Vec::<Heading>::new();
     let mut active_heading = None;
     let mut heading_offsets = Vec::new();
     let mut table_id = 0;
     let mut active_diagram = false;
-    while let Some((mut event, span)) = events.next() {
+    while let Some(item) = events.next() {
+        let (mut event, span) = item?;
         if let Event::Start(Tag::TableHead) = &event {
             let end = source[span.start..]
                 .find('\n')
@@ -627,7 +640,8 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                 .binary_search_by_key(&span.start, |range| range.start)
                 .is_ok()
         {
-            for (event, _) in events.by_ref() {
+            for item in events.by_ref() {
+                let (event, _) = item?;
                 if matches!(event, Event::End(TagEnd::CodeBlock)) {
                     break;
                 }
@@ -649,6 +663,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                     &[],
                     None,
                 )?;
+                pending_weight = 0;
             }
             let alignments = alignments.clone();
             if alignments.len() > 256 {
@@ -657,8 +672,11 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                 ));
             }
             let mut header = Vec::new();
-            for (event, header_span) in events.by_ref() {
-                if header_span.end.saturating_sub(span.start) > MAX_HTML {
+            let mut header_weight = 0usize;
+            for item in events.by_ref() {
+                let (event, header_span) = item?;
+                header_weight = header_weight.saturating_add(references::event_weight(&event));
+                if (if profile == ProjectionProfile::Web { header_weight } else { header_span.end.saturating_sub(span.start) }) > MAX_HTML {
                     return Err(invalid("Table header exceeds the prototype byte budget"));
                 }
                 let finished = matches!(event, Event::End(TagEnd::TableHead));
@@ -708,9 +726,11 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                     .map_or(span.end, |length| span.start + length);
             let mut row_spans = Vec::new();
             let mut row_count = 0;
+            let mut row_weight = 0usize;
             let mut chunk_span = span.start..span.end;
             let mut emitted = false;
-            for (event, row_span) in events.by_ref() {
+            for item in events.by_ref() {
+                let (event, row_span) = item?;
                 if matches!(event, Event::End(TagEnd::Table)) {
                     if row_count > 0 || !emitted {
                         writer.page(
@@ -733,9 +753,10 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                 }
                 let end_row = matches!(event, Event::End(TagEnd::TableRow));
                 chunk_span.end = row_span.end;
+                row_weight = row_weight.saturating_add(references::event_weight(&event));
                 rows.push(event);
                 if rows.len() + header.len() > MAX_EVENTS
-                    || chunk_span.end.saturating_sub(chunk_span.start) > MAX_HTML
+                    || (if profile == ProjectionProfile::Web { row_weight.saturating_add(header_weight) } else { chunk_span.end.saturating_sub(chunk_span.start) }) > MAX_HTML
                 {
                     return Err(invalid("A table row exceeds the prototype event budget"));
                 }
@@ -754,6 +775,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                             Some(header_span.clone()),
                         )?;
                         row_count = 0;
+                        row_weight = 0;
                         row_spans.clear();
                         emitted = true;
                     }
@@ -779,6 +801,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                     &[],
                     None,
                 )?;
+                pending_weight = 0;
             }
             active_diagram = diagram;
             if pending.is_empty() {
@@ -815,6 +838,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
             _ => {}
         }
         pending_span.end = span.end;
+        pending_weight = pending_weight.saturating_add(references::event_weight(&event));
         pending.push(event);
         if let Some(source) = bare_source {
             pending.push(Event::Text(source.into()));
@@ -822,7 +846,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
             depth = depth.saturating_sub(1);
         }
         if pending.len() > MAX_EVENTS
-            || pending_span.end.saturating_sub(pending_span.start) > MAX_HTML
+            || (if profile == ProjectionProfile::Web { pending_weight } else { pending_span.end.saturating_sub(pending_span.start) }) > MAX_HTML
         {
             return Err(invalid("An indivisible block exceeds the prototype budget"));
         }
@@ -836,6 +860,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                 &[],
                 None,
             )?;
+            pending_weight = 0;
             active_diagram = false;
         }
     }
@@ -844,6 +869,8 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
     }
     writer.file.flush()?;
     writer.diagram_file.flush()?;
+    drop(events);
+    let references = references.map(references::Collector::finish).transpose()?.unwrap_or_default();
     for (heading, offset) in toc.iter_mut().zip(heading_offsets) {
         heading.page = writer
             .pages
@@ -854,7 +881,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         renderer: None,
         epub_package: None,
         text_pages: false,
-        format, csv_delimiter: None, original_bytes: None, assets: vec![],
+        format, csv_delimiter: None, original_bytes: None, assets: vec![], references,
         version: 5,
         name: path
             .file_name()
@@ -1201,8 +1228,10 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
     } else {
         let bom = if source.starts_with('\u{feff}') { 3 } else { 0 };
         let (parse_source, _) = bare_plantuml(&source[bom..], options);
+        let mut references = (!index.references.is_empty()).then(|| references::Auditor::new(directory,index));
         for (event, span) in Parser::new_ext(&parse_source, options).into_offset_iter()
             .map(|(event, span)| (event, span.start + bom..span.end + bom)) {
+            let event = match &mut references { Some(references) => references.event(event,&span)?, None => event };
             if depth == 0 && matches!(event, Event::Start(Tag::Table(_))) {
                 active = true;
                 let end = source[span.start..]
@@ -1222,10 +1251,14 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
                 _ => {}
             }
             if active {
-                table.push(inert_cell_event(event));
+                table.push(event);
                 if depth == 0 {
                     let mut html = String::new();
-                    html::push_html(&mut html, table.drain(..));
+                    let events = markdown::audit_autolinks(table.drain(..).collect())?;
+                    html::push_html(&mut html, events.into_iter().map(|event| {
+                        if !index.references.is_empty() && (matches!(event,Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event,Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) { references::projected(event) }
+                        else { inert_cell_event(event) }
+                    }));
                     let mut digest = Sha256::new();
                     let (table_rows, table_cells) = audit_body(&mut digest, &html)?;
                     rows += table_rows;
@@ -1235,6 +1268,7 @@ pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
                 }
             }
         }
+        if let Some(references) = references { references.finish()?; }
     }
     let mut actual: Vec<_> = (0..expected.len()).map(|_| Sha256::new()).collect();
     let mut fragments = 0;

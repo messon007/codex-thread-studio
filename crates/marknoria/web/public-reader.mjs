@@ -22,6 +22,23 @@ export function publicReader({ origins, state, index, api, renderer = () => null
     contents: checked(async params => { if (typeof params.open !== 'boolean' || typeof contents !== 'function') throw Error('Invalid Contents command'); await contents(params.open); return state() }),
     save: checked(async () => { await save(); return state() }),
     selection: checked((_, signal) => selection(signal)),
+    referenceInfo: checked((params,signal) => {
+      if (!Number.isSafeInteger(params.id) || params.id < 0 || params.id >= (index().references?.length ?? 0)) throw Error('Invalid reference identity')
+      return api(`/api/reference?id=${params.id}&revision=${encodeURIComponent(params.revision)}`,signal)
+    }),
+    referenceImageInfo: checked((params,signal) => {
+      if (!Number.isSafeInteger(params.id) || index().references?.[params.id]?.kind !== 'image') throw Error('Invalid image reference')
+      return api(`/api/reference-image?id=${params.id}&revision=${encodeURIComponent(params.revision)}`,signal)
+    }),
+    referenceImageFrame: checked(async (params,signal) => {
+      if (!Number.isSafeInteger(params.id) || index().references?.[params.id]?.kind !== 'image' || !Number.isSafeInteger(params.frame) || params.frame < 0 || params.frame >= 128 || !/^[a-f0-9]{64}$/i.test(params.imageRevision || '')) throw Error('Invalid referenced image frame')
+      if (imageRequests >= 2) throw Object.assign(Error('Image frame budget exhausted'),{code:'BUSY'})
+      imageRequests++
+      try {
+        const blob = await api(`/api/reference-image?id=${params.id}&revision=${encodeURIComponent(params.revision)}&frame=${params.frame}&imageRevision=${encodeURIComponent(params.imageRevision)}`,signal,{imageRevision:params.revision})
+        return { revision:params.revision,id:params.id,frame:params.frame,imageRevision:params.imageRevision,blob }
+      } finally { imageRequests-- }
+    }),
     assetInfo: checked((params, signal) => {
       if (!Number.isSafeInteger(params.id) || params.id < 0) throw Error('Invalid asset identity')
       return api(`/api/asset-info?id=${params.id}&revision=${encodeURIComponent(params.revision)}`, signal)

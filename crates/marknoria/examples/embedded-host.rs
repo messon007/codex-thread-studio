@@ -27,6 +27,17 @@ fn main() -> io::Result<()> {
         if let Some(origin) = argument.strip_prefix("--parent=") {
             options = options.parent_origin(origin)?;
         }
+        if let Some(directory) = argument.strip_prefix("--reference-root=") { options = options.reference_root(directory)?; }
+        if let Some(path) = argument.strip_prefix("--reference-roots-file=") {
+            let path = PathBuf::from(path);
+            options = options.reference_roots_provider(move || {
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                std::fs::File::open(&path)?.take(128 * 1024 + 1).read_to_end(&mut bytes)?;
+                if bytes.len() > 128 * 1024 { return Err(io::Error::new(io::ErrorKind::InvalidData,"Reference policy exceeds 128 KiB")); }
+                serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData,error))
+            });
+        }
         if let Some(directory) = argument.strip_prefix("--notes=") {
             options = options.notes_directory(PathBuf::from(directory));
         }

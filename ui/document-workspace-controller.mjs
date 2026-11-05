@@ -184,6 +184,14 @@ export function createDocumentWorkspaceController({
     })
   }
 
+async function openReaderLink(file, reference) {
+  if (state.artifact !== file) return
+  if (reference.localPath) return openArtifact({ root: file.root, path: reference.localPath,
+    sourceSessionKey: file.sourceSessionKey }, { allowDetachedRoot: true, returnTool: file.returnTool })
+  if (/^(https?:|mailto:)/i.test(reference.target)) return openBrowserUrl(reference.target)
+  throw Error(t('This link is outside the authorized document directories or uses an unsupported scheme.'))
+}
+
 async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null, discardUnsaved = false } = {}) {
   if (largeMarkdownHost?.busy) return
   if (largeMarkdownHost?.dirty && state.artifact) state.artifact.dirty = true
@@ -895,6 +903,7 @@ function renderArtifact() {
         if (state.artifact !== file) return
         if (!readerNotesHost?.capture(selection)) setSelection(commentSelection(selection), selection.rect)
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
+        onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
         initialReference: file.readerReference,
         presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
           flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,

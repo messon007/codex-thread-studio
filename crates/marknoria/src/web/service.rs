@@ -17,6 +17,8 @@ pub struct ServiceOptions {
     notes_directory: Option<PathBuf>,
     parent_origins: Vec<String>,
     diagrams: DiagramMode,
+    reference_roots: Vec<PathBuf>,
+    reference_roots_provider: Option<references::RootProvider>,
 }
 impl Default for ServiceOptions {
     fn default() -> Self {
@@ -26,10 +28,29 @@ impl Default for ServiceOptions {
             notes_directory: None,
             parent_origins: Vec::new(),
             diagrams: DiagramMode::Backend,
+            reference_roots: Vec::new(),
+            reference_roots_provider: None,
         }
     }
 }
 impl ServiceOptions {
+    /// An explicit read-only directory capability for Markdown images/links.
+    /// Opening one document never implicitly grants its parent folder.
+    pub fn reference_root(mut self, root: impl AsRef<std::path::Path>) -> io::Result<Self> {
+        let root = root.as_ref().canonicalize()?;
+        if !root.is_dir() || !self.reference_roots.contains(&root) && self.reference_roots.len() >= references::MAX_ROOTS {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput,"Expected at most 257 distinct authorized reference folders"));
+        }
+        if !self.reference_roots.contains(&root) { self.reference_roots.push(root); }
+        Ok(self)
+    }
+    /// Trusted host policy, evaluated for each local reference request before
+    /// checking the image cache. It augments static grants without closing the
+    /// document or disturbing an editor draft. No HTTP command can install it.
+    pub fn reference_roots_provider(mut self, provider: impl Fn() -> io::Result<Vec<PathBuf>> + Send + Sync + 'static) -> Self {
+        self.reference_roots_provider = Some(references::RootProvider::new(provider));
+        self
+    }
     pub fn projection(mut self, profile: crate::core::ProjectionProfile) -> Self {
         self.projection = profile;
         self
@@ -123,6 +144,7 @@ impl Service {
         let browser_diagrams = matches!(options.diagrams, DiagramMode::Browser);
         let editor = Arc::new(edit_runtime::Editor::default());
         let app = App {
+            references: Arc::new(references::Resources::new(options.reference_roots).with_provider(options.reference_roots_provider)),
             editable: grant.writable(),
             queries: options.queries,
             notes_directory: options.notes_directory,
@@ -181,6 +203,7 @@ impl Service {
             let _diagrams = closing.diagram_work.acquire().await;
             tokio::task::spawn_blocking(move || {
                 editor.clear();
+                closing.references.shutdown();
                 documents.shutdown_checked()
             })
             .await
@@ -284,6 +307,8 @@ pub(super) async fn capabilities(State(app): State<App>) -> Json<Value> {
         "bridgeVersion":crate::core::reader::BRIDGE_VERSION,
         "embedded":app.embedded,"edit":app.editable,"queries":app.queries,"charts":app.queries,"assetInfo":true,"assetFrame":true,
         "assetProfile":{"metadataBytes":16384,"frameBytes":20*1024*1024,"concurrentFrames":2,"frameEncoding":"image/png"},
+        "referenceInfo":true,"referenceImages":true,
+        "referenceProfile":{"targets":4096,"targetBytes":32*1024*1024,"linkBytes":8192,"imageBytes":25*1024*1024,"imageSnapshots":4,"decodedEdge":2048,"remoteImages":false,"implicitFolderGrant":false,"rootLimit":257,"dynamicRoots":true},
         "chartProfile":{"datasetScope":"complete-input","valuePrecision":"float64","exactValueText":true,"maxPoints":crate::core::table_query::MAX_CHART_POINTS,"maxBytes":crate::core::MAX_HTML},
         "notes":app.notes_directory.is_some(),"queryNotes":app.notes_directory.is_some() && app.queries,"parentOrigins":app.parent_origins.as_ref(),
         "diagrams":if app.browser_diagrams {"browser"} else {"backend"},
@@ -293,6 +318,18 @@ pub(super) async fn capabilities(State(app): State<App>) -> Json<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_directory_limit_counts_distinct_canonical_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = ServiceOptions::default();
+        for id in 0..references::MAX_ROOTS {
+            let root = directory.path().join(id.to_string());std::fs::create_dir(&root).unwrap();
+            options = options.reference_root(root).unwrap();
+        }
+        options = options.reference_root(directory.path().join("0")).unwrap();
+        assert_eq!(options.reference_roots.len(),257);
+        assert!(options.reference_root(directory.path()).is_err());
+    }
     #[test]
     fn framing_requires_exact_http_origins() {
         for good in [

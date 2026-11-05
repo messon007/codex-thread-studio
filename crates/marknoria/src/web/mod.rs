@@ -19,6 +19,7 @@ mod document_runtime;
 mod pdf_runtime;
 mod epub_runtime;
 mod service;
+mod references;
 pub use service::{Service, ServiceOptions, DiagramMode};
 use crate::core::{
     Index, audit_tables, build_index, read_diagram, read_page, read_table, search,
@@ -39,6 +40,7 @@ use tokio::sync::Semaphore;
 
 #[derive(Clone)]
 struct App {
+    references: Arc<references::Resources>,
     editable: bool,
     queries: bool,
     notes_directory: Option<std::path::PathBuf>,
@@ -471,6 +473,7 @@ fn assets() -> Router {
         .route("/image-view.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-view.mjs")) }))
         .route("/image-view.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/image-view.css")) }))
         .route("/image-frames.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-frames.mjs")) }))
+        .route("/references.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/references.mjs")) }))
         .route("/presentation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/presentation.mjs")) }))
         .route("/reader-ui.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-ui.mjs")) }))
         .route("/translation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/translation.mjs")) }))
@@ -660,6 +663,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let listener =
         tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, options.port)).await?;
     let app = App {
+        references: Arc::new(references::Resources::new(vec![options.root.clone()])),
         editable: true,
         queries: true,
         notes_directory: crate::runtime::config::directory(),
@@ -683,6 +687,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let cancelled = app.cancelled.clone();
     let documents = app.documents.clone();
+    let references = app.references.clone();
     let comparisons = app.comparisons.clone();
     let comparison_documents = app.comparison_documents.clone();
     let maintenance_right = comparison_documents.clone();
@@ -735,6 +740,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     cancelled.store(true, Ordering::Relaxed);
     let _ = maintenance.join();
     documents.shutdown();
+    references.shutdown();
     comparisons.shutdown();
     comparison_documents.shutdown();
     result?;
@@ -765,6 +771,8 @@ pub fn reader_assets() -> Router {
 
 fn reader_routes() -> Router<App> {
     reader_assets().with_state(())
+        .route("/api/reference", get(references::info))
+        .route("/api/reference-image", get(references::image))
         .route("/api/epub", get(epub_runtime::description))
         .route("/epub-resource/{document}/{capability}/{*path}", get(epub_runtime::resource))
         .route("/api/original", get(pdf_runtime::original))

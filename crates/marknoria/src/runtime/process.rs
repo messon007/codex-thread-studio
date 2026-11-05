@@ -97,6 +97,20 @@ pub(crate) fn resident_kib(_: u32) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn an_owning_document_cancels_only_its_supervised_child() {
+        use std::{process::{Command,Stdio},sync::atomic::{AtomicBool,Ordering}};
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c","exec sleep 30"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut command = process_wrap::std::CommandWrap::from(command);
+        let mut child = command.spawn().unwrap();
+        let own = AtomicBool::new(false);
+        let owner = AtomicBool::new(true);
+        assert!(super::supervise_owned(child.as_mut(),&own,Some(&owner)).unwrap_err().contains("Document closed"));
+        assert!(!own.load(Ordering::Relaxed));
+        assert!(child.try_wait().unwrap().is_some());
+    }
     #[test]
     fn supervision_reads_the_current_process_resident_memory() {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -117,6 +131,24 @@ pub(crate) fn supervise_budget(
     timeout: Duration,
     rss_kib: usize,
 ) -> Result<(), String> {
+    supervise_poll(child, || cancelled.load(Ordering::Relaxed), timeout, rss_kib)
+}
+
+#[cfg(any(feature = "web", test))]
+pub(crate) fn supervise_owned(
+    child: &mut dyn process_wrap::std::ChildWrapper,
+    cancelled: &AtomicBool,
+    owner: Option<&AtomicBool>,
+) -> Result<(), String> {
+    supervise_poll(child, || cancelled.load(Ordering::Relaxed) || owner.is_some_and(|owner| owner.load(Ordering::Relaxed)), Duration::from_secs(60), 1024 * 1024)
+}
+
+fn supervise_poll(
+    child: &mut dyn process_wrap::std::ChildWrapper,
+    cancelled: impl Fn() -> bool,
+    timeout: Duration,
+    rss_kib: usize,
+) -> Result<(), String> {
     let stderr = child.stderr().take();
     let diagnostic = thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -128,7 +160,7 @@ pub(crate) fn supervise_budget(
     let started = Instant::now();
     let status = loop {
         let resident = resident_kib(child.id());
-        let error = if cancelled.load(Ordering::Relaxed) {
+        let error = if cancelled() {
             Some("Document closed")
         } else if started.elapsed() > timeout || resident.is_some_and(|kib| kib > rss_kib) {
             Some("Worker exceeded its time or memory budget")

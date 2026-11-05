@@ -45,6 +45,12 @@ decoded image previews report exact projected dimensions.
 Metadata has at most 128 frame entries and 1 KiB of alt text, keeping an encoded
 record within 16 KiB. It does not decode image pixels or advance animation.
 
+The explicit Web projection also exposes bounded parser-owned Markdown
+`reference`/`reference_target` APIs with original source byte ranges. They do not
+grant access to a target file; directory authority and supervised lazy decoding
+belong to the [Web reference adapter](markdown-references.md). The default
+indexed projection remains unchanged.
+
 `ProjectionPage` additionally carries the original optional `table` identity and
 `rowStart`, alongside original byte/line coordinates. This additive v1 metadata
 lets ordinary DOM hosts coalesce table fragments without reconstructing source

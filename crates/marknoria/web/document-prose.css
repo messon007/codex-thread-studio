@@ -83,3 +83,7 @@
   max-width: 100%;
   margin-inline: 0;
 }
+
+/* Markdown image slots retain their box while a supervised snapshot loads. */
+.markdown-reference-image { display:inline-block; position:relative; max-width:100%; min-height:1.5em; vertical-align:middle; }
+.markdown-reference-image[data-reference-state=error] { border-bottom:1px dotted var(--reader-muted,#536873); }

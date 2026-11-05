@@ -35,6 +35,9 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       if (type==='ready'||type==='state') publish(payload)
       else if (type==='selection') capture(payload)
       else if (type==='openRequested') options.onOpenRequested?.()
+      else if (type==='linkRequested' && payload?.documentId && payload.documentId===snapshot.documentId && payload.revision===snapshot.revision && typeof payload.target==='string' && payload.target.length<=8192 && new TextEncoder().encode(payload.target).length<=8192) {
+        void Promise.resolve().then(()=>{if(!disposed)return options.onLinkRequested?.(payload)}).catch(error=>{if(!disposed)options.onError?.(error)})
+      }
       else if (type==='error') options.onError?.(payload)
     }})
     publish(await client.ready())

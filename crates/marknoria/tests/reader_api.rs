@@ -438,3 +438,20 @@ fn projected_images_expose_metadata_and_png_frames_without_cache_paths() {
     reader.close().unwrap();
     assert_eq!(fs::read_dir(root.path().join("cache")).unwrap().count(), 0);
 }
+
+#[test]
+fn markdown_reference_api_retains_original_ranges_without_implicit_file_authority() {
+    use marknoria::reader::{ProjectionProfile,ReferenceKind};
+    let root = root();let source = "\u{feff}# Heading\r\n\r\n![中文😀](missing.png) [link](sibling.md)\r\n";
+    let reader = Reader::from_bytes("references.md",source.as_bytes(),options(&root).projection(ProjectionProfile::Web)).unwrap();
+    let owner = reader.descriptor();
+    assert!(owner.capabilities.reference_info);assert_eq!(owner.references,2);
+    let image = reader.reference(&owner.revision,0).unwrap();
+    assert_eq!(image.kind,ReferenceKind::Image);
+    assert_eq!(image.target.as_deref(),Some("missing.png"));
+    assert_eq!(&source[image.start_byte..image.end_byte],"![中文😀](missing.png)");
+    assert_eq!(reader.reference_target(&owner.revision,1).unwrap(),"sibling.md");
+    assert!(reader.reference(&"0".repeat(64),0).is_err());assert!(reader.reference(&owner.revision,2).is_err());
+    assert_eq!(reader.original_range(&owner.revision,0,source.len()).unwrap(),source.as_bytes());
+    reader.close().unwrap();
+}

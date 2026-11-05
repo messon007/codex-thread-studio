@@ -6,6 +6,20 @@ use std::io;
 /// Linkify scans linearly. Work is limited by the existing indivisible page and
 /// event budgets; source ranges are deliberately not rewritten by this renderer.
 pub(super) fn autolinks<'a>(events: Vec<Event<'a>>) -> io::Result<Vec<Event<'a>>> {
+    autolinks_bounded(events, super::MAX_EVENTS)
+}
+
+// The source audit renders a complete table, rather than one interactive page.
+// Its input is already source-bounded; allow the original events plus at most
+// four generated events per text byte. Page rendering retains MAX_EVENTS.
+pub(super) fn audit_autolinks<'a>(events: Vec<Event<'a>>) -> io::Result<Vec<Event<'a>>> {
+    let budget = events.iter().fold(events.len(), |budget, event| {
+        budget.saturating_add(match event { Event::Text(text) => text.len().saturating_mul(4), _ => 0 })
+    });
+    autolinks_bounded(events, budget)
+}
+
+fn autolinks_bounded<'a>(events: Vec<Event<'a>>, budget: usize) -> io::Result<Vec<Event<'a>>> {
     let mut finder = LinkFinder::new();
     finder.url_must_have_scheme(false);
     let mut output = Vec::with_capacity(events.len());
@@ -63,7 +77,7 @@ pub(super) fn autolinks<'a>(events: Vec<Event<'a>>) -> io::Result<Vec<Event<'a>>
                     output.push(Event::Text(value.to_owned().into()));
                     output.push(Event::End(TagEnd::Link));
                     end = link.end();
-                    if output.len() > super::MAX_EVENTS {
+                    if output.len() > budget {
                         return Err(super::invalid("Autolinks exceed the page event budget"));
                     }
                 }
@@ -76,7 +90,7 @@ pub(super) fn autolinks<'a>(events: Vec<Event<'a>>) -> io::Result<Vec<Event<'a>>
             }
         }
         output.push(event);
-        if output.len() > super::MAX_EVENTS {
+        if output.len() > budget {
             return Err(super::invalid("Markdown exceeds the page event budget"));
         }
     }

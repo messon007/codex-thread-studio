@@ -7,3 +7,8 @@
 [data-marknoria-image] .document-image img { display:block; max-width:100%; height:auto; margin-inline:auto; }
 [data-marknoria-image].asset-zoomed .document-image img { max-width:none; width:calc(var(--asset-zoom) * var(--asset-width)); }
 [data-marknoria-image] figcaption { color:var(--reader-muted,#49646e); font:12px/1.4 var(--ui-font-family,system-ui,sans-serif); margin-top:6px; overflow-wrap:anywhere; }
+[data-marknoria-image][data-controls-compact] { position:relative; margin:0; border:0; border-radius:0; padding:0; }
+[data-marknoria-image][data-controls-compact] .document-image { min-height:0; overflow:auto; }
+[data-marknoria-image][data-controls-compact] figcaption { display:none; }
+[data-marknoria-image][data-controls-compact] .asset-controls { position:absolute; z-index:8; width:max-content; visibility:hidden; padding:4px; background:var(--reader-panel,#fff); border:1px solid var(--reader-border,#d1dde2); border-radius:7px; }
+[data-marknoria-image][data-controls-compact]:hover .asset-controls, [data-marknoria-image][data-controls-compact]:focus-within .asset-controls { visibility:visible; }

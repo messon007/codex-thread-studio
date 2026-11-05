@@ -211,6 +211,21 @@ export async function imageViewContract(moduleUrl) {
       'Animation did not resume through the same controller'
     )
     animated.dispose()
+    const compact = make({ compact: true })
+    await compact.ready
+    compact.root.style.width = '2px'
+    compact.root.focus()
+    const compactControls = compact.root.querySelector('.asset-controls')
+    const compactBounds = compactControls.getBoundingClientRect(), viewportBounds = viewport.getBoundingClientRect()
+    check(compact.root.tabIndex === 0 && compact.root.getAttribute('aria-label') === literal,
+      'Compact image lost its keyboard focus or accessible name')
+    check(getComputedStyle(compactControls).visibility === 'visible' &&
+      compactBounds.left >= viewportBounds.left && compactBounds.right <= viewportBounds.right + 1 &&
+      compactBounds.top >= viewportBounds.top && compactBounds.bottom <= viewportBounds.bottom + 1,
+      'Compact controls were clipped outside the reading viewport')
+    check(compact.root.querySelector('.document-image').getBoundingClientRect().height < 10,
+      'Compact image retained the standalone minimum height')
+    compact.dispose()
     let wrong = false
     try {
       await readerImageProvider({ request: async () => ({ ...metadata, id: 1 }) }, owner, 0)

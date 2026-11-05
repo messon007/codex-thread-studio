@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createLargeMarkdownHost } from './large-markdown-host.mjs'
-function fixture(initialView, capabilities = {}) {
+function fixture(initialView, capabilities = {}, callbacks = {}) {
   const requests=[],states=[],selections=[]
   let listener,closed=0
   let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true,source:true,sourceRangeNavigation:true,...capabilities},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
@@ -14,7 +14,7 @@ function fixture(initialView, capabilities = {}) {
     return state
   },async dispose({force}){assert.equal(force,true);closed++}}
   const frame={src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
-  const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{initialView,createClient(_frame,options){listener=options.onEvent;return client}})
+  const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{initialView,...callbacks,createClient(_frame,options){listener=options.onEvent;return client}})
   return {host,requests,states,selections,emit:(type,value)=>listener(type,value),setState:patch=>{state={...state,...patch};listener('state',state)},closed:()=>closed}
 }
 test('host controls use only the public protocol and preserve dirty/save errors',async()=>{
@@ -221,4 +221,24 @@ test('host controls stay unready while a saved reading location is being restore
   await host.ready
   assert.equal(states.at(-1).ready,true)
  }finally{await host.dispose()}
+})
+
+test('reader links retain owner identity, reject stale events and report host failures',async()=>{
+ const links=[],errors=[]
+ const {host,emit}=fixture(undefined,{}, {onLinkRequested:async value=>{links.push(value);if(value.target==='broken')throw Error('Host denied the link')},onError:error=>errors.push(error.message)})
+ await host.ready
+ emit('linkRequested',null);emit('linkRequested',{})
+ const link={documentId:'doc',revision:'a'.repeat(64),target:'sibling.md',localPath:'/project/sibling.md',precision:'exact',reference:{startByte:3,endByte:20}}
+ emit('linkRequested',{...link,documentId:'other'})
+ emit('linkRequested',{...link,revision:'b'.repeat(64)})
+ emit('linkRequested',{...link,target:'x'.repeat(8193)})
+ emit('linkRequested',link)
+ await new Promise(resolve=>setTimeout(resolve,0))
+ assert.deepEqual(links,[link])
+ emit('linkRequested',{...link,target:'broken'})
+ await new Promise(resolve=>setTimeout(resolve,0))
+ assert.deepEqual(errors,['Host denied the link'])
+ await host.dispose();emit('linkRequested',link)
+ await new Promise(resolve=>setTimeout(resolve,0))
+ assert.equal(links.length,2)
 })

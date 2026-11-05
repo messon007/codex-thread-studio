@@ -8,6 +8,7 @@ import { diagramController, diagramMetrics } from './diagrams.mjs'
 import { assetController } from './assets.mjs'
 import { imageFrameResponse } from './image-frames.mjs'
 import { notesController } from './notes.mjs'
+import { mountReferences } from './references.mjs'
 import { jqController } from './jq-query.mjs'
 import { tableController } from './tables.mjs'
 import { fileController } from './files.mjs'
@@ -92,6 +93,7 @@ const cache = new Map()
 const nodes = new Map()
 let diagrams = null
 let assets = null
+let documentReferences = null
 let notes = null
 function syncNotesOwner() {
   const owned = serviceCapabilities.notes && presentation.state().notes === 'reader'
@@ -137,7 +139,8 @@ async function api(path, signal, options = {}) {
         await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt))
         continue
       }
-      if (!response.ok) throw new Error(`Reader request failed (${response.status}): ${(await response.text()).slice(0, 800)}`)
+      if (!response.ok) throw Object.assign(new Error(`Reader request failed (${response.status}): ${(await response.text()).slice(0, 800)}`),{status:response.status,...(response.status === 429 ? {code:'BUSY'} : {})})
+      if (response.status === 202 && imageRevision !== undefined) throw Object.assign(Error('Image snapshot is preparing'),{code:'BUSY'})
       if (imageRevision !== undefined) return imageFrameResponse(response, { revision: imageRevision, signal })
       return await response.json()
     }
@@ -358,6 +361,34 @@ function setup() {
   diagrams = diagramController(viewport, article => { virtualizer?.measureElement(article); schedule() }, { documentId, revision: index.revision, token })
   assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)virtualizer?.measureElement(article);schedule()},{translate})
   syncNotesOwner()
+  documentReferences = index.format === 'markdown' ? mountReferences(space, {
+    owner: { documentId, revision: index.revision }, viewport, translate,
+    provider: {
+      info: ({id,signal}) => api(`/api/reference?id=${id}&revision=${encodeURIComponent(index.revision)}`,signal),
+      imageInfo: ({id,signal}) => api(`/api/reference-image?id=${id}&revision=${encodeURIComponent(index.revision)}`,signal),
+      imageFrame: ({id,imageRevision,frame,signal}) => api(`/api/reference-image?id=${id}&revision=${encodeURIComponent(index.revision)}&imageRevision=${encodeURIComponent(imageRevision)}&frame=${frame}`,signal,{imageRevision:index.revision}),
+    },
+    onChange: article => { if (article) virtualizer?.measureElement(article); bridge?.publish('state',publicState()) },
+    onLink: async value => {
+      const target = value.target
+      if (target?.startsWith('#')) {
+        const fragment = decodeURIComponent(target.slice(1))
+        const counts = new Map()
+        const heading = index.toc.find(heading => {
+          const slug = heading.label.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu,'').replace(/\s/gu,'-')
+          const count = counts.get(slug) || 0; counts.set(slug,count+1)
+          return fragment === `heading-${heading.id}` || fragment === slug+(count?'-'+count:'')
+        })
+        if (!heading) throw Error('Heading link target is unavailable')
+        await jump(heading.page,heading.id)
+      } else if (embedded) {
+        if (!bridge?.connected) throw Error('The host has not connected its link handler')
+        bridge.publish('linkRequested',value)
+      } else if (value.openPath) await files.open(value.openPath)
+      else if (/^(https?:|mailto:)/i.test(target || '')) window.open(target,'_blank','noopener,noreferrer')
+      else throw Error('Reference is outside the authorized folder or uses an unsupported scheme')
+    },
+  }) : null
   jq = serviceCapabilities.queries ? jqController(index,api,{translate}) : null
   files.state('ready')
   document.querySelector('#document-name').textContent = index.name || 'Document'
@@ -523,6 +554,7 @@ function teardown() {
   tables?.dispose(); tables = null
   diagrams?.dispose(); diagrams = null
   assets?.dispose(); assets = null
+  documentReferences?.dispose(); documentReferences = null
   notes?.dispose(); notes = null
   jq?.dispose(); jq = null
   stopReader?.(); stopToc?.()
@@ -736,11 +768,11 @@ function publicState() {
   const sourceAvailable = Boolean(index&&['markdown','csv','tsv','text','html'].includes(index.format))
   return { apiVersion: 1, bridgeVersion: 1, state: stopped ? 'disposed' : documentError ? 'error' : index ? formatLoading || formatRenderer?.state().ready === false ? 'rendering' : 'ready' : 'indexing', error: documentError,
     documentId, resourceId, revision: index?.revision ?? null, editingRevision: editor?.revision ?? null,
-    presentation: presentation.state(),
+    presentation: presentation.state(), resources: documentReferences?.state() ?? null,
     timings: { indexMs: index?.indexMs ?? null, indexPeakRssKiB: index?.peakRssKib ?? null, firstUsefulContentMs: metrics.firstContentMs, maxHeartbeatGapMs: metrics.maxHeartbeatGapMs },
     editorError: editor?.error ? { code: editor.error.code || 'BACKEND', message: editor.error.message } : null,
     name: index?.name ?? null, format: index?.format ?? null, formatState: formatRenderer?.state() ?? null, view,
-    document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length} : null,
+    document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length,references:index.references?.length??0} : null,
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
     capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },

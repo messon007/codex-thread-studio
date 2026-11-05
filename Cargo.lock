@@ -3806,6 +3806,7 @@ dependencies = [
  "calamine",
  "chrono",
  "csv",
+ "data-url",
  "futures-util",
  "gif 0.14.2",
  "html5ever",
@@ -3834,6 +3835,7 @@ dependencies = [
  "tower",
  "tree-sitter-highlight",
  "tungstenite 0.29.0",
+ "url",
  "uuid",
  "zip",
 ]

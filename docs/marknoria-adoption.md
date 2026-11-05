@@ -26,7 +26,7 @@ The consuming workspace lock records serde_json 1.0.154 and sha2 0.11.1; these a
 within the SDK's public compatible patch ranges. The SDK's standalone lock stays
 unchanged. Third-party notices and first-party export MIT terms remain intact.
 
-## Executed locally on Ubuntu 26.04.1
+## Earlier complete-suite baseline on Ubuntu 26.04.1
 
 - Complete Studio UI suite: 780 passed; TypeScript type checks passed.
 - Complete Rust workspace: 149 application tests passed, one pre-existing ignored
@@ -60,9 +60,9 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
 
 ## Public interface and latest local package
 
-The current pin is MarkNoria `7638fd367430884e0a2bb52e9467f8ad738da5e7`.
-Two clean offline exports contain the same 791-file inventory and archive SHA-256
-`180bcc579b727b1f1c15c1d25f275c39b700ff0eaac08df21ce22ac6271d1613`.
+The current pin is MarkNoria `160b934e257a987e60530e68b5cdd82ebd0649ab`.
+Two clean offline exports contain the same 798-file inventory and archive SHA-256
+`f0a352c52059bbf65524312826f4064936ecbe248ec93e466deceb01962a3160`.
 The eight export contracts include staged Git byte preservation. Studio imports
 that exact archive without modifying any SDK source or generated resource.
 
@@ -228,3 +228,56 @@ remote CI or macOS/Windows execution is claimed from local compilation.
 The original Studio checkout is untouched. These integration changes are being
 prepared and committed in an isolated checkout. Remote pushes are deferred until
 the complete change set and local validation are ready, at the owner's request.
+
+
+## Current resource adoption batch
+
+The fixed SDK above and the application resource wiring form one adoption batch.
+The reviewed tree SHA-256 is
+`1bcb291c74e370b33ced8bae160924914337a94bfe710519d7caafe0b7f0f7ff`.
+The unchanged inventory verifies after the application build. No SDK patch or
+private checkout/runtime is used. The upstream duplicate-export contract passes
+eight checks; it is not regenerated for host-only edits.
+
+Each service receives its already authorized project root and a narrow trusted
+provider over Studio's current shared-directory configuration. Both old loaders
+and the provider use the same canonical-directory resolver. Resource authority
+is checked before image-cache hits, so new grants/revocations apply to new reads
+without closing the document or discarding a draft. A shared-root change does not
+remove the project's independent edit grant. The 257-root profile accommodates
+one project plus the existing 256 shared-directory setting, after deduplication.
+The gateway adds only the two declared reference GET routes; tokens, origins,
+method restrictions and ordinary file-open authorization remain intact.
+
+`linkRequested` is checked against the bound document/revision and bounded target.
+The workspace delegates local targets to its existing authorized open flow and
+external targets to its existing browser action. Stale, malformed, oversized and
+after-dispose events do not enter host actions; callback failures are reported.
+No child DOM or experimental global is used by this production adapter.
+
+Executed against the actual application binary on Ubuntu 26.04.1:
+
+- Six affected Rust gateway tests and 44 host/workspace UI tests pass, as do UI
+  build/type checks and the unmodified 798-file inventory verification.
+- `scripts/smoke-reader-resources.mjs --webkit` runs the actual gateway and
+  document workspace. Chromium 149 displays project/inline/shared images,
+  rejects missing token/foreign Origin/wrong method, adds and revokes a shared
+  grant, rejects cached metadata/frames after revocation, preserves/saves the
+  dirty draft, opens a relative CSV target and delegates an external link.
+- Gateway-served reader frames in native Wayland WebKitGTK 2.52.6 verify all three
+  resource images, PNG Blob transport, exact link identity and disposal. This is
+  reader-frame coverage, not full Studio-shell visual/accessibility acceptance.
+  No X11/XWayland is forced. Backend Chromium is intentionally unavailable.
+- App-requested closure removes all owned reader caches. Only the explicit editor
+  fixture changes; generated documents/caches/screenshots stay untracked.
+
+Before this wiring, the preceding fixed package passed 780 UI tests, type checks,
+149 application Rust tests (one pre-existing ignored) and 13 exact SDK contracts.
+This follow-up uses the targeted tests above rather than claiming those complete
+suites were rerun after every host edit. The public core/runtime and their shared
+fixtures did not change in the dynamic-resource follow-up.
+
+Small Markdown/raw-HTML compatibility, original-image profiles, remaining common
+entry points/Notes, durable AI draft references, WSL transport and the final
+cross-product/remote gates remain open. New commits remain local until the whole
+task is ready for the owner's requested combined push.

@@ -136,6 +136,7 @@ export function fileController(token, options = {}) {
   on(document.querySelector('#file-dismiss'), 'click', () => { feedback.hidden = true })
   on(document, 'keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseServer() } })
   return {
+    open(path) { selection = null; return openServer(path) },
     compare() {
       const target = new URL('./compare.html', import.meta.url)
       target.hash = token

@@ -94,7 +94,7 @@ fn svg(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if original.0 == 0 || original.1 == 0 || original.0 > 1_000_000 || original.1 > 1_000_000 {
         return Err("Invalid SVG dimensions".into());
     }
-    let scale = (EDGE as f32 / size.width()).min(EDGE as f32 / size.height());
+    let scale = (EDGE as f32 / size.width()).min(EDGE as f32 / size.height()).min(1.0);
     let width = ((size.width() * scale).ceil().max(1.0) as u32).min(EDGE);
     let height = ((size.height() * scale).ceil().max(1.0) as u32).min(EDGE);
     let mut pixels =

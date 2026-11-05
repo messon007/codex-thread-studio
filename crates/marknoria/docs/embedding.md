@@ -107,6 +107,7 @@ mounting its first view.
 | `save` | Saves the current editor page; separate edit and preview revisions remain explicit |
 | `assetInfo` | `id` from `state.document.assets`; returns bounded preview dimensions/frame timing without cache filenames |
 | `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
+| `referenceInfo`, `referenceImageInfo`, `referenceImageFrame` | Markdown target/source metadata and bounded image snapshots; explicit directory grants, image revisions and host navigation events are described in [markdown-references.md](markdown-references.md) |
 | `outline` | `offset` (default 0), at most 256 items, total and revision |
 | `search` | `query`, 1–256 UTF-8 bytes; bounded source lines or complete-document PDF/EPUB search |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
@@ -135,7 +136,7 @@ original column as its navigation anchor, without claiming that the match was
 in that column.
 The client supplies its latest state by default; explicitly supplied expectations
 are retained, so stale commands fail. Events are `ready`, `state`, `saved`,
-`selection`, `error`, `openRequested`, and `disposed`. Repeated identical state is suppressed.
+`selection`, `error`, `openRequested`, `linkRequested`, and `disposed`. Repeated identical state is suppressed.
 Selection notifications are debounced after the host handshake and previous requests cancelled.
 Embedded Ctrl/Command+O delegates to the host; it cannot browse the service filesystem.
 Saved `position` has the core ReadingPosition shape; `positionPrecision` is a

@@ -220,7 +220,7 @@ fn images_are_bounded_oriented_and_use_private_png_frames() {
     fs::write(&p,"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"20\"><rect width=\"40\" height=\"20\" fill=\"red\"/><image href=\"file:///etc/passwd\" width=\"1\" height=\"1\"/></svg>").unwrap();
     let (c, i) = index(&p);
     assert!(asset(c.path(), &i, 0, 0).unwrap().is_file());
-    assert!(i.assets[0].width <= 2048);
+    assert_eq!((i.assets[0].width, i.assets[0].height), (40, 20));
     assert!(
         !fs::read_to_string(c.path().join("source.md"))
             .unwrap()

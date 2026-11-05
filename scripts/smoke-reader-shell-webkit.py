@@ -59,7 +59,8 @@ def loaded(_view, event):
           await until(()=>document.querySelector('.artifact-large-markdown-frame')&&document.querySelector('#artifact-title').textContent.trim()===path.split('/').pop()&&!document.querySelector('#artifact-preview').disabled,format+' initialized');
           const frame=document.querySelector('.artifact-large-markdown-frame'), doc=frame.contentDocument;
           const client=createReaderClient(frame);await client.ready();
-          const state=()=>client.request('state');
+          const state=()=>client.request('state'),stages=[];
+          const stage=async name=>{await Promise.all([window,doc.defaultView].map(win=>new Promise(resolve=>win.requestAnimationFrame(()=>win.requestAnimationFrame(resolve)))));await pause();stages.push({name,timings:(await state()).timings})};
           const first=await state(),initial={...first.timings,hostFirstUsefulMs:performance.now()-started,mounted:doc.querySelectorAll('#space *').length};
           if((await state()).presentation.toolbar!=='host'||getComputedStyle(doc.querySelector('.reader-header')).display!=='none')throw Error('Duplicate child toolbar');
           for(const theme of ['light','dark']){
@@ -70,16 +71,45 @@ def loaded(_view, event):
             await until(()=>!document.querySelector('#settings-dialog').open,'settings close');
             for(let attempt=0;attempt<200&&(await state()).presentation.theme!==theme;attempt++)await pause();
             if((await state()).presentation.theme!==theme)throw Error('Theme did not reach reader');
+            await stage('theme-'+theme);
           }
+          let interactionProfile=null;
           if(format==='markdown'){
+            const restorers=[],calls=[],sync=[];
+            if(cfg.profileInteractions)for(const [realm,win] of [['parent',window],['child',doc.defaultView]]){
+              for(const [target,key] of [[win,'getComputedStyle'],[win.HTMLElement.prototype,'focus'],[win.Element.prototype,'getBoundingClientRect']]){
+                const original=target[key],record={realm,method:key,count:0,totalMs:0,maxMs:0};calls.push(record);
+                target[key]=function(...args){const start=performance.now();try{return Reflect.apply(original,this,args)}finally{const duration=performance.now()-start;record.count++;record.totalMs+=duration;record.maxMs=Math.max(record.maxMs,duration)}};
+                restorers.push(()=>{target[key]=original});
+              }
+            }
+            try{
             document.querySelector('#artifact-notes-tools button').click();
             await until(()=>document.querySelector('.notes-dialog'),'Notes');
-            setLanguage('zh-CN');
+            await stage('Notes-en-US-open');
+            const localeStart=performance.now();setLanguage('zh-CN');sync.push({locale:'zh-CN',ms:performance.now()-localeStart});
             await until(()=>[...document.querySelectorAll('.notes-filters button')].some(node=>node.textContent===t('Comments')),'live Notes locale');
+            for(let attempt=0;attempt<200&&(await state()).presentation.locale!=='zh-CN';attempt++)await pause();
+            if((await state()).presentation.locale!=='zh-CN')throw Error('Child locale did not update');
+            await stage('Notes-zh-CN');
+            if(cfg.profileInteractions){
+              for(const locale of ['en-US','zh-CN']){const start=performance.now();setLanguage(locale);sync.push({locale,ms:performance.now()-start});
+                await until(()=>[...document.querySelectorAll('.notes-filters button')].some(node=>node.textContent===t('Comments')),'repeated Notes locale');
+                for(let attempt=0;attempt<200&&(await state()).presentation.locale!==locale;attempt++)await pause();
+                if((await state()).presentation.locale!==locale)throw Error('Repeated child locale did not update');
+                await stage('Notes-repeat-'+locale);
+              }
+            }
             document.querySelector('.notes-dialog .notes-close').click();
+            await stage('Notes-closed');
             document.querySelector('#artifact-outline-toggle').click();
-            await until(()=>doc.querySelector('#toc-filter').getAttribute('aria-label')===t('Filter contents'),'live Contents locale');
+            await until(()=>!doc.querySelector('#reader-outline').hidden&&doc.querySelector('#toc-filter').getAttribute('aria-label')===t('Filter contents'),'live Contents locale');
+            if(!(await state()).outline.open)throw Error('Public Contents state did not open');
+            await stage('Contents-zh-CN');
             setLanguage('en-US');doc.querySelector('#contents-close').click();
+            await stage('Contents-en-US-closed');
+            }finally{for(const restore of restorers.reverse())restore()}
+            if(cfg.profileInteractions)interactionProfile={calls,sync,nestedTimings:true};
           }
           if(format==='markdown'){
             document.querySelector('#artifact-preview').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}));
@@ -95,10 +125,11 @@ def loaded(_view, event):
           for(const dialog of doc.querySelectorAll('dialog[open]')){
             const r=dialog.getBoundingClientRect();if(r.x<0||r.y<0||r.right>frame.clientWidth+1||r.bottom>frame.clientHeight+1)throw Error('Clipped dialog');
           }
+          const afterProductInteractions=(await state()).timings;
           send({snapshot:format});
           await until(()=>window.__shellShot===format||window.__shellShotError,'snapshot');
           if(window.__shellShotError)throw Error(window.__shellShotError);
-          results.push({format,phase:'first-open-private-cache',initial,afterInteractions:(await state()).timings,theme:true,initialized:true,accessibleNames:true,keyboard:format==='markdown'});client.disconnect();
+          results.push({format,phase:'first-open-private-cache',initial,afterProductInteractions,stages,interactionProfile,afterQaSnapshot:(await state()).timings,theme:true,initialized:true,accessibleNames:true,keyboard:format==='markdown'});client.disconnect();
           document.querySelector('#close-artifact').click();
           await until(()=>!document.querySelector('.artifact-large-markdown-frame'),'close');
         }

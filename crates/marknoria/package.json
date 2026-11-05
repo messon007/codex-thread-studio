@@ -27,7 +27,8 @@
     "check:source-ranges": "node tests/server/source-ranges-check.mjs",
     "check:outline": "node tests/browser/outline-check.mjs",
     "check:file-ui": "node tests/browser/file-ui-check.mjs",
-    "check:code-search": "node tests/browser/code-search-check.mjs"
+    "check:code-search": "node tests/browser/code-search-check.mjs",
+    "check:host-client": "node tests/browser/host-client-check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

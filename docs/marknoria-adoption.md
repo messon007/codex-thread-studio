@@ -2,12 +2,13 @@
 
 The reviewed pin is `scripts/marknoria-release.json`; the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
-`ffdd54116766cb53e979bb3f7cb3d18eac969eba`, 814 inventory files, archive SHA-256
-`92f4cb7f6291a00905fe5b6a76922f45494b4541eed959e67005ea936ae301cb`, tree SHA-256
-`57476dbac365c95ab361622ac8c5135765fd0a8c90a3327165540ff10abb1899`.
+`29e86cf542ee908fdab0c283c4b9145eddcd2c17`, 814 inventory files, archive SHA-256
+`84be9077b930a4cc4beb83c448d01897722f843dc926687e2157226fd6ff550e`, tree SHA-256
+`d14d97f967fe311bf66575754936d606230468f7490da8748a062901bb004965`.
 Two clean offline exports match; eight archive/inventory/Git-byte checks pass.
-This final source revision updates acceptance documentation only relative to the
-runtime-tested `87df867` package. Imported runtime source/resources are identical.
+This source revision updates acceptance documentation and an npm check alias
+relative to the runtime-tested `87df867` package. Imported runtime source and
+generated resources are identical.
 
 No private MarkNoria checkout, token, build output, assets or installed executable
 is needed. The SDK's MIT allowlist and original third-party licenses/provenance
@@ -101,7 +102,15 @@ editing is 198/90 ms and diagrams 47/34 ms. Earlier cache-isolation experiments
 show GStreamer registry dependence, not the exact blocking call. No prewarming or
 copied registry is presented as a fix. Warm results do not replace cold acceptance.
 
-Current downstream CI/review/merge and the requested independent Astra whole-goal
-approval remain open. Upstream private CI last reported a billing/spending block;
+Astra independently accepted the local feature/API/authorization and fixed-package
+evidence, but rejected whole-goal acceptance. A focused QA correction separates
+product interaction samples from screenshots and drains both realms before
+sampling. With Notes already open, first locale update through paint still has
+a 433 ms heartbeat spike (398 ms without probes), separate from cold startup;
+it is not attributed to Contents or screenshot capture. Cumulative maxima do
+not measure repeat-switch latency. This second performance item remains open.
+Derived fixture throughput is about 40/33 MB/s; wire byte counts, serialization
+CPU, sustained throughput and whole-application peak memory remain unmeasured.
+Current downstream CI/review/merge and Astra whole-goal approval remain open. Upstream private CI last reported a billing/spending block;
 earlier downstream CI results do not validate this candidate. The original Studio
 checkout stays untouched, and commits remain local until the final batch push.

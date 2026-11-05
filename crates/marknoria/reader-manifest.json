@@ -38,7 +38,7 @@
     "docs/reader-assets.md": "d66eb4db3945514c6a48277f11eae94dec63b99d799801df0fdf201bfa7a5001",
     "docs/table-components.md": "4a3209e064bc2050a53e148a32cf9d86c6034e71bf4b9bf26697a4250da71a15",
     "docs/translation.md": "8d6efb70648384b972adc1e3154252254282c12fe0e7c16dac55a74df51e5adf",
-    "docs/web-parity.md": "10a55c419f038fffcfdb5580925477075e675fd1ba5de61d1e5327e5dedf695d",
+    "docs/web-parity.md": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
     "examples/embedded-host.rs": "712dc746b14cd3a19585cb7abcfa0f6a2f6f443200317a25ef5cb0451fd3525e",
     "examples/reader-assets-host.rs": "172e770c6d9b4c3d3fc4ab2ca2bedfad9168dd621a012c90683325e09855d050",
     "examples/reader-corpus.rs": "c335b6ed1bc62ebc53d234e073413ede69aa73942d81fa6d4b2428c4c35efbc5",
@@ -419,7 +419,7 @@
     "licenses/npm/w3c-keyname/LICENSE": "869c30f368eb08735e779027b9f4bc9fea2f39624351856aebe42741f0bc0884",
     "licenses/npm/w3c-keyname/README.md": "59c6a9d986798d0b7e96a6fe8fc5381aa48f0512950d7edcb59c8a96baf338c3",
     "package-lock.json": "dae41cbd5a726314fdebf6a7927ec7049d69aaa517e776ba46b7473808db3ead",
-    "package.json": "4436063ebff9c8159adb6bb2a95cefce6a6d1fd0303e1e14bb0f25ae232db7df",
+    "package.json": "9454b1810c0dcf7a46131b76c2961c39f9d59323af758622b6586d5e1261f03f",
     "scripts/build.mjs": "e008efcee31c7083be0bd72bcb86e222ee8b584700eaedac2495d6df423ed6dd",
     "scripts/d2-resource.mjs": "e405beea6e162a9fe6d4cf844f8c34cea1b2f369c1b07152abc88b832e8001bd",
     "scripts/pdf-assets.mjs": "4a5fddd06eb6a40c663edd19ae98e7e148ab6188a45791179285694e13681a34",
@@ -861,7 +861,7 @@
     },
     "pdfjs-dist": "6.4.299"
   },
-  "revision": "ffdd54116766cb53e979bb3f7cb3d18eac969eba",
+  "revision": "29e86cf542ee908fdab0c283c4b9145eddcd2c17",
   "sourceFiles": {
     ".gitattributes": {
       "sha256": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
@@ -952,7 +952,7 @@
       "source": "docs/translation.md"
     },
     "docs/web-parity.md": {
-      "sha256": "10a55c419f038fffcfdb5580925477075e675fd1ba5de61d1e5327e5dedf695d",
+      "sha256": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
       "source": "docs/web-parity.md"
     },
     "examples/embedded-host.rs": {
@@ -976,7 +976,7 @@
       "source": "package-lock.json"
     },
     "package.json": {
-      "sha256": "4436063ebff9c8159adb6bb2a95cefce6a6d1fd0303e1e14bb0f25ae232db7df",
+      "sha256": "9454b1810c0dcf7a46131b76c2961c39f9d59323af758622b6586d5e1261f03f",
       "source": "distribution/public-package.json"
     },
     "scripts/build.mjs": {
@@ -1770,6 +1770,6 @@
     "python": "3.14.4",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   },
-  "treeSha256": "57476dbac365c95ab361622ac8c5135765fd0a8c90a3327165540ff10abb1899",
+  "treeSha256": "d14d97f967fe311bf66575754936d606230468f7490da8748a062901bb004965",
   "version": 1
 }

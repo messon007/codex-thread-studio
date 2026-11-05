@@ -32,7 +32,7 @@ try{
  await page.waitForFunction(()=>Boolean(window.__studioDeveloper))
  const actual=await page.request.get(new URL('/document-workspace-controller.mjs',url).href)
  if(await actual.text()!==await readFile(join(root,'ui/document-workspace-controller.mjs'),'utf8'))throw Error('Stale Studio binary frontend')
- const cases=[['markdown',file],['table',csv],['pdf',pdf],['epub',epub]], results=[]
+ const cases=[['markdown',file],['table',csv],['pdf',pdf],['epub',epub]].filter(([format])=>!process.argv.includes('--markdown-only')||format==='markdown'), results=[]
  await writeFile(join(dir,'corpus.json'),JSON.stringify({project,cases}))
  const settings=async(theme,locale='en-US')=>{
   await page.evaluate(()=>__studioDeveloper.click('#settings-button'))
@@ -118,7 +118,7 @@ try{
  }
  if(errors.length)throw Error(JSON.stringify(errors))
  let webkit
- if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir})],{timeout:175000,maxBuffer:1000000})).stdout)
+ if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
  if(process.argv.includes('--webkit')&&!webkit?.ok)throw Error('Native WebKit shell did not pass')
  console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,liveLocale:true,modalEscape:true,railSearch:true,results,webkit,artifacts:dir}))
 

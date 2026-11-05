@@ -17,7 +17,7 @@ Ordinary builds/CI do not read a private checkout, its assets or credentials.
 | Functional union / public API | Shared parsing, queries, PDF/EPUB, cells/charts, Notes, original resources, typed references; original public Rust fixtures and real two-product tests below | Independent whole-goal review |
 | Ordinary entry / defaults | Every ordinary Studio file uses the SDK; fresh Preview, capability-gated Source/Edit, explicit unsupported errors; 15-format gateway corpus in both engines | Current downstream platform CI |
 | Locale / shortcuts / visual / accessibility | Finite scoped host dictionary, live labels with literal data preserved; actual full Studio shell and standalone four-format scenes, screenshots, named controls, overlays and search | Control-name checks are not a full screen-reader audit |
-| Release performance | Separate index time/RSS, content timing, heartbeat and DOM; first-open and browser-cache reopen measurements below | Fresh platform cache still produces a 1.84 s WebKit heartbeat gap; no cold responsiveness pass |
+| Release performance | Separate index time/RSS, content timing, heartbeat and DOM; first-open and browser-cache reopen measurements below | Fresh platform cache still produces a 1.84 s WebKit gap; first locale update while Notes is open also has an unresolved interaction spike |
 | Fixed delivery | MIT allowlist, provenance, locked isolated resource build, unchanged import; two clean offline exports and eight archive/inventory/Git-byte checks | Final pin, remote CI/review/merge, Astra approval |
 
 ## Formats and actions
@@ -93,12 +93,30 @@ at 53,092/49,944 KiB RSS; Chromium content took 201/194 ms, host content 324/289
 heartbeat gaps 37/19 ms, with 741/21 initial nodes. Source/editor and completed
 figures are separate later checks.
 
+Dividing source size by these index times gives about 40/33 MB/s for these two
+fixtures; this is a derived sample, not a sustained or cold-I/O throughput
+benchmark. End-to-end wire byte counts, serialization CPU, browser/process-wide
+peak memory and large-corpus sustained throughput are **unmeasured**. Source-byte
+sizes, bounded transport windows and image-loader reuse counts do not substitute
+for measured transfer cost or a whole-application memory bound.
+
 With a **fresh private platform `XDG_CACHE_HOME`**, Wayland Markdown still took
 1952 ms to content with an 1839 ms heartbeat gap. Same-cache editing took 198 ms /
 90 ms gap and diagrams 47 ms / 34 ms gap. Earlier isolated experiments identified
 a GStreamer registry cache dependency, not the exact blocking call. Font/GPU/media
 toggles did not fix it. No prewarming/copied registry is presented as a product
 fix; **cold responsiveness is not passed**.
+
+A separate bounded interaction follow-up first opens English Notes and drains
+both realms' paint/timer work before switching locale. Its heartbeat maximum
+remains 101 ms after opening, then rises to **433 ms during the first locale
+update to Chinese through painting**, with Notes already open. It is unchanged
+before/after the QA screenshot. `setLanguage` itself took 12 ms; temporary nested
+focus/style/rectangle probes do not explain the complete pause and can perturb
+timings. An unwrapped paint-drained sample also observed 398 ms. The cause remains
+unattributed; it is not assigned to Contents, screenshot capture or a particular
+synchronous call. Subsequent cumulative maxima cannot establish repeat-switch
+latency. This is a second unpassed performance item, separate from cold startup.
 
 WSL's exact portable read-only adapter passes seven formats on Linux, including
 reauthorization, stable identities and cleanup. This is **not actual Windows/WSL

@@ -11,41 +11,39 @@ The goal is full application migration. Current work follows the
 [current parity inventory](gnome-native-status.md) distinguishes present gaps
 from the historical checkpoints below.
 
-## Current validated candidate
+## Current interface review build
 
-Run the optimized candidate integrating main `c73fdf4` and retaining the
-notification activation and IME composition fixes:
+For a fresh source checkout, follow [Build and run](#build-and-run).
+
+The native application is developed independently on
+`feat/ubuntu-26-04-gnome-native`; main keeps Web Desktop. The previous candidate
+was rejected during user acceptance. The current interface repairs and their
+actual screenshot/interaction checks are recorded in the
+[current inventory](gnome-native-status.md#interface-redesign-review).
+This is a review build, not a user-accepted release.
+
+On the build machine, use the one current optimized bundle:
 
 ```sh
-./target/gnome-native-candidate-20261105-main/codex-thread-studio-gnome
+/media/rui/studio-native-quality-build/package/codex-thread-studio-gnome
 ```
 
-The shared gateway is reused from `6b540c0`, with unchanged verified diagram
-engines. The frontend is rebuilt with portable math-font embedding in both
-debug and release profiles. Both packages pass installation and full math-worker
-checks with original build sources and Cargo caches hidden; the optimized pair
-also passes installed reading/editing, Git, settings, viewers and recovery.
-Earlier actual-report/32 MiB LF/CRLF, real Codex/OpenCode, GNOME Shell, IBus,
-Orca and mixed-scale checks retain their documented source and binary scope.
-See the [font portability checkpoint](gnome-native-status.md#portable-math-fonts-and-current-installer-fixture),
-[current inventory](gnome-native-status.md) and
-[requirement review](gnome-native-acceptance.md) for exact scope.
-Application/workflow inputs at `4788ce3` have a
-[passing remote matrix](gnome-native-status.md#remote-qualification-of-4788ce3);
-physical desktop acceptance remains outstanding.
+Close another Studio/server instance first because the applications share their
+existing profile and stores. Use GNOME Wayland without an X11 override. See the
+[startup and installation guide](gnome-native-desktop-check.md) for copying the
+complete bundle to another Ubuntu 26.04 machine and installing its dependencies.
+The bundle's `INTERFACE-REVIEW.json` identifies its source, binary hash and exact
+validation scope; `SHA256SUMS` covers its contents. Its optimized frontend at
+`49342aa` includes the readable Compare focus layout over the unchanged gateway
+and engines. Earlier provider, large-document and platform checks retain their
+recorded source/package identities.
 
-A portable copy of this package and its archive checksum are available under
-`target/codex-thread-studio-gnome-ubuntu-26.04-x86_64-88a9cc9f.tar.gz` and the
-matching `.sha256` path. Follow the
-[physical desktop check](gnome-native-desktop-check.md) to install it on Ubuntu
-26.04 or review the existing candidate. That checklist records manual results;
-it does not claim a physical desktop has passed.
-
-The package's dependency installer includes Noto Color Emoji, verified against
-the pinned renderer's real fallback-glyph test in a minimal-font namespace.
-
-The prior `gnome-native-candidate-20261105-ime` package and `ab21d4c` archive
-remain available with their original identities.
+The remaining candidate sections are historical validation records. Their
+`target/gnome-native-candidate-*` paths and older archives may have been removed
+during the requested cleanup; they are not current launch instructions. Use the
+guide above for the maintained review bundle. Physical desktop checks and the
+[acceptance reset](gnome-native-acceptance.md#acceptance-reset-after-user-rejection)
+remain explicit.
 
 ## Previous desktop activation candidate
 

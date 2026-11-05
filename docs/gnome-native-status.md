@@ -162,6 +162,42 @@ The previous optimized package also passed `release-map-n972bmwa`: actual main
 menu keyboard navigation, settings-dialog focus/dismissal, Map changes/undo and
 pane close with zero model turns. Its source identity remains `88e10dd`.
 
+## Compare layout follow-up — 2026-11-06
+
+The six-panel visual audit at `b89b992` reproduced a real Compare defect:
+with the sidebar and chat restored at 1600px, the right reader had only 18px
+visible. The fixed 700px inner divider and shrinkable children made the whole
+window-width threshold unsafe. Preview and Source were both affected.
+
+Compare now owns the content area while active, retaining the sidebar at wide
+sizes. Reader/close restores the existing conversation layout. The inner
+GtkPaned chooses its initial split from the readers' requisitions and constrains
+both children to their measured minima; user adjustments remain GTK-owned.
+This change reuses the existing two UI components and backend services.
+
+The controller rejected an earlier allocation-based attempt: its rectangle
+checks passed at 1280px, but actual screenshots showed two 339px readers and
+three-row headers. The final focused check additionally requires readable
+viewports and single-row headers in its fixed-size fixture. It passes ten
+layout checks in `panels-b89b992-ycig28xt`, covering Preview/Source at 1280/1600,
+resize/reopen, and returning to ordinary Reader/chat at both widths. An actual
+AT-SPI Value adjustment moves the inner divider 32px; its proportion survives
+resize/reopen within a 4px rounding tolerance. No GTK layout warning, model turn
+or session creation occurs. The controller independently inspected the actual
+normal/wide, Source/Preview and restored Reader captures. Physical pointer/IME
+checks retain their separate scope.
+
+The exact optimized frontend SHA-256 is
+`f79a3e0d773be36b2bb9e2f72d576025aa931c616276540ab625f7677688cd46`.
+The single review bundle contains the captures, geometry records and executed
+fixture under `interface-review/compare/`. Earlier failed visual and harness
+runs remain under `/tmp/studio-native-quality`; they are not counted as passes.
+Formatting and the locked offline release build pass. The preceding `b89b992`
+commit also passed [three-platform CI](https://github.com/messon007/codex-thread-studio/actions/runs/42073691883)
+and the complete [Native GNOME workflow](https://github.com/messon007/codex-thread-studio/actions/runs/42073691972),
+including independent Ubuntu 26.04 runtime installation. Those remote results
+identify the preceding commit, not this later Compare fix or overall user acceptance.
+
 ## Implemented application areas
 
 | Area | Native implementation and existing evidence |

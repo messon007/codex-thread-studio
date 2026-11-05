@@ -22,6 +22,13 @@ repair without substituting a fixture success for the reported experience.
 This is an independent native version on its own development branch. Main keeps
 the Web Desktop application. Native-to-main integration is not an acceptance gate.
 
+The [interface review](gnome-native-status.md#compare-layout-follow-up--2026-11-06)
+records a later Compare clipping defect and its verified focus-layout repair.
+Actual screenshot review rejected a cramped intermediate result despite passing
+rectangle checks; the final evidence includes readable widths, header alignment,
+user-adjusted divider retention and restoration of Reader/chat. This is a scoped
+repair, not a replacement for the acceptance reset above.
+
 ## Functional requirements
 
 The numbers below refer to the product's functional requirements. Evidence links

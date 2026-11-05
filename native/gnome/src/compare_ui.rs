@@ -192,9 +192,11 @@ impl Compare {
         panes.set_end_child(Some(&right.widget));
         panes.set_resize_start_child(true);
         panes.set_resize_end_child(true);
-        panes.set_shrink_start_child(true);
-        panes.set_shrink_end_child(true);
-        panes.set_position(700);
+        // GTK chooses the initial split from the readers' requisitions, then
+        // preserves the user's position across allocation and reopen. Neither
+        // reader may be dragged or resized below its measured minimum.
+        panes.set_shrink_start_child(false);
+        panes.set_shrink_end_child(false);
         panes.set_vexpand(true);
         widget.append(&panes);
         let ui = Rc::new(Self {

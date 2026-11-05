@@ -3350,7 +3350,11 @@ impl Ui {
         } else {
             1100
         };
-        self.conversation.set_visible(!document || width >= minimum);
+        // Compare is a focus view: both readers share the workspace instead of
+        // competing with chat. Returning to Reader/closing restores this policy.
+        let comparing = document && self.tools.visible_child_name().as_deref() == Some("compare");
+        self.conversation
+            .set_visible(!comparing && (!document || width >= minimum));
         // At desktop widths preserve explicit sidebar visibility. The previous
         // 1700px cutoff hid navigation even in a 1600px three-pane workspace.
         self.split

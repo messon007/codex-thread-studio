@@ -9,7 +9,6 @@ import { CommentSubmissionCoordinator, insertCommentPrompt } from './comment-sub
 import {
   chatCommentSource,
   documentCommentSource,
-  relocateDocumentComment,
 } from './comment-source-providers.mjs'
 import { createFileRangeTarget, structuredPreviewSourceRange, isMarkdownFile } from './document-review.mjs'
 import {
@@ -71,7 +70,7 @@ export function createReviewNotesController({
     renderArtifact,
     renderSessionMap,
     openArtifact,
-    setArtifactView,
+    jumpToSourceLine,
     reopenEpubSource,
     goToPdfPage,
     openBrowserUrl,
@@ -95,7 +94,6 @@ export function createReviewNotesController({
   const showError = reportError
   const waitFor = waitForBackend
   const transcriptScrollFollower = { pause: pauseTranscript }
-  const richArtifactReader = { goToPage: goToPdfPage }
   const reopenEpubComment = reopenEpubSource
   let querySnapshotDialog = null
   let annotationPersistTimer = null
@@ -848,22 +846,11 @@ async function reopenDocumentComment(target, excerpt) {
     await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath, readerReference: target.readerReference })
     return
   }
-  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
-  setArtifactView('source')
-  const source = $('#artifact-content .artifact-source')
-  if (!source) return
-  const { startOffset, endOffset } = relocateDocumentComment({ anchor: target }, state.artifact, excerpt)
-  if (startOffset == null || endOffset == null || endOffset <= startOffset) return
-  const node = source.firstChild
-  if (!node) return
-  const range = document.createRange()
-  range.setStart(node, Math.min(startOffset, node.length))
-  range.setEnd(node, Math.min(endOffset, node.length))
-  const selection = window.getSelection()
-  selection.removeAllRanges()
-  selection.addRange(range)
-  const rect = range.getBoundingClientRect()
-  $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
+  const line = Number(target.startLine)
+  if (!Number.isSafeInteger(line) || line < 1) throw Error(t('This older reference has no verifiable source position. Its saved quote is still available; reopen the document and select it again.'))
+  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath }, { viewState: { view: 'source' } })
+  await jumpToSourceLine(line)
+  toast(t('Opened approximately at the saved source line. Select the text again for an exact reference.'))
 }
 
 function renderComposerReviewContext() {
@@ -974,7 +961,7 @@ function showQuerySnapshot(snapshot, target) {
 
 async function reopenPdfComment(anchor) {
   await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath }, { viewState: { page: anchor.page } })
-  if (state.artifact?.kind === 'pdf') await richArtifactReader?.goToPage?.(anchor.page)
+  if (state.artifact?.format === 'pdf') await goToPdfPage?.(anchor.page)
 }
 
 async function reopenTableComment(anchor) {

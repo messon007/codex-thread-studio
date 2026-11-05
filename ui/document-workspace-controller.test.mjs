@@ -69,12 +69,6 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
   return { state, controller, element, errors, markdownRenders: () => markdownRenders, selectThread: (key) => { threadKey = key } }
 }
 
-// Retain regression coverage for callers using the explicit WSL 501 adapter.
-function legacyDocumentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
-  return documentWorkspaceFixture(context, (url, options) => url === '/studio/reader/open'
-    ? Promise.resolve(new Response('{}', { status: 501 })) : gatewayFetch(url, options), overrides)
-}
-
 function assertDocumentError(fixture, message, markdownRenders = 0) {
   assert.equal(fixture.state.artifact.loading, false)
   assert.equal(fixture.state.artifact.error, message)
@@ -86,8 +80,8 @@ function assertDocumentError(fixture, message, markdownRenders = 0) {
 
 test('large Markdown uses one retained frame without whole-document rendering and closes its lease', async (context) => {
   const closed = []
-  const result = { root: '/project', path: 'large.md', size: 32 * 1024 * 1024, readOnly: true, largeMarkdown: { id: 'reader-1', url: '/markdown-reader/reader-1/?embedded=1#token' } }
-  const fixture = legacyDocumentWorkspaceFixture(context, async (url, options) => {
+  const result = { root: '/project', path: 'large.md', size: 32 * 1024 * 1024, readOnly: true, reader: { id: 'reader-1', url: '/markdown-reader/reader-1/?embedded=1#token' } }
+  const fixture = documentWorkspaceFixture(context, async (url, options) => {
     if (url.endsWith('/close')) { closed.push(JSON.parse(options.body).id); return new Response('{}') }
     return new Response(JSON.stringify(result))
   })
@@ -105,7 +99,7 @@ test('large Markdown uses one retained frame without whole-document rendering an
   assert.equal(fixture.element('#artifact-view-switch').classList.contains('hidden'), false)
   assert.equal(fixture.element('#artifact-edit').classList.contains('hidden'), true)
   assert.equal(frames.length, 1)
-  assert.equal(frames[0].src, result.largeMarkdown.url)
+  assert.equal(frames[0].src, result.reader.url)
   fixture.controller.render()
   fixture.controller.setView('edit')
   assert.equal(frames.length, 1)
@@ -131,7 +125,7 @@ test('late large Markdown metadata releases its service after the document close
 
 test('document network failures clear Loading and display the error', async (context) => {
   const failure = new Error('Network connection closed')
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => { throw failure })
+  const fixture = documentWorkspaceFixture(context, async () => { throw failure })
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), failure)
   assertDocumentError(fixture, failure.message)
@@ -139,90 +133,31 @@ test('document network failures clear Loading and display the error', async (con
 
 test('document response decoding failures clear Loading and display the error', async (context) => {
   const failure = new SyntaxError('Invalid JSON response')
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => ({ ok: true, json: async () => { throw failure } }))
+  const fixture = documentWorkspaceFixture(context, async () => ({ ok: true, json: async () => { throw failure } }))
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), failure)
   assertDocumentError(fixture, failure.message)
 })
 
-test('binary document response failures clear Loading and display the error', async (context) => {
-  const failure = new Error('Document download interrupted')
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => ({ ok: true, arrayBuffer: async () => { throw failure } }))
-
-  await assert.rejects(fixture.controller.open({ path: 'large.pdf' }), failure)
-  assertDocumentError(fixture, failure.message)
-})
-
-test('Markdown rendering failures display an error without retrying the renderer', async (context) => {
-  const result = { root: '/project', path: 'large.md', content: '# Document', size: 10, lineCount: 1 }
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)))
-
-  await fixture.controller.open({ path: 'large.md' })
-  assertDocumentError(fixture, 'Unexpected Markdown rendering', 1)
-  assert.equal(fixture.errors.length, 1)
+test('invalid common reader metadata shows an explicit error', async context => {
+  const fixture = documentWorkspaceFixture(context, async () => new Response(JSON.stringify({content:'legacy content'})))
+  await assert.rejects(fixture.controller.open({path:'large.pdf'}), /Invalid reader response/)
+  assertDocumentError(fixture, 'Invalid reader response')
 })
 
 test('oversized documents display the server rejection without Markdown rendering', async (context) => {
   const message = 'file exceeds the 5 MiB review limit'
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify({ error: { message } }), { status: 413 }))
+  const fixture = documentWorkspaceFixture(context, async () => new Response(JSON.stringify({ error: { message } }), { status: 413 }))
 
   await assert.rejects(fixture.controller.open({ path: 'large.md' }), { message })
   assertDocumentError(fixture, message)
-})
-
-test('document opening waits for asynchronous Markdown parsing while keeping controls available', async (context) => {
-  let resolveRendering
-  let cancelled = 0
-  const result = { root: '/project', path: 'large.md', content: '# Document', size: 10, lineCount: 1 }
-  const fixture = legacyDocumentWorkspaceFixture(context, async () => new Response(JSON.stringify(result)), {
-    renderMarkdownDocument: () => new Promise(resolve => { resolveRendering = resolve }),
-    cancelMarkdownDocument: () => { cancelled += 1 },
-  })
-  const pending = fixture.controller.open({ path: 'large.md' })
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(fixture.element('#artifact-loading').classList.contains('hidden'), false)
-  assert.equal(fixture.element('#artifact-view-switch').classList.contains('hidden'), false)
-  fixture.controller.close({ restoreMap: false })
-  resolveRendering({ html: '<h1>Document</h1>', outline: [] })
-  await pending
-  assert.equal(cancelled, 2)
-  assert.equal(fixture.state.artifact, null)
-  assert.equal(fixture.element('#artifact-rail').classList.contains('hidden'), true)
-  assert.equal(fixture.element('#artifact-content').innerHTML, undefined)
-})
-
-test('late Markdown results cannot replace a newer document', async (context) => {
-  let resolveFirst
-  const fixture = legacyDocumentWorkspaceFixture(context, async (url, options) => {
-    const { path } = JSON.parse(options.body)
-    return new Response(JSON.stringify({ root: '/project', path, content: path, size: 10, lineCount: 1 }))
-  }, {
-    renderMarkdownDocument: source => source === 'first.md'
-      ? new Promise(resolve => { resolveFirst = resolve })
-      : Promise.resolve({ html: '<p>Second</p>', outline: [] }),
-  })
-  const first = fixture.controller.open({ path: 'first.md' })
-  await new Promise(resolve => setImmediate(resolve))
-  await fixture.controller.open({ path: 'second.md' })
-  const current = fixture.state.artifact
-  resolveFirst({ html: '<p>First</p>', outline: [] })
-  await first
-  assert.equal(fixture.state.artifact, current)
-  assert.equal(fixture.element('#artifact-content').innerHTML, '<p>Second</p>')
-})
-
-test('Source and line navigation reuse worker outlines instead of lexing whole documents', () => {
-  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /extractMarkdownOutline/u)
-  assert.match(source, /file\.markdownDocument\.result\.outline/u)
-  assert.match(source, /await renderArtifact\(\)/u)
 })
 
 test('late document failures cannot overwrite a newer request', async (context) => {
   let rejectFirst
   const pending = new Promise((resolve, reject) => { rejectFirst = reject })
   let requests = 0
-  const fixture = legacyDocumentWorkspaceFixture(context, () => ++requests === 1 ? pending : Promise.reject(new Error('Second request failed')))
+  const fixture = documentWorkspaceFixture(context, () => ++requests === 1 ? pending : Promise.reject(new Error('Second request failed')))
   const first = fixture.controller.open({ path: 'first.md' })
   await assert.rejects(fixture.controller.open({ path: 'second.md' }), { message: 'Second request failed' })
   const current = fixture.state.artifact
@@ -271,42 +206,10 @@ test('Document Workspace state factories isolate search and outline state', () =
   assert.equal(second.artifact, null)
 })
 
-test('Document outline keeps active-row scrolling inside its own list', () => {
-  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  const scroll = source.slice(source.indexOf('function scrollActiveOutlineItemIntoView()'), source.indexOf('function scheduleTextArtifactOutline('))
-
-  assert.match(scroll, /list\.scrollTop/u)
-  assert.doesNotMatch(scroll, /scrollIntoView/u)
-})
-
-test('line links keep rendered Markdown and HTML in Preview', () => {
-  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  const start = source.indexOf('function jumpArtifactToLine(')
-  const end = source.indexOf('\n  return {', start)
-  const jump = source.slice(start, end)
-
-  assert.match(jump, /state\.artifactView === 'preview'/u)
-  assert.match(jump, /artifactPreviewLocation\(file, Number\(line\)\)/u)
-  assert.match(jump, /navigateArtifactPreviewLocation\(file, previewLocation, Number\(line\), column\)/u)
-  assert.ok(jump.indexOf("state.artifactView === 'preview'") < jump.indexOf("setArtifactView('source')"))
-})
-
-test('manual Source to Preview uses the same nearest-heading mapping', () => {
-  const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
-  const start = source.indexOf('function setArtifactView(')
-  const end = source.indexOf('\nfunction toggleArtifactSearch(', start)
-  const switchView = source.slice(start, end)
-
-  assert.match(switchView, /artifactSourceLineAtViewport\(\)/u)
-  assert.match(switchView, /artifactPreviewLocation\(file, sourceLine\)/u)
-  assert.match(switchView, /if \(sourceLine != null && !previewLocation\) return/u)
-  assert.match(switchView, /navigateArtifactPreviewLocation\(file, previewLocation, sourceLine\)/u)
-})
-
 test('late document rendering cannot reopen an inactive right workspace', () => {
   const source = readFileSync(new URL('./document-workspace-controller.mjs', import.meta.url), 'utf8')
   const start = source.indexOf('function renderArtifact()')
-  const end = source.indexOf('\nfunction disposeArtifactEditor()', start)
+  const end = source.indexOf('\nasync function loadEpubReadingState', start)
   const render = source.slice(start, end)
   const inactiveGuard = render.indexOf("if (state.activeRightWorkspace !== 'document')")
   const showRail = render.indexOf("rail.classList.remove('hidden')")
@@ -357,15 +260,12 @@ test('shared table authorization failures never fall back to another file endpoi
   assert.deepEqual(requests,['/studio/reader/open'])
   assertDocumentError(fixture,'File not granted')
 })
-for (const [path,endpoint] of [['data.csv','/studio/review-file'],['data.xlsx','/studio/review-spreadsheet'],['small.md','/studio/review-file'],['photo.jpg','/studio/review-image'],['book.pdf','/studio/review-pdf'],['book.epub','/studio/review-epub']]) {
- test(`${path} preserves the authorized legacy transport only on explicit WSL unavailability`,async context=>{
+for (const path of ['data.csv','data.xlsx','small.md','photo.jpg','book.pdf','book.epub']) {
+ test(`${path} preserves the explicit unsupported error without a renderer fallback`, async context => {
   const requests=[]
-  const fixture=documentWorkspaceFixture(context,async url=>{
-    requests.push(url)
-    return new Response(JSON.stringify({error:{message:requests.length===1?'Shared byte transport unavailable':'Legacy grant rejected'}}),{status:requests.length===1?501:403})
-  })
-  await assert.rejects(fixture.controller.open({path}),/Legacy grant rejected/)
-  assert.deepEqual(requests,['/studio/reader/open',endpoint])
+  const fixture=documentWorkspaceFixture(context,async url=>{requests.push(url);return new Response(JSON.stringify({error:{message:'Unsupported WSL format'}}),{status:501})})
+  await assert.rejects(fixture.controller.open({path}),/Unsupported WSL format/)
+  assert.deepEqual(requests,['/studio/reader/open'])
  })
 }
 

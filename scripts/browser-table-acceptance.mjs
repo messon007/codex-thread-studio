@@ -3,17 +3,19 @@ import { join } from 'node:path'
 
 export async function checkTableAcceptance(page) {
   await page.evaluate(async () => {
-    const { renderTableArtifact } = await import('/table-reader.mjs')
+    const { mountTableCells } = await import('/reader-assets/table-cells.mjs')
     const host = document.createElement('div')
     host.id = 'table-acceptance'
     host.style.cssText = 'position:fixed;inset:20px;z-index:10000;background:var(--panel)'
     document.body.append(host)
     const text = '<img src=x onerror=alert(1)> 中文 long text '.repeat(100) + '\nLast line'
     let selections = 0
-    window.tableAcceptance = { text, get selections() { return selections }, reader: renderTableArtifact({
-      container: host, workbook: { sheets: [{ name: 'Test', rows: [[text, 'short']] }] },
-      onSelection: () => { selections++ },
-    }) }
+    const table = document.createElement('table'), body = table.createTBody(), row = body.insertRow()
+    const cell = row.insertCell(); cell.textContent = text; row.insertCell().textContent = 'short'; host.append(table)
+    const cells = mountTableCells(host, { locate: () => ({kind:'cell',table:0,row:0,column:0}), onSelection: value => { if (value) selections++ } })
+    cells.update(new Map([[cell, text]]))
+    window.tableAcceptance = { text, get selections() { return selections }, reader: { destroy: () => cells.dispose() } }
+
   })
   const cell = page.locator('#table-acceptance td').first()
   await cell.dblclick()
@@ -40,7 +42,7 @@ export async function checkTableAcceptance(page) {
   await cell.focus()
   await page.keyboard.press('Enter')
   await dialog.waitFor({ state: 'visible' })
-  await dialog.locator('[data-cell-close]').click()
+  await dialog.getByRole('button',{name:'Close'}).click()
   await cell.dblclick()
   await page.evaluate(() => { window.tableAcceptance.reader.destroy(); document.querySelector('#table-acceptance').remove(); delete window.tableAcceptance })
   if (await dialog.count()) throw Error('Cell dialog survived reader disposal')

@@ -363,3 +363,31 @@ reopen/staleness/distro isolation, unchanged sources and empty owned caches.
 This Linux transport substitute is **not actual Windows/WSL runtime validation**.
 Final ordinary-entry cleanup, common locale/visual/accessibility/release evidence,
 fixed final delivery and remote platform CI/review remain open.
+
+## Common entry cleanup checkpoint
+
+Ordinary document opening now has a single reader path and explicit unsupported
+errors, including the read-only WSL transport. The unreachable 501 fallback,
+local Markdown worker, table/EPUB renderers and editor wrapper, document-only
+image hydration, outer outline drawer and their static routes are removed.
+Studio retains its chat renderer, gateway/grants, shell controls, AI actions,
+legacy backend routes, PDF test adapter and EPUB content-keyed persistence.
+
+The removed legacy EPUB disposal also fixes a real shared-reader defect: state
+updates no longer cancel its debounced progress save. The actual gateway test
+now verifies saved CFI/theme/font scale while the reader is still open, before
+its close flush. Saved typed source references still use public navigation;
+older line references explicitly declare approximation, and offset-only
+unverifiable references fail visibly instead of inventing an exact range.
+Terminal initialization errors are shown even for editable documents.
+
+Validation on the unchanged 801-file SDK pin: all 790 UI checks pass, plus the
+new behavioral legacy-reference unit. Real rebuilt Studio Chromium and native
+Wayland WebKit gateway checks pass all 15 ordinary formats/resources; the EPUB
+workspace passes autosave/reopen/CFI/search/progress, and CSV/TSV/XLSX pass typed
+cells, complete queries/charts, SQL AI draft database restoration and cleanup.
+Generated TypeScript now has 74 modules; installed SDK inventory stays unchanged.
+Historical implementation-specific unit tests are replaced by the shared SDK
+contracts and actual gateway corpus, not a second maintained generic reader.
+Final locale/shortcuts/visual/accessibility/release/package/platform gates and
+the requested independent whole-goal Astra review remain open.

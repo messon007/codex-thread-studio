@@ -56,7 +56,6 @@ import { composerReferenceInput, pluginReferences, composerTrigger, createCompos
 import { MAX_COMPOSER_IMAGES, MAX_COMPOSER_IMAGE_TOTAL_BYTES, formatImageSize, prepareComposerImage, userImagesFromContent } from './composer-images.mjs'
 import {
   resolveMarkdownFileLink,
-  resolveMarkdownImagePath,
 } from './document-review.mjs'
 import {
 } from './document-outline.mjs'
@@ -93,7 +92,6 @@ import {
   createDocumentWorkspaceState,
 } from './document-workspace-controller.mjs'
 import { marked } from './vendor/marked.esm.js'
-import { createMarkdownDocumentClient } from './markdown-document-client.mjs'
 import {
   activeTurnAtMarker,
   navigableTurns,
@@ -348,7 +346,6 @@ const dirtyStreamItems = new Map()
 const turnLatencyTraces = new Map()
 let composerSearchTimer = null
 let codexCatalogFocusRefreshAt = 0
-let artifactMarkdownImageObserver = null
 let turnNavigatorFrame = null
 let turnNavigatorRenderFrame = null
 let turnNavigatorRenderIdle = null
@@ -404,7 +401,6 @@ const transcriptContentObserver = createTranscriptContentObserver({ onResize: ha
 const composerDrafts = createComposerDraftStore()
 const transcriptPresentationCache = new TranscriptPresentationCache({ visibleTurns: 30 })
 const markdownRenderCache = new Map()
-const markdownDocumentClient = createMarkdownDocumentClient()
 const MAX_MARKDOWN_RENDER_CACHE_BYTES = 24 * 1024 * 1024
 let markdownRenderCacheBytes = 0
 const MAX_DIAGRAM_SOURCE_CHARS = 100_000
@@ -648,7 +644,7 @@ const reviewNotes = createReviewNotesController({
     renderArtifact,
     renderSessionMap: () => sessionMap.render(),
     openArtifact,
-    setArtifactView,
+    jumpToSourceLine: (line) => documentWorkspace.jumpToLine(line),
     reopenEpubSource: reopenEpubComment,
     goToPdfPage: (page) => documentWorkspace.goToPdfPage(page),
     openBrowserUrl,
@@ -681,15 +677,9 @@ const documentWorkspace = createDocumentWorkspaceController({
     hideComposerMenu,
     closeActionMenus,
     applyRightRailWidth,
-    renderMarkdownDocument,
-    cancelMarkdownDocument: () => markdownDocumentClient.cancel(),
-    hydrateMarkdownImages,
-    disconnectMarkdownImageObserver,
-    disposeMarkdownImageAssets,
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
     openCommentForSelection: selection => reviewNotes.openCommentForSelection(selection),
-    renderDocumentCommentMarkers: () => reviewNotes.renderDocumentCommentMarkers(),
     openWorkspaceTool: (tool, sourceSessionKey) => {
       const ref = parseSessionRefKey(sourceSessionKey)
       if (!ref) return workspaceTools.open(tool)
@@ -4964,24 +4954,6 @@ function renderMarkdown(value) {
   return rendered
 }
 
-async function renderMarkdownDocument(value) {
-  const source = String(value || '')
-  if (!source) return { html: '', outline: [] }
-  const cacheKey = `document\u0000${getLocale()}\u0000${source}`
-  const cached = readMarkdownRenderCache(cacheKey)
-  if (cached != null) return cached
-  const finish = studioPerformance.start('markdown.document', { characters: source.length })
-  const parsed = await markdownDocumentClient.parse(source)
-  const rendered = {
-    html: renderMarkdownHtml('', { dirtyHtml: parsed.html, documentImages: true }),
-    outline: parsed.outline,
-  }
-  finish({ engine: parsed.engine })
-  const outlineSize = rendered.outline.reduce((size, item) => size + item.id.length + item.label.length + 64, 0)
-  writeMarkdownRenderCache(cacheKey, rendered, (rendered.html.length * 2) + outlineSize)
-  return rendered
-}
-
 function readMarkdownRenderCache(key) {
   const entry = markdownRenderCache.get(key)
   if (!entry) return null
@@ -5005,7 +4977,7 @@ function writeMarkdownRenderCache(key, value, size) {
   }
 }
 
-function renderMarkdownHtml(source, { tokens = null, parser = null, dirtyHtml = null, documentImages = false } = {}) {
+function renderMarkdownHtml(source, { tokens = null, parser = null, dirtyHtml = null } = {}) {
   const activeParser = parser || markdownParserForSource(source)
   const dirty = dirtyHtml ?? (tokens ? activeParser.parser(tokens) : activeParser.parse(source))
   const clean = DOMPurify.sanitize(dirty, {
@@ -5021,17 +4993,6 @@ function renderMarkdownHtml(source, { tokens = null, parser = null, dirtyHtml = 
     link.removeAttribute('target')
     link.rel = 'noopener noreferrer'
   })
-  if (documentImages) {
-    template.content.querySelectorAll('img').forEach((image) => {
-      const source = image.getAttribute('src') || ''
-      image.dataset.markdownImageSource = source
-      image.removeAttribute('src')
-      image.removeAttribute('srcset')
-      image.loading = 'lazy'
-      image.decoding = 'async'
-      image.classList.add('markdown-local-image', 'loading')
-    })
-  }
   template.content.querySelectorAll('input').forEach((input) => {
     if (input.type !== 'checkbox') input.remove()
     else input.disabled = true
@@ -5091,96 +5052,6 @@ function renderMarkdownHtml(source, { tokens = null, parser = null, dirtyHtml = 
     wrapper.append(table)
   })
   return template.innerHTML
-}
-
-function hydrateMarkdownImages(file, content) {
-  disconnectMarkdownImageObserver()
-  const images = [...content.querySelectorAll('img[data-markdown-image-source]')]
-  if (!images.length) return
-
-  const load = (image) => {
-    artifactMarkdownImageObserver?.unobserve(image)
-    loadMarkdownImage(file, image).catch((error) => showMarkdownImageError(image, error))
-  }
-  if (!globalThis.IntersectionObserver) {
-    images.forEach(load)
-    return
-  }
-  artifactMarkdownImageObserver = new IntersectionObserver((entries) => {
-    entries.filter((entry) => entry.isIntersecting).forEach((entry) => load(entry.target))
-  }, { root: content, rootMargin: '600px 0px' })
-  images.forEach((image) => artifactMarkdownImageObserver.observe(image))
-}
-
-async function loadMarkdownImage(file, image) {
-  if (state.artifact !== file || !image.isConnected) return
-  const source = image.dataset.markdownImageSource || ''
-  const target = resolveMarkdownImagePath(file, source)
-  if (!target) throw new Error(t('Only workspace-local, data, and blob images can be displayed'))
-  if (target.embedded) {
-    await assignMarkdownImageSource(image, target.embedded)
-    return
-  }
-
-  file.markdownImageAssets ||= new Map()
-  let pending = file.markdownImageAssets.get(target.path)
-  if (!pending) {
-    pending = gatewayFetch('/studio/review-image', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root: file.root, path: target.path }),
-    }).then(async (response) => {
-      if (!response.ok) {
-        const result = await response.json().catch(() => null)
-        throw new Error(result?.error?.message || `HTTP ${response.status}`)
-      }
-      const blob = await response.blob()
-      if (!blob.type.startsWith('image/')) throw new Error(t('The image response format is invalid'))
-      const url = URL.createObjectURL(blob)
-      file.markdownImageObjectUrls ||= new Set()
-      file.markdownImageObjectUrls.add(url)
-      return url
-    })
-    file.markdownImageAssets.set(target.path, pending)
-  }
-  const url = await pending
-  if (state.artifact !== file || !image.isConnected) return
-  await assignMarkdownImageSource(image, url)
-}
-
-function assignMarkdownImageSource(image, source) {
-  return new Promise((resolve, reject) => {
-    image.addEventListener('load', () => {
-      image.classList.remove('loading')
-      resolve()
-    }, { once: true })
-    image.addEventListener('error', () => reject(new Error(t('Unable to decode image'))), { once: true })
-    image.src = source
-  })
-}
-
-function showMarkdownImageError(image, error) {
-  if (!image.isConnected) return
-  const source = image.dataset.markdownImageSource || ''
-  const fallback = document.createElement('span')
-  fallback.className = 'markdown-image-error'
-  fallback.setAttribute('role', 'note')
-  fallback.dataset.noI18n = ''
-  fallback.textContent = `${t('Image unavailable')}: ${image.alt || source}`
-  fallback.title = error?.message || String(error || '')
-  image.replaceWith(fallback)
-}
-
-function disconnectMarkdownImageObserver() {
-  artifactMarkdownImageObserver?.disconnect()
-  artifactMarkdownImageObserver = null
-}
-
-function disposeMarkdownImageAssets(file) {
-  disconnectMarkdownImageObserver()
-  file?.markdownImageObjectUrls?.forEach((url) => URL.revokeObjectURL(url))
-  file?.markdownImageObjectUrls?.clear()
-  file?.markdownImageAssets?.clear()
 }
 
 function startDiagramRendering() {

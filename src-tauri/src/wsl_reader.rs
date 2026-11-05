@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(
             resolve_reference(source, "/project", "../images/%E4%B8%AD%E6%96%87%20a.png#x")
                 .unwrap(),
-            "/project/images/中文 a.png"
+            "/project/images/\u{4e2d}\u{6587} a.png"
         );
         assert_eq!(
             resolve_reference(source, "/project", "/images/a.png").unwrap(),

@@ -133,6 +133,7 @@ test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
     .filter((entry) => entry.isFile()
       && /\.(?:js|mjs|html)$/u.test(entry.name)
       && entry.name !== 'i18n.mjs'
+      && !entry.name.endsWith('.test.mjs')
       && !entry.name.startsWith('vendor'))
     .map((entry) => entry.name)
   const violations = runtimeFiles.filter((name) => /\p{Script=Han}/u.test(

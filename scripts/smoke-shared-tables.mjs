@@ -6,7 +6,8 @@ import { mkdir, mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promis
 import { resolve, join } from 'node:path'
 import { once } from 'node:events'
 import { Workbook } from '../ui/vendor/artifact-table.mjs'
-import { cellText } from '../ui/table-data.mjs'
+// Expected Excel fixture values only; document parsing belongs to the SDK.
+const cellText = value => value == null ? '' : value instanceof Date ? value.toISOString() : typeof value === 'object' ? String(value.text ?? value.result ?? value.formula ?? value.hyperlink ?? '') : String(value)
 const root=resolve(new URL('../',import.meta.url).pathname)
 const output=join(root,'target/shared-tables-smoke')
 await mkdir(output,{recursive:true})

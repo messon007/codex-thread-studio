@@ -84,10 +84,8 @@ test('PlantUML routing preserves nested blocks, fences, case, CRLF and incomplet
   assert.equal(markdownParserForSource('No diagram on the next parse'), plain)
 })
 
-test('chat keeps its parser while document workers retain the same sanitization', () => {
+test('chat keeps its parser and sanitization independently of the shared document reader', () => {
   assert.doesNotMatch(app, /marked\.use\(/u)
-  assert.match(app, /await markdownDocumentClient\.parse\(source\)/u)
-  assert.match(app, /renderMarkdownHtml\('', \{ dirtyHtml: parsed\.html, documentImages: true \}\)/u)
   assert.match(app, /const activeParser = parser \|\| markdownParserForSource\(source\)/u)
   assert.match(app, /tokens \? activeParser\.parser\(tokens\) : activeParser\.parse\(source\)/u)
   assert.match(app, /DOMPurify\.sanitize\(dirty/u)

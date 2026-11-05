@@ -93,10 +93,7 @@ test('uses interface typography for application chrome and workspace tools', () 
 })
 
 test('uses reading typography for diagrams and configured code typography for tools', () => {
-  const editor = readFileSync(new URL('./workspace-editor.mjs', import.meta.url), 'utf8')
   const workspaceTools = readFileSync(new URL('./workspace-tools.mjs', import.meta.url), 'utf8')
   assert.match(app, /fontFamily: state\.typography\.contentFontFamily/u)
-  assert.match(editor, /fontSize: 'var\(--ui-font-label\)'/u)
-  assert.match(editor, /font: 'var\(--ui-font-weight\) var\(--ui-font-label\) var\(--ui-font-family\)'/u)
   assert.match(workspaceTools, /fontWeight: rootStyle\.getPropertyValue\('--code-font-weight'\)\.trim\(\) \|\| '500'/u)
 })

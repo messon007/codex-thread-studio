@@ -130,3 +130,22 @@ test('Send and Clear submits the composer before clearing only the selected sess
   assert.match(sendAndClear, /sendButton\.disabled \|\| form\.classList\.contains\('hidden'\) \|\| form\.classList\.contains\('shell-mode'\)/u)
   assert.doesNotMatch(sendAndClear, /confirm\(/u)
 })
+
+test('legacy document references use explicit approximate source lines and refuse unverifiable offsets', async () => {
+  let context
+  const opened=[],lines=[],notices=[]
+  const state={...createReviewNotesState(),activeAnnotationPromptTemplate:'{{annotations}}'}
+  const controller=createReviewNotesController({state,commentSources:{promptInstructions:(_drafts,value)=>{context=value;return []}},
+    notify:message=>notices.push(message),view:{selectedThread:()=>({cwd:'/project'}),openArtifact:async(...args)=>opened.push(args),jumpToSourceLine:async line=>lines.push(line)}})
+  controller.buildPrompt([])
+  await context.openDocument({filePath:'/project/a.md',startLine:7,startOffset:25},'Saved quote')
+  assert.equal(opened[0][1].viewState.view,'source')
+  assert.deepEqual(lines,[7])
+  assert.match(notices[0],/approximately/u)
+  await assert.rejects(context.openDocument({filePath:'/project/a.md',startOffset:25},'Saved quote'),/no verifiable source position/u)
+  assert.equal(opened.length,1)
+  const reference={documentId:'original',revision:'a'.repeat(64),location:{kind:'source',startByte:25,endByte:30}}
+  await context.openDocument({filePath:'/project/a.md',readerReference:reference},'Saved quote')
+  assert.equal(opened[1][0].readerReference,reference)
+  assert.deepEqual(lines,[7])
+})

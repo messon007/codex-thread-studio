@@ -1118,27 +1118,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/document-review.mjs", get(document_review_js))
         .route("/document-outline.mjs", get(document_outline_js))
         .route("/diagram-source.mjs", get(diagram_source_js))
-        .route(
-            "/markdown-document-client.mjs",
-            get(markdown_document_client_js),
-        )
-        .route(
-            "/markdown-document-parser.mjs",
-            get(markdown_document_parser_js),
-        )
-        .route(
-            "/markdown-document-worker.mjs",
-            get(markdown_document_worker_js),
-        )
         .route("/vendor/comrak.js", get(comrak_js))
         .route("/vendor/comrak_bg.wasm", get(comrak_wasm))
         .route("/environment-profile.mjs", get(environment_profile_js))
-        .route("/epub-reader.mjs", get(epub_reader_js))
         .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
         .route("/pdf-reader.mjs", get(pdf_reader_js))
         .route("/pdf-comment-provider.mjs", get(pdf_comment_provider_js))
-        .route("/table-reader.mjs", get(table_reader_js))
-        .route("/table-data.mjs", get(table_data_js))
         .route("/git-review-data.mjs", get(git_review_data_js))
         .route(
             "/table-comment-provider.mjs",
@@ -1149,7 +1134,6 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/session-resources-ui.mjs", get(session_resources_ui_js))
         .route("/git-review.mjs", get(git_review_js))
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
-        .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
         .route("/comment-submission.mjs", get(comment_submission_js))
         .route("/comment-markers.mjs", get(comment_markers_js))
@@ -2710,18 +2694,6 @@ async fn diagram_source_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/diagram-source.mjs"))
 }
 
-async fn markdown_document_client_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-client.mjs"))
-}
-
-async fn markdown_document_parser_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-parser.mjs"))
-}
-
-async fn markdown_document_worker_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-worker.mjs"))
-}
-
 async fn comrak_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/comrak.js"))
 }
@@ -2735,10 +2707,6 @@ async fn comrak_wasm() -> impl IntoResponse {
 
 async fn environment_profile_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/environment-profile.mjs"))
-}
-
-async fn epub_reader_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/epub-reader.mjs"))
 }
 
 async fn epub_comment_provider_js() -> impl IntoResponse {
@@ -2763,10 +2731,6 @@ async fn git_review_js() -> impl IntoResponse {
 
 async fn right_rail_layout_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/right-rail-layout.mjs"))
-}
-
-async fn workspace_editor_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/workspace-editor.mjs"))
 }
 
 async fn comment_core_js() -> impl IntoResponse {
@@ -2875,14 +2839,6 @@ async fn pdf_reader_js() -> impl IntoResponse {
 
 async fn pdf_comment_provider_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/pdf-comment-provider.mjs"))
-}
-
-async fn table_reader_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/table-reader.mjs"))
-}
-
-async fn table_data_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/table-data.mjs"))
 }
 
 async fn git_review_data_js() -> impl IntoResponse {
@@ -5227,15 +5183,10 @@ mod tests {
                 "/composer-tools.mjs",
                 "/composer-images.mjs",
                 "/document-review.mjs",
-                "/table-data.mjs",
                 "/git-review-data.mjs",
                 "/document-outline.mjs",
                 "/diagram-source.mjs",
-                "/markdown-document-client.mjs",
-                "/markdown-document-parser.mjs",
-                "/markdown-document-worker.mjs",
                 "/vendor/comrak.js",
-                "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
                 "/comment-markers.mjs",
                 "/comment-submission.mjs",

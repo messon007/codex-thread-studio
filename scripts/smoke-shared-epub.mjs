@@ -93,7 +93,6 @@ try{
  const saved=(await command('state')).formatState
  assert.equal(saved.theme,'sepia');assert.equal(saved.fontScale,1.25)
  const lease=await page.evaluate(()=>testState.artifact.largeMarkdown)
- await page.evaluate(()=>controller.close({restoreMap:false}))
  const persisted=async()=>{
   const response=await fetch(new URL('/studio/epub/state',url),{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({root:workspace,path:file,bookHash})})
   return response.status===204?null:response.json()
@@ -102,6 +101,9 @@ try{
  const savedDeadline=Date.now()+5000
  do{stored=await persisted();if(stored?.cfi===saved.cfi&&stored?.theme==='sepia')break;await pause(30)}while(Date.now()<savedDeadline)
  assert.equal(stored.cfi,saved.cfi);assert.equal(stored.theme,'sepia');assert.equal(stored.fontScale,1.25)
+ // Progress must persist while the reader remains open, without relying on a close flush.
+ assert.equal(await page.evaluate(()=>testState.artifact?.largeMarkdown.id),lease.id)
+ await page.evaluate(()=>controller.close({restoreMap:false}))
  await open()
  await page.waitForFunction(cfi=>testState.artifact.readerReady && !testState.artifact.saving && testState.artifact.readingState?.cfi===cfi,saved.cfi)
  frame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(element=>element.contentFrame())

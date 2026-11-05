@@ -438,13 +438,15 @@ fn parse_runtime_file(mut bytes: Vec<u8>) -> io::Result<RuntimeFile> {
     let size = text(relative_end + 1, size_end)?
         .parse::<u64>()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if size > 128 * 1024 * 1024
-        || bytes.len().saturating_sub(read_only_end + 1) as u64
-            != if header.unchanged { 0 } else { size }
-    {
+    let header_bytes = read_only_end + 1;
+    let payload_bytes = bytes.len().saturating_sub(header_bytes) as u64;
+    if size > 128 * 1024 * 1024 || payload_bytes != if header.unchanged { 0 } else { size } {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "WSL file changed or response length differs from declared size",
+            format!(
+                "WSL file changed or response length differs from declared size (v2={}, unchanged={}, declaredBytes={size}, payloadBytes={payload_bytes}, headerBytes={header_bytes}, totalBytes={})",
+                header.environment.is_some(), header.unchanged, bytes.len()
+            ),
         ));
     }
     let root = text(begin, root_end)?;

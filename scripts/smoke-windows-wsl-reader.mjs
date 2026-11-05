@@ -32,6 +32,14 @@ try {
   assert.equal(identity[0], distribution); assert.equal(identity[2], user); assert.notEqual(identity[1], 0)
   setup = true
   await wsl('python3', '-c', 'import os,sys,base64;root,md,png=sys.argv[1:];os.mkdir(root,0o700);os.mkdir(root+"/project");os.mkdir(root+"/shared");open(root+"/project/notes.md","wb").write(base64.b64decode(md));[open(root+p,"wb").write(base64.b64decode(png)) for p in ["/project/project.png","/shared/shared.png"]]', fixture, Buffer.from(original).toString('base64'), png)
+  // Separate raw wsl.exe pipe fidelity from the production supervised launcher.
+  const raw = (await exec('wsl.exe', ['--distribution', distribution, '--user', user, '--exec', '/usr/bin/head', '-c', '134217729', source], {encoding: null, timeout: 30000, maxBuffer: 1024 * 1024})).stdout
+  const expectedBytes = Buffer.from(original)
+  const firstDifference = Array.from({length: Math.max(raw.length, expectedBytes.length)}, (_, i) => i).find(i => raw[i] !== expectedBytes[i]) ?? null
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+  const rawDiagnostic = {rawWindowsWslPipe: raw.equals(expectedBytes), expectedBytes: expectedBytes.length, actualBytes: raw.length, expectedSha256: digest(expectedBytes), actualSha256: digest(raw), firstDifference}
+  console.log(JSON.stringify(rawDiagnostic))
+  assert.equal(rawDiagnostic.rawWindowsWslPipe, true, 'Raw WSL pipe differs from the original fixture')
   const canonical = await wsl('realpath', source)
   const expectedId = 'wsl:v1:' + createHash('sha256').update(JSON.stringify(['wsl-document-v1', identity[0], identity[1], canonical])).digest('hex')
   const environment = {...process.env, XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'), XDG_CACHE_HOME: join(directory, 'cache'), READER_CACHE_DIR: cache, CODEX_HOME: join(directory, 'codex'), CODEX_THREAD_STUDIO_WINDOWS_BACKEND: 'wsl'}

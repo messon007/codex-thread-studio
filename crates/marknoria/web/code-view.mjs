@@ -1,7 +1,7 @@
 import { EditorState, Compartment, ChangeSet } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap, undo, redo, undoDepth, redoDepth, indentWithTab } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language'
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, StreamLanguage } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { javascript, typescriptLanguage } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -9,9 +9,11 @@ import { python } from '@codemirror/lang-python'
 import { cpp } from '@codemirror/lang-cpp'
 import { rust } from '@codemirror/lang-rust'
 import { yaml } from '@codemirror/lang-yaml'
+import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { oneDark } from '@codemirror/theme-one-dark'
 
-const languages = { javascript: javascript().language, js: javascript().language, typescript: typescriptLanguage, ts: typescriptLanguage, json: json().language, python: python().language, py: python().language, cpp: cpp().language, c: cpp().language, rust: rust().language, rs: rust().language, yaml: yaml().language, yml: yaml().language }
+const languages = { javascript: javascript().language, js: javascript().language, typescript: typescriptLanguage, ts: typescriptLanguage, json: json().language, python: python().language, py: python().language, cpp: cpp().language, c: cpp().language, rust: rust().language, rs: rust().language, yaml: yaml().language, yml: yaml().language, toml: StreamLanguage.define(toml) }
+const syntax = language => ['markdown', 'md'].includes(language) ? markdown({ codeLanguages: info => languages[info.split(/\s/u)[0].toLowerCase()] || null }) : languages[language] || []
 const encoder = new TextEncoder()
 
 export function codeView(parent, options = {}) {
@@ -24,7 +26,7 @@ export function codeView(parent, options = {}) {
   const theme = new Compartment()
   const style = EditorView.theme({
     '&': { height: '100%', backgroundColor: 'var(--reader-panel)', color: 'var(--reader-text)' },
-    '.cm-scroller': { fontFamily: 'var(--code-font-family,Consolas,monospace)', fontSize: '13px', lineHeight: '24px', overflow: 'auto' },
+    '.cm-scroller': { fontFamily: 'var(--code-font-family,Consolas,monospace)', fontSize: 'var(--code-font-size,13px)', lineHeight: '24px', overflow: 'auto' },
     '.cm-content': { padding: '12px 0' },
     '.cm-gutters': { backgroundColor: 'var(--reader-soft)', color: 'var(--reader-faint)', borderColor: 'var(--reader-border)' },
     '.cm-lineNumbers .cm-gutterElement': { minWidth: '48px', padding: '0 10px' },
@@ -34,9 +36,8 @@ export function codeView(parent, options = {}) {
   const extensions = [
     lineNumbers({ formatNumber: number => String(line + number - 1) }), style,
     theme.of(color()), editing.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
-    markdown({ codeLanguages: info => languages[info.split(/\s/u)[0].toLowerCase()] || null }),
     bracketMatching(), drawSelection(),
-    ...(options.readOnly ? [] : [history({ minDepth: 100 }), highlightActiveLine(), highlightActiveLineGutter(), keymap.of([...historyKeymap, ...defaultKeymap, indentWithTab, { key: 'Mod-s', run: () => { options.save?.(); return true } }])]),
+    ...(options.readOnly ? [EditorView.contentAttributes.of({ tabindex: '0' }), keymap.of(defaultKeymap)] : [history({ minDepth: 100 }), highlightActiveLine(), highlightActiveLineGutter(), keymap.of([...historyKeymap, ...defaultKeymap, indentWithTab, { key: 'Mod-s', run: () => { options.save?.(); return true } }])]),
     EditorState.changeFilter.of(transaction => {
       if (!transaction.docChanged || !options.maxBytes) return true
       let difference = 0
@@ -58,10 +59,10 @@ export function codeView(parent, options = {}) {
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   return {
     view,
-    load(text, startLine) {
+    load(text, startLine, language = 'markdown') {
       line = startLine
       bytes = encoder.encode(text).length
-      view.setState(EditorState.create({ doc: text, extensions }))
+      view.setState(EditorState.create({ doc: text, extensions: [...extensions, syntax(language)] }))
       base = view.state.doc
       changes = ChangeSet.empty(base.length)
       options.changed?.()

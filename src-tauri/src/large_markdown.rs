@@ -8,7 +8,10 @@ use axum::{
     http::{header, Method, Response, StatusCode},
     Json,
 };
-use marknoria::server::Service;
+use marknoria::{
+    reader::FileGrant,
+    web::{DiagramMode, Service, ServiceOptions},
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -51,6 +54,25 @@ impl Default for Readers {
     }
 }
 
+fn take_expired(entries: &mut HashMap<String, Reader>) -> Vec<Reader> {
+    let ids: Vec<_> = entries
+        .iter()
+        .filter(|(_, reader)| reader.touched.elapsed() >= IDLE)
+        .map(|(id, _)| id.clone())
+        .collect();
+    ids.into_iter()
+        .filter_map(|id| entries.remove(&id))
+        .collect()
+}
+
+async fn close_readers(readers: Vec<Reader>) {
+    for reader in readers {
+        if let Err(error) = reader.service.close().await {
+            eprintln!("Studio reader cleanup failed: {error}");
+        }
+    }
+}
+
 impl Readers {
     pub async fn open(
         &self,
@@ -64,21 +86,25 @@ impl Readers {
                 "Another document is opening".into(),
             )
         })?;
-        {
-            let mut entries = self.entries.lock().unwrap();
-            entries.retain(|_, reader| reader.touched.elapsed() < IDLE);
-            if entries.len() >= MAX_READERS {
-                return Err((
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "Close an existing large document first".into(),
-                ));
-            }
+        let expired = take_expired(&mut self.entries.lock().unwrap());
+        close_readers(expired).await;
+        if self.entries.lock().unwrap().len() >= MAX_READERS {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                "Close an existing document first".into(),
+            ));
         }
-        let service = if editable {
-            Service::start_editable(source.clone()).await
+        let grant = if editable {
+            FileGrant::read_write(&source)
         } else {
-            Service::start(source.clone()).await
+            FileGrant::read_only(&source)
         }
+        .map_err(|error| (StatusCode::FORBIDDEN, error.to_string()))?;
+        let service = Service::start_with_options(
+            grant,
+            ServiceOptions::default().diagrams(DiagramMode::Browser),
+        )
+        .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         let id = uuid::Uuid::new_v4().to_string();
         let token = service.token.clone();
@@ -101,9 +127,13 @@ impl Readers {
                     let Some(entries) = entries.upgrade() else {
                         break;
                     };
-                    let mut entries = entries.lock().unwrap();
-                    entries.retain(|_, reader| reader.touched.elapsed() < IDLE);
-                    if entries.is_empty() {
+                    let (expired, empty) = {
+                        let mut entries = entries.lock().unwrap();
+                        let expired = take_expired(&mut entries);
+                        (expired, entries.is_empty())
+                    };
+                    close_readers(expired).await;
+                    if empty {
                         break;
                     }
                 }
@@ -119,7 +149,14 @@ pub async fn try_open(
     state: &GatewayState,
     request: &ReviewFileRequest,
 ) -> Result<Option<serde_json::Value>, (StatusCode, String)> {
-    let json = marknoria::jq_query::supported(&request.path);
+    let json = matches!(
+        std::path::Path::new(&request.path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("json" | "jsonl" | "ndjson" | "geojson" | "jsonc")
+    );
     if !json && review_language(std::path::Path::new(&request.path)) != "markdown" {
         return Ok(None);
     }
@@ -129,7 +166,12 @@ pub async fn try_open(
         path: request.path.clone(),
     };
     let (root, path, metadata, document_root) = tokio::task::spawn_blocking(move || {
-        resolve_review_path_with_shared(&review, marknoria::MAX_SOURCE, "128 MiB Markdown", &shared)
+        resolve_review_path_with_shared(
+            &review,
+            marknoria::reader::Budgets::default().source_bytes,
+            "128 MiB Markdown",
+            &shared,
+        )
     })
     .await
     .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))??;
@@ -156,56 +198,114 @@ pub async fn close(
     State(state): State<GatewayState>,
     Json(request): Json<CloseRequest>,
 ) -> Response<Body> {
-    state
+    let removed = state
         .markdown_readers
         .entries
         .lock()
         .unwrap()
         .remove(&request.id);
+    if let Some(reader) = removed {
+        if let Err(error) = reader.service.close().await {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Reader cleanup failed: {error}"),
+            );
+        }
+    }
     json_response(StatusCode::OK, &json!({"closed":true}))
 }
 
 fn allowed_path(path: &str) -> bool {
+    if path.len() > 4096
+        || path.contains(['\\', '\0'])
+        || path.split('/').any(|part| part == "." || part == "..")
+    {
+        return false;
+    }
     matches!(
         path,
-        "" | "reader.mjs"
-            | "styles.css"
+        "" | "styles.css"
+            | "checkbox.css"
+            | "reader.mjs"
             | "source.mjs"
             | "position.mjs"
             | "editor.mjs"
             | "theme.js"
-            | "checkbox.css"
             | "syntax-light.css"
             | "syntax-dark.css"
             | "tables.mjs"
             | "table-query.mjs"
+            | "table-query.css"
+            | "table-view.mjs"
+            | "table-view.css"
             | "table-layout.mjs"
             | "table-controls.mjs"
+            | "table-cells.mjs"
+            | "table-cells.css"
+            | "table-plot.mjs"
+            | "table-plot.css"
             | "jq-query.mjs"
-            | "api/table-query"
-            | "api/table-query/schema"
-            | "api/table-query/close"
-            | "api/jq-query"
+            | "jq-query.css"
+            | "notes.mjs"
+            | "notes.css"
+            | "assets.mjs"
             | "icons.mjs"
             | "files.mjs"
             | "diagrams.mjs"
             | "engine.mjs"
+            | "public-reader.mjs"
+            | "reader-bridge.mjs"
+            | "host-client.mjs"
+            | "query-operation.mjs"
+            | "component-styles.mjs"
+            | "clipboard.mjs"
+            | "translation.mjs"
+            | "presentation.mjs"
+            | "reader-ui.mjs"
+            | "document-prose.css"
+            | "projection-html.mjs"
+            | "projection-view.mjs"
+            | "projection-view.css"
+            | "pdf-reader.mjs"
+            | "pdf-reader.css"
+            | "epub-reader.mjs"
+            | "epub-reader.css"
             | "vendor/purify.mjs"
             | "vendor/virtual-core.mjs"
             | "vendor/editor.mjs"
+            | "vendor/epub.mjs"
             | "vendor/mermaid.min.js"
             | "vendor/plantuml.js"
             | "vendor/plantuml-viz-global.js"
             | "vendor/d2.js"
             | "api/document"
+            | "api/capabilities"
+            | "api/operations"
+            | "api/selection/source"
             | "api/window"
+            | "api/projection"
             | "api/table"
             | "api/source"
             | "api/edit"
             | "api/search"
             | "api/diagram-source"
             | "api/renderer"
-    )
+            | "api/table-query"
+            | "api/table-query/schema"
+            | "api/table-query/close"
+            | "api/table-chart"
+            | "api/jq-query"
+            | "api/notes"
+            | "api/asset"
+            | "api/original"
+            | "api/epub"
+    ) || path.starts_with("vendor/pdf/")
+        || path.strip_prefix("epub-resource/").is_some_and(|suffix| {
+            let mut parts = suffix.splitn(3, '/');
+            uuid::Uuid::parse_str(parts.next().unwrap_or("")).is_ok()
+                && uuid::Uuid::parse_str(parts.next().unwrap_or("")).is_ok()
+                && parts.next().is_some_and(|name| !name.is_empty())
+        })
 }
 
 fn edit_scope(source: &std::path::Path, root: &std::path::Path) -> bool {
@@ -244,7 +344,14 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
     if request.method() != Method::GET
         && !(matches!(
             path.as_str(),
-            "api/edit" | "api/table-query" | "api/table-query/close" | "api/jq-query"
+            "api/edit"
+                | "api/table-query"
+                | "api/table-query/close"
+                | "api/jq-query"
+                | "api/table-chart"
+                | "api/operations"
+                | "api/selection/source"
+                | "api/notes"
         ) && request.method() == Method::POST)
     {
         return json_error(StatusCode::METHOD_NOT_ALLOWED, "Reader method rejected");
@@ -288,11 +395,23 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
         .query()
         .map(|value| format!("?{value}"))
         .unwrap_or_default();
+    // Relay the raw encoded suffix: decoded archive names can contain # or %.
+    // Authorization still uses the decoded allowlist above; the service validates
+    // the immutable archive capability/member and fixed PDF resource inventory.
+    let raw_prefix = format!("/markdown-reader/{id}/");
+    let Some(raw_path) = request.uri().path().strip_prefix(&raw_prefix) else {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid reader route prefix");
+    };
     let mut upstream = state.markdown_readers.client.request(
         request.method().clone(),
-        format!("http://{address}/{path}{query}"),
+        format!("http://{address}/{raw_path}{query}"),
     );
-    for name in ["x-reader-token", "x-reader-document", "content-type"] {
+    for name in [
+        "x-reader-token",
+        "x-reader-document",
+        "content-type",
+        "range",
+    ] {
         if let Some(value) = request.headers().get(name) {
             upstream = upstream.header(name, value);
         }
@@ -303,7 +422,7 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
             Err(_) => {
                 return json_error(
                     StatusCode::PAYLOAD_TOO_LARGE,
-                    "Editing request exceeds 2 MiB",
+                    "Reader request exceeds 2 MiB",
                 )
             }
         };
@@ -318,30 +437,24 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
             )
         }
     };
-    let mut builder = Response::builder().status(response.status())
+    let mut builder = Response::builder()
+        .status(response.status())
         .header(header::CACHE_CONTROL, "no-store")
         .header("x-content-type-options", "nosniff")
-        .header(header::REFERRER_POLICY, "no-referrer")
-        .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob:; img-src blob: data:; font-src data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'");
-    if let Some(content_type) = response.headers().get(header::CONTENT_TYPE) {
-        builder = builder.header(header::CONTENT_TYPE, content_type);
-    }
-    if path.is_empty() && response.status().is_success() {
-        let html = match response.text().await {
-            Ok(html) => html,
-            Err(error) => return json_error(StatusCode::BAD_GATEWAY, &error.to_string()),
-        };
-        let html = html.replace(
-            "</head>",
-            &format!(
-                "<style>{}\n{}</style></head>",
-                include_str!("../../ui/large-markdown-host.css"),
-                include_str!("../../ui/vendor/marknoria-checkbox.css")
-            ),
-        );
-        return builder
-            .body(Body::from(html))
-            .expect("reader page response");
+        .header(header::REFERRER_POLICY, "no-referrer");
+    // Preserve the reader's restrictive policy and range/revision metadata.
+    // Do not inject CSS, rewrite source HTML or forward Studio credentials.
+    for name in [
+        "content-type",
+        "content-security-policy",
+        "content-range",
+        "accept-ranges",
+        "content-length",
+        "x-reader-revision",
+    ] {
+        if let Some(value) = response.headers().get(name) {
+            builder = builder.header(name, value);
+        }
     }
     builder
         .body(Body::from_stream(response.bytes_stream()))

@@ -109,25 +109,42 @@ export function createDocumentWorkspaceController({
   function disposeLargeMarkdown() {
     largeMarkdownHost?.dispose()
     largeMarkdownHost = null
+    readerPresentationSignature = ''
     largeMarkdownFrame?.remove()
     largeMarkdownFrame = null
     releaseLargeMarkdown(largeMarkdownFile)
     largeMarkdownFile = null
   }
 
+  let readerPresentationSignature = ''
   function syncLargeMarkdownTheme() {
-    const target = largeMarkdownFrame?.contentDocument?.documentElement
-    if (!target) return
-    const mode = document.documentElement.dataset.theme || 'light'
-    if (target.dataset.theme !== mode) target.dataset.theme = mode
-    const syntaxTheme = largeMarkdownFrame.contentDocument.getElementById('syntax-theme')
-    const stylesheet = mode === 'dark' ? './syntax-dark.css' : './syntax-light.css'
-    if (syntaxTheme && syntaxTheme.getAttribute('href') !== stylesheet) syntaxTheme.setAttribute('href', stylesheet)
-    const theme = getComputedStyle(document.documentElement)
-    for (const name of ['panel', 'panel-soft', 'text', 'muted', 'faint', 'border', 'brand', 'brand-soft', 'ui-font-family', 'ui-font-size', 'content-font-family', 'content-font-size', 'content-font-weight', 'code-font-family', 'code-font-size']) {
-      target.style.setProperty(`--${name}`, theme.getPropertyValue(`--${name}`))
+    if (!largeMarkdownHost || !largeMarkdownFrame) return
+    const style = getComputedStyle(document.documentElement)
+    const palette = {}
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    for (const [key, variable] of Object.entries({panel:'panel',soft:'panel-soft',text:'text',muted:'muted',faint:'faint',border:'border',brand:'brand','brand-soft':'brand-soft'})) {
+      const value = style.getPropertyValue('--'+variable).trim()
+      if (!context || !value || !CSS.supports('color',value)) continue
+      context.clearRect(0,0,1,1);context.fillStyle=value;context.fillRect(0,0,1,1)
+      palette[key]='#'+[...context.getImageData(0,0,1,1).data].map(channel=>channel.toString(16).padStart(2,'0')).join('')
     }
-    target.classList.add('studio-host')
+    const settings = {theme:document.documentElement.dataset.theme==='dark'?'dark':'light',toolbar:'host',locale:getLocale(),palette}
+    for (const [key,variable] of Object.entries({fontFamily:'ui-font-family',contentFontFamily:'content-font-family',codeFontFamily:'code-font-family'})) {
+      const value=style.getPropertyValue('--'+variable).trim()
+      if(value)settings[key]=value
+    }
+    for (const [key,variable] of Object.entries({fontSize:'ui-font-size',contentFontSize:'content-font-size',codeFontSize:'code-font-size'})) {
+      const value=parseFloat(style.getPropertyValue('--'+variable))
+      if(Number.isFinite(value)&&value>=11&&value<=32)settings[key]=value
+    }
+    const weight=Number(style.getPropertyValue('--content-font-weight'))
+    if(Number.isInteger(weight)&&weight>=100&&weight<=900)settings.contentFontWeight=weight
+    const signature=JSON.stringify(settings)
+    if(signature===readerPresentationSignature)return
+    readerPresentationSignature=signature
+    largeMarkdownHost.settings(settings).catch(error=>{readerPresentationSignature='';showError(error)})
   }
 
   function bind() {
@@ -385,7 +402,7 @@ function toggleArtifactOutline() {
 function setArtifactOutlineOpen(open) {
   state.artifactOutlineOpen = Boolean(open)
   if (state.artifact?.kind === 'large-markdown') {
-    largeMarkdownHost?.setOutline(state.artifactOutlineOpen)
+    largeMarkdownHost?.setOutline(state.artifactOutlineOpen).catch(showError)
     $('#artifact-outline-toggle').classList.toggle('active', state.artifactOutlineOpen)
     $('#artifact-outline-toggle').setAttribute('aria-expanded', String(state.artifactOutlineOpen))
     return
@@ -787,7 +804,7 @@ function renderArtifact() {
       largeMarkdownFrame.addEventListener('load', () => {
         syncLargeMarkdownTheme()
         if (state.artifact === file && state.artifactView === 'edit') largeMarkdownHost?.setView('edit').catch(showError)
-        if (state.artifact === file && file.readerLine) largeMarkdownFrame.contentWindow?.postMessage({ type: 'marknoria:navigate', line: file.readerLine }, location.origin)
+        if (state.artifact === file && file.readerLine) largeMarkdownHost?.navigateLine(file.readerLine).catch(showError)
       })
       content.replaceChildren(largeMarkdownFrame)
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
@@ -1017,7 +1034,7 @@ async function mountMarkdownTableLayouts(file, content) {
       row.cells.length === columns && [...row.cells].every(cell => cell.colSpan === 1 && cell.rowSpan === 1))
   })
   if (!tables.length) return
-  markdownTableLayoutModule ||= import('./markdown-table-layout.mjs')
+  markdownTableLayoutModule ||= import('./reader-assets/table-layout.mjs')
   const { tableLayout } = await markdownTableLayoutModule
   const current = () => generation === markdownTableGeneration && state.artifact === file && state.artifactView === 'preview' && content.isConnected
   if (!current() || !tables[0].isConnected) return

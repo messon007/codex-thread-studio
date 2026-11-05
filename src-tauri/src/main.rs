@@ -558,7 +558,7 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
-    if let Some(result) = marknoria::server::index_worker() {
+    if let Some(result) = marknoria::reader::worker_entry() {
         if let Err(error) = result {
             eprintln!("Markdown indexing failed: {error}");
             std::process::exit(1);
@@ -1206,14 +1206,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
-            "/markdown-table-layout.mjs",
-            get(|| async {
-                javascript(include_str!("../../crates/marknoria/web/table-layout.mjs"))
-            }),
-        )
-        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
+        )
+        .nest(
+            "/reader-assets",
+            marknoria::web::reader_assets().with_state(()),
         )
         .route("/markdown-reader/{id}/", get(large_markdown::page))
         .route(
@@ -5222,7 +5220,8 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
-                "/markdown-table-layout.mjs",
+                "/reader-assets/table-layout.mjs",
+                "/reader-assets/host-client.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",
@@ -5335,7 +5334,10 @@ mod tests {
                 format!("/{}", segments.join("/"))
             }
 
-            let mut pending = vec!["/app.js".to_string()];
+            let mut pending = vec![
+                "/app.js".to_string(),
+                "/reader-assets/host-client.mjs".to_string(),
+            ];
             let mut visited = BTreeSet::new();
             while let Some(module) = pending.pop() {
                 if !visited.insert(module.clone()) {

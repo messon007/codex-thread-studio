@@ -1,96 +1,47 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createLargeMarkdownHost } from './large-markdown-host.mjs'
-
-test('host reuses paged reading controls without rebuilding an outline or rendering document text', async context => {
-  const previous = globalThis.MutationObserver
-  let changed
-  let disconnected = false
-  globalThis.MutationObserver = class {
-    constructor(callback) { changed = callback }
-    observe() {}
-    disconnect() { disconnected = true }
-  }
-  context.after(() => { globalThis.MutationObserver = previous })
-  let outlineOpen = false
-  let mode = 'preview'
-  let dirty = false
-  let saveSucceeds = true
-  let left = false
-  const navigated = []
-  const reader = {
-    index: { toc: [{ id: 0 }], sourceLines: 100000 },
-    source: { visible: false, async show() { this.visible = true; changed() }, go: line => navigated.push(line) },
-    jump: (...location) => navigated.push(location),
-  }
-  const buttons = {
-    '#contents-toggle': { getAttribute: () => String(outlineOpen), click() { outlineOpen = !outlineOpen; changed() } },
-    '#source-mode': {},
-    '#preview-mode': { click() { reader.source.visible = false; changed() } },
-  }
-  const bridge = {
-    get state() { return { ready: true, readingReady: true, editable: true, view: mode, dirty, busy: false, outlineOpen, hasOutline: true, lineCount: 100000, documentId: 'current-document', status: saveSucceeds ? '' : 'The file changed outside Studio' } },
-    async setView(view) { mode = view; reader.source.visible = view === 'source'; changed() },
-    navigate(match) { if (mode === 'preview') return reader.jump(match.page, null, match.tableRow); return reader.source.go(match.line) },
-    async save() { if (saveSucceeds) dirty = false; return saveSucceeds },
-    leave() { left = true },
-  }
-  const snapshots = []
-  const frame = { contentWindow: { readerExperiment: reader, marknoriaHost: bridge }, contentDocument: { querySelector: selector => buttons[selector] } }
-  const host = createLargeMarkdownHost(frame, state => snapshots.push(state))
-  context.after(() => host.dispose())
-  assert.equal(snapshots[0].lineCount, 100000)
-  await host.setView('source')
-  assert.equal(snapshots.at(-1).view, 'source')
-  host.navigateMatch({ line: 4242, page: 3 })
-  assert.equal(navigated.at(-1), 4242)
-  await host.setView('preview')
-  host.setOutline(true)
-  assert.equal(snapshots.at(-1).outlineOpen, true)
-  host.navigateMatch({ line: 4242, page: 3, tableRow: 50 })
-  assert.deepEqual(navigated.at(-1), [3, null, 50])
-  await host.setView('edit')
-  dirty = true
-  assert.equal(host.dirty, true)
-  host.navigateMatch({ line: 50 })
-  assert.equal(navigated.at(-1), 50)
-  saveSucceeds = false
-  await assert.rejects(host.save(), /changed outside/)
-  assert.equal(host.dirty, true)
-  saveSucceeds = true
-  assert.equal(await host.save(), true)
-  assert.equal(snapshots.at(-1).dirty, false)
-  host.dispose()
-  assert.equal(disconnected, true)
-  assert.equal(left, true)
+function fixture() {
+  const requests=[],states=[],selections=[]
+  let listener,closed=0
+  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
+  const client={ready:async()=>state,async request(method,params,{signal}={}){
+    requests.push({method,params,signal})
+    if(method==='setView')state={...state,view:params.view}
+    if(method==='contents')state={...state,outline:{...state.outline,open:params.open}}
+    if(method==='search')return {matches:[{line:8,location:{kind:'cell',table:0,row:4,column:0}}]}
+    if(method==='save'){if(state.error)throw Error(state.error);state={...state,dirty:false}}
+    return state
+  },async dispose({force}){assert.equal(force,true);closed++}}
+  const frame={src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
+  const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{createClient(_frame,options){listener=options.onEvent;return client}})
+  return {host,requests,states,selections,emit:(type,value)=>listener(type,value),setState:patch=>{state={...state,...patch};listener('state',state)},closed:()=>closed}
+}
+test('host controls use only the public protocol and preserve dirty/save errors',async()=>{
+ const {host,requests,states,setState,closed}=fixture()
+ await host.ready
+ assert.equal(states.at(-1).lineCount,100)
+ assert.equal(states.at(-1).readingReady,true)
+ assert.equal(requests[0].method,'settings');assert.equal(requests[0].params.toolbar,'host')
+ await host.setView('source');assert.equal(states.at(-1).view,'source')
+ await host.setOutline(true);assert.equal(states.at(-1).outlineOpen,true)
+ setState({dirty:true,error:'Changed outside Studio'})
+ await assert.rejects(host.save(),/Changed outside/);assert.equal(host.dirty,true)
+ setState({error:null});assert.equal(await host.save(),true);assert.equal(host.dirty,false)
+ const matches=await host.search('needle');await host.navigateMatch(matches[0])
+ assert.deepEqual(requests.at(-1).params.location,{kind:'line',line:8})
+ await host.setView('preview');await host.navigateMatch(matches[0])
+ assert.deepEqual(requests.at(-1).params.location,{kind:'cell',table:0,row:4,column:0})
+ await host.dispose();assert.equal(closed(),1)
+ await assert.rejects(host.setView('source'),/disposed/)
 })
-
-test('iframe selections publish translated screen coordinates and detach listeners', context => {
-  const previous = globalThis.MutationObserver
-  globalThis.MutationObserver = class { observe() {} disconnect() {} }
-  context.after(() => { globalThis.MutationObserver = previous })
-  const listeners = new Map(), selections = []
-  const article = { dataset: { page: '0' } }
-  const element = { nodeType: 1, closest(selector) {
-    if (selector === '#viewport, #source-view') return this
-    if (selector === '[data-page]') return article
-    return null
-  } }
-  const range = { startContainer: element, endContainer: element,
-    getBoundingClientRect: () => ({ left: 5, right: 45, top: 10, bottom: 30, width: 40, height: 20 }) }
-  const selection = { rangeCount: 1, isCollapsed: false, toString: () => 'Selected \u4e2d\u6587', getRangeAt: () => range }
-  const frame = { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 100, top: 200 }),
-    contentDocument: { querySelector: () => null, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener: type => listeners.delete(type) },
-    contentWindow: { marknoriaHost: { state: { ready: true }, leave() {} }, getSelection: () => selection,
-      readerExperiment: { index: { pages: [{ line: 10 }, { line: 25 }], sourceLines: 100, revision: 'revision' } } } }
-  const host = createLargeMarkdownHost(frame, () => {}, value => selections.push(value))
-  context.after(() => host.dispose())
-  listeners.get('mouseup')()
-  assert.equal(selections[0].quote, 'Selected \u4e2d\u6587')
-  assert.equal(selections[0].startLine, 10)
-  assert.equal(selections[0].endLine, 25)
-  assert.equal(selections[0].rect.left, 105)
-  assert.equal(selections[0].rect.top, 210)
-  host.dispose()
-  assert.equal(listeners.size, 0)
+test('typed selections preserve scope and precision while converting frame coordinates',async()=>{
+ const {host,emit,selections}=fixture();await host.ready
+ emit('selection',{documentId:'doc',revision:'a'.repeat(64),quote:'\u4e2d\u6587😀',precision:'exact',location:{kind:'source',startByte:3,endByte:13},viewportRect:{x:5,y:10,width:40,height:20}})
+ const selection=selections[0]
+ assert.equal(selection.documentId,'doc');assert.equal(selection.precision,'exact')
+ assert.deepEqual(selection.location,{kind:'source',startByte:3,endByte:13})
+ assert.equal(selection.rect.left,105);assert.equal(selection.rect.top,210)
+ assert.equal(selection.startLine,null)
+ await host.dispose();emit('selection',{quote:'late'});assert.equal(selections.length,1)
 })

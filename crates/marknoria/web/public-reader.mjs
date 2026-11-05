@@ -1,0 +1,107 @@
+import { installReaderBridge } from './reader-bridge.mjs'
+import { queryOperation } from './query-operation.mjs'
+
+export function publicReader({ origins, state, index, api, renderer = () => null, setView, navigate, contents, selection, save, settings, dispose }) {
+  const queryId = id => {
+    if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
+    return id
+  }
+  const current = params => {
+    const value = state()
+    if (value.state !== 'ready') throw Object.assign(Error('Reader is preparing its document renderer'), { code: 'BUSY' })
+    if (!value.documentId || params.documentId !== value.documentId || params.revision !== value.revision) {
+      throw Object.assign(Error('Reader document or revision changed'), { code: 'REVISION' })
+    }
+    return value
+  }
+  const checked = execute => (params, signal) => { current(params); return execute(params, signal) }
+  return installReaderBridge({ origins, state, onDispose: dispose, commands: {
+    setView: checked(async params => { if (!['preview', 'source', 'edit'].includes(params.view)) throw Error('Invalid reader view'); await setView(params.view); return state() }),
+    navigate: checked(async params => { await navigate(params.location); return state() }),
+    contents: checked(async params => { if (typeof params.open !== 'boolean' || typeof contents !== 'function') throw Error('Invalid Contents command'); await contents(params.open); return state() }),
+    save: checked(async () => { await save(); return state() }),
+    selection: checked((_, signal) => selection(signal)),
+    projectionWindow: checked((params, signal) => {
+      if (renderer() || !Number.isSafeInteger(params.start) || params.start < 0 || !Number.isSafeInteger(params.count) || params.count < 1 || params.count > 5) throw Error('Invalid bounded projection window')
+      return api(`/api/projection?revision=${encodeURIComponent(params.revision)}&start=${params.start}&count=${params.count}`, signal)
+    }),
+    sourceWindow: checked((params, signal) => {
+      if (!state().capabilities.source || params.line != null && (!Number.isSafeInteger(params.line) || params.line < 1) || params.offset != null && (!Number.isSafeInteger(params.offset) || params.offset < 0) || params.line != null && params.offset != null || params.previous != null && typeof params.previous !== 'boolean') throw Error('Invalid bounded source window')
+      const query = new URLSearchParams()
+      if (params.line != null) query.set('line',params.line)
+      if (params.offset != null) query.set('offset',params.offset)
+      query.set('previous',params.previous === true)
+      return api(`/api/source?${query}`,signal)
+    }),
+    sourceSelection: checked((params, signal) => {
+      if (!state().capabilities.source || ![params.start,params.end,params.fromUtf16,params.toUtf16].every(value=>Number.isSafeInteger(value)&&value>=0) || params.end<params.start || params.toUtf16<params.fromUtf16) throw Error('Invalid source selection coordinates')
+      return api('/api/selection/source',signal,{method:'POST',body:JSON.stringify({revision:params.revision,start:params.start,end:params.end,fromUtf16:params.fromUtf16,toUtf16:params.toUtf16})})
+    }),
+    outline: checked((params, signal) => {
+      if (renderer()) return renderer().outline({ offset: params.offset ?? 0, signal })
+      const offset = params.offset ?? 0, headings = index().toc
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > headings.length) throw Error('Invalid outline offset')
+      return { revision: state().revision, offset, total: headings.length, items: headings.slice(offset, offset + 256) }
+    }),
+    search: checked((params, signal) => {
+      if (typeof params.query !== 'string' || new TextEncoder().encode(params.query).length > 256) throw Error('Invalid source search')
+      if (renderer()) return renderer().search(params.query, { signal })
+      return api(`/api/search?query=${encodeURIComponent(params.query)}`, signal).then(value=>({...value,matches:value.matches.map(match=>{
+        const table=index().pages[match.page]?.table
+        return {...match,location:table!=null&&match.tableRow!=null ? {kind:'cell',table,row:match.tableRow,column:0} : {kind:'line',line:match.line},locationPrecision:table!=null?'row':'line'}
+      })}))
+    }),
+    sql: checked((params, signal) => {
+      if (!state().capabilities.queries) throw Error('Queries were disabled by the host')
+      if (!Number.isSafeInteger(params.table) || params.table < 0 || typeof params.sql !== 'string' || params.sql.length > 16384) throw Error('Invalid SQL request')
+      return queryOperation(api, params.revision, signal, operationId => api('/api/table-query', signal, { method: 'POST', body: JSON.stringify({ table: params.table, sql: params.sql, revision: params.revision, operationId }) }))
+    }),
+    tableChart: checked((params, signal) => {
+      if (!state().capabilities.charts) throw Error('Charts were disabled or no table is available')
+      if (!Number.isSafeInteger(params.y) || params.y < 0 || params.x != null && (!Number.isSafeInteger(params.x) || params.x < 0)) throw Error('Invalid chart axes')
+      return queryOperation(api, params.revision, signal, operationId => api('/api/table-chart', signal, { method: 'POST', body: JSON.stringify({ source: params.source, x: params.x ?? null, y: params.y, revision: params.revision, operationId }) }))
+    }),
+    jq: checked((params, signal) => {
+      if (!state().capabilities.queries || typeof params.filter !== 'string' || params.filter.length > 16384) throw Error('Invalid or disabled jq request')
+      return queryOperation(api, params.revision, signal, operationId => api('/api/jq-query', signal, { method: 'POST', body: JSON.stringify({ filter: params.filter, slurp: params.slurp === true, revision: params.revision, operationId }) }))
+    }),
+    epubProgress: checked(async(params,signal)=>{
+      const active=renderer()
+      if(state().format!=='epub'||!active)throw Error('EPUB progress requires an EPUB document')
+      if(params.operation==='build')await active.buildProgressIndex({signal})
+      else if(params.operation==='cancel')active.cancelProgressIndex()
+      else if(params.operation==='seek')await active.seekProgress(params.percentage)
+      else throw Error('Invalid EPUB progress operation')
+      return state()
+    }),
+    notes: checked((params, signal) => {
+      if (!state().capabilities.notes) throw Error('Note storage was not granted by the host')
+      if (!params.request || !['list','add','update','delete','clear','copy'].includes(params.request.operation) || new TextEncoder().encode(JSON.stringify(params.request)).length>131072) throw Error('Invalid bounded note request')
+      return api('/api/notes',signal,{method:'POST',body:JSON.stringify(params.request)})
+    }),
+    tableInfo: checked(params => {
+      if (!Number.isSafeInteger(params.table) || params.table < 0 || !index().tables[params.table]) throw Error('Invalid table identity')
+      const table = index().tables[params.table]
+      return { revision: state().revision, table: params.table, columns: table.columns, rows: table.rows, label: table.label || 'Table' }
+    }),
+    tableWindow: checked((params, signal) => {
+      if (!Number.isSafeInteger(params.table) || params.table < 0 || !Number.isSafeInteger(params.row) || params.row < 0 || !Array.isArray(params.columns) || !params.columns.length || params.columns.length > 512 || new Set(params.columns).size !== params.columns.length || params.columns.some(column => !Number.isSafeInteger(column) || column < 0)) throw Error('Invalid table window')
+      return api(`/api/table?id=${params.table}&row=${params.row}&columns=${params.columns.join(',')}`, signal)
+    }),
+    sqlSchema: checked((params, signal) => {
+      if (!Number.isSafeInteger(params.table) || params.table < 0) throw Error('Invalid table identity')
+      return api(`/api/table-query/schema?table=${params.table}`, signal)
+    }),
+    sqlPage: checked((params, signal) => {
+      if (!Number.isSafeInteger(params.row) || params.row < 0) throw Error('Invalid result row')
+      return api(`/api/table-query?id=${queryId(params.id)}&row=${params.row}`, signal)
+    }),
+    sqlClose: checked((params, signal) => api('/api/table-query/close', signal, { method: 'POST', body: JSON.stringify({ id: queryId(params.id) }) })),
+    jqPage: checked((params, signal) => {
+      if (!Number.isSafeInteger(params.page) || params.page < 0) throw Error('Invalid result page')
+      return api('/api/jq-query', signal, { method: 'POST', body: JSON.stringify({ id: queryId(params.id), page: params.page, revision: params.revision }) })
+    }),
+    jqClose: checked((params, signal) => api('/api/jq-query', signal, { method: 'POST', body: JSON.stringify({ id: queryId(params.id), close: true, revision: params.revision }) })),
+    settings: checked(async params => { await settings(params); return state() }),
+  } })
+}

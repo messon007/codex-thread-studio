@@ -104,6 +104,7 @@ function controls() {
 
 async function applyMode(side) {
   const pane = panes[side]
+  if(pane.file?.sourceAvailable===false)pane.mode='preview'
   const ticket = ++pane.generation
   const frame = document.getElementById(`${side}-preview`)
   const diff = document.getElementById(`${side}-diff`)
@@ -111,7 +112,7 @@ async function applyMode(side) {
   for (const view of ['preview', 'source']) {
     const button = document.getElementById(`${side}-mode-${view}`)
     button.setAttribute('aria-pressed', String(pane.mode === view))
-    button.disabled = !pane.file
+    button.disabled = !pane.file || view==='source'&&pane.file.sourceAvailable===false
   }
   diff.hidden = true
   frame.hidden = !pane.file
@@ -132,6 +133,7 @@ async function applyMode(side) {
 }
 
 async function setMode(side, mode) {
+  if(mode==='source'&&panes[side].file?.sourceAvailable===false)return
   capture(side)
   panes[side].mode = mode
   navigation += 1
@@ -143,7 +145,7 @@ function clearDiff() {
   for (const side of sides) {
     capture(side)
     panes[side].generation += 1
-    reader(side)?.source.attach(null)
+    reader(side)?.source?.attach(null)
     panes[side].diff?.dispose()
     if (panes[side].diff?.viewport.ownerDocument !== document) panes[side].diff?.viewport.remove()
     panes[side].diff = null
@@ -166,8 +168,8 @@ async function refresh() {
       const next = state[side]
       const newFile = next?.id !== pane.file?.id
       pane.file = next
-      document.getElementById(`${side}-file`).textContent = next?.path || 'Choose a Markdown file'
-      document.getElementById(`${side}-file`).title = next?.path || ''
+      document.getElementById(`${side}-file`).textContent = next?.displayPath || next?.path || 'Choose a document'
+      document.getElementById(`${side}-file`).title = next?.displayPath || next?.path || ''
       document.getElementById(`${side}-empty`).hidden = Boolean(next)
       if (newFile) {
         pane.tools.clear()
@@ -178,10 +180,13 @@ async function refresh() {
       void applyMode(side).catch(error => { status.textContent = error.message })
     }
   }
+  // Indexing can finish without changing document identity.
+  for (const side of sides) panes[side].file = state[side]
   if (!sides.every(side => state[side]?.ready || state[side]?.error)) {
     status.textContent = sides.some(side => state[side]?.error) ? 'A document could not be indexed; reopen it to retry.' : 'Read either document now. Open another file to compare · read only'
     return
   }
+  if(sides.some(side=>state[side]?.sourceAvailable===false)){status.textContent='Side-by-side previews · Source differences require two text documents';return}
   if (metadata) return
   const ticket = generation
   if (!comparisonId) {
@@ -267,6 +272,15 @@ for (const side of sides) {
   }, `Choose ${side} Markdown file`, panes[side].file?.path))
 }
 addEventListener('message', event => {
+  if (event.origin === location.origin && event.data?.type === 'marknoria:choose-file') {
+    for (const side of sides) {
+      if (document.getElementById(`${side}-preview`).contentWindow === event.source) {
+        document.getElementById(`choose-${side}`).click()
+        return
+      }
+    }
+    return
+  }
   if (event.origin !== location.origin || event.data?.type !== 'marknoria:ready') return
   for (const side of sides) {
     if (event.source === document.getElementById(`${side}-preview`).contentWindow && event.data.documentId === panes[side].file?.id) {

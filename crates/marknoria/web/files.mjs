@@ -1,4 +1,6 @@
 export function fileController(token, options = {}) {
+  const lifetime = new AbortController()
+  const on = (target, type, listener) => target.addEventListener(type, listener, { signal: lifetime.signal })
   const dialog = document.querySelector('#file-browser')
   const list = document.querySelector('#file-browser-list')
   const feedback = document.querySelector('#file-feedback')
@@ -9,6 +11,26 @@ export function fileController(token, options = {}) {
   let browsing = 0
   let request = null
   let selection = null
+  let nativeChoosing = false
+  if (window.marknoriaDesktop) {
+    const compare = document.querySelector('#compare-files')
+    if (compare) compare.title = 'Compare two local supported files (read only)'
+  }
+
+  async function chooseLocal(selected) {
+    if (opening || nativeChoosing) return
+    nativeChoosing = true
+    try {
+      const path = await window.marknoriaDesktop.chooseFile()
+      if (!path) return
+      feedback.hidden=true;document.querySelector('#file-message').textContent=''
+      selection = typeof selected === 'function' ? selected : null
+      await openServer(path)
+    } catch (error) {
+      document.querySelector('#file-message').textContent = error.message
+      feedback.hidden = false
+    } finally { nativeChoosing = false }
+  }
 
   async function api(path, options = {}) {
     const response = await fetch(new URL(`.${path}`, import.meta.url), { ...options, headers: { ...options.headers, 'x-reader-token': token } })
@@ -30,6 +52,7 @@ export function fileController(token, options = {}) {
     }
     if (options.beforeChange && !options.beforeChange()) return
     opening = true
+    feedback.hidden=true;document.querySelector('#file-message').textContent=''
     dialog.setAttribute('aria-busy', 'true')
     for (const button of dialog.querySelectorAll('button')) button.disabled = true
     try {
@@ -61,7 +84,7 @@ export function fileController(token, options = {}) {
       document.querySelector('#file-browser-location').textContent = folder ? `${rootName} / ${folder.split('/').join(' / ')}` : response.root
       document.querySelector('#file-browser-location').title = location
       document.querySelector('#file-browser-up').disabled = !folder
-      document.querySelector('#file-browser-note').textContent = response.truncated ? 'Showing a limited list. Choose a smaller folder.' : 'Only Markdown files are shown. Browsing stays inside this server folder.'
+      document.querySelector('#file-browser-note').textContent = response.truncated ? 'Showing a limited list. Choose a smaller folder.' : 'Only supported files are shown. Browsing stays inside this server folder.'
       list.replaceChildren()
       for (const entry of response.entries) {
         const button = document.createElement('button')
@@ -84,11 +107,17 @@ export function fileController(token, options = {}) {
         button.addEventListener('click', () => { if (!opening) entry.directory ? browse(entry.path) : openServer(entry.path) })
         list.append(button)
       }
-      if (!response.entries.length) list.textContent = 'No Markdown files or folders here.'
+      if (!response.entries.length) list.textContent = 'No supported files or folders here.'
     } catch (error) { if (error.name !== 'AbortError' && ticket === browsing) list.textContent = error.message }
   }
 
   function chooseServer(selected = null, title = 'Open from server', initialFile = null) {
+    if (window.parent !== window && new URLSearchParams(location.search).has('comparison')) {
+      parent.postMessage({ type: 'marknoria:choose-file' }, location.origin)
+      return
+    }
+    if (options.enabled === false) { options.onOpen?.(); return }
+    if (window.marknoriaDesktop) return chooseLocal(selected)
     if (opening || dialog.open) return
     selection = typeof selected === 'function' ? selected : null
     document.querySelector('.reader-settings')?.removeAttribute('open')
@@ -98,14 +127,14 @@ export function fileController(token, options = {}) {
   }
 
   const close = () => { if (!opening) dialog.close() }
-  dialog.addEventListener('close', () => { if (!dialog.open) { browsing += 1; request?.abort() } })
-  dialog.addEventListener('cancel', event => { if (opening) event.preventDefault() })
-  for (const button of document.querySelectorAll('[data-open-server]')) button.addEventListener('click', () => chooseServer())
-  document.querySelector('#file-browser-close').addEventListener('click', close)
-  document.querySelector('#file-browser-cancel').addEventListener('click', close)
-  document.querySelector('#file-browser-up').addEventListener('click', () => { if (!opening) browse(folder.split('/').slice(0, -1).join('/')) })
-  document.querySelector('#file-dismiss').addEventListener('click', () => { feedback.hidden = true })
-  document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseServer() } })
+  on(dialog, 'close', () => { if (!dialog.open) { browsing += 1; request?.abort() } })
+  on(dialog, 'cancel', event => { if (opening) event.preventDefault() })
+  for (const button of document.querySelectorAll('[data-open-server]')) on(button, 'click', () => chooseServer())
+  on(document.querySelector('#file-browser-close'), 'click', close)
+  on(document.querySelector('#file-browser-cancel'), 'click', close)
+  on(document.querySelector('#file-browser-up'), 'click', () => { if (!opening) browse(folder.split('/').slice(0, -1).join('/')) })
+  on(document.querySelector('#file-dismiss'), 'click', () => { feedback.hidden = true })
+  on(document, 'keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseServer() } })
   return {
     compare() {
       const target = new URL('./compare.html', import.meta.url)
@@ -117,11 +146,11 @@ export function fileController(token, options = {}) {
       const ready = state === 'ready'
       document.querySelector('#welcome').hidden = ready
       document.querySelector('#viewport').hidden = !ready
-      document.querySelector('#welcome-title').textContent = state === 'indexing' ? 'Preparing your document…' : state === 'error' ? 'Could not open this document' : 'Open a Markdown document'
-      document.querySelector('#welcome-description').textContent = error || (state === 'indexing' ? 'Building the outline and preparing the first pages. You can choose another file at any time.' : 'Choose a document on the server. Read large files, explore sections, and choose the columns you need.')
+      document.querySelector('#welcome-title').textContent = state === 'indexing' ? 'Preparing your document…' : state === 'error' ? 'Could not open this document' : 'Open a supported document'
+      document.querySelector('#welcome-description').textContent = error || (state === 'indexing' ? 'Building the outline and preparing the first pages. You can choose another file at any time.' : window.marknoriaDesktop ? 'Choose a supported document from any local folder. Read, edit and compare files in place.' : 'Choose a document on the server. Read large files, explore sections, and choose the columns you need.')
       document.querySelector('#document-summary').textContent = state === 'idle' ? 'Choose a file to start reading' : state === 'indexing' ? 'Preparing document…' : state === 'error' ? 'Choose another file to continue' : ''
       for (const id of ['contents-toggle', 'search-toggle']) document.getElementById(id).disabled = !ready
     },
-    dispose() { request?.abort() },
+    dispose() { lifetime.abort(); browsing++; request?.abort(); if (dialog.open) dialog.close(); list.replaceChildren() },
   }
 }

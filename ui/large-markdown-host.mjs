@@ -1,102 +1,85 @@
-export function createLargeMarkdownHost(frame, onState, onSelection = () => {}) {
-  let disposed = false
-  let timer = null
-  let signature = ''
-  let request = null
-  let searchGeneration = 0
-  let observer = null
-  const document = () => frame.contentDocument
-  let selectionDocument = null
-  const captureSelection = () => {
-    const selection = frame.contentWindow?.getSelection()
-    if (!selection?.rangeCount || selection.isCollapsed) return
-    const quote = String(selection).trim().slice(0, 16000)
-    if (!quote) return
-    const range = selection.getRangeAt(0)
-    const element = node => node?.nodeType === 1 ? node : node?.parentElement
-    const start = element(range.startContainer)
-    const end = element(range.endContainer)
-    if (!start?.closest('#viewport, #source-view') || start.closest('dialog')) return
-    const index = frame.contentWindow?.readerExperiment?.index
-    const line = node => Number(node?.closest('[data-source-line]')?.dataset.sourceLine)
-      || index?.pages[Number(node?.closest('[data-page]')?.dataset.page)]?.line
-      || null
-    const startLine = line(start)
-    const endPage = end?.closest('[data-page]')
-    const endLine = Number(end?.closest('[data-source-end-line]')?.dataset.sourceEndLine)
-      || (endPage ? (index?.pages[Number(endPage.dataset.page) + 1]?.line || index?.sourceLines) : line(end))
-    const rect = range.getBoundingClientRect(), outer = frame.getBoundingClientRect()
-    onSelection({ quote, startLine, endLine: startLine ? Math.max(startLine, endLine || startLine) : null,
-      revision: index?.revision || '', rect: { left: outer.left + rect.left, right: outer.left + rect.right,
-        top: outer.top + rect.top, bottom: outer.top + rect.bottom, width: rect.width, height: rect.height } })
-  }
-  const bindSelection = () => {
-    const next = document()
-    if (!next || next === selectionDocument) return
-    selectionDocument?.removeEventListener?.('mouseup', captureSelection)
-    selectionDocument?.removeEventListener?.('keyup', captureSelection)
-    selectionDocument = next
-    next.addEventListener?.('mouseup', captureSelection)
-    next.addEventListener?.('keyup', captureSelection)
-  }
-  frame.addEventListener?.('load', bindSelection)
-  bindSelection()
-  const bridge = () => frame.contentWindow?.marknoriaHost
-  const snapshot = () => bridge()?.state || { ready: false }
-  const endpoint = path => new URL(`./api/${path}`, new URL(frame.src))
-  const headers = () => ({ 'x-reader-token': new URL(frame.src).hash.slice(1), ...(snapshot().documentId ? { 'x-reader-document': snapshot().documentId } : {}) })
-  const publish = () => {
-    if (disposed) return
-    clearTimeout(timer)
-    const next = snapshot()
-    const key = JSON.stringify(next)
-    if (key !== signature) { signature = key; onState(next) }
-    if (bridge() && !observer) {
-      observer = new MutationObserver(publish)
-      for (const selector of ['#view-modes', '#contents-toggle', '#edit-range', '#edit-status', '#document-summary', '#welcome-title']) {
-        const target = document()?.querySelector(selector)
-        if (target) observer.observe(target, { attributes: true, childList: true, subtree: true, attributeFilter: ['aria-pressed', 'aria-expanded', 'disabled', 'hidden'] })
-      }
+// Studio shell adapter over the fixed public MarkNoria parent protocol.
+// It never reads the child DOM, diagnostic globals or implementation controls.
+export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, options = {}) {
+  let client, disposed = false, snapshot = { state: 'indexing' }, request, generation = 0
+  let heartbeat = null, signature = ''
+  const publish = state => {
+    if (disposed || !state) return
+    snapshot = state
+    const visible = {
+      ready: state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
+      editable: Boolean(state.capabilities?.edit), view: state.view, dirty: Boolean(state.dirty),
+      busy: Boolean(state.busy), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
+      lineCount: state.document?.sourceLines, size: state.document?.fileBytes,
+      documentId: state.documentId, revision: state.revision, format: state.format,
+      status: state.editorError?.message || state.error || '', error: state.error,
+      position: state.position, capabilities: state.capabilities,
     }
-    if (!bridge()) timer = setTimeout(publish, 80)
+    const next = JSON.stringify(visible)
+    if (next !== signature) { signature = next; onState(visible) }
   }
-  const heartbeat = setInterval(() => { if (!disposed && bridge()) fetch(endpoint('renderer'), { headers: headers() }).catch(() => {}) }, 30_000)
-  publish()
+  const capture = selection => {
+    if (disposed || !selection?.quote) return
+    const local = selection.viewportRect, outer = frame.getBoundingClientRect()
+    const line = selection.location?.kind === 'line' ? selection.location.line : null
+    onSelection({ ...selection, startLine: line, endLine: line,
+      rect: local ? { left: outer.left + local.x, top: outer.top + local.y,
+        right: outer.left + local.x + local.width, bottom: outer.top + local.y + local.height,
+        width: local.width, height: local.height } : null })
+  }
+  const ready = (async () => {
+    const factory = options.createClient || (await import(new URL('./reader-assets/host-client.mjs',import.meta.url).href)).createReaderClient
+    if (disposed) return
+    client = factory(frame,{onEvent(type,payload){
+      if (type==='ready'||type==='state') publish(payload)
+      else if (type==='selection') capture(payload)
+      else if (type==='error') options.onError?.(payload)
+    }})
+    publish(await client.ready())
+    if (disposed) { await client.dispose({force:true}); return }
+    publish(await client.request('settings',{toolbar:'host',...options.presentation}))
+    const keepAlive = options.heartbeat || (async()=>{
+      const url=new URL(frame.src)
+      const response=await fetch(new URL('./api/capabilities',url),{headers:{'x-reader-token':url.hash.slice(1),'x-reader-document':snapshot.documentId}})
+      if(!response.ok)throw Error('Reader keepalive failed ('+response.status+')')
+    })
+    heartbeat=setInterval(()=>{if(!disposed)Promise.resolve(keepAlive()).catch(error=>options.onError?.(error))},30000)
+    return snapshot
+  })()
+  void ready.catch(error=>{if(!disposed){publish({...snapshot,state:'error',error:String(error.message||error)});options.onError?.(error)}})
+  async function command(method,params,signal) {
+    await ready
+    if (disposed || !client) throw new DOMException('Reader host disposed','AbortError')
+    return client.request(method,params,{signal})
+  }
   return {
-    get busy() { return Boolean(snapshot().busy) },
-    get dirty() { return Boolean(snapshot().dirty) },
-    leave() { bridge()?.leave() },
-    async setView(mode) {
-      if (!bridge() || disposed) return
-      await bridge().setView(mode)
-      publish()
+    ready,
+    get busy(){return Boolean(snapshot.busy)}, get dirty(){return Boolean(snapshot.dirty)},
+    async setView(view){publish(await command('setView',{view}))},
+    async save(){publish(await command('save',{}));return true},
+    async setOutline(open){publish(await command('contents',{open}))},
+    async settings(settings){publish(await command('settings',settings))},
+    navigateLine(line){return command('navigate',{location:{kind:'line',line}})},
+    async search(query){
+      request?.abort();const own=++generation
+      if(!query.trim()||disposed)return []
+      const operation=request=new AbortController()
+      const value=await command('search',{query},operation.signal)
+      return own===generation&&!disposed?value.matches:[]
     },
-    async save() {
-      if (!bridge() || disposed) return false
-      const saved = await bridge().save()
-      publish()
-      if (!saved) throw Error(snapshot().status || 'Unable to save the editing page')
-      return true
+    navigateMatch(match){
+      const location=snapshot.view==='preview'&&match.location?match.location:{kind:'line',line:match.line}
+      return command('navigate',{location})
     },
-    setOutline(open) {
-      if (!bridge() || disposed) return
-      const button = document().querySelector('#contents-toggle')
-      if ((button.getAttribute('aria-expanded') === 'true') !== open) button.click()
+    leave(){return this.dispose()},
+    dispose(){
+      if(disposed)return
+      disposed=true;++generation;request?.abort();clearInterval(heartbeat)
+      // The surrounding Studio discard prompt is authoritative. Backend close
+      // separately awaits service cleanup; no credentials enter the child.
+      const closing=client?.dispose({force:true})
+      void closing?.catch(error=>options.onError?.(error))
+      return closing
     },
-    async search(query) {
-      request?.abort()
-      const generation = ++searchGeneration
-      if (!bridge() || !query.trim() || disposed) return []
-      request = new AbortController()
-      const response = await fetch(endpoint(`search?query=${encodeURIComponent(query)}`), { signal: request.signal, headers: headers() })
-      if (!response.ok) throw new Error(`Reader request failed (${response.status})`)
-      const result = await response.json()
-      return generation === searchGeneration && !disposed ? result.matches : []
-    },
-    navigateMatch(match) {
-      if (!bridge() || disposed) return
-      return bridge().navigate(match)
-    },
-    dispose() { frame.removeEventListener?.('load', bindSelection); selectionDocument?.removeEventListener?.('mouseup', captureSelection); selectionDocument?.removeEventListener?.('keyup', captureSelection); disposed = true; bridge()?.leave(); clearTimeout(timer); clearInterval(heartbeat); observer?.disconnect(); request?.abort() },
   }
 }

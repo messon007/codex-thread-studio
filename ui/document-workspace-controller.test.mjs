@@ -28,11 +28,15 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
     }
     return elements.get(selector)
   }
+  const previousStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle')
+  Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: () => ({ getPropertyValue: () => '' }) })
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
-  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelector: element } })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelector: element, documentElement: { dataset: {} } } })
   let cleanup = () => {}
   context.after(() => {
     cleanup()
+    if (previousStyle) Object.defineProperty(globalThis, 'getComputedStyle', previousStyle)
+    else delete globalThis.getComputedStyle
     if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument)
     else delete globalThis.document
   })
@@ -82,7 +86,8 @@ test('large Markdown uses one retained frame without whole-document rendering an
     return new Response(JSON.stringify(result))
   })
   const frames = []
-  document.createElement = () => {
+  document.createElement = tag => {
+    if (tag === 'canvas') return { getContext: () => null }
     const frame = { setAttribute() {}, addEventListener() {}, remove() { this.removed = true } }
     frames.push(frame)
     return frame

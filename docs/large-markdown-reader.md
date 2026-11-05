@@ -8,19 +8,22 @@ retain their previous reader and size limit until remote indexing is implemented
 
 ## Shared implementation
 
-The source snapshot in `crates/marknoria` is pinned to the revision recorded in
-`crates/marknoria/UPSTREAM.md`. It is the same Rust parser/indexer, virtualized
-frontend, table projection, source paging and isolated diagram renderer as the
-standalone app. Studio does not launch a separately installed MarkNoria binary.
-No MarkNoria installation or server-side Chrome/Chromium is required. Diagrams
-use the same bundled browser libraries as Studio's existing Markdown view.
-Checkbox styling is shared with the pinned standalone MarkNoria snapshot and
-recorded in `crates/marknoria/CONTROLS.md`. Reproducible embedding changes in
-`scripts/marknoria-embedding.mjs` add an explicitly editable single-document
-service and a bounded state/control bridge. Parser and source anchors are shared
-unchanged. The Windows adapter releases validated target handles before atomic
-replacement; the same revision/identity checks run before this step. The default
-library service remains read only.
+The source/resource snapshot in `crates/marknoria` is the exact reviewed public
+package pinned externally by `scripts/marknoria-release.json`. Its own
+`reader-manifest.json` records source revision, API/protocol versions, all file
+hashes, build tools, source mappings and third-party notices. Normal builds need
+no upstream checkout, token, npm asset build, separately installed reader binary
+or backend Chromium. All reader resources come from this package; Studio does
+not substitute its own sanitizer, editor, virtualizer or diagram versions.
+
+The integration uses only `marknoria::reader`, `marknoria::web::Service` and the
+versioned parent protocol. Static component modules are served by the separate
+public `reader_assets()` router, which grants no document API/file authority.
+The host imports the official client through this route. It does not inspect
+child DOM, diagnostic globals or implementation controls, rewrite reader HTML,
+inject CSS, or relax the reader's CSP. The old embedding and SQL/jq source patches
+are removed. `toolbar: 'host'` delegates header and status presentation to Studio.
+
 The Studio executable handles the index-worker argument before normal startup;
 parser memory peaks leave the main process when the worker exits.
 
@@ -33,8 +36,8 @@ Studio's gateway token. Embedded sessions cannot browse/open other files or
 access the privileged diagram-rendering page. Only project files enable Edit;
 documents opened through configured shared directories outside that project
 remain read only. The proxy checks the original canonical path/project boundary
-again before editing, limits request bodies, and only allows POST on the scoped
-editing endpoint. Existing gateway authentication
+again before editing, limits request bodies, and only permits the explicitly allowlisted read/query/edit/note operations.
+No gateway credentials are forwarded to the private service. Existing gateway authentication
 and Host/Origin checks remain in place.
 
 ## Bounded work and lifecycle
@@ -89,11 +92,13 @@ not constant-memory. First-content streaming during indexing remains future work
 
 ## Refresh and verify
 
-Build assets in the pinned standalone checkout, then run:
+Review a fixed public archive and its external SHA-256 pin, then run:
 
 ```sh
-node scripts/vendor-marknoria.mjs /path/to/marknoria
-cargo test -p marknoria --lib
+node scripts/vendor-marknoria.mjs /path/to/reviewed-reader.tar.gz
+node scripts/vendor-marknoria.mjs --verify
+python3 scripts/import-marknoria-test.py
+cargo test --manifest-path crates/marknoria/Cargo.toml --target-dir target/reader-sdk --locked --test reader_api --test markdown_profile
 cargo test -p codex-thread-studio --bin codex-thread-studio
 node --test ui/document-workspace-controller.test.mjs
 STUDIO_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs \
@@ -101,11 +106,15 @@ STUDIO_CHROMIUM_PATH=/path/to/test-browser \
 node scripts/smoke-large-markdown.mjs /path/to/large-report.md
 ```
 
-The snapshot refresh script imports library/frontend source and the editor and
-virtualizer bundles, and reuses Studio's pinned diagram/sanitizer assets. It never
-imports private fixtures, screenshots, caches, desktop dependencies or binaries.
-A normal Studio checkout builds without
-access to the private upstream repository or a sibling checkout.
+The importer checks the externally reviewed archive hash before extraction,
+rejects links, path traversal, duplicate/foreign entries and resource-budget
+violations, verifies the full inventory against the separate pin, and atomically
+replaces the owned vendor directory. Failure preserves the previous package.
+`--check` validates a candidate without installing it; `--verify` checks installed
+source before creating build artifacts. No imported source is patched or
+reformatted. The nested SDK workspace stays excluded from Studio's formatting
+workspace; its library is still a normal path dependency. A consuming Cargo lock
+records compatible patch resolution independently of the standalone SDK lock.
 
 On Linux, add `--webkit` to the smoke command to exercise native WebKitGTK as well
 as Chromium (a graphical session and Python GI/WebKit2 bindings are needed only

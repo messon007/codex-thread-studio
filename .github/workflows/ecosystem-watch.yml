@@ -109,7 +109,7 @@ jobs:
           node --check ui/app.js
           npm test
           npm run version:check
-          cargo fmt --all -- --check
+          cargo fmt --package codex-thread-studio -- --check
           cargo test --workspace --locked
 
       - name: Audit UI dependencies

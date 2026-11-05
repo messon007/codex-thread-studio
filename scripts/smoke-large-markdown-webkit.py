@@ -9,7 +9,7 @@ from gi.repository import Gtk, WebKit2, GLib
 manager = WebKit2.UserContentManager()
 manager.register_script_message_handler('result')
 view = WebKit2.WebView(web_context=WebKit2.WebContext.new_ephemeral(), user_content_manager=manager)
-window = Gtk.OffscreenWindow()
+window = Gtk.Window()
 window.set_default_size(900, 900)
 window.add(view)
 result = None
@@ -36,6 +36,10 @@ def loaded(view, event):
       try {
         await wait(() => window.readerExperiment?.metrics.firstContentMs != null);
         const reader = window.readerExperiment;
+        const { createReaderClient } = await import('/reader-assets/host-client.mjs');
+        const client = createReaderClient({ src: location.href, contentWindow: window });
+        await client.ready();
+        await client.request('settings', { toolbar: 'host' });
         if (reader.index.tables.length) {
           await reader.jump(reader.index.tables[0].firstPage);
           await wait(() => document.querySelector('.column-choices input'));
@@ -57,20 +61,20 @@ def loaded(view, event):
         await reader.source.show(Math.max(1, Math.floor(reader.index.sourceLines / 2)));
         if (!reader.source.page?.text || !reader.source.visible) throw Error('Paged Source did not load');
         if (__EDIT_CHECK__) {
-          await marknoriaHost.setView('edit');
+          await client.request('setView', { view: 'edit' });
           document.querySelector('#edit-line').value = '1';
           document.querySelector('#edit-go').dispatchEvent(new Event('submit', { cancelable: true }));
-          await wait(() => readerExperiment.editor.data?.window.start === 0 && !marknoriaHost.state.busy);
+          await wait(() => readerExperiment.editor.data?.window.start === 0 && !readerExperiment.editor.busy);
           const code = readerExperiment.editor.code;
           code.view.dispatch({ changes: { from: 0, insert: 'Native Studio edit\n' } });
-          if (!marknoriaHost.state.dirty) throw Error('Native edit did not become dirty');
-          await marknoriaHost.setView('source');
+          if (!readerExperiment.editor.dirty) throw Error('Native edit did not become dirty');
+          await client.request('setView', { view: 'source' });
           if (document.querySelector('#source-text').textContent.startsWith('Native Studio edit')) throw Error('View switching saved unexpectedly');
-          await marknoriaHost.setView('edit');
+          await client.request('setView', { view: 'edit' });
           if (!readerExperiment.editor.code.text.startsWith('Native Studio edit')) throw Error('Native Edit lost its page');
-          if (!await marknoriaHost.save()) throw Error(marknoriaHost.state.status);
-          if (marknoriaHost.state.dirty) throw Error('Native Save did not clear dirty');
-          await marknoriaHost.setView('source');
+          await client.request('save');
+          if (readerExperiment.editor.dirty) throw Error('Native Save did not clear dirty');
+          await client.request('setView', { view: 'source' });
           if (!document.querySelector('#source-text').textContent.startsWith('Native Studio edit')) throw Error('Saved source did not refresh');
         }
         window.webkit.messageHandlers.result.postMessage(JSON.stringify({sourceBytes: reader.index.sourceBytes, diagrams: reader.index.diagrams.length, mode: reader.diagramMetrics.mode, sourceReady: true, editing: __EDIT_CHECK__, mounted: document.querySelectorAll('#space *').length}));

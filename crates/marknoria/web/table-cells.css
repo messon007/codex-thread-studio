@@ -1,0 +1,14 @@
+/* Shared ordinary/projected/SQL cell interactions. */
+td.table-cell-selected { outline: 2px solid var(--reader-brand,#087f72); outline-offset: -2px; background: var(--reader-brand-soft,#e6f5f2); }
+.table-cell-dialog { box-sizing: border-box; width: min(900px,calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--reader-border,#d5dee2); border-radius: 12px; color: var(--reader-text,#111a1f); background: var(--reader-panel,#fff); }
+.table-cell-dialog[open] { display: flex; flex-direction: column; }
+.table-cell-dialog::backdrop { background: rgb(20 35 43 / 38%); }
+.table-cell-dialog header,.table-cell-dialog footer { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; gap:12px; flex:none; }
+.table-cell-dialog h2 { margin:0; font:600 16px/1.4 system-ui,sans-serif; }
+.table-cell-address { margin:0; padding:0 16px 10px; color:var(--reader-muted,#3f515a); font-size:12px; }
+.table-cell-full { margin:0; padding:16px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; min-height:0; border-block:1px solid var(--reader-border,#d5dee2); }
+
+.table-cell-dialog button { border:1px solid var(--reader-border,#d5dee2); border-radius:6px; background:var(--reader-panel,#fff); color:var(--reader-text,#111a1f); padding:5px 9px; cursor:pointer; font:inherit; }
+.table-cell-dialog .dialog-close { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; padding:6px; }
+.table-cell-dialog .dialog-close svg { width:16px; height:16px; }
+.table-cell-dialog { font:14px/1.5 var(--ui-font-family,system-ui,sans-serif); }

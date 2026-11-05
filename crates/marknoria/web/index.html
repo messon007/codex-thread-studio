@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>MarkNoria — Large Markdown Reader</title>
+  <link rel="stylesheet" href="./table-view.css">
+  <link rel="stylesheet" href="./table-query.css">
+  <link rel="stylesheet" href="./jq-query.css">
+  <link rel="stylesheet" href="./notes.css">
+  <link rel="stylesheet" href="./document-prose.css">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./checkbox.css">
   <link id="syntax-theme" rel="stylesheet" href="./syntax-light.css">
@@ -15,9 +20,10 @@
   <header class="reader-header">
     <div class="reader-identity"><span class="reader-file-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z M14 3v5h5 M9 12h6 M9 16h6"/></svg></span><div><h1 id="document-name">Document</h1><p>Markdown · Read-only preview</p></div></div>
     <div class="reader-header-actions">
-      <button id="compare-files" class="reader-action" type="button" title="Compare two server Markdown files (read only)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h7v16H3Z M14 4h7v16h-7Z M6 8h1 M6 12h1 M17 8h1 M17 12h1"/></svg><span>Compare</span></button>
-      <button class="reader-action" type="button" data-open-server title="Open a Markdown file on the server"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3Z M3 7V4h7l2 3"/></svg><span>Open</span></button>
+      <button id="compare-files" class="reader-action" type="button" aria-label="Compare" title="Compare two server Markdown files (read only)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h7v16H3Z M14 4h7v16h-7Z M6 8h1 M6 12h1 M17 8h1 M17 12h1"/></svg><span>Compare</span></button>
+      <button class="reader-action" type="button" aria-label="Open" data-open-server title="Open a Markdown file on the server"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3Z M3 7V4h7l2 3"/></svg><span>Open</span></button>
       <div id="view-modes" class="view-modes" role="group" aria-label="Document view" hidden><button id="preview-mode" type="button" aria-pressed="true">Preview</button><button id="source-mode" type="button" aria-pressed="false">Source</button><button id="edit-mode" type="button" aria-pressed="false" hidden>Edit</button></div>
+      <div class="reader-document-tools" role="group" aria-label="Document tools"></div>
       <button id="contents-toggle" class="reader-icon-button" aria-label="Contents" title="Contents" aria-expanded="false" aria-controls="reader-outline"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h1 M3 12h1 M3 18h1"/></svg></button>
       <button id="search-toggle" class="reader-icon-button" aria-label="Search document" title="Search document" aria-expanded="false" aria-controls="search"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></button>
       <details class="reader-settings"><summary aria-label="Reading settings" title="Reading settings"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h5 M12 6h9 M3 12h10 M17 12h4 M3 18h3 M10 18h11 M8 3v6 M13 9v6 M6 15v6"/></svg></summary><div class="reader-settings-panel"><strong>Reading settings</strong><label>Column width <span><input id="column-width" type="number" min="80" max="600" step="20" value="180"> px</span></label><label>Wrap cell text <input id="wrap" type="checkbox" checked></label></div></details>

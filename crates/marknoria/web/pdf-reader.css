@@ -1,0 +1,12 @@
+.marknoria-pdf { width:100%; min-width:0; --pdf-border:var(--reader-border,#cbd5e1); color:var(--reader-text,var(--text,#1e293b)) }
+.marknoria-pdf .pdf-controls { position:sticky; top:0; z-index:5; display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px; background:var(--reader-panel,var(--panel,#fff)); border-bottom:1px solid var(--pdf-border); font:var(--ui-font-size,14px)/1.5 var(--ui-font-family,system-ui,sans-serif) }
+.marknoria-pdf .pdf-controls input[type=number] { width:5em }
+.marknoria-pdf .pdf-controls label { display:inline-flex; align-items:center; gap:4px }
+.marknoria-pdf .pdf-status { overflow-wrap:anywhere; flex-basis:100% }
+.marknoria-pdf .pdf-status:empty { display:none }
+.marknoria-pdf .pdf-pages { padding:12px 0; min-width:0 }
+.marknoria-pdf .pdf-page { position:relative; margin:0 auto 16px; flex:none; background:white; box-shadow:0 0 0 1px var(--pdf-border); contain:layout style; overflow:clip }
+.marknoria-pdf .pdf-page[hidden] { display:none }
+.marknoria-pdf .pdf-page canvas { display:block; margin:0; max-width:none }
+.marknoria-pdf .textLayer { z-index:1 }
+.marknoria-pdf .pdf-region-box { position:absolute; z-index:2; pointer-events:none; border:2px solid #0f766e; background:#14b8a633; box-sizing:border-box }

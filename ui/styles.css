@@ -691,6 +691,12 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .artifact-heading p { max-width: 100%; margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: var(--ui-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .artifact-header-actions { min-width: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
 .artifact-header-actions .segmented-control { margin-right: 4px; }
+#artifact-notes-tools { display: inline-flex; align-items: center; }
+#artifact-notes-tools:empty { display: none; }
+#artifact-notes-tools > button { min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--ui-font-compact); }
+#artifact-notes-tools > button:hover { background: var(--panel-strong); color: var(--text); }
+#artifact-notes-tools > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
 .artifact-header-actions .artifact-action-icon.active { border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); background: var(--brand-soft); color: var(--brand); }
 .segmented-control { height: 30px; padding: 2px; display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .segmented-control button { min-width: 43px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; font-size: var(--ui-font-compact); }

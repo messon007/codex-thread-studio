@@ -209,6 +209,7 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   const update = () => {
     chart.disabled = loading || !current
     run.disabled = reset.disabled = loading || !metadata
+    editor.disabled = !metadata
     editor.setAttribute('aria-busy', String(loading))
     if (!tools) return
     tools.previous.disabled = loading || !current || current.rowStart === 0

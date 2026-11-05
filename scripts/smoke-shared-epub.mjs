@@ -47,7 +47,7 @@ try{
   window.controller=createDocumentWorkspaceController({state:testState,gatewayFetch,randomId:()=>crypto.randomUUID(),reportError:error=>{throw error},view:{
    selectedThread:()=>({cwd:${JSON.stringify(workspace)}}),selectedStateKey:()=>'epub-fixture',activateRightWorkspace:tool=>{testState.activeRightWorkspace=tool},
    hideComposerMenu(){},closeActionMenus(){},applyRightRailWidth(){},disconnectMarkdownImageObserver(){},disposeMarkdownImageAssets(){},hideSelection(){},
-   setSelection(selection,rect){window.captured={selection,rect}},renderMarkdownDocument(){throw Error('Legacy parser must not run')},openResources(){window.openRequests=(window.openRequests||0)+1}
+   setSelection(selection,rect){window.captured={selection,rect}},openCommentForSelection(selection){window.captured={selection}},renderMarkdownDocument(){throw Error('Legacy parser must not run')},openResources(){window.openRequests=(window.openRequests||0)+1}
   }});controller.bind();
  `}))
  await page.goto(url.href)
@@ -81,6 +81,7 @@ try{
  const searched=await command('search',{query:'EPUB sentinel'})
  assert.equal(searched.matches.length,2)
  await chapter.getByText('EPUB sentinel two 中文😀.',{exact:true}).click({clickCount:3})
+ await page.locator('.notes-toolbar [data-action=ask-ai]').click()
  await page.waitForFunction(()=>window.captured?.selection?.source?.anchor?.readerReference?.location?.kind==='epub')
  const source=await page.evaluate(()=>captured.selection.source)
  assert.equal(source.provider,'epub')
@@ -102,11 +103,13 @@ try{
  do{stored=await persisted();if(stored?.cfi===saved.cfi&&stored?.theme==='sepia')break;await pause(30)}while(Date.now()<savedDeadline)
  assert.equal(stored.cfi,saved.cfi);assert.equal(stored.theme,'sepia');assert.equal(stored.fontScale,1.25)
  await open()
- await page.waitForFunction(cfi=>testState.artifact.readingState?.cfi===cfi,saved.cfi)
+ await page.waitForFunction(cfi=>testState.artifact.readerReady && !testState.artifact.saving && testState.artifact.readingState?.cfi===cfi,saved.cfi)
  frame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(element=>element.contentFrame())
  await frame.frameLocator('iframe[title="Second chapter"]').getByText('EPUB sentinel two 中文😀.',{exact:true}).waitFor()
+ const beforeReopen=(await command('state')).formatState
  await page.evaluate(source=>controller.reopenEpubSource(source.anchor),source)
  const reopened=(await command('state')).formatState
+ if(reopened.cfi!==saved.cfi) console.error(JSON.stringify({stage:'EPUB-reopen',saved:saved.cfi,before:beforeReopen.cfi,source:source.anchor.cfiRange,selected:selected.location.cfi,after:reopened.cfi,parent:await page.evaluate(()=>({cfi:testState.artifact.readingState?.cfi,ready:testState.artifact.readerReady,busy:testState.artifact.saving}))}))
  assert.equal(reopened.cfi,saved.cfi);assert.equal(reopened.theme,'sepia');assert.equal(reopened.fontScale,1.25)
  assert.notEqual((await page.evaluate(()=>testState.artifact.largeMarkdown.id)),lease.id)
  const indexed=await command('epubProgress',{operation:'build'})

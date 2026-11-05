@@ -23,7 +23,7 @@ import { documentCommentSource } from './comment-source-providers.mjs'
 import { tableCommentSource } from './table-comment-provider.mjs'
 import DOMPurify from './vendor/purify.es.mjs'
 import { getLocale, t } from './i18n.mjs'
-import { createLargeMarkdownHost } from './large-markdown-host.mjs'
+import { createLargeMarkdownHost, createReaderNotesHost } from './large-markdown-host.mjs'
 
 export function createDocumentWorkspaceState() {
   return {
@@ -63,6 +63,7 @@ export function createDocumentWorkspaceController({
     disposeMarkdownImageAssets,
     hideSelection,
     setSelection,
+    openCommentForSelection,
     openWorkspaceTool,
     openResources,
     renderSessionMap,
@@ -97,6 +98,7 @@ export function createDocumentWorkspaceController({
   let largeMarkdownFrame = null
   let largeMarkdownFile = null
   let largeMarkdownHost = null
+  let readerNotesHost = null
 
   function releaseLargeMarkdown(file) {
     const lease = file?.largeMarkdown || file?.reader
@@ -108,6 +110,7 @@ export function createDocumentWorkspaceController({
   }
 
   function disposeLargeMarkdown() {
+    readerNotesHost?.dispose(); readerNotesHost = null
     if (largeMarkdownFile?.format === 'epub' && largeMarkdownFile.readingState) {
       clearTimeout(epubReadingStateTimer); epubReadingStateTimer = null
       persistEpubReadingState(largeMarkdownFile).catch(error => reportClientError(error))
@@ -147,6 +150,8 @@ export function createDocumentWorkspaceController({
     const weight=Number(style.getPropertyValue('--content-font-weight'))
     if(Number.isInteger(weight)&&weight>=100&&weight<=900)settings.contentFontWeight=weight
     if (largeMarkdownFile?.format === 'epub') settings.epub = { theme: largeMarkdownFile.readingState?.theme || 'light', typography: readingTypography() }
+    const notesRoot = $('#artifact-reader-shell')
+    if (notesRoot?.style) for (const [key,value] of Object.entries(palette)) notesRoot.style.setProperty('--reader-'+key,value)
     const signature=JSON.stringify(settings)
     if(signature===readerPresentationSignature)return
     readerPresentationSignature=signature
@@ -849,8 +854,20 @@ function renderArtifact() {
         if (state.artifact === file && file.readerLine) largeMarkdownHost?.navigateLine(file.readerLine).catch(showError)
       })
       content.replaceChildren(largeMarkdownFrame)
+      const commentSelection = selection => ({ quote: selection.quote, itemId: null, turnId: null,
+        source: selection.location?.kind === 'epub' ? epubCommentSource({ root: file.root, filePath: file.path,
+          bookHash: file.hash, cfiRange: selection.location.cfi, href: selection.location.href,
+          chapterLabel: file.readingState?.chapterLabel, readerReference: selection })
+          : documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
+          baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
+          readerReference: selection }) })
+      readerNotesHost = createReaderNotesHost($('#artifact-reader-shell'), $('#artifact-notes-tools'), {
+        translate: t, onError: showError,
+        onAction: openCommentForSelection ? selection => openCommentForSelection(commentSelection(selection)) : undefined,
+      })
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
+        void readerNotesHost?.update(snapshot, largeMarkdownHost).catch(showError)
         if (snapshot.initialized && largeMarkdownFrame?.style) largeMarkdownFrame.style.visibility = ''
         if (file.format === 'epub' && snapshot.initialized && snapshot.formatState?.ready) {
           const next = snapshot.formatState
@@ -876,13 +893,7 @@ function renderArtifact() {
         renderArtifact()
       }, selection => {
         if (state.artifact !== file) return
-        setSelection({ quote: selection.quote, itemId: null, turnId: null,
-          source: selection.location?.kind === 'epub' ? epubCommentSource({ root: file.root, filePath: file.path,
-            bookHash: file.hash, cfiRange: selection.location.cfi, href: selection.location.href,
-            chapterLabel: file.readingState?.chapterLabel, readerReference: selection })
-            : documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
-            baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
-            readerReference: selection }) }, selection.rect)
+        if (!readerNotesHost?.capture(selection)) setSelection(commentSelection(selection), selection.rect)
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
         initialReference: file.readerReference,
         presentation: file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',

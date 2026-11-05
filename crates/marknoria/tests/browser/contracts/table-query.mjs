@@ -92,7 +92,9 @@ export async function tableQueryContract(moduleUrl) {
   }
   try {
     query = mountTableQuery(root, { provider, revision })
+    check(root.querySelector('.table-query-editor').disabled, 'SQL input accepted edits before its default/schema arrived')
     await query.ready
+    check(!root.querySelector('.table-query-editor').disabled, 'SQL input stayed disabled after initialization')
     const dialog = root.querySelector('.table-query-dialog'),
       content = dialog.querySelector('.table-content')
     await wait(

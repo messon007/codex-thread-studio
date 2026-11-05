@@ -688,6 +688,7 @@ const documentWorkspace = createDocumentWorkspaceController({
     disposeMarkdownImageAssets,
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
+    openCommentForSelection: selection => reviewNotes.openCommentForSelection(selection),
     renderDocumentCommentMarkers: () => reviewNotes.renderDocumentCommentMarkers(),
     openWorkspaceTool: (tool, sourceSessionKey) => {
       const ref = parseSessionRefKey(sourceSessionKey)

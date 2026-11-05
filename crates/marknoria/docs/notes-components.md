@@ -9,6 +9,8 @@ path capability in the component.
 ```js
 import { mountNotes, readerNoteStorage } from './marknoria/notes.mjs'
 const owner = await client.ready()
+// Hide the child's own Notes UI while retaining its explicitly granted store.
+await client.request('settings', { notes: 'host' })
 const notes = mountNotes({
   owner, // documentId, immutable revision, display name
   root: readingSurface,

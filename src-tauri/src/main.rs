@@ -821,7 +821,8 @@ fn initialize_gateway(
         eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
     }
     let state = GatewayState {
-        markdown_readers: large_markdown::Readers::default(),
+        markdown_readers: large_markdown::Readers::default()
+            .with_notes_directory(epub_reading_path.with_file_name("reader-notes")),
         codex,
         codex_backends: Arc::new(codex_backends),
         backend_descriptors: Arc::new(backend_descriptors),

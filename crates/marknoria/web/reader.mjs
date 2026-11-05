@@ -93,6 +93,11 @@ const nodes = new Map()
 let diagrams = null
 let assets = null
 let notes = null
+function syncNotesOwner() {
+  const owned = serviceCapabilities.notes && presentation.state().notes === 'reader'
+  if (!owned) { notes?.dispose(); notes = null }
+  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,publicSelection,{documentId,translate})
+}
 let jq = null
 let cacheBytes = 0
 let index
@@ -352,7 +357,7 @@ function setup() {
   if (['pdfjs','epubjs'].includes(index.renderer)) { setupFormat(); return }
   diagrams = diagramController(viewport, article => { virtualizer?.measureElement(article); schedule() }, { documentId, revision: index.revision, token })
   assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)virtualizer?.measureElement(article);schedule()},{translate})
-  notes = serviceCapabilities.notes ? notesController(index,api,()=>!editor?.dirty,publicSelection,{documentId,translate}) : null
+  syncNotesOwner()
   jq = serviceCapabilities.queries ? jqController(index,api,{translate}) : null
   files.state('ready')
   document.querySelector('#document-name').textContent = index.name || 'Document'
@@ -455,7 +460,7 @@ function setupFormat() {
   document.querySelector('#source-mode').hidden = true; document.querySelector('#edit-mode').hidden = true
   document.querySelector('#view-modes').hidden = false; document.querySelector('#compare-files').disabled = true
   document.querySelector('#document-summary').textContent = `${(index.originalBytes / 1048576).toFixed(2)} MiB · Loading ${label}…`
-  notes = serviceCapabilities.notes ? notesController(index,api,()=>true,publicSelection,{documentId,translate}) : null
+  syncNotesOwner()
   formatReady = (pdf ? import('./pdf-reader.mjs') : import('./epub-reader.mjs')).then(async module => {
     owner.signal.throwIfAborted()
     const mount = pdf ? module.mountPdfReader : module.mountEpubReader
@@ -738,7 +743,7 @@ function publicState() {
     document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length} : null,
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
-    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
@@ -836,6 +841,7 @@ function connectBridge() {
     async settings(params) {
       const before = presentation.state()
       presentation.update(params)
+      if (before.notes !== presentation.state().notes) syncNotesOwner()
       if (params.theme != null) window.dispatchEvent(new CustomEvent('marknoria:theme-request', { detail: { theme: params.theme } }))
       if (params.wrap != null && params.wrap !== before.wrap) { const input = document.getElementById('wrap'); input.checked = params.wrap; input.dispatchEvent(new Event('change')) }
       if (formatRenderer && params.pdf) await formatRenderer.settings(params.pdf)

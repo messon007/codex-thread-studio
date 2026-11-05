@@ -41,6 +41,7 @@ export async function presentationContract(moduleUrl) {
       },
       theme: 'dark',
       toolbar: 'host',
+      notes: 'host',
       fontFamily: 'Noto Sans, sans-serif',
       contentFontFamily: 'serif',
       codeFontFamily: 'monospace',
@@ -53,6 +54,7 @@ export async function presentationContract(moduleUrl) {
     })
     check(
       changed.locale === 'fr' &&
+        changed.notes === 'host' &&
         root.lang === 'fr' &&
         root.dataset.theme === 'dark' &&
         root.classList.contains('host-toolbar') &&
@@ -88,6 +90,7 @@ export async function presentationContract(moduleUrl) {
       text = root.textContent
     for (const patch of [
       { theme: 'bad', fontSize: 20 },
+      { notes: 'none', fontSize: 20 },
       { locale: 'bad_locale', fontSize: 20 },
       { messages: { Copy: 9 }, fontSize: 20 },
       { palette: { brand: 'url(https://example.invalid)' } },

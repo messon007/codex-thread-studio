@@ -134,3 +134,76 @@ stage. The original Studio checkout remains untouched; both repositories' new
 commits are local. All-format adoption, remaining Notes/storage/AI wiring,
 Markdown resources, visual/accessibility acceptance and current remote/platform
 CI remain open; these checkpoints do not close the synchronization issues.
+
+## Local follow-up: ordinary table document adoption
+
+Isolated Studio commit `f7940e8` imports the unchanged package from
+`a9cf902ded351b518222aaf74c1885864f703d78`: 791 inventory files, archive SHA-256
+`8cc605ddcd795e6be8aa0f9fceb0d38d2719a69fca9f1b8dc4a94910009e6cac`,
+tree SHA-256
+`210f8f4595ace9c9abec8c715bf5e99e2f32217af7f24f16df6870f486bb3452`.
+Two clean offline exports match; eight export/Git-byte checks pass. Host builds
+leave the imported inventory unchanged.
+
+CSV/TSV/XLSX workspace opens now use the shared service/client, with complete-input
+SQL/charts, typed cells, independent table paging and column sizing. A generated
+123-record corpus passes the actual Chromium gateway/workspace and native Wayland
+WebKitGTK reader frames. The workbook scalar oracle uses Studio's locked ExcelJS;
+the corpus includes two sheets, dates, boolean values and cached/uncached formulas.
+CSV/TSV editing, save, undo and reopening a Source view restore original bytes.
+Authentication/origin/project denials do not fall back to another loader; explicit
+WSL HTTP 501 retains the existing loader pending shared byte transport.
+
+The full consuming suites pass 769 UI tests, type/format checks, 149 application
+Rust tests (one existing ignored) and 12 unchanged public SDK contracts. Regression
+tests also cover one registry-owned maintenance task and disposal during pending
+initialization without a late heartbeat.
+
+One warm debug run measured index times 2.0 / 2.5 / 17.2 ms and worker peak RSS
+55,216 / 55,520 / 60,872 KiB for CSV / TSV / XLSX. Host first rows took
+564 / 305 / 325 ms; reader first useful content took 42 / 31 / 189 ms, with
+opening heartbeat gaps 29 / 20 / 24 ms. These small synthetic measurements are
+not large-input, release, cold-start or full WebKit Studio-shell acceptance.
+EPUB/image entry points, Markdown resources, Notes/storage/AI integration and the
+remaining common-corpus/remote gates stay open. No native UI or FFI was changed.
+
+## Local follow-up: Studio EPUB adoption
+
+Isolated Studio commit `d3209e9` adopts the shared EPUB service and parent protocol
+from the same unchanged `a9cf902` package. It retains existing `fnv1a64` content
+keys and SQLite reading state. The host computes the compatibility key with a
+64 KiB buffer under its single-open permit; complete original ZIP bytes no longer
+enter the UI. Shared resource grants and bounded chapter loading remain intact.
+
+Saved paper/flow/font settings and CFI are restored through public commands before
+the frame is revealed. Typed initial references use the same revision/precision
+checks as later navigation. Failed/superseded state loads release their new
+session. Disposal while settings/mode/location initialization is pending leaves
+no late heartbeat. Existing EPUB comment providers and their e-book-specific AI
+instruction remain intact, with public revision/CFI references preserved through
+the normalized draft serialization round trip.
+
+The real Chromium gateway/workspace passes original content-key compatibility,
+new-session reading-state restoration, physical text selection with exact CFI,
+comment capture/reopening, outline, complete-book search, paginated/scrolled
+settings, progress indexing/seek, delegated Open, chapter sandboxing, original
+byte preservation and cache cleanup. Native Wayland WebKitGTK reader frames pass
+outline/search, CFI/settings, progress/seek and cleanup. Full Studio-shell visual
+and accessibility acceptance remains a separate gate.
+
+Studio passes 776 UI tests, type/format checks, 149 application Rust tests (one
+existing ignored) and 12 unchanged SDK contracts. The shared-host table corpus
+and large Markdown/diagram workflows also pass after the initialization change.
+One concurrent Wayland WebKit process exited with SIGSEGV without a Markdown
+result; the isolated sequential rerun completed successfully. The process failure
+is recorded, not diagnosed or declared fixed by that rerun.
+
+One warm debug EPUB run measured index time 0.9 ms, worker peak RSS 57,896 KiB,
+reader first useful content 230 ms and host first book content 724 ms. The opening
+heartbeat gap was 67 ms; it does not prove a 50 ms responsiveness target or a
+release/cold-start/large-book budget. Image entry points, small Markdown resources,
+Notes/storage/AI wiring, locale/defaults and common acceptance still need work.
+The current remote issues explicitly limit synchronization to Web desktop and
+its Rust dependencies; GTK/AppKit/WinUI/FFI are not adoption or CI gates. Remote
+Web-host CI/review/merge remain open. This stage changes no native UI or FFI and
+all new commits remain local at the owner's request.

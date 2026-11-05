@@ -25,6 +25,7 @@ export function readerPresentation(
       version: PRESENTATION_VERSION,
       theme: themeRoot.dataset.theme === 'dark' ? 'dark' : 'light',
       toolbar: 'reader',
+      notes: 'reader',
       fontFamily: null,
       codeFontFamily: null,
       contentFontFamily: null,
@@ -74,6 +75,10 @@ export function readerPresentation(
       if (patch.toolbar != null) {
         if (!['reader', 'host'].includes(patch.toolbar)) throw TypeError('Invalid toolbar owner')
         next.toolbar = patch.toolbar
+      }
+      if (patch.notes != null) {
+        if (!['reader', 'host'].includes(patch.notes)) throw TypeError('Invalid Notes owner')
+        next.notes = patch.notes
       }
       for (const key of Object.keys(fonts))
         if (patch[key] !== undefined) {

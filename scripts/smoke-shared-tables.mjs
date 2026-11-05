@@ -58,7 +58,7 @@ try{
   window.controller=createDocumentWorkspaceController({state:testState,gatewayFetch,randomId:()=>crypto.randomUUID(),reportError:error=>{throw error},view:{
    selectedThread:()=>({cwd:${JSON.stringify(workspace)}}),selectedStateKey:()=>'table-fixture',activateRightWorkspace:tool=>{testState.activeRightWorkspace=tool},
    hideComposerMenu(){},closeActionMenus(){},applyRightRailWidth(){},disconnectMarkdownImageObserver(){},disposeMarkdownImageAssets(){},hideSelection(){},
-   setSelection(selection,rect){window.captured={selection,rect}},renderMarkdownDocument(){throw Error('Legacy parser must not run')},openResources(){window.openRequests=(window.openRequests||0)+1}
+   setSelection(selection,rect){window.captured={selection,rect}},openCommentForSelection(selection){window.captured={selection}},renderMarkdownDocument(){throw Error('Legacy parser must not run')},openResources(){window.openRequests=(window.openRequests||0)+1}
   }});controller.bind();
  `}))
  await page.goto(url.href)
@@ -93,11 +93,67 @@ try{
   assert.equal(chart.points.length,123)
   assert.equal(chart.points[122].value,122)
   await command('navigate',{location:{kind:'cell',table:0,row:122,column:2}})
+  await page.locator('.notes-toolbar [data-action=ask-ai]').click()
   await page.waitForFunction(()=>captured?.selection?.source?.anchor?.readerReference?.location?.row===122)
   const selected=await page.evaluate(()=>captured.selection)
   assert.equal(selected.quote,'001')
   assert.equal(selected.source.anchor.readerReference.precision,'exact')
   assert.deepEqual(selected.source.anchor.readerReference.location,{kind:'cell',table:0,row:122,column:2})
+  assert.equal(owner.capabilities.notes,true)
+  assert.equal(owner.capabilities.queryNotes,true)
+  await page.locator('.notes-open').waitFor()
+  assert.equal(await frame.locator('.notes-toolbar').count(),0)
+  assert.equal((await command('notes',{request:{operation:'list',offset:0}})).total,0)
+  let notesChecked=false
+  if(file.format==='csv'){
+   const listNotes=()=>command('notes',{request:{operation:'list',offset:0}})
+   const waitNotes=async count=>{
+    const deadline=Date.now()+5000
+    do{const result=await listNotes();if(result.total===count)return result;await pause(30)}while(Date.now()<deadline)
+    throw Error('Notes did not reach '+count+' records')
+   }
+   const cell=frame.locator('.table-content tbody tr').last().locator('td').nth(2)
+   await cell.click()
+   await page.locator('.notes-toolbar').getByRole('button',{name:'Favorite',exact:true}).click()
+   const favorite=(await waitNotes(1)).items[0]
+   assert.deepEqual(favorite.anchor.location,{kind:'cell',table:0,row:122,column:2})
+   assert.equal(favorite.quote,'001')
+   await cell.click()
+   await page.locator('.notes-toolbar').getByRole('button',{name:'Comment',exact:true}).click()
+   await page.locator('.notes-editor').getByRole('textbox',{name:'Comment',exact:true}).fill('Local cell comment')
+   await page.locator('.notes-editor').getByRole('button',{name:'Save comment',exact:true}).click()
+   await waitNotes(2)
+   await page.locator('.notes-dialog[open]').getByRole('button',{name:'Close',exact:true}).click()
+   await frame.getByRole('button',{name:'SQL',exact:true}).first().click()
+   await frame.getByRole('textbox',{name:'SQL query',exact:true}).fill('SELECT SUM(CAST(c2 AS INTEGER)) AS total FROM t')
+   await frame.getByRole('button',{name:'Run query',exact:true}).click()
+   const aggregate=frame.locator('.table-query-result tbody td')
+   await aggregate.getByText('7503',{exact:true}).waitFor()
+   await aggregate.getByText('7503',{exact:true}).click()
+   await page.locator('.notes-toolbar').getByRole('button',{name:'Favorite',exact:true}).click()
+   const withQuery=await waitNotes(3)
+   const snapshot=withQuery.items.find(item=>item.anchor.query)
+   assert.equal(snapshot.quote,'7503')
+   assert.equal(snapshot.anchor.location,null)
+   assert.equal(snapshot.anchor.query.sourceRows,123)
+   assert.equal(snapshot.anchor.query.sql,'SELECT SUM(CAST(c2 AS INTEGER)) AS total FROM t')
+   await frame.locator('.table-query-dialog').getByRole('button',{name:'Close',exact:true}).click()
+   const copied=await command('notes',{request:{operation:'copy',id:snapshot.id}})
+   assert.match(copied.text,/snapshot, not a source cell/)
+   await page.locator('.notes-open').click()
+   await page.locator('.notes-dialog[open] .note-card').waitFor()
+   const libraryBounds=await page.locator('.notes-dialog[open]').boundingBox(), viewport=page.viewportSize()
+   assert.ok(libraryBounds.x>=0&&libraryBounds.y>=0&&libraryBounds.x+libraryBounds.width<=viewport.width&&libraryBounds.y+libraryBounds.height<=viewport.height)
+   if(process.env.STUDIO_SMOKE_SCREENSHOTS){await mkdir(process.env.STUDIO_SMOKE_SCREENSHOTS,{recursive:true});await page.screenshot({path:join(process.env.STUDIO_SMOKE_SCREENSHOTS,'notes-library.png')})}
+   await page.locator('.notes-filters').getByRole('button',{name:'Comments',exact:true}).click()
+   await page.locator('.notes-filters').getByRole('button',{name:'Clear comments',exact:true}).click()
+   await page.locator('.notes-confirm').getByRole('button',{name:'Clear all',exact:true}).click()
+   const remaining=await waitNotes(2)
+   assert.ok(remaining.items.every(item=>item.kind==='favorite'))
+   await page.locator('.notes-dialog[open]').getByRole('button',{name:'Close',exact:true}).click()
+   notesChecked=true
+  }
+
   if(file.format==='xlsx'){
    assert.equal(owner.document.tables,2)
    assert.equal((await command('tableInfo',{table:1})).label,'Other')
@@ -146,6 +202,7 @@ try{
 
   }
 
+  if(notesChecked) assert.equal((await command('notes',{request:{operation:'list',offset:0}})).total,2)
   const opens=await page.evaluate(()=>window.openRequests||0)
   await frame.locator('#viewport').press('Control+o')
   await page.waitForFunction(before=>window.openRequests>before,opens)
@@ -154,9 +211,9 @@ try{
    const lease=await page.evaluate(()=>testState.artifact.largeMarkdown)
    const native=await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-large-markdown-webkit.py'),new URL(lease.url,url).href,'--tables'],{env:environment,timeout:110000,maxBuffer:1000000})
    webkit=JSON.parse(native.stdout)
-   assert.equal(webkit.wholeInputQuery,true);assert.equal(webkit.typedCells,true);assert.equal(webkit.cleanup,true)
+   assert.equal(webkit.wholeInputQuery,true);assert.equal(webkit.typedCells,true);assert.equal(webkit.cleanup,true);assert.equal(webkit.durableSqlNotes,true)
   }
-  results.push({format:file.format,rows:info.rows,sheets:owner.document.tables,typedCells:true,completeQueryAndChart:true,opening:{indexMs:opening.indexMs,indexPeakRssKiB:opening.indexPeakRssKiB,readerFirstUsefulMs:opening.firstUsefulContentMs,maxOpeningHeartbeatGapMs:opening.maxHeartbeatGapMs,hostFirstRowsMs},webkit})
+  results.push({notesChecked,format:file.format,rows:info.rows,sheets:owner.document.tables,typedCells:true,completeQueryAndChart:true,opening:{indexMs:opening.indexMs,indexPeakRssKiB:opening.indexPeakRssKiB,readerFirstUsefulMs:opening.firstUsefulContentMs,maxOpeningHeartbeatGapMs:opening.maxHeartbeatGapMs,hostFirstRowsMs},webkit})
   await page.evaluate(()=>controller.close({restoreMap:false}))
   await page.waitForFunction(()=>client.active===0)
  }

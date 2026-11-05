@@ -39,7 +39,9 @@ def loaded(view, event):
         const { createReaderClient } = await import('/reader-assets/host-client.mjs');
         const client = createReaderClient({ src: location.href, contentWindow: window });
         await client.ready();
-        await client.request('settings', { toolbar: 'host' });
+        const initial = await client.request('state');
+        await client.request('settings', { toolbar: 'host', ...(initial.capabilities?.presentation?.notesOwner ? { notes: 'host' } : {}) });
+        if (initial.capabilities?.notes && document.querySelector('.notes-toolbar')) throw Error('Child Notes UI duplicated its host');
         if (__EPUB_CHECK__) {
           const owner = await client.request('state');
           if (owner.format !== 'epub' || owner.capabilities.source || owner.capabilities.edit) throw Error('EPUB capabilities changed');
@@ -60,11 +62,25 @@ def loaded(view, event):
         }
         if (__TABLE_CHECK__) {
           const owner = await client.request('state');
+          if (!owner.capabilities.notes || !owner.capabilities.queryNotes || !owner.capabilities.presentation?.notesOwner) throw Error('Expected explicit Notes grants and ownership capability');
           const info = await client.request('tableInfo', { table: 0 });
           if (info.rows !== 123) throw Error('Table record count changed');
           const total = await client.request('sql', { table: 0, sql: 'SELECT COUNT(*),SUM(CAST(c2 AS INTEGER)),MIN(c3) FROM t' });
           if (JSON.stringify(total.rows[0]) !== JSON.stringify(['123','7503','001'])) throw Error('Whole-input SQL changed values');
+          let noteId = null;
+          if (owner.capabilities.queryNotes) {
+            const added = await client.request('notes', { request: { operation: 'add', kind: 'favorite', quote: '123', revision: owner.revision,
+              anchor: { location: { kind: 'queryCell', queryId: total.id, row: 0, column: 0 } } } });
+            noteId = added.id;
+          }
           await client.request('sqlClose', { id: total.id });
+          if (noteId) {
+            const persisted = await client.request('notes', { request: { operation: 'list', offset: 0 } });
+            const stored = persisted.items.find(item => item.id === noteId);
+            if (!stored?.anchor.query || stored.anchor.location !== null || stored.anchor.query.sourceRows !== 123) throw Error('SQL note lost durable provenance');
+            await client.request('notes', { request: { operation: 'delete', id: noteId } });
+          }
+
           const chart = await client.request('tableChart', { source: { kind: 'table', table: 0 }, x: 0, y: 1 });
           if (chart.points.length !== 123 || chart.points[122].value !== 122) throw Error('Chart used a partial dataset');
           await client.request('navigate', { location: { kind: 'cell', table: 0, row: 122, column: 2 } });
@@ -81,7 +97,7 @@ def loaded(view, event):
             if (!source.result.text.includes('row-122')) throw Error('Original source unavailable');
           }
           await client.dispose({ force: true });
-          window.webkit.messageHandlers.result.postMessage(JSON.stringify({ format: owner.format, rows: 123, wholeInputQuery: true, typedCells: true, cleanup: client.active === 0 }));
+          window.webkit.messageHandlers.result.postMessage(JSON.stringify({ format: owner.format, rows: 123, wholeInputQuery: true, typedCells: true, durableSqlNotes: Boolean(noteId), cleanup: client.active === 0 }));
           return;
         }
 

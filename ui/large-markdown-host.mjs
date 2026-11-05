@@ -7,10 +7,10 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (disposed || !state) return
     snapshot = state
     const visible = {
-      initialized, ready: state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
+      initialized, ready: initialized && state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
       editable: Boolean(state.capabilities?.edit), view: state.view, dirty: Boolean(state.dirty),
       busy: Boolean(state.busy), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
-      lineCount: state.document?.sourceLines, size: state.document?.fileBytes,
+      lineCount: state.document?.sourceLines, size: state.document?.fileBytes, name: state.name,
       documentId: state.documentId, revision: state.revision, format: state.format,
       status: state.editorError?.message || state.error || '', error: state.error,
       position: state.position, capabilities: state.capabilities, formatState: state.formatState,
@@ -39,7 +39,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     }})
     publish(await client.ready())
     if (disposed) { await client.dispose({force:true}); return }
-    publish(await client.request('settings',{toolbar:'host',...options.presentation}))
+    publish(await client.request('settings',{toolbar:'host',...(snapshot.capabilities?.presentation?.notesOwner ? {notes:'host'} : {}),...options.presentation}))
     if (disposed) return
     const initialView = options.initialView
     if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
@@ -78,6 +78,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async save(){publish(await command('save',{}));return true},
     async setOutline(open){publish(await command('contents',{open}))},
     async settings(settings){publish(await command('settings',settings))},
+    notes(request, { documentId, revision, signal }) { return command('notes',{documentId,revision,request},signal) },
     navigateLine(line){return command('navigate',{location:{kind:'line',line}})},
     navigateLocation(location){return command('navigate',{location})},
     async navigateReference(reference){
@@ -105,6 +106,56 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       const closing=client?.dispose({force:true})
       void closing?.catch(error=>options.onError?.(error))
       return closing
+    },
+  }
+}
+
+// Ordinary host Notes UI over the same explicit Rust store as the child reader.
+// Each binding captures its document/revision and transport; no active-pane lookup.
+export function createReaderNotesHost(root, toolbar, options = {}) {
+  let disposed = false, generation = 0, key = '', binding = null, selected = null, enabled = false
+  const load = options.load || (() => import(new URL('./reader-assets/notes.mjs', import.meta.url).href))
+  return {
+    async update(owner, host) {
+      if (disposed) return
+      enabled = Boolean(owner.capabilities?.notes && owner.capabilities?.presentation?.notesOwner)
+      const next = enabled && owner.initialized && owner.ready ? owner.documentId + ':' + owner.revision : ''
+      if (key === next) return
+      key = next
+      const own = ++generation
+      binding?.dispose(); binding = null; selected = null
+      if (!next) return
+      const { mountNotes } = await load()
+      if (disposed || own !== generation) return
+      const identity = { documentId: owner.documentId, revision: owner.revision, name: owner.name || 'Document' }
+      binding = mountNotes({
+        owner: identity, root, toolbar, overlayRoot: root.ownerDocument.body,
+        selection: async () => selected,
+        storage: (request, { signal }) => host.notes(request, { ...identity, signal }),
+        canSave: () => !host.dirty,
+        queryNotes: Boolean(owner.capabilities.queryNotes),
+        translate: options.translate,
+        actions: options.onAction ? [{ id: 'ask-ai', label: options.translate?.('Ask AI') || 'Ask AI', run: async (selection, { signal }) => {
+          signal.throwIfAborted()
+          if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
+          selected = null
+          await binding?.selectionChanged()
+          signal.throwIfAborted()
+          return options.onAction(selection, { signal })
+        } }] : [],
+      })
+      if (selected) await binding.selectionChanged()
+    },
+    capture(value) {
+      if (!enabled || disposed) return false
+      const bounds = value.rect
+      selected = { ...value, viewportRect: bounds ? { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height } : value.viewportRect }
+      void binding?.selectionChanged().catch(error => options.onError?.(error))
+      return true
+    },
+    dispose() {
+      if (disposed) return
+      disposed = true; ++generation; binding?.dispose(); binding = null; selected = null
     },
   }
 }

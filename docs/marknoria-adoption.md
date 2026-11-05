@@ -28,7 +28,7 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
 
 ## Executed locally on Ubuntu 26.04.1
 
-- Complete Studio UI suite: 776 passed; TypeScript type checks passed.
+- Complete Studio UI suite: 780 passed; TypeScript type checks passed.
 - Complete Rust workspace: 149 application tests passed, one pre-existing ignored
   test, and 12 exact shared SDK contract tests passed.
 - Strict import synthetic regression: 13 tests passed, including replacement and
@@ -60,9 +60,9 @@ unchanged. Third-party notices and first-party export MIT terms remain intact.
 
 ## Public interface and latest local package
 
-The current pin is MarkNoria `a9cf902ded351b518222aaf74c1885864f703d78`.
+The current pin is MarkNoria `7638fd367430884e0a2bb52e9467f8ad738da5e7`.
 Two clean offline exports contain the same 791-file inventory and archive SHA-256
-`8cc605ddcd795e6be8aa0f9fceb0d38d2719a69fca9f1b8dc4a94910009e6cac`.
+`180bcc579b727b1f1c15c1d25f275c39b700ff0eaac08df21ce22ac6271d1613`.
 The eight export contracts include staged Git byte preservation. Studio imports
 that exact archive without modifying any SDK source or generated resource.
 
@@ -119,7 +119,7 @@ The registry owns one reusable maintenance task rather than spawning a timer for
 each rapid reopen. Disposal during an outstanding settings/mode request cannot
 start a late heartbeat. Lifecycle regression tests cover both conditions.
 The public archive's normalized tree SHA-256 is
-`210f8f4595ace9c9abec8c715bf5e99e2f32217af7f24f16df6870f486bb3452`.
+`45855b3ed4125ac751ac4329f3d5ebdc9a892e1b7ce0e60cd88aaea5682e257b`.
 
 ## Shared EPUB workspace stage
 
@@ -167,6 +167,49 @@ SIGSEGV before producing its Markdown check result; the isolated sequential reru
 completed successfully. This records the observed failure and rerun, rather than
 claiming that the environmental/process instability has been diagnosed or fixed.
 
+## Host-owned shared document Notes stage
+
+Studio explicitly configures the existing public Rust Notes store under its own
+application state directory. File read-only permission is preserved; Notes storage
+is separate authority. The default library/service profile remains Notes-disabled.
+No data, gateway credential or AI account is added to the SDK package.
+
+The public `settings({notes:'host'})` presentation capability disposes the child
+Notes UI without revoking granted storage. The parent mounts the unchanged shared
+`mountNotes` component in an explicit document-toolbar slot with Studio's palette
+and typography. Each binding captures its document ID/revision and transport;
+remounting, pending module imports, changed revisions and disposal cannot redirect
+an old request/action to a new active file. Selection bounds are mapped from the
+frame to the host viewport. Copy/Comment/Favorite use the shared component; its
+additional Ask AI action opens Studio's existing comment workflow. Chat/session
+comments and favorites remain Studio-owned; this new store holds document Notes.
+
+The real Chromium gateway/workspace checks a selected CSV cell's comment/favorite,
+a complete-input SQL aggregate favorite, SQL-result closure with durable query
+provenance, copying its snapshot label, comment-only clearing that retains both
+favorites, and persistence across edit/save/undo and a new reader session. TSV
+and XLSX demonstrate separate document stores; their ordinary table/AI actions
+still run through the shared host. Native Wayland WebKitGTK reader frames verify
+explicit Notes capabilities, host ownership and durable SQL-result Notes through
+the actual scoped Rust service. This is not full Studio-shell WebKit acceptance.
+
+The Notes library's bounds fit the actual Studio viewport; a generated screenshot
+was inspected locally and remains outside version control. The toolbar entrance
+uses a dedicated host slot instead of inheriting browser-default button styling.
+The consuming suite passes 780 UI tests, type/format checks, 149 application Rust
+tests (one existing ignored) and 12 unchanged public SDK contract tests. The
+imported 791-file inventory remains unchanged after building. Two clean offline
+exports match; eight archive/inventory/Git-byte checks pass.
+
+The cold-start workflow exposed a shared SQL input race: edits were possible
+before schema/default SQL arrived and could then be overwritten. The upstream
+input now remains disabled until schema initialization, with 27 component checks
+passing in each engine. Host controls likewise remain unready until initial
+settings/location restoration finishes; a delayed-location regression covers this
+ordering. EPUB and large Markdown/diagram workflows pass after these changes.
+Ordinary PDF/image/small-Markdown Notes entry points, durable SQL references for
+AI drafts, remaining locale/defaults and full common acceptance remain open.
+
 ## Remaining acceptance
 
 This is not a completed #48 adoption or #7 feature-union acceptance. Small
@@ -174,7 +217,7 @@ Markdown still uses the existing ordinary document renderer; image entry points
 have not migrated. WSL tables retain an explicit unsupported-transport fallback
 and still need shared byte transport. The shared PDF adapter still needs full
 application visual/accessibility acceptance. Remaining work includes authorized Markdown
-image/link resources, full typed selection/Notes/AI adapter integration, remaining
+image/link resources, remaining typed selection/Notes/AI adapter integration across ordinary entry points, remaining
 locale/default-state behavior, common corpus/visual/accessibility/performance
 comparison, and actual downstream three-platform CI and review/merge. Native
 Wayland WebKitGTK also passed original-source display, Mermaid/PlantUML/D2,

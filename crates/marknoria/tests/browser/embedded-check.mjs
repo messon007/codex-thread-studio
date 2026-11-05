@@ -239,6 +239,15 @@ try {
   assert.equal(ordinaryQuery.closed,true)
   assert.equal(await page.evaluate(()=>clients[0].request('notes',{request:{operation:'list',offset:0}}).then(()=>false,()=>true)),true)
   assert.equal(states[0].capabilities.queryNotes,false);assert.equal(states[1].capabilities.queryNotes,true)
+  const noteOwner = await page.evaluate(async () => {
+    const before = await clients[1].request('state')
+    const host = await clients[1].request('settings', { notes: 'host' })
+    const denied = await clients[0].request('settings', { notes: 'host' })
+    return { capability: before.capabilities.presentation.notesOwner, owner: host.presentation.notes,
+      notes: host.capabilities.notes, disabled: denied.capabilities.notes }
+  })
+  assert.deepEqual(noteOwner,{capability:true,owner:'host',notes:true,disabled:false})
+  assert.equal(await page.frameLocator('iframe').nth(1).locator('.notes-toolbar').count(),0)
   const durableQueryNote=await page.evaluate(async owner=>{
     const {mountTableQuery,readerQueryProvider}=await import('/table-query.mjs')
     const {mountNotes,readerNoteStorage}=await import('/notes.mjs')
@@ -261,6 +270,9 @@ try {
   assert.equal(durableQueryNote.note.quote,'119');assert.equal(durableQueryNote.note.anchor.query.row,119)
   assert.equal(durableQueryNote.note.anchor.query.column,1);assert.equal(durableQueryNote.note.anchor.query.sourceRows,120)
   assert.equal(durableQueryNote.note.anchor.location,null);assert.ok(durableQueryNote.text.includes('snapshot, not a source cell'))
+  await page.evaluate(() => clients[1].request('settings', { notes: 'reader' }))
+  assert.equal(await page.frameLocator('iframe').nth(1).locator('.notes-toolbar').count(),1)
+  assert.equal(await page.evaluate(() => clients[1].request('notes',{request:{operation:'list',offset:0}}).then(value=>value.total)),1)
   const wrongVersion = await page.evaluate(() => new Promise(resolve => {
     const requestId = crypto.randomUUID()
     const receive = event => {

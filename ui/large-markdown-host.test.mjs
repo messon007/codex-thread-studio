@@ -153,3 +153,72 @@ test('an initial stale reference is rejected before showing initialized content'
   assert.equal(states.some(value=>value.initialized),false)
  }finally{await host.dispose()}
 })
+
+test('Notes ownership is delegated only when the fixed package declares the capability',async()=>{
+ const {host,requests}=fixture(undefined,{notes:true,presentation:{notesOwner:true}})
+ try{
+  await host.ready
+  assert.equal(requests[0].params.notes,'host')
+  await host.notes({operation:'list',offset:0},{documentId:'old-doc',revision:'c'.repeat(64)})
+  assert.equal(requests.at(-1).params.documentId,'old-doc')
+  assert.equal(requests.at(-1).params.revision,'c'.repeat(64))
+ }finally{await host.dispose()}
+})
+
+test('ordinary Notes bindings preserve original owner/transport and map frame bounds',async()=>{
+ const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
+ const mounts=[],calls=[]
+ const root={ownerDocument:{body:{}}}
+ const controller=createReaderNotesHost(root,{}, {load:async()=>({mountNotes:options=>{
+  const record={options,disposed:false,selections:0};mounts.push(record)
+  return {dispose(){record.disposed=true},async selectionChanged(){record.selections++}}
+ }})})
+ const host=name=>({dirty:false,notes:async(request,owner)=>{calls.push({name,request,owner});return {items:[],total:0}}})
+ const first={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),name:'one.csv',capabilities:{notes:true,queryNotes:true,presentation:{notesOwner:true}}}
+ try{
+  await controller.update(first,host('one'))
+  assert.equal(mounts[0].options.queryNotes,true)
+  controller.capture({documentId:'one',revision:first.revision,quote:'001',location:{kind:'cell',table:0,row:2,column:1},precision:'exact',rect:{left:100,top:200,width:30,height:15}})
+  assert.deepEqual((await mounts[0].options.selection()).viewportRect,{x:100,y:200,width:30,height:15})
+  await controller.update({...first,documentId:'two',revision:'b'.repeat(64)},host('two'))
+  assert.equal(mounts[0].disposed,true)
+  assert.equal(await mounts[1].options.selection(),null)
+  const signal=new AbortController().signal
+  await mounts[0].options.storage({operation:'list',offset:0},{signal})
+  assert.equal(calls[0].name,'one')
+  assert.equal(calls[0].owner.documentId,'one')
+  assert.equal(calls[0].owner.revision,first.revision)
+  assert.equal(calls[0].owner.signal,signal)
+ }finally{controller.dispose()}
+ assert.equal(mounts[1].disposed,true)
+})
+
+test('late Notes imports cannot mount after owner replacement or disposal',async()=>{
+ const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
+ const pending=[],mounts=[]
+ const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{load:()=>new Promise(resolve=>pending.push(resolve))})
+ const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),capabilities:{notes:true,presentation:{notesOwner:true}}}
+ const first=controller.update(owner,{})
+ const second=controller.update({...owner,documentId:'two'},{})
+ controller.dispose()
+ for(const resolve of pending)resolve({mountNotes:options=>{mounts.push(options);return {dispose(){}}}})
+ await Promise.all([first,second])
+ assert.deepEqual(mounts,[])
+ assert.equal(controller.capture({quote:'late'}),false)
+})
+
+test('host controls stay unready while a saved reading location is being restored',async()=>{
+ let finish
+ const states=[],owner={state:'ready',documentId:'book',revision:'a'.repeat(64),view:'preview',capabilities:{}}
+ const client={ready:async()=>owner,request:async method=>method==='navigate'?new Promise(resolve=>{finish=resolve}):owner,dispose:async()=>{}}
+ const host=createLargeMarkdownHost({src:'http://127.0.0.1:4000/markdown-reader/book/#token'},state=>states.push(state),()=>{},
+  {createClient:()=>client,initialLocation:{kind:'epub',cfi:'epubcfi(/6/4!/4/2/1:0)'}})
+ try{
+  for(let i=0;i<20&&!finish;i++)await Promise.resolve()
+  assert.equal(typeof finish,'function')
+  assert.equal(states.at(-1).ready,false)
+  finish(owner)
+  await host.ready
+  assert.equal(states.at(-1).ready,true)
+ }finally{await host.dispose()}
+})

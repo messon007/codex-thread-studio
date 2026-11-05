@@ -80,6 +80,13 @@ editor page navigation and undo/redo remain inside the reader. The host must
 guard reloading/replacing a dirty document before disposing it. This setting
 does not hide document overlays or their controls.
 
+`notes: 'host'` independently delegates the Notes UI to an ordinary host mounting
+the shared `mountNotes` component. It disposes the child Notes controls/dialogs
+without revoking the explicitly granted Notes storage API. The default `reader`
+owner mounts the child UI; switching back recreates it over the same records.
+`capabilities.presentation.notesOwner` declares support. This is presentation
+ownership only: it never grants storage, queries or file access.
+
 Envelopes use `protocol: "marknoria.reader"`, `version: 1`, a UUID `requestId`, and
 `kind: request/response/event/cancel`. Requests name a method and parameters;
 responses contain `result` or `{error:{code,message}}`. Both ends check source

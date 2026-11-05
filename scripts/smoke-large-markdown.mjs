@@ -65,6 +65,7 @@ try {
       hideComposerMenu() {}, closeActionMenus() {}, applyRightRailWidth() {},
       disconnectMarkdownImageObserver() {}, disposeMarkdownImageAssets() {}, hideSelection() {},
       setSelection(selection, rect) { window.testSelection = { selection, rect } },
+      openCommentForSelection(selection) { window.testSelection = { selection } },
       renderMarkdownDocument() { throw Error('Whole-document parsing must not run') },
     }});
     window.controller.bind();
@@ -97,6 +98,7 @@ try {
       const selected = window.expectedReference = await referenceClient.request('sourceSelection', { start: source.result.start, end: source.result.end, fromUtf16: 0, toUtf16: end })
       await referenceClient.request('navigate', { location: selected.location })
     })
+    await page.locator('.notes-toolbar [data-action=ask-ai]').click()
     await page.waitForFunction(() => window.testSelection?.selection?.source?.anchor?.readerReference?.location?.kind === 'source')
     const reference = await page.evaluate(() => window.testSelection.selection.source.anchor)
     const expectedReference = await page.evaluate(() => window.expectedReference)

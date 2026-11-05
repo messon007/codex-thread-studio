@@ -75,6 +75,7 @@ pub struct Readers {
     opening: Arc<tokio::sync::Semaphore>,
     client: reqwest::Client,
     maintenance: Arc<ReaderMaintenance>,
+    notes_directory: Option<std::path::PathBuf>,
 }
 
 impl Default for Readers {
@@ -82,6 +83,7 @@ impl Default for Readers {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
             maintenance: Arc::new(ReaderMaintenance::default()),
+            notes_directory: None,
             opening: Arc::new(tokio::sync::Semaphore::new(1)),
             client: reqwest::Client::builder()
                 .no_proxy()
@@ -113,6 +115,10 @@ async fn close_readers(readers: Vec<Reader>) {
 }
 
 impl Readers {
+    pub fn with_notes_directory(mut self, directory: std::path::PathBuf) -> Self {
+        self.notes_directory = Some(directory);
+        self
+    }
     pub async fn open(
         &self,
         source: std::path::PathBuf,
@@ -152,12 +158,13 @@ impl Readers {
         } else {
             None
         };
-        let service = Service::start_with_options(
-            grant,
-            ServiceOptions::default().diagrams(DiagramMode::Browser),
-        )
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        let mut options = ServiceOptions::default().diagrams(DiagramMode::Browser);
+        if let Some(directory) = &self.notes_directory {
+            options = options.notes_directory(directory.clone());
+        }
+        let service = Service::start_with_options(grant, options)
+            .await
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         let id = uuid::Uuid::new_v4().to_string();
         let token = service.token.clone();
         self.entries.lock().unwrap().insert(

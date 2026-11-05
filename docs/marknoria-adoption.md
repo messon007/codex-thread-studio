@@ -1,4 +1,4 @@
-# Fixed public reader adoption — review candidate
+# Fixed public reader adoption
 
 The reviewed pin is `scripts/marknoria-release.json`; the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
@@ -119,8 +119,9 @@ editing is 198/90 ms and diagrams 47/34 ms. Earlier cache-isolation experiments
 show GStreamer registry dependence, not the exact blocking call. No prewarming or
 copied registry is presented as a fix. Warm results do not substitute for this cold measurement.
 
-Astra independently accepted the local feature/API/authorization and fixed-package
-evidence. Whole-goal acceptance remains pending the explicit downstream gates. A focused QA correction separates
+Astra independently accepted the complete technical delivery after verifying the
+actual WSL2 result below. Final merge/issue transactions are tracked in PR #55.
+A focused QA correction separates
 product interaction samples from screenshots and drains both realms before
 sampling. With Notes already open, first locale update through paint still has
 a 433 ms heartbeat spike (398 ms without probes), separate from cold startup;
@@ -134,17 +135,27 @@ absolute latency ceiling for these scenes; they are not new merge-blocking rules
 Existing resource/DOM/query budgets remain unchanged.
 Derived fixture throughput is about 40/33 MB/s; wire byte counts, serialization
 CPU, sustained throughput and whole-application peak memory remain unmeasured.
-The three-platform candidate passes above remove the prior compile/test gate.
-Candidate `190e427` provisioned Ubuntu 24.04/WSL1 on an actual Windows runner but
-failed Markdown open with a declared/body byte-count mismatch. WSL1 is an extra
-probe, not the documented supported backend: README requires WSL2. This failure
-must not be reported as a WSL2 result or require new WSL1 support. `eb59e56` adds
-bounded raw-pipe/numeric diagnostics without weakening rejection. The acceptance
-workflow now selects WSL2 and records its actual kernel; that result is pending.
-The check asserts explicit distro/non-root user identity, exact Source,
-read-only behavior, cached shared-image revocation, stable identity on reopen,
-lease expiry and cache cleanup through the production gateway. It does not claim
-a seven-format real WSL run. Actual WSL2 validation, review/merge and Astra
-whole-goal approval remain open. Upstream private CI last reported a billing/spending block.
+The final technical candidate `f2ec4f8204a04fd4fc2598cab867e402bce0d666` passed
+Windows, macOS and Ubuntu in both push run `42037000119` and PR run `42037012109`.
+The Windows production gateway case used Ubuntu 24.04, kernel
+`6.18.54.1-microsoft-standard-WSL2`, user `reader-test`, UID 1000. Its 88-byte
+BOM/Unicode/CRLF Markdown matched the original SHA-256 exactly. Explicit identity,
+exact Source, read-only behavior, cached shared-image revocation, stable reopen
+identity, lease expiry and cache cleanup all passed. Linux's existing seven-format
+portable adapter tests remain separate; this real WSL2 case does not claim every
+format or WSL1 compatibility.
+
+The earlier `190e427` WSL1 probe failed a declared/body byte-count check. WSL1 is
+outside the README's documented WSL2 requirement; that observation is not reported
+as a WSL2 failure and did not result in relaxed checks or a new support promise.
+Bounded raw-byte/numeric diagnostics remain available. No SDK/native implementation
+was changed for this check.
+
+Astra's independent final review accepted #7's functional union/actual adoption
+and #6's reproducible fixed delivery/platform compatibility. Public core #4 and
+embedding/components #5 had already passed independently. PR #55 records final
+merge and parent-issue completion; the candidate is technically approved for
+normal merge, with the measured limitations above retained. Upstream private CI
+has a separate GitHub billing/spending block; public consumer CI did execute.
 The original Studio checkout stays untouched. Local commits are batched before
-pushing review candidates; no SDK/native implementation change is needed here.
+pushing review candidates.

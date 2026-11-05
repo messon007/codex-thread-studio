@@ -93,7 +93,7 @@ node scripts/smoke-shared-tables.mjs --webkit
 node scripts/smoke-large-markdown.mjs --edit --webkit
 # Reuse the first script's private generated corpus; supply MARKNORIA_SERVER.
 node scripts/smoke-standalone-reader.mjs CORPUS_DIRECTORY --webkit
-# On Windows, after provisioning Ubuntu-24.04 / reader-test with python3:
+# On Windows, after provisioning Ubuntu-24.04/WSL2 / reader-test with python3:
 # Uses real Studio --serve and /studio/reader/open; no browser or AI CLI needed.
 node scripts/smoke-windows-wsl-reader.mjs
 ```
@@ -113,27 +113,38 @@ Indexing took 49/35 ms at 53,092/49,944 KiB worker RSS. Chromium content took
 201/194 ms with 37/19 ms opening heartbeat gaps. Full-shell four-format first-open
 and reopen metrics, DOM counts and measurement limits are in the packaged matrix.
 
-**Unpassed cold-platform performance:** fresh private `XDG_CACHE_HOME` Wayland
+**Measured cold-platform limitation:** fresh private `XDG_CACHE_HOME` Wayland
 Markdown still records 1952 ms first content and an 1839 ms heartbeat gap; same-cache
 editing is 198/90 ms and diagrams 47/34 ms. Earlier cache-isolation experiments
 show GStreamer registry dependence, not the exact blocking call. No prewarming or
-copied registry is presented as a fix. Warm results do not replace cold acceptance.
+copied registry is presented as a fix. Warm results do not substitute for this cold measurement.
 
 Astra independently accepted the local feature/API/authorization and fixed-package
-evidence, but rejected whole-goal acceptance. A focused QA correction separates
+evidence. Whole-goal acceptance remains pending the explicit downstream gates. A focused QA correction separates
 product interaction samples from screenshots and drains both realms before
 sampling. With Notes already open, first locale update through paint still has
 a 433 ms heartbeat spike (398 ms without probes), separate from cold startup;
 it is not attributed to Contents or screenshot capture. Cumulative maxima do
-not measure repeat-switch latency. This second performance item remains open.
+not measure repeat-switch latency. A later bounded run observes 382/383 ms with
+and without QA-only GStreamer plugin suppression. A JSC sample locates Fontconfig
+work under forced position layout; suppressing repeated theme requests does not
+improve the gap, so the speculative production change was removed. These remain
+known performance risks. Astra verified that the original issues specify no
+absolute latency ceiling for these scenes; they are not new merge-blocking rules.
+Existing resource/DOM/query budgets remain unchanged.
 Derived fixture throughput is about 40/33 MB/s; wire byte counts, serialization
 CPU, sustained throughput and whole-application peak memory remain unmeasured.
 The three-platform candidate passes above remove the prior compile/test gate.
-The focused real Windows/WSL smoke check is added to Windows CI and still awaits
-execution; it asserts explicit distro/non-root user identity, exact Source,
+Candidate `190e427` provisioned Ubuntu 24.04/WSL1 on an actual Windows runner but
+failed Markdown open with a declared/body byte-count mismatch. WSL1 is an extra
+probe, not the documented supported backend: README requires WSL2. This failure
+must not be reported as a WSL2 result or require new WSL1 support. `eb59e56` adds
+bounded raw-pipe/numeric diagnostics without weakening rejection. The acceptance
+workflow now selects WSL2 and records its actual kernel; that result is pending.
+The check asserts explicit distro/non-root user identity, exact Source,
 read-only behavior, cached shared-image revocation, stable identity on reopen,
 lease expiry and cache cleanup through the production gateway. It does not claim
-WSL2 or a seven-format real WSL run. Performance, review/merge and Astra whole-goal
-approval remain open. Upstream private CI last reported a billing/spending block.
+a seven-format real WSL run. Actual WSL2 validation, review/merge and Astra
+whole-goal approval remain open. Upstream private CI last reported a billing/spending block.
 The original Studio checkout stays untouched. Local commits are batched before
 pushing review candidates; no SDK/native implementation change is needed here.

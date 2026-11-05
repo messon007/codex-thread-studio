@@ -1,5 +1,5 @@
 // Real Windows Studio gateway -> explicitly selected WSL distribution/user.
-// Run after provisioning Ubuntu-24.04 + reader-test; never substitutes Linux tests.
+// Run after provisioning Ubuntu-24.04/WSL2 + reader-test; never substitutes Linux tests.
 import assert from 'node:assert/strict'
 import {spawn, execFile} from 'node:child_process'
 import {promisify} from 'node:util'
@@ -28,6 +28,9 @@ await writeFile(join(config, 'settings.json'), JSON.stringify({wslDistribution: 
 let child, log = '', setup = false, closeLease, failure
 const leases = new Set()
 try {
+  const wslKernel = await wsl('/usr/bin/uname', '-r')
+  assert.match(wslKernel, /microsoft.*WSL2/iu, 'CI must exercise the documented WSL2 backend')
+  console.log(JSON.stringify({actualWindowsWslKernel: wslKernel, distribution, user}))
   const identity = JSON.parse(await wsl('python3', '-c', 'import os,json;print(json.dumps([os.environ["WSL_DISTRO_NAME"],os.getuid(),__import__("pwd").getpwuid(os.getuid()).pw_name]))'))
   assert.equal(identity[0], distribution); assert.equal(identity[2], user); assert.notEqual(identity[1], 0)
   setup = true
@@ -113,7 +116,7 @@ try {
   while ((await readdir(cache)).length && Date.now() < deadline) await pause(30)
   assert.deepEqual(await readdir(cache), [])
   assert.equal(await wsl('python3', '-c', 'import sys,base64;print(base64.b64encode(open(sys.argv[1],"rb").read()).decode())', source), Buffer.from(original).toString('base64'))
-  console.log(JSON.stringify({ok: true, actualWindowsWsl: true, productionGateway: true, distribution, user, uid: identity[1], exactSource: true, readOnly: true, cachedResourceRevocation: true, stableIdentity: true, cleanup: true}))
+  console.log(JSON.stringify({ok: true, actualWindowsWsl: true, productionGateway: true, distribution, user, wslKernel, uid: identity[1], exactSource: true, readOnly: true, cachedResourceRevocation: true, stableIdentity: true, cleanup: true}))
 } catch (error) {
   failure = error
   throw error

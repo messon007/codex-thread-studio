@@ -1,0 +1,14 @@
+[data-marknoria-image] { box-sizing:border-box; margin:12px 0; border:1px solid var(--reader-border,#d1dde2); border-radius:9px; padding:16px; color:var(--reader-text,#23353c); }
+[data-marknoria-image] .asset-controls { display:flex; flex-wrap:wrap; gap:6px; padding-bottom:8px; }
+[data-marknoria-image] .asset-controls button { font:var(--ui-font-size,13px)/1.4 var(--ui-font-family,system-ui,sans-serif); cursor:pointer; padding:5px 10px; border:1px solid var(--reader-border,#d1dde2); border-radius:7px; color:var(--reader-muted,#49646e); background:var(--reader-panel,#fff); }
+[data-marknoria-image] .asset-controls button:hover:not(:disabled) { background:var(--reader-brand-soft,#e4f4f1); color:var(--reader-brand,#087f78); }
+[data-marknoria-image] .asset-controls button:focus-visible { outline:2px solid var(--reader-brand,#087f78); outline-offset:2px; }
+[data-marknoria-image] .document-image { overflow:visible; min-height:80px; }
+[data-marknoria-image] .document-image img { display:block; max-width:100%; height:auto; margin-inline:auto; }
+[data-marknoria-image].asset-zoomed .document-image img { max-width:none; width:calc(var(--asset-zoom) * var(--asset-width)); }
+[data-marknoria-image] figcaption { color:var(--reader-muted,#49646e); font:12px/1.4 var(--ui-font-family,system-ui,sans-serif); margin-top:6px; overflow-wrap:anywhere; }
+[data-marknoria-image][data-controls-compact] { position:relative; margin:0; border:0; border-radius:0; padding:0; }
+[data-marknoria-image][data-controls-compact] .document-image { min-height:0; overflow:auto; }
+[data-marknoria-image][data-controls-compact] figcaption { display:none; }
+[data-marknoria-image][data-controls-compact] .asset-controls { position:absolute; z-index:8; width:max-content; visibility:hidden; padding:4px; background:var(--reader-panel,#fff); border:1px solid var(--reader-border,#d1dde2); border-radius:7px; }
+[data-marknoria-image][data-controls-compact]:hover .asset-controls, [data-marknoria-image][data-controls-compact]:focus-within .asset-controls { visibility:visible; }

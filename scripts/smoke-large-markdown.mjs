@@ -11,16 +11,23 @@ const output = resolve(root, 'target/large-markdown-smoke')
 await mkdir(output, { recursive: true })
 const directory = await mkdtemp(join(output, 'run-'))
 const fixture = join(directory, 'large.md')
-if (process.argv[2]) await copyFile(resolve(process.argv[2]), fixture)
+const fixtureArgument = process.argv.slice(2).find(value => !value.startsWith('--'))
+if (fixtureArgument) await copyFile(resolve(fixtureArgument), fixture)
 const { chromium } = await import(process.env.STUDIO_PLAYWRIGHT_MODULE || 'playwright')
 const binary = process.env.STUDIO_REMOTE_BINARY || resolve(root, 'target/release/codex-thread-studio')
 const cache = join(directory, 'cache')
-const environment = { ...process.env, XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'), XDG_CACHE_HOME: join(directory, 'xdg-cache'), CODEX_HOME: join(directory, 'codex'), READER_CACHE_DIR: cache, READER_CHROMIUM: '/intentionally-unavailable-chromium' }
+const desktopEnvironment=Object.fromEntries(['XDG_RUNTIME_DIR','WAYLAND_DISPLAY','GDK_BACKEND','DBUS_SESSION_BUS_ADDRESS','WEBKIT_DISABLE_COMPOSITING_MODE'].filter(key=>process.env[key]).map(key=>[key,process.env[key]]))
+const environment = {PATH:'/usr/bin:/bin',LANG:'C.UTF-8',...desktopEnvironment,CODEX_HOME:join(directory,'codex'),XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'), XDG_CACHE_HOME: join(directory, 'xdg-cache'), READER_CACHE_DIR: cache, READER_CHROMIUM: '/intentionally-unavailable-chromium' }
 let browser
 let server
 let log = ''
 try {
-  if (!process.argv[2]) await writeFile(fixture, '# Large report\n\n' + 'Bounded document content.\n\n'.repeat(70_000))
+  if (!fixtureArgument) {
+    const columns = Array.from({ length: 24 }, (_, index) => `Column ${index + 1}`)
+    const table = '| ' + columns.join(' | ') + ' |\n| ' + columns.map(() => '---').join(' | ') + ' |\n'
+      + Array.from({ length: 120 }, (_, row) => '| ' + columns.map((_, column) => `row ${row + 1} value ${column + 1}`).join(' | ') + ' |').join('\n')
+    await writeFile(fixture, '# Large report\n\n## Shared table\n\n' + table + '\n\n' + 'Bounded document content.\n\n'.repeat(70_000))
+  }
   const diagrams = join(directory, 'diagrams.md')
   await writeFile(diagrams, '# Mermaid\n\n```mermaid\nflowchart LR\n A[Complete] --> B[Done]\n```\n\n# PlantUML\n\n```plantuml\nAlice -> Bob: Hello\n```\n\n# D2\n\n```d2\na: Complete\nb: Diagram\na -> b: context\n```\n\n# Padding\n\n' + 'Read-only document.\n\n'.repeat(55_000))
   server = spawn(binary, ['--serve', '--listen', '127.0.0.1:0'], { env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -58,6 +65,8 @@ try {
       activateRightWorkspace: tool => { state.activeRightWorkspace = tool },
       hideComposerMenu() {}, closeActionMenus() {}, applyRightRailWidth() {},
       disconnectMarkdownImageObserver() {}, disposeMarkdownImageAssets() {}, hideSelection() {},
+      setSelection(selection, rect) { window.testSelection = { selection, rect } },
+      openCommentForSelection(selection) { window.testSelection = { selection } },
       renderMarkdownDocument() { throw Error('Whole-document parsing must not run') },
     }});
     window.controller.bind();
@@ -75,7 +84,35 @@ try {
     assert.equal(await page.locator('#artifact-edit').isVisible(), true)
     const frame = await page.locator('.artifact-large-markdown-frame').elementHandle().then(element => element.contentFrame())
     await frame.waitForFunction(() => window.readerExperiment?.metrics.firstContentMs != null, null, { timeout: 60_000 })
-    const snapshot = await frame.evaluate(() => ({ sourceBytes: readerExperiment.index.sourceBytes, pages: readerExperiment.index.pages.length, tables: readerExperiment.index.tables.length, mounted: document.querySelectorAll('#space *').length, diagrams: readerExperiment.index.diagrams.length, mode: readerExperiment.diagramMetrics.mode }))
+    const snapshot = await frame.evaluate(() => ({ sourceBytes: readerExperiment.index.sourceBytes, pages: readerExperiment.index.pages.length, tables: readerExperiment.index.tables.length, mounted: document.querySelectorAll('#space *').length, diagrams: readerExperiment.index.diagrams.length, mode: readerExperiment.diagramMetrics.mode, indexMs: readerExperiment.index.indexMs, indexPeakRssKiB: readerExperiment.index.peakRssKib, firstUsefulContentMs: readerExperiment.metrics.firstContentMs, maxHeartbeatGapMs: readerExperiment.metrics.maxHeartbeatGapMs }))
+    await page.waitForFunction(()=>testState.artifact.readerReady)
+    snapshot.hostFirstUsefulMs = Date.now() - started
+    // Exercise the real outer Studio comment adapter, not only child selection.
+    await page.evaluate(async () => {
+      window.testSelection = null
+      const { createReaderClient } = await import('/reader-assets/host-client.mjs')
+      window.referenceClient = createReaderClient(document.querySelector('.artifact-large-markdown-frame'))
+      await referenceClient.ready()
+      const source = await referenceClient.request('sourceWindow', { line: 1 })
+      const normalized = source.result.text.replaceAll('\r\n', '\n')
+      let end = Math.min(8, normalized.length)
+      if (/[\uD800-\uDBFF]/u.test(normalized[end-1] || '')) end--
+      const selected = window.expectedReference = await referenceClient.request('sourceSelection', { start: source.result.start, end: source.result.end, fromUtf16: 0, toUtf16: end })
+      await referenceClient.request('navigate', { location: selected.location })
+    })
+    await page.locator('.notes-toolbar [data-action=ask-ai]').click()
+    await page.waitForFunction(() => window.testSelection?.selection?.source?.anchor?.readerReference?.location?.kind === 'source')
+    const reference = await page.evaluate(() => window.testSelection.selection.source.anchor)
+    const expectedReference = await page.evaluate(() => window.expectedReference)
+    assert.deepEqual(reference.readerReference.location, expectedReference.location)
+    assert.equal(reference.readerReference.documentId, expectedReference.documentId)
+    assert.equal(reference.readerReference.revision, expectedReference.revision)
+    assert.equal(reference.readerReference.precision, 'exact')
+    assert.equal(reference.startOffset, null)
+    assert.equal(reference.endOffset, null)
+    await page.evaluate(() => referenceClient.request('setView', { view: 'preview' }))
+
+    await frame.locator('.reader-shell.host-toolbar').waitFor({ state: 'attached' })
     assert.equal(await frame.locator('.reader-header').isVisible(), false)
     assert.equal(await frame.locator('.reader-footer').isVisible(), false)
     assert.equal(await page.locator('#artifact-view-switch').isVisible(), true)
@@ -115,6 +152,8 @@ try {
       await page.locator('#artifact-outline-toggle').click()
       await frame.locator('#reader-outline').waitFor({ state: 'visible' })
       await frame.locator('.toc-row').first().click()
+      assert.equal(await frame.locator('#reader-outline').isVisible(), true, 'Chapter navigation must keep Contents open')
+      await page.locator('#artifact-outline-toggle').click()
       await frame.locator('#reader-outline').waitFor({ state: 'hidden' })
       await page.waitForFunction(() => !document.querySelector('#artifact-outline-toggle').classList.contains('active'))
       const query = await frame.evaluate(() => readerExperiment.index.toc[0].label)
@@ -157,6 +196,11 @@ try {
       await table.getByRole('button', { name: 'Apply', exact: true }).click()
       await frame.waitForFunction(selector => document.querySelector(selector)?.dataset.loading === 'false' && document.querySelector(selector)?.querySelectorAll('th').length === 2, selector)
       assert.ok(await table.locator('tbody td').count() <= 100)
+      const revision = await frame.evaluate(() => readerExperiment.index.revision)
+      const result = await api('api/table-query', { method: 'POST', headers: { 'x-reader-token': readerToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ table: tableId, revision, sql: 'SELECT COUNT(*) FROM data' }) }).then(response => response.json())
+      assert.equal(result.rows[0][0], String(await frame.evaluate(id => readerExperiment.index.tables[id].rows, tableId)))
+      assert.equal((await api('api/table-query/close', { method: 'POST', headers: { 'x-reader-token': readerToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: result.id }) })).status, 200)
+      snapshot.completeTableQuery = true
     }
     if (snapshot.diagrams) {
       for (const id of [0, 1, 2]) {
@@ -193,12 +237,12 @@ try {
       const newline = firstNewline > 0 && original[firstNewline - 1] === 13 ? '\r\n' : '\n'
       const insert = value => frame.evaluate(value => readerExperiment.editor.code.view.dispatch({ changes: { from: 0, insert: value } }), value)
       await page.locator('#artifact-edit').click()
-      await frame.waitForFunction(() => marknoriaHost.state.view === 'edit' && !marknoriaHost.state.busy)
+      await page.waitForFunction(() => testState.artifactView === 'edit' && !testState.artifact.saving)
       await page.waitForSelector('#artifact-edit.active')
       await frame.locator('#edit-line').fill('1')
       await frame.locator('#edit-go button').click()
-      await frame.waitForFunction(() => readerExperiment.editor.data?.window.start === 0 && !marknoriaHost.state.busy, null, { timeout: 5000 }).catch(async error => {
-        console.error(JSON.stringify({ ...await frame.evaluate(() => ({ ...marknoriaHost.state, editorLoaded: Boolean(readerExperiment.editor.code), pageStart: readerExperiment.editor.data?.window.start, pageLine: readerExperiment.editor.data?.window.line, input: document.querySelector('#edit-line').value, valid: document.querySelector('#edit-line').checkValidity() })), editRequests }))
+      await frame.waitForFunction(() => readerExperiment.editor.data?.window.start === 0 && !readerExperiment.editor.busy, null, { timeout: 5000 }).catch(async error => {
+        console.error(JSON.stringify({ ...await frame.evaluate(() => ({ editorLoaded: Boolean(readerExperiment.editor.code), pageStart: readerExperiment.editor.data?.window.start, pageLine: readerExperiment.editor.data?.window.line, input: document.querySelector('#edit-line').value, valid: document.querySelector('#edit-line').checkValidity() })), editRequests }))
         throw error
       })
       assert.equal(await frame.locator('#edit-save').isVisible(), false)
@@ -234,6 +278,8 @@ try {
         await frame.locator('.toc-row').first().click()
         await frame.waitForFunction(line => readerExperiment.editor.line() === line, first.line + 1)
         assert.equal(await page.evaluate(() => testState.artifact.dirty), true)
+        await page.locator('#artifact-outline-toggle').click()
+        await frame.locator('#reader-outline').waitFor({state:'hidden'})
       }
       await page.locator('#artifact-save').click()
       await page.waitForFunction(() => !testState.artifact.dirty && !testState.artifact.saving)
@@ -244,7 +290,7 @@ try {
       await frame.locator('#edit-redo').click()
       await page.waitForFunction(() => !testState.artifact.dirty)
       await frame.locator('#edit-next').click()
-      await frame.waitForFunction(() => readerExperiment.editor.data.window.start > 0 && !marknoriaHost.state.busy)
+      await frame.waitForFunction(() => readerExperiment.editor.data.window.start > 0 && !readerExperiment.editor.busy)
       await insert('Keep on conflict\n')
       const external = Buffer.concat([Buffer.from('External change\n'), expected])
       await writeFile(fixture, external)

@@ -133,6 +133,7 @@ test('runtime web source keeps Chinese text exclusively in i18n.mjs', () => {
     .filter((entry) => entry.isFile()
       && /\.(?:js|mjs|html)$/u.test(entry.name)
       && entry.name !== 'i18n.mjs'
+      && !entry.name.endsWith('.test.mjs')
       && !entry.name.startsWith('vendor'))
     .map((entry) => entry.name)
   const violations = runtimeFiles.filter((name) => /\p{Script=Han}/u.test(
@@ -194,4 +195,15 @@ test('comments and favorites use compact right-area launchers without add menus'
   assert.doesNotMatch(source, /button\.querySelector\('span'\)\.textContent = favorite/)
   assert.match(html, /id="selection-comment"/)
   assert.match(html, /id="selection-favorite"/)
+})
+
+
+test('shared control aliases preserve their English labels', () => {
+  setLanguage('en-US')
+  for (const label of ['Apply','Contents','Next page','Previous page','Favorite','{count} saved items']) assert.equal(t(label), label)
+  setLanguage('zh-CN')
+  assert.equal(t('Apply'), t('Application'))
+  assert.equal(t('Next page'), t('Next'))
+  setLanguage('en-US')
+  assert.equal(t('Apply'), 'Apply')
 })

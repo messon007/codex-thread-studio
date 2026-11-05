@@ -6,6 +6,7 @@ export interface CommentContext {
   unknownLabel?: string
   translate?: (message: string, values?: Record<string, string | number>) => string
   contentForSource?: (source: CommentSource) => string | null | undefined
+  openQuerySnapshot?: (snapshot: CommentRecord, target: CommentRecord) => unknown
   openDocument?: (target: CommentRecord, excerpt: string) => unknown
   openWebSource?: (url: string) => unknown
   openPdfSource?: (anchor: PdfAnchor, excerpt: string) => unknown
@@ -31,6 +32,7 @@ export interface FileRangeTarget {
   endLine: number | null
   prefix: string
   suffix: string
+  readerReference?: CommentRecord | undefined
 }
 export interface PdfAnchor extends CommentRecord {
   root: string; filePath: string; documentHash: string; page: number
@@ -38,6 +40,7 @@ export interface PdfAnchor extends CommentRecord {
 }
 export interface EpubAnchor extends CommentRecord {
   root: string; filePath: string; bookHash: string; cfiRange: string; href: string; chapterLabel: string
+  readerReference?: CommentRecord | undefined
 }
 export interface TableAnchor extends CommentRecord {
   root: string; filePath: string; documentHash: string; sheet: string; range: string

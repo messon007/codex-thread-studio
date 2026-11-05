@@ -1,0 +1,89 @@
+/* One document typography profile for ordinary and virtual projections. */
+[data-marknoria-prose],
+[data-marknoria-prose][data-marknoria-table-view] {
+  color: var(--reader-text, #111a1f);
+  font-family: var(
+    --content-font-family,
+    var(
+      --ui-font-family,
+      'Noto Sans CJK SC',
+      'Noto Sans SC',
+      'Microsoft YaHei',
+      system-ui,
+      sans-serif
+    )
+  );
+  font-size: var(--content-font-size, 15px);
+  font-weight: var(--content-font-weight, 500);
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+[data-marknoria-prose] h1 {
+  font-size: 1.55em;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+  margin-block: 16px;
+  font-weight: 600;
+}
+[data-marknoria-prose] h2 {
+  font-size: 1.32em;
+  letter-spacing: -0.015em;
+  line-height: 1.45;
+  margin-block: 14px;
+  font-weight: 600;
+}
+[data-marknoria-prose] h3 {
+  font-size: 1.16em;
+  margin-block: 12px;
+  font-weight: 600;
+}
+[data-marknoria-prose] p {
+  margin-block: 6px 13px;
+}
+[data-marknoria-prose] li {
+  margin-block: 4px;
+}
+[data-marknoria-prose] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--code-bg, #f1f4f5);
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 9px;
+  padding: 15px 16px;
+  font: var(--code-font-size, 12px)/1.62
+    var(--code-font-family, 'JetBrains Mono', Consolas, monospace);
+}
+[data-marknoria-prose] pre[data-document-code] {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding-block: 0;
+  background: transparent;
+}
+[data-marknoria-prose] :not(pre) > code {
+  font-size: 0.88em;
+  background: var(--code-bg, #f1f4f5);
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 5px;
+  padding: 0.16em 0.38em;
+}
+[data-marknoria-prose] blockquote {
+  border-left: 3px solid var(--reader-brand, #087f72);
+  color: var(--reader-muted, #3f515a);
+  padding-left: 16px;
+}
+[data-marknoria-prose] a {
+  color: var(--blue, #3269c8);
+  text-underline-offset: 2px;
+}
+[data-marknoria-prose] pre code {
+  font: inherit;
+}
+[data-marknoria-prose] > :not(.table-controls):not(.table-content) {
+  max-width: 100%;
+  margin-inline: 0;
+}
+
+/* Markdown image slots retain their box while a supervised snapshot loads. */
+.markdown-reference-image { display:inline-block; position:relative; max-width:100%; min-height:1.5em; vertical-align:middle; }
+.markdown-reference-image[data-reference-state=error] { border-bottom:1px dotted var(--reader-muted,#536873); }

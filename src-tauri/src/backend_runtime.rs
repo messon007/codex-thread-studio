@@ -46,11 +46,12 @@ if [ -r "$pid_file" ]; then
   rm -f "$pid_file"
 fi"#;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux"))]
 const WSL_READ_FILE_SCRIPT: &str = r#"root=$(realpath -e -- "$1") || exit 20
 requested=$2
 max_bytes=$3
-shift 3
+expected_fingerprint=$4
+shift 4
 case "$requested" in
   /*) candidate=$requested ;;
   *) candidate=$root/$requested ;;
@@ -72,11 +73,26 @@ if [ -z "$document_root" ]; then
 fi
 [ -n "$document_root" ] || exit 22
 [ -f "$path" ] || exit 23
-size=$(stat -c %s -- "$path") || exit 23
+exec 3< "$path" || exit 23
+opened=$(realpath -e -- /proc/self/fd/3) || exit 23
+[ "$opened" = "$path" ] || exit 22
+size=$(stat -L -c %s -- /proc/self/fd/3) || exit 23
 [ "$size" -le "$max_bytes" ] || exit 24
 relative=${path#"$document_root"/}
+distribution=${WSL_DISTRO_NAME:-local-test}
+uid=$(id -u) || exit 23
+user=$(id -un) || exit 23
+signature=$(stat -L -c '%d:%i:%s:%y:%z' -- /proc/self/fd/3) || exit 23
+fingerprint=$(printf '%s\0%s\0%s\0%s\0' "$distribution" "$uid" "$path" "$signature" | sha256sum) || exit 23
+fingerprint=${fingerprint%% *}
+mode=bytes
+[ "$fingerprint" = "$expected_fingerprint" ] && mode=unchanged
+printf 'studio-file-v2\0%s\0%s\0%s\0%s\0%s\0' "$distribution" "$uid" "$user" "$fingerprint" "$mode"
 printf '%s\0%s\0%s\0%s\0%s\0%s\0' "$root" "$document_root" "$path" "$relative" "$size" "$read_only"
-cat -- "$path""#;
+if [ "$mode" = bytes ]; then
+  head -c "$((max_bytes + 1))" <&3 || exit 23
+  [ "$signature" = "$(stat -L -c '%d:%i:%s:%y:%z' -- /proc/self/fd/3)" ] || exit 25
+fi"#;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Debug, Default)]
@@ -94,14 +110,27 @@ pub struct BackendRuntime {
     wsl: WslSettings,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WslEnvironment {
+    pub distribution: String,
+    pub uid: u32,
+    pub user: String,
+}
+
+#[cfg(any(windows, test, target_os = "linux"))]
 pub struct RuntimeFile {
+    pub environment: Option<WslEnvironment>,
+    pub fingerprint: Option<String>,
+    pub unchanged: bool,
     pub root: String,
     pub document_root: String,
     pub path: String,
     pub relative_path: String,
     pub content: Vec<u8>,
     pub size: u64,
+    // Legacy Windows callers use project locality; shared byte sessions stay read-only.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub read_only: bool,
 }
 
@@ -150,38 +179,80 @@ impl BackendRuntime {
         None
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux"))]
+    pub fn pinned_wsl(&self, environment: &WslEnvironment) -> Self {
+        Self::new(
+            self.path.clone(),
+            WslSettings {
+                distribution: Some(environment.distribution.clone()),
+                user: Some(environment.user.clone()),
+            },
+        )
+    }
+
+    #[cfg(any(windows, test, target_os = "linux"))]
     pub async fn read_wsl_file(
         &self,
         root: &str,
         path: &str,
         max_bytes: u64,
-        shared_document_directories: &[String],
+        shared: &[String],
     ) -> io::Result<RuntimeFile> {
-        if root.contains('\0') || path.contains('\0') {
+        self.read_wsl_file_cached(root, path, max_bytes, shared, None, None)
+            .await
+    }
+
+    #[cfg(any(windows, test, target_os = "linux"))]
+    pub async fn read_wsl_file_cached(
+        &self,
+        root: &str,
+        path: &str,
+        max_bytes: u64,
+        shared_document_directories: &[String],
+        expected_fingerprint: Option<&str>,
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+    ) -> io::Result<RuntimeFile> {
+        if expected_fingerprint.is_some_and(|value| {
+            value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "WSL paths cannot contain NUL characters",
+                "Invalid WSL cache fingerprint",
             ));
         }
-        let launcher = std::env::var_os("CODEX_THREAD_STUDIO_WSL_BIN")
-            .unwrap_or_else(|| OsString::from("wsl.exe"));
-        let mut args = wsl_base_args(self.wsl.distribution.as_deref(), self.wsl.user.as_deref());
-        args.extend([
-            "--exec".to_string(),
-            "/bin/bash".to_string(),
-            "-c".to_string(),
-            WSL_READ_FILE_SCRIPT.to_string(),
-            "codex-thread-studio-read".to_string(),
-            root.to_string(),
-            path.to_string(),
+        if root.len() > 4096
+            || path.len() > 4096
+            || root.contains('\0')
+            || path.contains('\0')
+            || max_bytes > 128 * 1024 * 1024
+            || shared_document_directories.len() > 256
+            || shared_document_directories
+                .iter()
+                .any(|path| path.len() > 4096 || path.contains('\0'))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "WSL file request exceeds its path/source budget",
+            ));
+        }
+        let mut args = vec![
+            "-c".to_owned(),
+            WSL_READ_FILE_SCRIPT.to_owned(),
+            "codex-thread-studio-read".to_owned(),
+            root.to_owned(),
+            path.to_owned(),
             max_bytes.to_string(),
-        ]);
+            expected_fingerprint.unwrap_or("").to_owned(),
+        ];
         args.extend(shared_document_directories.iter().cloned());
-        let output = Command::new(launcher)
-            .args(args)
-            .env("PATH", &self.path)
-            .output()
+        let args: Vec<_> = args.iter().map(String::as_str).collect();
+        let output = self
+            .command("/bin/bash", &args, &[])
+            .bounded_file_output(
+                max_bytes + 32 * 1024,
+                std::time::Duration::from_secs(30),
+                cancelled,
+            )
             .await?;
         if !output.status.success() {
             return Err(io::Error::new(
@@ -189,6 +260,7 @@ impl BackendRuntime {
                     Some(22) => io::ErrorKind::PermissionDenied,
                     Some(21 | 23) => io::ErrorKind::NotFound,
                     Some(24) => io::ErrorKind::FileTooLarge,
+                    Some(25) => io::ErrorKind::InvalidData,
                     _ => io::ErrorKind::InvalidInput,
                 },
                 format!("WSL file inspection failed with {}", output.status),
@@ -274,11 +346,73 @@ pub fn windows_native_requested(value: Option<&str>, compiled: bool) -> Result<b
     }
 }
 
-#[cfg(any(windows, test))]
-fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
+#[cfg(any(windows, test, target_os = "linux"))]
+#[derive(Default)]
+struct FileEnvironment {
+    environment: Option<WslEnvironment>,
+    fingerprint: Option<String>,
+    unchanged: bool,
+    start: usize,
+}
+#[cfg(any(windows, test, target_os = "linux"))]
+fn file_environment(bytes: &[u8]) -> io::Result<FileEnvironment> {
+    const PREFIX: &[u8] = b"studio-file-v2\0";
+    if !bytes.starts_with(PREFIX) {
+        return Ok(FileEnvironment::default());
+    }
+    let mut start = PREFIX.len();
+    let mut fields = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let end = bytes[start..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .filter(|size| *size > 0 && *size <= 256)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid WSL environment header")
+            })?;
+        let value = std::str::from_utf8(&bytes[start..start + end])
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if value.chars().any(char::is_control) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid WSL environment identity",
+            ));
+        }
+        fields.push(value.to_owned());
+        start += end + 1;
+    }
+    let uid = fields[1]
+        .parse::<u32>()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if fields[3].len() != 64
+        || !fields[3].bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !matches!(fields[4].as_str(), "bytes" | "unchanged")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid WSL file cache header",
+        ));
+    }
+    Ok(FileEnvironment {
+        environment: Some(WslEnvironment {
+            distribution: fields[0].clone(),
+            uid,
+            user: fields[2].clone(),
+        }),
+        fingerprint: Some(fields[3].clone()),
+        unchanged: fields[4] == "unchanged",
+        start,
+    })
+}
+
+#[cfg(any(windows, test, target_os = "linux"))]
+fn parse_runtime_file(mut bytes: Vec<u8>) -> io::Result<RuntimeFile> {
+    let header = file_environment(&bytes)?;
+    let begin = header.start;
     let mut separators = bytes
         .iter()
         .enumerate()
+        .skip(begin)
         .filter_map(|(index, byte)| (*byte == 0).then_some(index));
     let boundaries = [
         separators.next(),
@@ -304,23 +438,52 @@ fn parse_runtime_file(bytes: Vec<u8>) -> io::Result<RuntimeFile> {
     let size = text(relative_end + 1, size_end)?
         .parse::<u64>()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let header_bytes = read_only_end + 1;
+    let payload_bytes = bytes.len().saturating_sub(header_bytes) as u64;
+    if size > 128 * 1024 * 1024 || payload_bytes != if header.unchanged { 0 } else { size } {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "WSL file changed or response length differs from declared size (v2={}, unchanged={}, declaredBytes={size}, payloadBytes={payload_bytes}, headerBytes={header_bytes}, totalBytes={})",
+                header.environment.is_some(), header.unchanged, bytes.len()
+            ),
+        ));
+    }
+    let root = text(begin, root_end)?;
+    let document_root = text(root_end + 1, document_root_end)?;
+    let path = text(document_root_end + 1, path_end)?;
+    let relative_path = text(path_end + 1, relative_end)?;
+    let read_only = match text(size_end + 1, read_only_end)?.as_str() {
+        "0" => false,
+        "1" => true,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "WSL file read-only marker is invalid",
+            ))
+        }
+    };
+    if [&root, &document_root, &path, &relative_path]
+        .iter()
+        .any(|value| value.len() > 4096)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "WSL response path exceeds its budget",
+        ));
+    }
+    bytes.drain(..read_only_end + 1);
     Ok(RuntimeFile {
-        root: text(0, root_end)?,
-        document_root: text(root_end + 1, document_root_end)?,
-        path: text(document_root_end + 1, path_end)?,
-        relative_path: text(path_end + 1, relative_end)?,
-        content: bytes[read_only_end + 1..].to_vec(),
+        environment: header.environment,
+        fingerprint: header.fingerprint,
+        unchanged: header.unchanged,
+        root,
+        document_root,
+        path,
+        relative_path,
+        content: bytes,
         size,
-        read_only: match text(size_end + 1, read_only_end)?.as_str() {
-            "0" => false,
-            "1" => true,
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "WSL file read-only marker is invalid",
-                ))
-            }
-        },
+        read_only,
     })
 }
 
@@ -381,6 +544,60 @@ impl RuntimeCommand {
             #[cfg(unix)]
             native_process_group,
         })
+    }
+
+    /// Bounded regular-file transfer. The owned process group/WSL cleanup is
+    /// retained across the read, including timeout, overflow and cancellation.
+    #[cfg(any(windows, test, target_os = "linux"))]
+    async fn bounded_file_output(
+        mut self,
+        max_bytes: u64,
+        deadline: std::time::Duration,
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+    ) -> io::Result<Output> {
+        use tokio::io::AsyncReadExt;
+        self.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = self.spawn()?;
+        let mut stdout = child
+            .take_stdout()
+            .expect("piped file stdout")
+            .take(max_bytes + 1);
+        let mut bytes = Vec::new();
+        let outcome = tokio::time::timeout(deadline, async {
+          tokio::select! {
+           result = async {
+            stdout.read_to_end(&mut bytes).await?;
+            if bytes.len() as u64 > max_bytes {
+                return Err(io::Error::new(io::ErrorKind::FileTooLarge, "WSL file output exceeds its transfer budget"));
+            }
+            child.wait().await
+           } => result,
+           _ = async {
+            if let Some(cancelled) = cancelled {
+                loop {
+                    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {break;}
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            } else { std::future::pending::<()>().await; }
+           } => Err(io::Error::new(io::ErrorKind::Interrupted,"WSL file read cancelled")),
+          }
+        }).await;
+        match outcome {
+            Ok(Ok(status)) => Ok(Output {
+                status,
+                stdout: bytes,
+                stderr: Vec::new(),
+            }),
+            failure => {
+                let _ = child.kill_tree().await;
+                Err(match failure {
+                    Ok(Err(error)) => error,
+                    _ => io::Error::new(io::ErrorKind::TimedOut, "WSL file read timed out"),
+                })
+            }
+        }
     }
 
     /// The CLI owns its detached service. Do not put its manager in the
@@ -943,6 +1160,113 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn wsl_file_transfer_bounds_output_deadlines_and_growth() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("data.txt");
+        std::fs::write(&source, b"data").unwrap();
+        let runtime = BackendRuntime::new("/usr/bin:/bin".into(), WslSettings::default());
+        let file = runtime
+            .read_wsl_file(root.path().to_str().unwrap(), "data.txt", 8, &[])
+            .await
+            .unwrap();
+        assert_eq!(file.content, b"data");
+        assert!(file.environment.is_some());
+        assert!(!file.unchanged);
+        let cached = runtime
+            .read_wsl_file_cached(
+                root.path().to_str().unwrap(),
+                "data.txt",
+                8,
+                &[],
+                file.fingerprint.as_deref(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(cached.unchanged);
+        assert!(cached.content.is_empty());
+        assert_eq!(cached.size, 4);
+        assert_eq!(
+            runtime
+                .read_wsl_file(root.path().to_str().unwrap(), "data.txt", 2, &[])
+                .await
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::FileTooLarge
+        );
+        let output = runtime
+            .command("/bin/bash", &["-c", "printf '123456789'"], &[])
+            .bounded_file_output(4, std::time::Duration::from_secs(2), None)
+            .await;
+        assert_eq!(output.err().unwrap().kind(), io::ErrorKind::FileTooLarge);
+        let pid_file = root.path().join("pid");
+        let script = "printf '%s' \"$$\" > \"$1\"; exec sleep 30";
+        let output = runtime
+            .command(
+                "/bin/bash",
+                &["-c", script, "test", pid_file.to_str().unwrap()],
+                &[],
+            )
+            .bounded_file_output(256, std::time::Duration::from_millis(100), None)
+            .await;
+        assert_eq!(output.err().unwrap().kind(), io::ErrorKind::TimedOut);
+        let pid = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "Timed-out file reader remains alive"
+        );
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signal = cancelled.clone();
+        let cancel = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            signal.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let output = runtime
+            .command(
+                "/bin/bash",
+                &["-c", script, "test", pid_file.to_str().unwrap()],
+                &[],
+            )
+            .bounded_file_output(256, std::time::Duration::from_secs(5), Some(&cancelled))
+            .await;
+        cancel.await.unwrap();
+        assert_eq!(output.err().unwrap().kind(), io::ErrorKind::Interrupted);
+        let pid = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "Cancelled file reader remains alive"
+        );
+
+        let fake = root.path().join("head");
+        let quoted = source.to_string_lossy().replace('\'', "'\"'\"'");
+        std::fs::write(
+            &fake,
+            format!("#!/bin/bash\nprintf grown >> '{quoted}'\nexec /usr/bin/head \"$@\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = BackendRuntime::new(
+            format!("{}:/usr/bin:/bin", root.path().display()).into(),
+            WslSettings::default(),
+        );
+        let grown = runtime
+            .read_wsl_file(root.path().to_str().unwrap(), "data.txt", 8, &[])
+            .await;
+        assert_eq!(grown.err().unwrap().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn wsl_file_script_allows_shared_files_without_following_escaping_links() {
         let base = std::env::temp_dir().join(format!(
@@ -968,6 +1292,7 @@ mod tests {
                     project.to_str().unwrap(),
                     path.to_str().unwrap(),
                     "1024",
+                    "",
                     shared.to_str().unwrap(),
                 ])
                 .output()

@@ -143,8 +143,6 @@ test('resolves Markdown images from the document directory without escaping the 
   assert.deepEqual(resolveMarkdownImagePath(file, 'data:image/png;base64,abc'), { embedded: 'data:image/png;base64,abc' })
   assert.equal(resolveMarkdownImagePath(file, '../../../outside.png'), null)
   assert.equal(resolveMarkdownImagePath(file, 'https://example.com/image.png'), null)
-  assert.match(documentReviewApp, /gatewayFetch\('\/studio\/review-image'/u)
-  assert.match(documentReviewApp, /hydrateMarkdownImages\(file, content\)/u)
 })
 
 test('resolves Markdown images beside a read-only shared document', () => {
@@ -159,8 +157,8 @@ test('resolves Markdown images beside a read-only shared document', () => {
     resolveMarkdownImagePath(file, 'images/example.png'),
     { path: '/shared/library/docs/images/example.png' },
   )
-  assert.match(documentWorkspaceSource, /const editable = \(textReady \|\| largeMarkdownReady\) && !file\.readOnly/u)
-  assert.match(documentWorkspaceSource, /view === 'edit' && state\.artifact\.readOnly/u)
+  assert.match(documentWorkspaceSource, /const editable = largeMarkdownReady && !file\.readOnly/u)
+  assert.match(documentWorkspaceSource, /view === 'edit' && file\.readOnly/u)
 })
 
 test('resolves generated file links with source locations', () => {
@@ -176,17 +174,11 @@ test('resolves generated file links with source locations', () => {
   assert.equal(resolveMarkdownFileLink('mailto:user@example.com'), null)
 })
 
-test('document outline stays inside the document shell as a wide overlay drawer', () => {
-  const shellPosition = documentReviewHtml.indexOf('id="artifact-reader-shell"')
-  const outlinePosition = documentReviewHtml.indexOf('id="artifact-outline"')
-  const contentPosition = documentReviewHtml.indexOf('id="artifact-content"')
-  assert.ok(documentReviewHtml.includes('id="artifact-outline-toggle" class="icon-button artifact-action-icon hidden"'))
-  assert.ok(shellPosition >= 0 && shellPosition < outlinePosition && outlinePosition < contentPosition)
-  assert.match(documentReviewStyles, /\.artifact-reader-shell\.outline-open \.artifact-outline-backdrop \{ display: block; \}/u)
-  assert.match(documentReviewStyles, /\.artifact-outline \{ width: min\(420px, calc\(100% - 20px\)\);[\s\S]*position: absolute;/u)
-  assert.match(documentReviewStyles, /font: var\(--ui-font-emphasis\) var\(--ui-font-compact\)\/1\.45 var\(--ui-font-family\)/u)
-  assert.doesNotMatch(documentReviewStyles, /artifact-reader-shell\.compact/u)
-  assert.doesNotMatch(documentReviewApp, /artifactOutlineOpen:/u)
+test('document outline belongs to the shared reader instead of a duplicate outer drawer', () => {
+  assert.ok(documentReviewHtml.includes('id="artifact-outline-toggle"'))
+  assert.ok(!documentReviewHtml.includes('id="artifact-outline-list"'))
+  assert.match(documentWorkspaceSource, /largeMarkdownHost\?\.setOutline/u)
+  assert.doesNotMatch(documentWorkspaceSource, /extractHtmlOutline|filterDocumentOutline/u)
 })
 
 test('artifact identity uses the available header width before truncating', () => {
@@ -293,15 +285,11 @@ test('structured preview formatting falls back safely for semantic indentation o
   assert.equal(jsonPreview.text, malformedJson)
 })
 
-test('document workspace enables formatted structured previews with source-mapped annotation offsets', () => {
-  assert.match(documentWorkspaceSource, /structuredTextPreviewKind\(result\.path\) \? 'preview' : 'source'/u)
-  assert.match(documentWorkspaceSource, /!markdown && !html && !structured/u)
-  assert.match(documentWorkspaceSource, /artifact-content artifact-structured-preview/u)
-  assert.match(documentWorkspaceSource, /artifact-source artifact-structured-source/u)
-  assert.match(documentWorkspaceSource, /renderStructuredTextPreview\(file\.path, renderedContent\)/u)
-  assert.match(documentReviewStyles, /\.artifact-source \{[^}]*var\(--code-font/u)
-  assert.match(reviewNotesSource, /structuredPreviewSourceRange/u)
-  assert.match(reviewNotesSource, /structuredPreview\.sourceMap/u)
+test('formatted previews and source selections use the shared reader reference', () => {
+  assert.match(documentWorkspaceSource, /kind: 'large-markdown'/u)
+  assert.doesNotMatch(documentWorkspaceSource, /renderStructuredTextPreview|innerHTML/u)
+  assert.match(documentWorkspaceSource, /readerReference: selection/u)
+  assert.match(reviewNotesSource, /target.readerReference/u)
 })
 
 test('keeps an unresolved rendered selection unresolved after normalization', () => {

@@ -353,7 +353,8 @@ kbd { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: 5
 .interaction-schema-field > span { font-weight: var(--ui-font-emphasis); }
 .interaction-checkbox { grid-template-columns: auto 1fr; align-items: center; }
 .interaction-checkbox small { grid-column: 2; }
-.artifact-pdf-preview, .artifact-table-preview { padding: 0 !important; overflow: hidden !important; }
+.artifact-pdf-preview { padding: 0 !important; overflow: auto !important; }
+.artifact-table-preview { padding: 0 !important; overflow: hidden !important; }
 .artifact-pdf-host, .artifact-table-host, .pdf-reader, .table-reader { width: 100%; height: 100%; min-height: 0; }
 .pdf-reader, .table-reader { display: grid; grid-template-rows: auto 1fr; background: var(--panel-soft); }
 .pdf-toolbar, .table-toolbar { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
@@ -690,6 +691,12 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .artifact-heading p { max-width: 100%; margin: 4px 0 0; overflow: hidden; color: var(--faint); font-size: var(--ui-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .artifact-header-actions { min-width: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 3px; }
 .artifact-header-actions .segmented-control { margin-right: 4px; }
+#artifact-notes-tools { display: inline-flex; align-items: center; }
+#artifact-notes-tools:empty { display: none; }
+#artifact-notes-tools > button { min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--ui-font-compact); }
+#artifact-notes-tools > button:hover { background: var(--panel-strong); color: var(--text); }
+#artifact-notes-tools > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
 .artifact-header-actions .artifact-action-icon.active { border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); background: var(--brand-soft); color: var(--brand); }
 .segmented-control { height: 30px; padding: 2px; display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .segmented-control button { min-width: 43px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; font-size: var(--ui-font-compact); }
@@ -1438,3 +1445,11 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .markdown-resizable-table .table-column-resize:hover,.markdown-resizable-table .table-column-resize:focus-visible { background:var(--brand-soft); outline:1px solid var(--brand); }
 .markdown-resizable-table.table-resizing,.markdown-resizable-table.table-resizing * { cursor:col-resize!important; user-select:none; }
 .markdown-resizable-table .table-measurement { position:fixed; left:0; top:0; visibility:hidden; pointer-events:none; width:max-content; }
+
+/* Saved AI references reuse shell dialogs while keeping long SQL scrollable. */
+.query-snapshot-dialog[open] { display: flex; flex-direction: column; }
+.query-snapshot-dialog .dialog-header { flex: 0 1 auto; max-height: 35dvh; overflow: auto; }
+.query-snapshot-dialog .router-dialog-body { min-height: 0; max-height: none; overflow: auto; }
+
+/* Cover initialization without hiding/suspending the WebKit child frame. */
+.artifact-rail.reader-initializing #artifact-loading { position: absolute; inset: var(--app-header-height) 0 28px; z-index: 4; background: var(--panel); }

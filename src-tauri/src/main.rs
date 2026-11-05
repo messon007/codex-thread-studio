@@ -49,6 +49,9 @@ mod terminal_runtime;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
 mod workspace_watch;
+#[cfg(any(windows, target_os = "linux"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod wsl_reader;
 
 use backend_config::{BackendDescriptor, ConfiguredCodexBackend};
 use backend_runtime::{BackendRuntime, WslSettings};
@@ -558,7 +561,7 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
-    if let Some(result) = marknoria::server::index_worker() {
+    if let Some(result) = marknoria::reader::worker_entry() {
         if let Err(error) = result {
             eprintln!("Markdown indexing failed: {error}");
             std::process::exit(1);
@@ -821,7 +824,8 @@ fn initialize_gateway(
         eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
     }
     let state = GatewayState {
-        markdown_readers: large_markdown::Readers::default(),
+        markdown_readers: large_markdown::Readers::default()
+            .with_notes_directory(epub_reading_path.with_file_name("reader-notes")),
         codex,
         codex_backends: Arc::new(codex_backends),
         backend_descriptors: Arc::new(backend_descriptors),
@@ -950,6 +954,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/studio/git/stage", axum::routing::post(git_stage))
         .route("/studio/git/unstage", axum::routing::post(git_unstage))
         .route("/studio/review-file", axum::routing::post(read_review_file))
+        .route(
+            "/studio/reader/open",
+            axum::routing::post(large_markdown::open_document),
+        )
         .route(
             "/studio/markdown/close",
             axum::routing::post(large_markdown::close),
@@ -1110,27 +1118,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/document-review.mjs", get(document_review_js))
         .route("/document-outline.mjs", get(document_outline_js))
         .route("/diagram-source.mjs", get(diagram_source_js))
-        .route(
-            "/markdown-document-client.mjs",
-            get(markdown_document_client_js),
-        )
-        .route(
-            "/markdown-document-parser.mjs",
-            get(markdown_document_parser_js),
-        )
-        .route(
-            "/markdown-document-worker.mjs",
-            get(markdown_document_worker_js),
-        )
         .route("/vendor/comrak.js", get(comrak_js))
         .route("/vendor/comrak_bg.wasm", get(comrak_wasm))
         .route("/environment-profile.mjs", get(environment_profile_js))
-        .route("/epub-reader.mjs", get(epub_reader_js))
         .route("/epub-comment-provider.mjs", get(epub_comment_provider_js))
         .route("/pdf-reader.mjs", get(pdf_reader_js))
         .route("/pdf-comment-provider.mjs", get(pdf_comment_provider_js))
-        .route("/table-reader.mjs", get(table_reader_js))
-        .route("/table-data.mjs", get(table_data_js))
         .route("/git-review-data.mjs", get(git_review_data_js))
         .route(
             "/table-comment-provider.mjs",
@@ -1141,7 +1134,6 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/session-resources-ui.mjs", get(session_resources_ui_js))
         .route("/git-review.mjs", get(git_review_js))
         .route("/right-rail-layout.mjs", get(right_rail_layout_js))
-        .route("/workspace-editor.mjs", get(workspace_editor_js))
         .route("/comment-core.mjs", get(comment_core_js))
         .route("/comment-submission.mjs", get(comment_submission_js))
         .route("/comment-markers.mjs", get(comment_markers_js))
@@ -1206,14 +1198,12 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
-            "/markdown-table-layout.mjs",
-            get(|| async {
-                javascript(include_str!("../../crates/marknoria/web/table-layout.mjs"))
-            }),
-        )
-        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
+        )
+        .nest(
+            "/reader-assets",
+            marknoria::web::reader_assets().with_state(()),
         )
         .route("/markdown-reader/{id}/", get(large_markdown::page))
         .route(
@@ -2704,18 +2694,6 @@ async fn diagram_source_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/diagram-source.mjs"))
 }
 
-async fn markdown_document_client_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-client.mjs"))
-}
-
-async fn markdown_document_parser_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-parser.mjs"))
-}
-
-async fn markdown_document_worker_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/markdown-document-worker.mjs"))
-}
-
 async fn comrak_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/vendor/comrak.js"))
 }
@@ -2729,10 +2707,6 @@ async fn comrak_wasm() -> impl IntoResponse {
 
 async fn environment_profile_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/environment-profile.mjs"))
-}
-
-async fn epub_reader_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/epub-reader.mjs"))
 }
 
 async fn epub_comment_provider_js() -> impl IntoResponse {
@@ -2757,10 +2731,6 @@ async fn git_review_js() -> impl IntoResponse {
 
 async fn right_rail_layout_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/right-rail-layout.mjs"))
-}
-
-async fn workspace_editor_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/workspace-editor.mjs"))
 }
 
 async fn comment_core_js() -> impl IntoResponse {
@@ -2869,14 +2839,6 @@ async fn pdf_reader_js() -> impl IntoResponse {
 
 async fn pdf_comment_provider_js() -> impl IntoResponse {
     javascript(include_str!("../../ui/pdf-comment-provider.mjs"))
-}
-
-async fn table_reader_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/table-reader.mjs"))
-}
-
-async fn table_data_js() -> impl IntoResponse {
-    javascript(include_str!("../../ui/table-data.mjs"))
 }
 
 async fn git_review_data_js() -> impl IntoResponse {
@@ -3576,11 +3538,15 @@ fn parse_session_state_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<
 
 fn shared_document_directories(state: &GatewayState) -> Result<Vec<PathBuf>, (StatusCode, String)> {
     let configured = configured_shared_document_directories(state)?;
-    Ok(configured
+    Ok(canonical_shared_document_directories(&configured))
+}
+
+fn canonical_shared_document_directories(configured: &[String]) -> Vec<PathBuf> {
+    configured
         .iter()
         .filter_map(|directory| fs::canonicalize(directory).ok())
         .filter(|directory| directory.is_dir())
-        .collect())
+        .collect()
 }
 
 fn configured_shared_document_directories(
@@ -4126,7 +4092,22 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                                     || source.provider.len() > 64
                                     || source.version == 0
                                     || serde_json::to_vec(&source.anchor)
-                                        .map_or(true, |anchor| anchor.len() > 32 * 1024)
+                                        // SQL AI references retain a bounded verified value and
+                                        // provenance. The existing 1 MiB request and draft
+                                        // count limits remain in force.
+                                        .map_or(true, |anchor| {
+                                            anchor.len()
+                                                > if source.provider == "document"
+                                                    && source
+                                                        .anchor
+                                                        .pointer("/readerReference/querySnapshot")
+                                                        .is_some_and(serde_json::Value::is_object)
+                                                {
+                                                    128 * 1024
+                                                } else {
+                                                    32 * 1024
+                                                }
+                                        })
                             })
                             || draft
                                 .item_id
@@ -5202,15 +5183,10 @@ mod tests {
                 "/composer-tools.mjs",
                 "/composer-images.mjs",
                 "/document-review.mjs",
-                "/table-data.mjs",
                 "/git-review-data.mjs",
                 "/document-outline.mjs",
                 "/diagram-source.mjs",
-                "/markdown-document-client.mjs",
-                "/markdown-document-parser.mjs",
-                "/markdown-document-worker.mjs",
                 "/vendor/comrak.js",
-                "/epub-reader.mjs",
                 "/epub-comment-provider.mjs",
                 "/comment-markers.mjs",
                 "/comment-submission.mjs",
@@ -5222,7 +5198,8 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
-                "/markdown-table-layout.mjs",
+                "/reader-assets/table-layout.mjs",
+                "/reader-assets/host-client.mjs",
                 "/mermaid-config.mjs",
                 "/thread-router.mjs",
                 "/router-coordination.mjs",
@@ -5335,7 +5312,10 @@ mod tests {
                 format!("/{}", segments.join("/"))
             }
 
-            let mut pending = vec!["/app.js".to_string()];
+            let mut pending = vec![
+                "/app.js".to_string(),
+                "/reader-assets/host-client.mjs".to_string(),
+            ];
             let mut visited = BTreeSet::new();
             while let Some(module) = pending.pop() {
                 if !visited.insert(module.clone()) {

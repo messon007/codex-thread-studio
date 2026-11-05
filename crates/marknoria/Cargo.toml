@@ -2,28 +2,90 @@
 name = "marknoria"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.90"
 publish = false
-autobins = false
+license = "MIT"
+default-run = "marknoria-server"
+
+[[example]]
+name = "reader-assets-host"
+path = "examples/reader-assets-host.rs"
+required-features = ["web"]
+
+[[example]]
+name = "embedded-host"
+path = "examples/embedded-host.rs"
+required-features = ["web"]
+
+[[bin]]
+name = "marknoria-server"
+path = "src/web/main.rs"
+required-features = ["web"]
+
+[features]
+default = ["web"]
+web = ["dep:axum", "dep:tokio", "dep:tower", "dep:futures-util", "dep:url", "dep:data-url"]
+diagram-png = []
+
+[workspace]
+members = ["crates/syntax"]
 
 [dependencies]
-axum = "=0.8.9"
-libc = "0.2.174"
-pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html", "simd"] }
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
-sha2 = "=0.11.1"
-similar = { version = "=3.2.1", default-features = false, features = ["std", "text"] }
-same-file = "=1.0.6"
-syntect = { version = "=5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
-tempfile = "=3.27.0"
-tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
-tower = { version = "=0.5.3", features = ["util"] }
-tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
-uuid = { version = "1.23.5", features = ["v4"] }
-
+axum = { version = "=0.8.9", optional = true }
+futures-util = { version = "=0.3.34", optional = true, default-features = false, features = ["std"] }
+libc = "=0.2.191"
 kuchikiki = "=0.8.2"
-rusqlite = { version = "=0.41.1", features = ["bundled", "hooks", "limits"] }
-jaq-core = "=3.1.2"
-jaq-std = "=3.0.4"
-jaq-json = "=2.0.3"
+html5ever = "=0.26.0"
+linkify = "=0.11.0"
+pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html", "simd"] }
+process-wrap = { version = "=9.1.0", default-features = false, features = ["std", "process-group", "job-object", "creation-flags"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+# The package lock fixes standalone builds; consuming workspaces may unify
+# compatible patch releases in their own reviewed lockfile.
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+similar = { version = "=3.2.0", default-features = false, features = ["std", "text"] }
+same-file = "=1.0.6"
+tempfile = "=3.27.0"
+tokio = { version = "=1.54.1", optional = true, features = ["macros", "rt-multi-thread", "net", "signal", "time", "fs", "io-util"] }
+tower = { version = "=0.5.3", optional = true, features = ["util"] }
+tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
+uuid = { version = "=1.23.5", features = ["v4"] }
+resvg = { version = "=0.45.1" }
+rusqlite = { version = "=0.41.1", features = ["bundled", "hooks", "limits", "fallible_uint"] }
+csv = "=1.4.0"
+calamine = { version = "=0.38.0", default-features = false, features = ["dates"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["alloc"] }
+zip = { version = "=9.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+quick-xml = "=0.42.0"
+gif = "=0.14.2"
+base64 = "=0.22.1"
+url = { version = "=2.5.8", optional = true }
+data-url = { version = "=0.3.2", optional = true }
+roxmltree = "=0.20.0"
+jsonc-parser = { version = "=0.34.0", default-features = false }
+jaq-core = "=3.1.0"
+jaq-std = "=3.0.1"
+jaq-json = "=2.0.1"
+
+marknoria-syntax = { path = "crates/syntax" }
+tree-sitter-highlight = "=0.27.1"
+
+
+
+[profile.release]
+strip = true
+
+[dev-dependencies]
+png = "=0.18.1"
+
+# Keep complete grammar/staticlib debug builds within hosted and local disk budgets.
+# Override CARGO_PROFILE_DEV_DEBUG or CARGO_PROFILE_TEST_DEBUG for full symbols.
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

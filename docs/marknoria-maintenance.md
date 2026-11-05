@@ -1,5 +1,7 @@
 # MarkNoria 主维护与 Studio 同步计划
 
+Current fixed-import implementation and executed local checks: [adoption status](marknoria-adoption.md). The analysis below preserves its frozen source baseline.
+
 共享文档/阅读能力以 MarkNoria 为主维护源，Studio 按经过验证的固定版本同步。
 **同步范围仅为 Web desktop 阅读器：`web/`、`src/web/` 及该路径实际使用的 Rust core/runtime、资源和构建依赖。**
 MarkNoria 的 browser/WebView 使用同一阅读器；Studio 复用该阅读组件，保留自己的 Tauri/网关和 AI 工作台。

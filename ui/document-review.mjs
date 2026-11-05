@@ -168,6 +168,7 @@ export function normalizeAnnotationTarget(value = {}) {
             endLine: validLines ? endLine : null,
             prefix: validRange ? String(target.prefix || '').slice(0, 256) : '',
             suffix: validRange ? String(target.suffix || '').slice(0, 256) : '',
+            ...(target.readerReference ? { readerReference: normalizeReaderReference(target.readerReference) } : {}),
         };
     }
     return {
@@ -175,6 +176,44 @@ export function normalizeAnnotationTarget(value = {}) {
         itemId: draft.itemId ? String(draft.itemId).slice(0, 256) : null,
         turnId: draft.turnId ? String(draft.turnId).slice(0, 256) : null,
     };
+}
+// Public reader coordinates retain their declared units. They must never be
+// copied into legacy DOM UTF-16 offsets or silently relocated by quote search.
+export function normalizeReaderReference(value) {
+    const input = record(value);
+    const location = record(input.location);
+    const encoded = JSON.stringify(location);
+    if (encoded.length > 32768 || new TextEncoder().encode(encoded).length > 32768
+        || !['source', 'line', 'projection', 'cell', 'queryCell', 'pdf', 'epub', 'epubChapter'].includes(String(location.kind))
+        || !['exact', 'approximate', 'draft'].includes(String(input.precision))
+        || typeof input.documentId !== 'string' || !input.documentId || input.documentId.length > 256
+        || typeof input.revision !== 'string' || !/^[a-f0-9]{64}$/iu.test(input.revision)) {
+        throw new TypeError('Invalid public reader reference');
+    }
+    return {
+        documentId: input.documentId, revision: input.revision,
+        precision: input.precision, location: JSON.parse(encoded),
+        quoteTruncated: Boolean(input.quoteTruncated),
+        ...(input.querySnapshot ? { querySnapshot: normalizeQuerySnapshot(input.querySnapshot, input.revision, location) } : {}),
+    };
+}
+function normalizeQuerySnapshot(value, revision, location) {
+    const snapshot = record(value), anchor = record(snapshot.anchor), query = record(anchor.query);
+    const bytes = (value) => new TextEncoder().encode(value).length;
+    const offset = (value) => Number.isSafeInteger(value) && Number(value) >= 0;
+    if (bytes(JSON.stringify(snapshot)) > 65536 || snapshot.revision !== revision || location.kind !== 'queryCell'
+        || typeof snapshot.quote !== 'string' || bytes(snapshot.quote) > 32768
+        || typeof query.sql !== 'string' || !query.sql.trim() || bytes(query.sql) > 16384
+        || typeof query.columnName !== 'string' || bytes(query.columnName) > 4096
+        || ![query.table, query.row, query.column, query.totalRows, query.sourceRows].every(offset)
+        || Number(query.column) >= 256 || Number(query.row) >= Number(query.totalRows)
+        || query.row !== location.row || query.column !== location.column
+        || typeof query.valueIsNull !== 'boolean' || anchor.quoteTruncated !== undefined && typeof anchor.quoteTruncated !== 'boolean'
+        || anchor.location != null)
+        throw new TypeError('Invalid durable SQL snapshot');
+    return { revision, quote: snapshot.quote, anchor: { quoteTruncated: Boolean(anchor.quoteTruncated),
+            query: { table: query.table, sql: query.sql, row: query.row, column: query.column, columnName: query.columnName,
+                totalRows: query.totalRows, sourceRows: query.sourceRows, valueIsNull: query.valueIsNull } } };
 }
 export function snapshotAnnotationSelection(value) {
     const selection = record(value);

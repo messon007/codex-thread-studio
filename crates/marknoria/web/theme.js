@@ -11,6 +11,7 @@
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
     const stylesheet = document.getElementById('syntax-theme')
     if (stylesheet) stylesheet.setAttribute('href', dark ? './syntax-dark.css' : './syntax-light.css')
+    dispatchEvent(new CustomEvent('marknoria:theme', { detail: { theme: dark ? 'dark' : 'light' } }))
     const button = document.getElementById('theme-toggle')
     if (button) {
       button.title = `Theme: ${preference}. Switch to ${dark ? 'light' : 'dark'} theme.`
@@ -34,6 +35,11 @@
       try { localStorage.setItem(key, preference) } catch {}
       apply()
     })
+  })
+  addEventListener('marknoria:theme-request', event => {
+    if (!['light','dark'].includes(event.detail?.theme)) return
+    preference = event.detail.theme
+    apply()
   })
   addEventListener('storage', event => { if (event.key === key) { preference = event.newValue || 'system'; apply() } })
   media.addEventListener('change', apply)

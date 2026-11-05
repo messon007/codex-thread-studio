@@ -1,0 +1,95 @@
+.table-plot-dialog {
+  box-sizing: border-box;
+  width: min(1000px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 12px;
+  background: var(--reader-panel, #fff);
+  color: var(--reader-text, #111a1f);
+  font: 14px/1.5 var(--ui-font-family, system-ui, sans-serif);
+}
+.table-plot-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.table-plot-dialog::backdrop {
+  background: rgb(20 35 43 / 38%);
+}
+.table-plot-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--reader-border, #d5dee2);
+  flex: none;
+}
+.table-plot-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.table-plot-body {
+  min-height: 0;
+  overflow: auto;
+}
+.table-plot {
+  color: var(--reader-text, #111a1f);
+  background: var(--reader-panel, #fff);
+  padding: 12px 16px;
+  min-width: 0;
+}
+.table-plot-axes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.table-plot-axes select {
+  max-width: min(300px, 100%);
+  min-width: 0;
+}
+.table-plot-dialog button,
+.table-plot-axes :is(select, button) {
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 6px;
+  background: var(--reader-panel, #fff);
+  color: inherit;
+  padding: 5px 9px;
+  font: inherit;
+}
+.table-plot-dialog .dialog-close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 22px;
+}
+.table-plot-status,
+.table-plot-description {
+  margin: 8px 0;
+  color: var(--reader-muted, #3f515a);
+  overflow-wrap: anywhere;
+}
+.table-plot svg {
+  display: block;
+  width: 100%;
+  max-height: 55dvh;
+  aspect-ratio: 2;
+  overflow: hidden;
+}
+.table-plot svg rect {
+  fill: var(--reader-brand, #087f72);
+  cursor: pointer;
+}
+.table-plot svg rect:is(:focus, .selected) {
+  stroke: var(--reader-text, #111a1f);
+  stroke-width: 2;
+  outline: 0;
+}
+.table-plot svg text {
+  fill: currentColor;
+  font:
+    12px system-ui,
+    sans-serif;
+}

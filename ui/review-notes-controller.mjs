@@ -9,7 +9,6 @@ import { CommentSubmissionCoordinator, insertCommentPrompt } from './comment-sub
 import {
   chatCommentSource,
   documentCommentSource,
-  relocateDocumentComment,
 } from './comment-source-providers.mjs'
 import { createFileRangeTarget, structuredPreviewSourceRange, isMarkdownFile } from './document-review.mjs'
 import {
@@ -71,7 +70,7 @@ export function createReviewNotesController({
     renderArtifact,
     renderSessionMap,
     openArtifact,
-    setArtifactView,
+    jumpToSourceLine,
     reopenEpubSource,
     goToPdfPage,
     openBrowserUrl,
@@ -95,8 +94,8 @@ export function createReviewNotesController({
   const showError = reportError
   const waitFor = waitForBackend
   const transcriptScrollFollower = { pause: pauseTranscript }
-  const richArtifactReader = { goToPage: goToPdfPage }
   const reopenEpubComment = reopenEpubSource
+  let querySnapshotDialog = null
   let annotationPersistTimer = null
   let favoritesSearchTimer = null
   let translationGeneration = 0
@@ -643,6 +642,7 @@ function addAnnotation(event) {
   renderAnnotationRail()
 }
 function closeAnnotationRail() {
+  querySnapshotDialog?.close()
   const close = () => {
     $('#annotation-rail').classList.add('hidden')
     if (state.activeRightWorkspace === 'comments') state.activeRightWorkspace = null
@@ -842,22 +842,15 @@ async function reopenAnnotationSource(id) {
 }
 
 async function reopenDocumentComment(target, excerpt) {
-  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath })
-  setArtifactView('source')
-  const source = $('#artifact-content .artifact-source')
-  if (!source) return
-  const { startOffset, endOffset } = relocateDocumentComment({ anchor: target }, state.artifact, excerpt)
-  if (startOffset == null || endOffset == null || endOffset <= startOffset) return
-  const node = source.firstChild
-  if (!node) return
-  const range = document.createRange()
-  range.setStart(node, Math.min(startOffset, node.length))
-  range.setEnd(node, Math.min(endOffset, node.length))
-  const selection = window.getSelection()
-  selection.removeAllRanges()
-  selection.addRange(range)
-  const rect = range.getBoundingClientRect()
-  $('#artifact-content').scrollBy({ top: rect.top - $('#artifact-content').getBoundingClientRect().top - 90, behavior: 'smooth' })
+  if (target.readerReference) {
+    await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath, readerReference: target.readerReference })
+    return
+  }
+  const line = Number(target.startLine)
+  if (!Number.isSafeInteger(line) || line < 1) throw Error(t('This older reference has no verifiable source position. Its saved quote is still available; reopen the document and select it again.'))
+  await openArtifact({ root: target.root || selectedThread()?.cwd, path: target.filePath }, { viewState: { view: 'source' } })
+  await jumpToSourceLine(line)
+  toast(t('Opened approximately at the saved source line. Select the text again for an exact reference.'))
 }
 
 function renderComposerReviewContext() {
@@ -930,6 +923,7 @@ function commentProviderContext(index = 0) {
     translate: t,
     unknownLabel: t('Saved comment'),
     contentForSource: (source) => state.artifact?.path === source?.anchor?.filePath ? state.artifact.content : null,
+    openQuerySnapshot: showQuerySnapshot,
     openDocument: reopenDocumentComment,
     openEpubSource: reopenEpubComment,
     openPdfSource: reopenPdfComment,
@@ -938,10 +932,36 @@ function commentProviderContext(index = 0) {
   }
 }
 
+function showQuerySnapshot(snapshot, target) {
+  querySnapshotDialog?.close()
+  const dialog = document.createElement('dialog')
+  dialog.className = 'dialog table-cell-dialog query-snapshot-dialog'
+  dialog.setAttribute('aria-label', t('SQL result snapshot'))
+  const header = document.createElement('header'); header.className = 'dialog-header'
+  const heading = document.createElement('div'), title = document.createElement('h2'), path = document.createElement('p')
+  title.textContent = t('SQL result snapshot'); path.textContent = target.filePath
+  heading.append(title,path)
+  const close = document.createElement('button'); close.type='button';close.className='icon-button';close.textContent='×'
+  close.setAttribute('aria-label',t('Close'));close.addEventListener('click',()=>dialog.close())
+  header.append(heading,close)
+  const body = document.createElement('div');body.className='router-dialog-body'
+  const value = document.createElement('pre'), provenance = document.createElement('pre')
+  value.textContent=snapshot.quote
+  provenance.textContent=JSON.stringify({sourceRevision:snapshot.revision,...snapshot.anchor.query,
+    quoteTruncated:snapshot.anchor.quoteTruncated},null,2)
+  for(const node of [value,provenance])node.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere'
+  const hint=document.createElement('p');hint.textContent=t('Saved SQL result; not a source cell. Opening this snapshot does not rerun the query.')
+  const valueTitle=document.createElement('h3');valueTitle.textContent=t('Saved value')
+  const sourceTitle=document.createElement('h3');sourceTitle.textContent=t('Query and source')
+  body.append(hint,valueTitle,value,sourceTitle,provenance);dialog.append(header,body);document.body.append(dialog)
+  querySnapshotDialog=dialog
+  dialog.addEventListener('close',()=>{dialog.remove();if(querySnapshotDialog===dialog)querySnapshotDialog=null},{once:true})
+  dialog.showModal();close.focus()
+}
+
 async function reopenPdfComment(anchor) {
-  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath })
-  state.artifact.page = anchor.page
-  await richArtifactReader?.goToPage?.(anchor.page)
+  await openArtifact({ root: anchor.root || selectedThread()?.cwd, path: anchor.filePath }, { viewState: { page: anchor.page } })
+  if (state.artifact?.format === 'pdf') await goToPdfPage?.(anchor.page)
 }
 
 async function reopenTableComment(anchor) {

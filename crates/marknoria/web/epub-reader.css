@@ -1,0 +1,246 @@
+/* Adapted from Codex Thread Studio a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a, MIT. */
+.epub-reader {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  outline: 0;
+  background: var(--reader-soft, #f8fafb);
+  color: var(--reader-text, #111a1f);
+}
+.epub-toolbar {
+  height: 45px;
+  min-height: 45px;
+  padding: 6px 9px;
+  position: relative;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--reader-border, #d5dee2);
+  background: color-mix(in srgb, var(--reader-panel, #fff) 94%, transparent);
+}
+.epub-tool-button {
+  height: 31px;
+  min-width: 31px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 8px;
+  background: var(--reader-panel, #fff);
+  color: var(--reader-muted, #3f515a);
+  cursor: pointer;
+  font: 500 12px/1 var(--ui-font-family, system-ui, sans-serif);
+}
+.epub-tool-button:hover,
+.epub-tool-button.active {
+  border-color: color-mix(in srgb, var(--reader-brand, #087f72) 38%, var(--reader-border, #d5dee2));
+  background: var(--reader-brand-soft, #e6f5f2);
+  color: var(--reader-brand, #087f72);
+}
+.epub-book-identity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+}
+.epub-book-identity strong,
+.epub-book-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.epub-book-identity strong {
+  font: 500 14px/1.25 var(--ui-font-family, system-ui, sans-serif);
+}
+.epub-book-identity small {
+  color: var(--reader-faint, #60727b);
+  font-size: 12px;
+}
+.epub-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.epub-page-actions .epub-tool-button {
+  padding: 0;
+  font-size: 16px;
+}
+.epub-settings-toggle {
+  font-size: 10px !important;
+  letter-spacing: -0.04em;
+}
+.epub-settings-popover {
+  width: 244px;
+  padding: 8px;
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 12;
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 11px;
+  background: var(--reader-panel, #fff);
+  box-shadow: 0 16px 46px rgb(20 35 43 / 18%);
+}
+.epub-setting-row {
+  min-height: 42px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.epub-setting-row + .epub-setting-row {
+  border-top: 1px solid var(--reader-border, #d5dee2);
+}
+.epub-setting-row > span {
+  color: var(--reader-faint, #60727b);
+  font-size: 12px;
+}
+.epub-setting-row > div {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.epub-setting-row button {
+  height: 27px;
+  min-width: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--reader-border, #d5dee2);
+  border-radius: 7px;
+  background: var(--reader-soft, #f8fafb);
+  color: var(--reader-muted, #3f515a);
+  cursor: pointer;
+  font-size: 12px;
+}
+.epub-setting-row button:hover,
+.epub-setting-row button.active {
+  border-color: color-mix(in srgb, var(--reader-brand, #087f72) 34%, var(--reader-border, #d5dee2));
+  background: var(--reader-brand-soft, #e6f5f2);
+  color: var(--reader-brand, #087f72);
+}
+.epub-font-value {
+  min-width: 38px;
+  color: var(--reader-muted, #3f515a);
+  font-size: 12px;
+  text-align: center;
+}
+.epub-reader-body {
+  min-height: 0;
+  flex: 1;
+  position: relative;
+  display: flex;
+  overflow: hidden;
+}
+.epub-viewer {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #fffdfa;
+}
+.epub-reader[data-paper='sepia'] .epub-viewer {
+  background: #f4ecd8;
+}
+.epub-reader[data-paper='dark'] .epub-viewer {
+  background: #171b1f;
+}
+.epub-viewer > .epub-container,
+.epub-viewer .epub-view {
+  max-width: 100% !important;
+}
+.epub-viewer iframe {
+  border: 0 !important;
+  background: transparent !important;
+}
+.epub-reader-footer {
+  height: 31px;
+  min-height: 31px;
+  padding: 0 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--reader-border, #d5dee2);
+  background: var(--reader-panel, #fff);
+  color: var(--reader-faint, #60727b);
+  font-size: 12px;
+}
+.epub-reader-footer span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .epub-book-identity small {
+    display: none;
+  }
+}
+
+.epub-reader .hidden {
+  display: none !important;
+}
+
+.epub-reader-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(48px, 150px) auto;
+  gap: 8px;
+}
+.epub-progress-seek {
+  min-width: 0;
+  width: 100%;
+  accent-color: var(--reader-brand, #087f72);
+}
+.epub-progress-seek:disabled {
+  opacity: 0.45;
+}
+.epub-settings-popover {
+  max-width: calc(100% - 16px);
+  max-height: min(400px, calc(100dvh - 120px));
+  overflow: auto;
+  box-sizing: border-box;
+}
+.epub-setting-row {
+  flex-wrap: wrap;
+}
+.epub-progress-settings {
+  display: block;
+}
+.epub-progress-settings > span {
+  display: block;
+  margin-bottom: 6px;
+}
+.epub-progress-settings .epub-progress-build {
+  width: 100%;
+  height: auto;
+  min-height: 27px;
+  padding-block: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.epub-progress-status {
+  display: block;
+  color: var(--reader-faint, #60727b);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+.epub-reader .epub-progress-seek {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  height: 18px;
+  min-height: 0;
+  box-sizing: border-box;
+  background: transparent;
+}

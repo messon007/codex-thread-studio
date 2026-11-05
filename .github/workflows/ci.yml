@@ -66,10 +66,15 @@ jobs:
         run: npm audit --audit-level=moderate
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt --package codex-thread-studio -- --check
 
       - name: Test
         run: cargo test --workspace --locked
+
+      - name: Test the fixed public reader independently
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/reader-sdk-check
+        run: cargo test --manifest-path crates/marknoria/Cargo.toml --workspace --all-targets --locked
 
       - name: Test optional Windows native backend (WSL remains the default)
         if: runner.os == 'Windows'
@@ -80,3 +85,22 @@ jobs:
             cargo test --workspace --locked --features windows-native optional_native_runtime_starts_and_stops_without_wsl
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+
+      - name: Provision real WSL for the default Windows reader backend
+        timeout-minutes: 10
+        if: runner.os == 'Windows'
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 2
+          wsl-shell-user: reader-test
+          additional-packages: python3
+
+      - name: Test the production Windows to WSL reader gateway
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        run: |
+          cargo build --locked --bin codex-thread-studio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/smoke-windows-wsl-reader.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

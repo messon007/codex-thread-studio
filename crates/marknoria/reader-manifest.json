@@ -1,0 +1,1780 @@
+{
+  "allowlistSha256": "526291cbf2832ea8a23bb91f1ce117d02b51c649c779f7cae9dafa14238aa51c",
+  "apiVersion": 1,
+  "bridgeVersion": 1,
+  "buildPlatform": "linux-x86_64",
+  "capabilitiesApiVersion": 1,
+  "exporterSha256": "1c58afeece88edd61cc92ef50dde1bd058f659d770ad7fd5b2582ba7316155f4",
+  "files": {
+    ".cargo/config.toml": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
+    ".gitattributes": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
+    ".gitignore": "765a82b9f33eb96e723eaa39a0b8f565f69fa0c4a2153112b705ae54cc54db90",
+    "Cargo.lock": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
+    "Cargo.toml": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
+    "DISTRIBUTION.md": "6e0a159fde75d39c2da05ebbdf762a568acbcec50b8eadc5930ad2a753912e03",
+    "LICENSE": "cf3d3312057275ec7758d30a1ee308b7f45ead216b695f16bd36299aa0e9b523",
+    "README.md": "361e42f6f8d6e7b9e2885a3f88a83f5047e6d3430e00284d69ab1f04912193d5",
+    "assets/diagrams/engine.mjs": "b8e8fae1ae28136b57c97368c5e50f573f2573459bb00b18a94be73b5873d995",
+    "assets/diagrams/render.html": "eb91203b6d413b0410763dc75e3adc86487840fe0a295d515cd8d4ff23be0ef9",
+    "assets/vendor/d2-MPL-2.0.txt": "97933e571f92c0b21e09a59fe67d7ce9a77d3eac5efe5f341756d5f93d191775",
+    "assets/vendor/d2-THIRD_PARTY_NOTICES.txt": "b5543d14ae949663052296904c0f2f3b1521150dda871f693a67dddadcefb3be",
+    "assets/vendor/d2.js": "3a61e574f015905f500ea65d97a8376c115a685a8d2667b03d6e96ac3df825e1",
+    "assets/vendor/mermaid-MIT.txt": "ec9fb67dcb25eccc416ed56e1aab819222c805a2a4bfe4cb19e7556bf2ffde80",
+    "assets/vendor/mermaid.min.js": "a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f",
+    "assets/vendor/plantuml-MIT.txt": "b0475db7325c48eede0eee5e44aea92dad28c755aed4484a6cdde99cedea9446",
+    "assets/vendor/plantuml-viz-global.js": "fc6ca2de83dd4e3fca967d5214122777890a5cd1ab101115a1f716fc84e6dc5e",
+    "assets/vendor/plantuml.js": "21c049ce47d087eff61ae0836f9c62a2b0c0d2528a5f16c2247057544228fae7",
+    "assets/vendor/purify-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "assets/vendor/purify.mjs": "60c5d5ccbb466de3de3ba863461a92bf134f8c156cef7992da43e0f659bc5cbd",
+    "crates/syntax/Cargo.toml": "b0cab109ce632f2288d81e43e35cb71402993187b560f1043a3b0a254bbbe306",
+    "crates/syntax/src/lib.rs": "f5a0ac91aca63d13d1e5ebed7d8151b4e2edd3625ea96e6c9d171096fdd8fcea",
+    "docs/embedding.md": "b376aa1818276d8209a75da7f6b15a17895b4dc68cdc8203851199dbda945ae0",
+    "docs/image-components.md": "f2422817ee1b9a889807e4165da3b64f7c86be7703c9a692283ee3a1d68bb03f",
+    "docs/jq-components.md": "3171ff64e8f4866a6a72569fe37724f3a79f5e31d5d6af27bdf50a34a50d1441",
+    "docs/markdown-profile.md": "0593167114c0aa00f369cdeaadcbd9950404f1dcdca290f03e68eda2b9acb648",
+    "docs/markdown-references.md": "17688c70f81bb753b03cb8e6463eea10647d62bd7e4eed26eb554e5f645b9e5c",
+    "docs/notes-components.md": "f2f2a266c7466376a235344520ce4afa19a273b6dc1223867b900db550222504",
+    "docs/projection-components.md": "c56897594903bc6f8bc21682f5368f4df719f97c14221811ed7648d41cafed0e",
+    "docs/reader-api.md": "ada9ab56f9e115f3417e5369203d23f499aefbf419011db4d30647b4282946f9",
+    "docs/reader-assets.md": "d66eb4db3945514c6a48277f11eae94dec63b99d799801df0fdf201bfa7a5001",
+    "docs/table-components.md": "4a3209e064bc2050a53e148a32cf9d86c6034e71bf4b9bf26697a4250da71a15",
+    "docs/translation.md": "8d6efb70648384b972adc1e3154252254282c12fe0e7c16dac55a74df51e5adf",
+    "docs/web-parity.md": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
+    "examples/embedded-host.rs": "712dc746b14cd3a19585cb7abcfa0f6a2f6f443200317a25ef5cb0451fd3525e",
+    "examples/reader-assets-host.rs": "172e770c6d9b4c3d3fc4ab2ca2bedfad9168dd621a012c90683325e09855d050",
+    "examples/reader-corpus.rs": "c335b6ed1bc62ebc53d234e073413ede69aa73942d81fa6d4b2428c4c35efbc5",
+    "examples/reader-host.rs": "19b04a4e3d027caa6a8468c463ecdc86eb586136fbd212cdfce07c79c68d656c",
+    "licenses/npm-packages.json": "4b4ef25f51f4261b745a319ec685ff6871fddfff1bf39799c9d50131bb31d024",
+    "licenses/npm/@antfu/install-pkg/LICENSE": "67cd5e903c1f908edfa27c25606fa806ce629d9a8ddb7d83019d9fd1f83f7fde",
+    "licenses/npm/@antfu/install-pkg/README.md": "3d6438487b484ea94c73525300e2a547e96ef974e4ab10845e9ec2a6e25d8e25",
+    "licenses/npm/@braintree/sanitize-url/LICENSE": "0984740e0c3d725c8044dec7edcefe1dbce180ef5a7bc710c251e19607000158",
+    "licenses/npm/@braintree/sanitize-url/README.md": "75ea387b9da704723beacdef638fda27384d69a3295e58f45f3c849d0daf3701",
+    "licenses/npm/@chevrotain/cst-dts-gen/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/@chevrotain/gast/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/@chevrotain/regexp-to-ast/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/@chevrotain/types/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/@chevrotain/utils/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/@codemirror/autocomplete/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/autocomplete/README.md": "fe60ea606b86f17e6504ffb3a46851204fd2631606077badb4333f5132630d73",
+    "licenses/npm/@codemirror/commands/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/commands/README.md": "b453ee5a58e90e518e27c4c1f8d8d354fb1af101a34ad8ce4f3e168ded11b158",
+    "licenses/npm/@codemirror/lang-cpp/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-cpp/README.md": "c89ddd9e826225d2bd1496ce2d837dbf7983535e30c5b953f15ef8bb15627afa",
+    "licenses/npm/@codemirror/lang-css/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-css/README.md": "326c710ec43c42bfa5606fd062f7beffc0ba7622edf5e0b11168ced8dd63b605",
+    "licenses/npm/@codemirror/lang-html/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-html/README.md": "70fc344967e668c8f0508781dec17eb4ac302680c155f09232baaf0a6272210e",
+    "licenses/npm/@codemirror/lang-javascript/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-javascript/README.md": "549b2d9b899cec6478224db5ca2848a7e69d242c8c532f5066ba12ab72ab7854",
+    "licenses/npm/@codemirror/lang-json/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-json/README.md": "d43846532a377390a5bf914b7a998ee15d7b47049f89a2d81e5e20d05624e81f",
+    "licenses/npm/@codemirror/lang-markdown/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-markdown/README.md": "6cff7dd17c3879947b805fac4c43c78b814a2f40af50385985238c71ed459897",
+    "licenses/npm/@codemirror/lang-python/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-python/README.md": "ddd4f323183f8946c9b045dc9f0b8fa32091494d48402610cd75f245eed43368",
+    "licenses/npm/@codemirror/lang-rust/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lang-rust/README.md": "a55ec494393ed181a8e0e38b2138cf3caa73c860d9e79d68bd136dd8d5c2f3a5",
+    "licenses/npm/@codemirror/lang-yaml/LICENSE": "8ac9cfc9c82c397298c2139028d2474d8e0470f2092a97edddccf353bc5d4d36",
+    "licenses/npm/@codemirror/lang-yaml/README.md": "cc2a4c9f061f4a025c311489f6bc5d289eadcf7af2d5ded8e242c2db5f270bbc",
+    "licenses/npm/@codemirror/language/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/language/README.md": "bc86fda6c103d012afb0458947e4c2e8f05866ba478e8963e6d6a2efec5c0346",
+    "licenses/npm/@codemirror/legacy-modes/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/legacy-modes/README.md": "dc4ab903dbee7a73be0b5ae52a5a971a5d1f6b6e650041a3569284cc907c7dad",
+    "licenses/npm/@codemirror/lint/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/lint/README.md": "a4970b15299d575ce94f2067f78be65e6e86533d9aab8eb2906529ada045759f",
+    "licenses/npm/@codemirror/search/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/search/README.md": "91bec09450c589ae7f2c2fb1e1f96089cc9a39665fbf3fcabbead1c0e58496a0",
+    "licenses/npm/@codemirror/state/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/state/README.md": "6c149ad3864a31b8eaf4119b15db163c1f269fc73b793db08196c30d2f1bb0ea",
+    "licenses/npm/@codemirror/streamparser/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/streamparser/README.md": "fac8deb9caa0bcdce091235750b08f45f2cc61451c584ff25d51102ee71e746e",
+    "licenses/npm/@codemirror/theme-one-dark/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/theme-one-dark/README.md": "ea5cd9185e5a5c35ce95a32ea991960a82860e76c72ee2b36c5359e742bdfc63",
+    "licenses/npm/@codemirror/view/LICENSE": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "licenses/npm/@codemirror/view/README.md": "03248fe3712bfb20832ea8b609797a039d14e262b8ef8453cfa52a4bf11dd9a3",
+    "licenses/npm/@d2lang/d2/LICENSE.txt": "97933e571f92c0b21e09a59fe67d7ce9a77d3eac5efe5f341756d5f93d191775",
+    "licenses/npm/@d2lang/d2/README.md": "aa36330df59e9d6cd87a8ef2aa7b99e54bff664b86b7d877c00dd1095c28147e",
+    "licenses/npm/@esbuild/linux-x64/README.md": "3b0ebdffe92e5b77c948c4ac0bf4bc4a38803b15405d0425b517705221c27a2f",
+    "licenses/npm/@iconify/types/README.md": "72ebbd8340f69079ae150c638a8bb8964845f9923a7627c83c0ce73589ec00ca",
+    "licenses/npm/@iconify/types/license.txt": "045ce74712fc613fdd74d1c55f5140a08d623836ff2aca44132b38d68fbc67ad",
+    "licenses/npm/@iconify/utils/license.txt": "a86793ac023162ce98b91899601c15f6712f44943163c4f92a0a4bf89152b3bf",
+    "licenses/npm/@iconify/utils/readme.md": "13ebde1e90a8ee6ab14093914afb5ffde08d54f6524fc8f526a5c6f5d39d4750",
+    "licenses/npm/@lezer/common/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/common/README.md": "04e7ceb85bf2914e3dfa040713fc323bf5cdaa18033a5230a0e56e53f3a63b1b",
+    "licenses/npm/@lezer/cpp/LICENSE": "54bd812a6d334e0c438b78a43cea74b67e882739fd3450115ddc7c52be5706c1",
+    "licenses/npm/@lezer/cpp/README.md": "59fb8d8bcf38959d3d4fee01eec69d7c74c1bae13a57f15ce731a3a03de171aa",
+    "licenses/npm/@lezer/css/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/css/README.md": "798f7433dde4941451664fdb838ddeee8761511f7733b08fc03930405c182bf2",
+    "licenses/npm/@lezer/highlight/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/highlight/README.md": "502dc39d1a092721dde42972eeb2abc58e19e0d8b5ccf9f7b90575c03483a410",
+    "licenses/npm/@lezer/html/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/html/README.md": "34c8fc6548510f7859bf3e0757b60312d8f9191c3d43cf1ca0de1a58bc890e4b",
+    "licenses/npm/@lezer/javascript/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/javascript/README.md": "32cf9afd335f8005066287d1fe1def1c26d65d1d5bad93c15fa0560ae3b14924",
+    "licenses/npm/@lezer/json/LICENSE": "7e744ae18ef84389d576469a5781172b0d50b7981111109f6da7cbc6b4188288",
+    "licenses/npm/@lezer/json/README.md": "f356c7705189e31351f610c685b848d9c00d8fea1ac98faef486d70a2d54d9ff",
+    "licenses/npm/@lezer/lr/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/lr/README.md": "54e5e19933e145d831b940c6bd70c3339f13ef160a302db0edf053e93881424b",
+    "licenses/npm/@lezer/markdown/LICENSE": "54bd812a6d334e0c438b78a43cea74b67e882739fd3450115ddc7c52be5706c1",
+    "licenses/npm/@lezer/markdown/README.md": "580b1ed0d4a6032a6dd5aa0345e669e0b494f352ee9042594d7d774ded98613a",
+    "licenses/npm/@lezer/python/LICENSE": "54bd812a6d334e0c438b78a43cea74b67e882739fd3450115ddc7c52be5706c1",
+    "licenses/npm/@lezer/python/README.md": "a182f400ee356dec7c79225b9fa0f4b7a2c39e51378efe838922c4f2a68b59a1",
+    "licenses/npm/@lezer/rust/LICENSE": "568902fb66eaf1f11750e966b33fd7b5d7c618e65af09f35ef843635bcf5f1ba",
+    "licenses/npm/@lezer/rust/README.md": "9d7392e8bcc51c068f2b1a175bb366e404ea6cbc329a72238fe06477143d4566",
+    "licenses/npm/@lezer/yaml/LICENSE": "8cb910abd2a5463466b7c31958b39d6787ebf9e9f299598266b814bc90dd076b",
+    "licenses/npm/@lezer/yaml/README.md": "d8f9d3881ad2621c5faf764e41ffc86f65fb02c9a1428a7c6d8181cc4ed3ed0f",
+    "licenses/npm/@marijn/find-cluster-break/LICENSE": "9360b00fdd091f05c783b568bdd46c679c41b72415599252de98949462ea1acb",
+    "licenses/npm/@marijn/find-cluster-break/README.md": "58b02b912ce7c0bb7694d55127d72d6f69a904317460be3d2a2d831523767213",
+    "licenses/npm/@mermaid-js/parser/LICENSE": "d374061c40bfb6f99c5033290caefda97a9b3e7e477e5ee02f487143ef2177e8",
+    "licenses/npm/@mermaid-js/parser/README.md": "4ecc47285e4915dcc1f26c91e186e47de041648f0fe7b5efb64f8e1886379f0f",
+    "licenses/npm/@napi-rs/canvas-linux-x64-gnu/README.md": "4183a65ac5cbd8df6d3ee4f21dd26d0ae64686cf952fea98a695ef3cbbb863a1",
+    "licenses/npm/@napi-rs/canvas-linux-x64-musl/README.md": "35e1248e7defd8cdfa18464965d12e6ac626667b9f6d5ad096a232818e1be0da",
+    "licenses/npm/@napi-rs/canvas/LICENSE": "0b8e3b4f0042f33677406344854c1dcce3a2878eb3a3f6baee58c6f5752655ce",
+    "licenses/npm/@napi-rs/canvas/README.md": "b176dfd1668e8efe705646dac52743f8d780a0a40adc69ef494ee655390d762a",
+    "licenses/npm/@plantuml/core/LICENSE": "b0475db7325c48eede0eee5e44aea92dad28c755aed4484a6cdde99cedea9446",
+    "licenses/npm/@plantuml/core/README.md": "86e5203f6e6060d5f6848129d2f2b25950d84312b81b70bc18931f2e023eac8e",
+    "licenses/npm/@tanstack/virtual-core/LICENSE": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7",
+    "licenses/npm/@types/d3-array/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-array/README.md": "2e6822a8e985004a596fdc5ead26378067b0a6bafe77fd147409ceac2926e842",
+    "licenses/npm/@types/d3-axis/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-axis/README.md": "dd2b2a0bb63c29cfc84cc6de44e084e6914cc8e9e522849e95eb437420ab43ef",
+    "licenses/npm/@types/d3-brush/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-brush/README.md": "e900862a4c9580687e2faaa052bbe07815c0a3897d49721ec631645fb77fb01e",
+    "licenses/npm/@types/d3-chord/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-chord/README.md": "17d1c339b2a67310befde9318e9a4b9401f1cb0cb526cb652104d16d1a9774dd",
+    "licenses/npm/@types/d3-color/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-color/README.md": "7bf2a8f3f94af9642d753924384523a05a325380016f8d5f95757f45d5a46619",
+    "licenses/npm/@types/d3-contour/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-contour/README.md": "0e92dafbbe1fc87a7e4f962c63b94562ac052281a52ca6f09f953b116a3a945a",
+    "licenses/npm/@types/d3-delaunay/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-delaunay/README.md": "cb8fd8ba83bea52ed5b405abac7eb7cd9f5db688ee719555bbf15087a3443922",
+    "licenses/npm/@types/d3-dispatch/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-dispatch/README.md": "136e8189ff4efb3033a5d5b60c105aef1ed0edcb4187f93836a07f439c557078",
+    "licenses/npm/@types/d3-drag/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-drag/README.md": "7c594189ea092e1c71cd6bd90da2ecab1c6a47380c658d916aea896e85fec751",
+    "licenses/npm/@types/d3-dsv/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-dsv/README.md": "aa7d5d1078dc3efc08769d89ff98c6adeeb62c7b4d7e5ec0ea1ed6d28f4044c6",
+    "licenses/npm/@types/d3-ease/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-ease/README.md": "1f8121257773e9f20cca76984cd65bc851d46804cd75bd430aa54855e642f016",
+    "licenses/npm/@types/d3-fetch/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-fetch/README.md": "dc6fed25a0d999d9a3c54b212b6321c73ac29eff5a6aca453060aca6864d91b6",
+    "licenses/npm/@types/d3-force/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-force/README.md": "5f9da7c743a51683584d49872690d99cf45ed6e25ee542d9bec17a5f444b82e7",
+    "licenses/npm/@types/d3-format/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-format/README.md": "a3bb25bd363fb62afa55b2a1ff3102b2ae0b07783bdba262cf89bbcf2133c99a",
+    "licenses/npm/@types/d3-geo/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-geo/README.md": "c2c93af0c0c0cedaac46b3149c0f312dc73c23021272e4df87994d37eec2ca6d",
+    "licenses/npm/@types/d3-hierarchy/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-hierarchy/README.md": "3d18e0c60370a9a907a2d1aba3959e78f81b883e86d02abbb1fd3bdfc50d8f65",
+    "licenses/npm/@types/d3-interpolate/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-interpolate/README.md": "8d06f39a6cc9a4aa3ad9ce1984a9295a21d42504f325befea2ddce62dc115ce7",
+    "licenses/npm/@types/d3-path/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-path/README.md": "5b95c78b56ec7469420281f9e4e0ef412e443866a4e62a2b04f0709240842ace",
+    "licenses/npm/@types/d3-polygon/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-polygon/README.md": "a75110b0379f29215764681eb8b5aca3e706ced3eec79426f37843dceb319f56",
+    "licenses/npm/@types/d3-quadtree/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-quadtree/README.md": "bd4835bb407041ca39613e73dfaf74ea87caa2745122f91c08324b3704bc41d2",
+    "licenses/npm/@types/d3-random/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-random/README.md": "6d101b2842bc34b459807ddf92129729c2b40eeb61c7db4b898fa73a4e0b8383",
+    "licenses/npm/@types/d3-scale-chromatic/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-scale-chromatic/README.md": "fdbc7ca09e9a9d07335b0076c443c56a939a7c44bbd58e2b0224947ad65fb2fa",
+    "licenses/npm/@types/d3-scale/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-scale/README.md": "9bd14ff991fe9a186e317ee8e0eb803ad7e4c817b625dbf65c02c7759f1ea55f",
+    "licenses/npm/@types/d3-selection/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-selection/README.md": "efc6a603d2c11e68a856e7548a3ee229ad6eb9ead2c49cf0f3a6259fc1981653",
+    "licenses/npm/@types/d3-shape/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-shape/README.md": "4c459a0c0adea80b6803d6968833491f08a066a3c3ddd0c655c04b10d6b9de8e",
+    "licenses/npm/@types/d3-time-format/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-time-format/README.md": "e88862019a6a4aad0d3677f5cd5387e5c261200c39b1ee336c0a188e656c3d01",
+    "licenses/npm/@types/d3-time/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-time/README.md": "ca15d2e2b10077642a0c3ee4cc88440ffe3e97b203b27d74d1f327e25a790cd3",
+    "licenses/npm/@types/d3-timer/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-timer/README.md": "4e6a9cd7abb838ed61a29093d0d1142b26442d46706667397724d9a41ed3be9d",
+    "licenses/npm/@types/d3-transition/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-transition/README.md": "fd0877184abd8d79a486099cba9c9ca55b2020ccdeb0a0b2e6d1d4aadf355b19",
+    "licenses/npm/@types/d3-zoom/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3-zoom/README.md": "47703fda533854db76816e6c665669f01f0a25137b0583d4b4d5deb65e358491",
+    "licenses/npm/@types/d3/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/d3/README.md": "33ba40f9a277b6c0ade8eb15e9c876c1f19337a7fbd3b1c3ca033c55fa366645",
+    "licenses/npm/@types/geojson/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/geojson/README.md": "e80bc33f782f24db5b0c9ec56ec17b489ffbf169acc8e506b953296a32a6ebbf",
+    "licenses/npm/@types/localforage/README.md": "30caf985a7a2c11346c86dff1d06bd0ad82ac9a4e3a4404f33fa00850568ea4f",
+    "licenses/npm/@types/trusted-types/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "licenses/npm/@types/trusted-types/README.md": "eb132f6de734ccde07aa6d704f15e0c223755dc9f6d16b528f579d1a03df8a7e",
+    "licenses/npm/@upsetjs/venn.js/LICENSE": "6a3508febf2cfccfee96597394543a6154a4bb0b1f91f28404be42c09e9fcb54",
+    "licenses/npm/@upsetjs/venn.js/README.md": "47d3fa36bcbb237ae1f94997764fe69f3993ee57933901fcd85279330866d41a",
+    "licenses/npm/@xmldom/xmldom/LICENSE": "4da724fc305d81606b245b324d4d2586916b9d248b23d82183df753ace0fdf71",
+    "licenses/npm/@xmldom/xmldom/readme.md": "c7f099b9bc1e997f97aaab31e5039bfd7bc747eddff85b256675d05f2e1ef178",
+    "licenses/npm/chevrotain/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/chevrotain/README.md": "8271b17c11fa1ecc939786abc7188cf497ef1b61d4dd56dfc49c1cd6cbf5260e",
+    "licenses/npm/commander/LICENSE": "04512a63dce4d2d506ad612dc0bd7681ccf6e3655f7b6eaef7dfac8323d1ec0b",
+    "licenses/npm/commander/Readme.md": "38f4988915091db1f59c7a51707355b3607b82764eb0241b6b41ca35d625501d",
+    "licenses/npm/core-js/LICENSE": "b87653fff2d44426ab5cd4723cee3b1364dc8d35a0acdf098c54689543123bf8",
+    "licenses/npm/core-js/README.md": "0ad92cfb72dd647bbfa5bb27466b09dcf02f559d4a1dfe196af08a0ceed6f0e3",
+    "licenses/npm/core-util-is/LICENSE": "33b734d60042d0fe0c92dd1fc1e874193a1c899ec3e276a2eb935d2d0bf5b710",
+    "licenses/npm/core-util-is/README.md": "57072548a79553ec5a930b370f5f37f2b86f57ab39357dc63e097c7e8ba7412a",
+    "licenses/npm/cose-base/LICENSE": "5fb3cf4a14c3c5af6e473a192df8bca10c77754e3a0c6492c79fb92a76a5478a",
+    "licenses/npm/cose-base/README.md": "02909b288dff00a542fe00548d60c954ed6d7737f05f3e98aed202f57d11a473",
+    "licenses/npm/crelt/LICENSE": "23852ebf6aef7fadffc92514b3c5df163a8651f2c3ed0dbb494cb49d93bd5de5",
+    "licenses/npm/crelt/README.md": "68312e4f1cfe684a2976828ca5c8942e1ab983c276e189858480901c9aecf439",
+    "licenses/npm/cytoscape-cose-bilkent/LICENSE": "440fc58a56a12814e417d2b341da89b050da052dc75bdb235607d37ec5fe74ef",
+    "licenses/npm/cytoscape-cose-bilkent/README.md": "bb64641811b78229dfe41bb4741d221a278653e896cfa900c65d508df91ecf5d",
+    "licenses/npm/cytoscape-fcose/LICENSE": "2837634f403949215760fcdd2fa1ed0c64875d02099ecc8318c704b852f1421d",
+    "licenses/npm/cytoscape-fcose/README.md": "faec826e1342c8cc08af735adaa4d16438efa12e6cf7fd08c797fa771e550d7c",
+    "licenses/npm/cytoscape-fcose/node_modules/cose-base/LICENSE": "5fb3cf4a14c3c5af6e473a192df8bca10c77754e3a0c6492c79fb92a76a5478a",
+    "licenses/npm/cytoscape-fcose/node_modules/cose-base/README.md": "e5b2f6e7d24ef3a7cff9113c21eb8d2f1d028c575813a09d5c41f5a7e435d8ea",
+    "licenses/npm/cytoscape-fcose/node_modules/layout-base/LICENSE": "eabb762d8a95109a39c9be3247325529a5239a7aca327d909c3ccdc41f3a06bf",
+    "licenses/npm/cytoscape-fcose/node_modules/layout-base/README.md": "fa3d495c77ad132c443e22254584a7a442ef2868460ac764bc3861efa0e7e6e4",
+    "licenses/npm/cytoscape/LICENSE": "eb319c6e6f233607f71e8e2f450391751883cfc0eeb3ca7ef574c13d1d9c2203",
+    "licenses/npm/cytoscape/README.md": "d76cc17e7f9ca5ca5d5269376ff6445eb02ecfbd86aa17ea8318e99874979a72",
+    "licenses/npm/cytoscape/license-update.mjs": "4a5a644717fc90d678e8fbbc537a08452d0566726710eef47b196abd6363e635",
+    "licenses/npm/d/LICENSE": "77485a12d142fd84ee9f278b42968b2f029c876c8dddca7d0e13fa164ffeed34",
+    "licenses/npm/d/README.md": "4e9e3a7ddabf1e6d6052b305c221fac6599a41d71105b623bb0da1fe4110979f",
+    "licenses/npm/d3-array/LICENSE": "3e6849627f74ff73c257a3ae1efb574015d94fc1035c05ec3c15805165efcbc4",
+    "licenses/npm/d3-array/README.md": "63306b7ab50d8b7c265e256c1052f80f8fa89c8ffa33a5e5a4f6b5293509b3d4",
+    "licenses/npm/d3-axis/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-axis/README.md": "8051ee0fa797e1570412dd0c1524729a64f9373cd56721356a62f8c65e33a12e",
+    "licenses/npm/d3-brush/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-brush/README.md": "dbb3e75fdd854e1ec58636a4c8e09068d0d8a75e09ca26ab7344975ea40d9a95",
+    "licenses/npm/d3-chord/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-chord/README.md": "576bc15a894f32d819399d58b5210180ab92c940f940cd33966509565a83385e",
+    "licenses/npm/d3-color/LICENSE": "faa682e3e430941f958d26180458f5934a62f58dac4d70ccdd15608c15d0f884",
+    "licenses/npm/d3-color/README.md": "ee276fa58b747f91eaf252fadeac21cf19512f6207e06f730213ef90464c2134",
+    "licenses/npm/d3-contour/LICENSE": "e51cba0e4fa1d8c078e15319868f2b90188f413f9ce9dac1043b62db32901e93",
+    "licenses/npm/d3-contour/README.md": "aba39dc424331f04665a7c398d2c4f18d55566d0c46d89367d61144345825176",
+    "licenses/npm/d3-delaunay/LICENSE": "582c3022bd01942336095f92b58a90b1be624dc547d987555c6c956512dd24c1",
+    "licenses/npm/d3-delaunay/README.md": "3710adf465222d875c214fe4c46432baf649f4acf599867d2697feeb5d9ce8f5",
+    "licenses/npm/d3-dispatch/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-dispatch/README.md": "cbe6479ac57e830f098fa694f34a8b853cd142cfe72661cb01b069fa0b539f7d",
+    "licenses/npm/d3-drag/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-drag/README.md": "11332bab6ec08d535d25441e23cf949a0f72881f4ae96d8ba67ff5ba82ad59f1",
+    "licenses/npm/d3-dsv/LICENSE": "7842a82012622e5a37bfe4f6c1b67cd3bae6350716b5bf87f36cea0bdc1319dc",
+    "licenses/npm/d3-dsv/README.md": "5bcf1250d60b0bbee8c547cf2ca0b29219de2ef21917673476c2d65a4387e49f",
+    "licenses/npm/d3-ease/LICENSE": "b989d9085148d21ff64a75e14462aefa06b2589a55553b07b1460c70081c7d08",
+    "licenses/npm/d3-ease/README.md": "b183da72188a0f779fa9c1f049144404b9021edb7fde577ebce647893b77d932",
+    "licenses/npm/d3-fetch/LICENSE": "ffdc17dc9040006bddeb891c95bfbb492e86d6bc64a4a4233666febab1be35e0",
+    "licenses/npm/d3-fetch/README.md": "d70ad9da069c91e73d3628353308230a73a612fce6f39a3da53d1acfb6e44e09",
+    "licenses/npm/d3-force/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-force/README.md": "6d0a15984b353cff3cc574f1f966c0572776aa574d0bef036916bf372c8a990f",
+    "licenses/npm/d3-format/LICENSE": "2a6d2d5f32ba0b755ddbc1c833f766e30cdbe6ebe9a6d4e3e24427721f0b63d3",
+    "licenses/npm/d3-format/README.md": "01c826f535111db52a3d1b53152f076dec609b360e0ead69a22d653f94ef692f",
+    "licenses/npm/d3-geo/LICENSE": "3e3edc1224eec9c39cd26491a21304a62883c1e5b6a65c5283ccc7a6cc94baee",
+    "licenses/npm/d3-geo/README.md": "1cb8d98508ab34efc900c6d1d6509d4ca37ced31721c7aabab4f5e559893cf2a",
+    "licenses/npm/d3-hierarchy/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-hierarchy/README.md": "63062a4dba31d1f53df338f07b983c4a0da5cc8fc0be247669e1d50fa6bf8f0f",
+    "licenses/npm/d3-interpolate/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-interpolate/README.md": "6bd1bf651b35c39af8db9495fda6a94df129f7b5952bd31be3593bad70f6bd0a",
+    "licenses/npm/d3-path/LICENSE": "a09b0d6d76e768fca2085fad05743ee81ddd11946bcda160a3cf5e1081a479aa",
+    "licenses/npm/d3-path/README.md": "9a7fa5a282dd797bfacfce6e8509a6e451678f9593ceec8af504f58ba1b70181",
+    "licenses/npm/d3-polygon/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-polygon/README.md": "e5616d7a2595593f0376ef4274b46078cfdfc9ae2c252d3a49e3b8d008786f3d",
+    "licenses/npm/d3-quadtree/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-quadtree/README.md": "2856748b611e17e22a97b8ac697633522568c74c0058bdb6c64297a606de6e7d",
+    "licenses/npm/d3-random/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-random/README.md": "ddd5e5844f420971382532443b1718601d4449b090ac4490532b4b576648c367",
+    "licenses/npm/d3-sankey/LICENSE": "2bf785e778d67a4f5266cffcd4f2cc5bb98cde73791666e7efeb8002ba32dfa5",
+    "licenses/npm/d3-sankey/README.md": "a0effb6b68401572a8f8f5b9ea72f8b39784e7bfd8ec7c0bb33a3255a146b68b",
+    "licenses/npm/d3-sankey/node_modules/d3-array/LICENSE": "0747bebeb06b10954913149be9b9a8bdf6fad3e6fdcbd9f9524e7a94c13d2cea",
+    "licenses/npm/d3-sankey/node_modules/d3-array/README.md": "39b9164493354cd8b268ec5b0f39ab5b570f557afbfb5c79f3a2bd624fc48690",
+    "licenses/npm/d3-sankey/node_modules/d3-path/LICENSE": "b8265327ab678f554800e71188b1cc6b1ff57522e292d2b1c0be66f27cf328b6",
+    "licenses/npm/d3-sankey/node_modules/d3-path/README.md": "3506eed9071bc75b614aba0742ec9f883bb6e981bf72abc0e0b6d8aede4455ec",
+    "licenses/npm/d3-sankey/node_modules/d3-shape/LICENSE": "7eea8533ea92bd8c32a901e89ecb0305890905bb12711449565ddff96891146d",
+    "licenses/npm/d3-sankey/node_modules/d3-shape/README.md": "90840e069b76216d33df46125a531d470945812180f5df1b0a26f2f1bbbe11b5",
+    "licenses/npm/d3-sankey/node_modules/internmap/LICENSE": "9ea8903938dab5f12c4572d60725069bec2d1b0dc3bcc210b09bae946a5ebb1f",
+    "licenses/npm/d3-sankey/node_modules/internmap/README.md": "fb5e3828bed5908684841a61fb3be0d5a79a2c0d79937c76a7dbdf288963c80f",
+    "licenses/npm/d3-scale-chromatic/LICENSE": "0986d93944902cca9af86824b6a641b4b7c2d10602fc510c433a8bcd443919fe",
+    "licenses/npm/d3-scale-chromatic/README.md": "4a42a4e3fd7d33349f7cca20e7fb9e121f9529c9182aaa18161148c5485bd90d",
+    "licenses/npm/d3-scale/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-scale/README.md": "2d5a5c3729868a77708ca3e5c7d7b25e1aaf212cb9233c867a09db9c1359e322",
+    "licenses/npm/d3-selection/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-selection/README.md": "25783584ce38320a1bfd590878bd1dc01a95ed491298843f23c75f7146877d7c",
+    "licenses/npm/d3-shape/LICENSE": "faa682e3e430941f958d26180458f5934a62f58dac4d70ccdd15608c15d0f884",
+    "licenses/npm/d3-shape/README.md": "a978a4c7714491eb85f7fad8f4b5b13398777ef009e27bd9cf577286924b30c5",
+    "licenses/npm/d3-time-format/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-time-format/README.md": "adc683395c793234d4b9eaf1556fbba2407eaabb54998dfb3606c71fb6c9e4de",
+    "licenses/npm/d3-time/LICENSE": "faa682e3e430941f958d26180458f5934a62f58dac4d70ccdd15608c15d0f884",
+    "licenses/npm/d3-time/README.md": "c9a08196d05aa68f42cfd53f8bbd3409e204e618eb97a6fcd1dfeff54ec79d63",
+    "licenses/npm/d3-timer/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-timer/README.md": "3883adcfb42e1734497f7ecea25a2b3a2911e53d1c766ade2b76589228170b13",
+    "licenses/npm/d3-transition/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-transition/README.md": "262e7a4004dec4d16b0223315754de8b1597ca94f60b1e327c93fe991558cafc",
+    "licenses/npm/d3-zoom/LICENSE": "e008c5e25a6be382593089c29bfabbc553c6378eee02895aec46ce396cc404ee",
+    "licenses/npm/d3-zoom/README.md": "f8cde36f4481999e3eb3ae7ff1a6695883a04115c9ec4867825d90cc1a06ee20",
+    "licenses/npm/d3/LICENSE": "3e6849627f74ff73c257a3ae1efb574015d94fc1035c05ec3c15805165efcbc4",
+    "licenses/npm/d3/README.md": "9a2a0f2296eb2670503c682f120ce6068fe81c639978c6fe7b3303b30f2e41b3",
+    "licenses/npm/dagre-d3-es/LICENSE.md": "d01eb84ccce437dbf5fd40853bceea0f287930920acea066597a4a25ead63858",
+    "licenses/npm/dagre-d3-es/README.md": "6e0c672893edffcdb83e9b611105ca064a59af1d4a588d2f028c7f29a7b3454b",
+    "licenses/npm/dayjs/LICENSE": "5faab7526d055651be3aab769d58897be6bd91f3d39d137f25f12dba1b31d5dc",
+    "licenses/npm/dayjs/README.md": "900c80d1b626c1a777f977111322badede124381407b3f6de23e314c05239b27",
+    "licenses/npm/delaunator/LICENSE": "0b348fff56384b43dbb37593906904e56d0f9deb51eae590d4dc6d427fbf1808",
+    "licenses/npm/delaunator/README.md": "9433f4fc6ec738ec7b373e6e38d31d8d1b1034f8183d7bccbf5c89591b000e4e",
+    "licenses/npm/dompurify/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "licenses/npm/dompurify/LICENSE-MPL": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85",
+    "licenses/npm/dompurify/README.md": "565e6a29192b5dbb94b172ef5e4b90759994eb34874da22bb8e9be5c3e894969",
+    "licenses/npm/elkjs/LICENSE.md": "89591d4578fb1ebd91501312a3d25f021bd865a2e436641c1cf7b1bc7e3c1617",
+    "licenses/npm/elkjs/README.md": "7eda753b43e35f7cf2d37124e2b75d041cc233033918503de4a4e3a221ee3cd8",
+    "licenses/npm/epubjs/README.md": "c40da4712264c2143daf19ddcec7451fba7c6cd0ec06c0c8499d38d46f3fda3e",
+    "licenses/npm/epubjs/license": "8663e726f4194e1a34913b223c2e4745ed06f3ec645a66a41ab70b735070b692",
+    "licenses/npm/es-toolkit/LICENSE": "51f3674294d988d89dbebd31273baaeb3c697a15482d9699b14d1fded2e132a7",
+    "licenses/npm/es-toolkit/NOTICE": "11ee5e3bce9b0a4dde7f73811caf98978e710228d891c3111ad8ef8d7d2a916f",
+    "licenses/npm/es-toolkit/README.md": "e29b87d4d0e592731dd0eed53952684ec4ec4db8b022caf35f51326425ed475f",
+    "licenses/npm/es5-ext/LICENSE": "5dc6fe91750695c7a47f9bc200f7bd52f3e81c6854d431f43c34c7e7f8ae8b52",
+    "licenses/npm/es5-ext/README.md": "1c3b11d341e5e3ad3b5d56874c61a7672b8f9c6343df5cf01046de269b78780a",
+    "licenses/npm/es6-iterator/LICENSE": "29c6c58225baf0c91719e5600f7e1302cad616c0fd81c45b02b5e78882b9e2a9",
+    "licenses/npm/es6-iterator/README.md": "80cf19a2a7bdb2e4f0d4df59ca343386817e7a9a72b1a7b5364a2d5699f08cee",
+    "licenses/npm/es6-symbol/LICENSE": "77485a12d142fd84ee9f278b42968b2f029c876c8dddca7d0e13fa164ffeed34",
+    "licenses/npm/es6-symbol/README.md": "538ad32e0b3e7bde47343676b526b79aa4df91d444f28c6b793b6f33af8c202d",
+    "licenses/npm/esbuild/LICENSE.md": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
+    "licenses/npm/esbuild/README.md": "6d481cd60ec3c679e5e395f547ab4221147f35642894f6b95a8df38fd25c87bd",
+    "licenses/npm/esniff/LICENSE": "77485a12d142fd84ee9f278b42968b2f029c876c8dddca7d0e13fa164ffeed34",
+    "licenses/npm/esniff/README.md": "8a8a835d48f5f966916ce2c013b66555b9460aad3ad7fe8e4928412d04a5528b",
+    "licenses/npm/event-emitter/LICENSE": "71e4397ed2a8c49be8e8c023a1ca353b6457c2e3615cf2afd947d2c853f410f7",
+    "licenses/npm/event-emitter/README.md": "99e48d179e8a4fc82134e8d3c011ac54fbdc6ef2639c67cd80d58070186b75e4",
+    "licenses/npm/ext/LICENSE": "2f81a49be59092e3229ed757730791b7bee7b3394d26e58a4b6ae1829437698b",
+    "licenses/npm/ext/README.md": "7e7fd102863fc43b2dc3c2482fdd601432f1398f748e5bb6667a2316aa33c0a7",
+    "licenses/npm/hachure-fill/LICENSE": "5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391",
+    "licenses/npm/hachure-fill/README.md": "318cd952f43ad3abc54e6f056742c2ead78776a3e6420178820b4820a1e725ef",
+    "licenses/npm/iconv-lite/LICENSE": "ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d",
+    "licenses/npm/iconv-lite/README.md": "d320d84b29280ae77bc70b2ae6f0510b7fedce9ba6aa2da9bcec5c68688a83ae",
+    "licenses/npm/immediate/LICENSE.txt": "809e66de579fb7d92503848bbe6d1f348f4f6521a71e5d294fe7cc0c87a3b4ff",
+    "licenses/npm/immediate/README.md": "f8ba840a9e01f16ccab189fc52191a42324153ad376b8ade110db8af9300ffe1",
+    "licenses/npm/import-meta-resolve/license": "8770a1a4b69ee722636643e81340ce4a8f0b8415b1c568487edc9062338bfcc7",
+    "licenses/npm/import-meta-resolve/readme.md": "932cae2095aaf3d9f9774d592ec6659f6b2b1ab7c4837a21f9ad05c1f34532ff",
+    "licenses/npm/inherits/LICENSE": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b",
+    "licenses/npm/inherits/README.md": "b33c8be1ca837d9e4c9b0e04a550feacbc101556164d3cdbb875aed6ccbb8a29",
+    "licenses/npm/internmap/LICENSE": "9ea8903938dab5f12c4572d60725069bec2d1b0dc3bcc210b09bae946a5ebb1f",
+    "licenses/npm/internmap/README.md": "fb5e3828bed5908684841a61fb3be0d5a79a2c0d79937c76a7dbdf288963c80f",
+    "licenses/npm/isarray/README.md": "ff138e683771b187f3629c383db72ee7d632009010a36d08e18e8d2a34222ec7",
+    "licenses/npm/jszip/LICENSE.markdown": "566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4",
+    "licenses/npm/jszip/README.markdown": "5eee3659204ed8f04b58d388b2dae55539c5cbcda733e4e945811c9121a68ede",
+    "licenses/npm/katex/LICENSE": "766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3",
+    "licenses/npm/katex/README.md": "0826188c372072aa9431a6d0e9419836e50f334402ea7997516101409245b6a1",
+    "licenses/npm/katex/node_modules/commander/LICENSE": "04512a63dce4d2d506ad612dc0bd7681ccf6e3655f7b6eaef7dfac8323d1ec0b",
+    "licenses/npm/katex/node_modules/commander/Readme.md": "e219aeefbaea202ffb39b94a50812a4a2e69e91b67db3a5e39f3e0eeae2d7686",
+    "licenses/npm/khroma/license": "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49",
+    "licenses/npm/khroma/readme.md": "2fdee93b3b4411346da6ce5a052b2cd0ca1730af3fce933618bf6cf2967cfd74",
+    "licenses/npm/layout-base/LICENSE": "eabb762d8a95109a39c9be3247325529a5239a7aca327d909c3ccdc41f3a06bf",
+    "licenses/npm/layout-base/README.md": "fa3d495c77ad132c443e22254584a7a442ef2868460ac764bc3861efa0e7e6e4",
+    "licenses/npm/lie/README.md": "97a1e33c510ea9ce0eb1faf0bc1f89a71bfe414c1768b227d47b5ac3c50e1a29",
+    "licenses/npm/lie/license.md": "5c81b0caa98593408b03125efa25efe622341ed87ae55561968828cd887d64a4",
+    "licenses/npm/localforage/LICENSE": "8c3c0576866d6c22f56cbe65b8ef20e63c8aa75ec58f8cd139a242edb42bf8f1",
+    "licenses/npm/localforage/README.md": "210afa26d3ca5d9a4de03d3ed0619d6a15c6ef7b263a223323b7a9b2e142860c",
+    "licenses/npm/localforage/node_modules/lie/README.md": "1e38c909f02620b745c09e691c7135363c02b188e1ed52c807c6c9aece764115",
+    "licenses/npm/localforage/node_modules/lie/license.md": "2a714679422aa639925ee1f9382e7fc4f9883c8f4b1452a21efe6ba589028484",
+    "licenses/npm/lodash-es/LICENSE": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc",
+    "licenses/npm/lodash-es/README.md": "559b7df61dd505d1ad3b5ebb64bf1558dd65297740c4671f443b946a3022675a",
+    "licenses/npm/lodash/LICENSE": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc",
+    "licenses/npm/lodash/README.md": "159abc800864ddc93d06b65ee54305b49541b3957e0c4cfd6b27a697d36e6ef5",
+    "licenses/npm/marked/LICENSE.md": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+    "licenses/npm/marked/README.md": "1989f49431cc983f5bfd6ae4f565549274f77f0bee2c0507bd39b330dfd8b2d2",
+    "licenses/npm/marks-pane/README.md": "d44b08cdeb1ed586c29ebb71714a9fd3bc1608cefad7fc277373960ff5e134ac",
+    "licenses/npm/mermaid/LICENSE": "ec9fb67dcb25eccc416ed56e1aab819222c805a2a4bfe4cb19e7556bf2ffde80",
+    "licenses/npm/mermaid/README.md": "eae450a8a65100cb0f5a4b29b8ebfe9a1b7c57e771887e1471d6726c02cc3dd5",
+    "licenses/npm/mermaid/README.zh-CN.md": "2713af51940f7d1df7de75fa0ad30ac5a46620913f1185f26b0408bfb4a81040",
+    "licenses/npm/next-tick/LICENSE": "d61b7b0b7ef23fe17a4cf996c50362ba842725e9b1a0686792a9c16894a6d5c0",
+    "licenses/npm/next-tick/README.md": "57daa1aa3a242dc6bb8351f99cc48885dd8b88fe049c154bfdbe54d32349de02",
+    "licenses/npm/package-manager-detector/LICENSE": "05c365176db3cc00e951c44b921c809c75b8e99d2d724f7daf00381e26fb0850",
+    "licenses/npm/package-manager-detector/README.md": "8186d1f2bafb9320ac869b97aa1f780c5f51d2916c94cfb0dfb5fd61c5eaec98",
+    "licenses/npm/pako/LICENSE": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539",
+    "licenses/npm/pako/README.md": "8174ca473d9df9da15064d199064e8e3ff88d46beb66b545e048756e6f0fb469",
+    "licenses/npm/path-data-parser/LICENSE": "e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71",
+    "licenses/npm/path-data-parser/README.md": "1fff17038232e0a8c5b435f845204d87e281e3561f8c28a1b4a114f2b299ad66",
+    "licenses/npm/path-webpack/README.md": "9d2f5524ae0d8c6229d8c14474c40ab3e1e8b66be130e20bd95530e53aefb07a",
+    "licenses/npm/pdfjs-dist/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    "licenses/npm/pdfjs-dist/README.md": "c53acbcd27bb9851954ac2bc244df531bad1d0769c8be3bfaeccd95eb650d31c",
+    "licenses/npm/points-on-curve/LICENSE": "e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71",
+    "licenses/npm/points-on-curve/README.md": "897b434803b5016ddf568a67f77ecdcdf41fa5a13cd61e3b08a0808f0254fdf6",
+    "licenses/npm/points-on-path/LICENSE": "b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c",
+    "licenses/npm/points-on-path/README.md": "30d5f1717bab957d96e12e5d20698ca7bd8f4f5370f4d96c3c6880ab2723581c",
+    "licenses/npm/process-nextick-args/license.md": "ecdccbcf39024f624ded480c01c0b25458e1eca8f26ecf040933865ce56d9a4f",
+    "licenses/npm/process-nextick-args/readme.md": "f659caaae9d9f4a860850b3229f6c261a09b86e3644dbc01128fe5d74b01aecd",
+    "licenses/npm/readable-stream/LICENSE": "ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54",
+    "licenses/npm/readable-stream/README.md": "5a917d93a11215fbdfe7366e7466bc2ef3e3b9dee8291b0e1d48e6d4796f19cf",
+    "licenses/npm/robust-predicates/LICENSE": "88d9b4eb60579c191ec391ca04c16130572d7eedc4a86daa58bf28c6e14c9bcd",
+    "licenses/npm/robust-predicates/README.md": "6feda9e9aa15c9717487b1e8035ccdaa8865089639fed9cc56027d172a304fdf",
+    "licenses/npm/roughjs/LICENSE": "dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d",
+    "licenses/npm/roughjs/README.md": "467beeaf0b62f8dd36ed41d5dfe146c6b67b455d91c07396394be7de6ff5f54c",
+    "licenses/npm/rw/LICENSE": "e273680c43c2ab5bb3b50af28de6a08000b333396834db7bf6129cd6f130c9cd",
+    "licenses/npm/rw/README.md": "6a7723ae5867cd4d1e7f0171ff59dec5ce964e5b3337ced327b936aaa4344300",
+    "licenses/npm/safe-buffer/LICENSE": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac",
+    "licenses/npm/safe-buffer/README.md": "d301a850808775718ddb510d4bf2a922d9b0afa72894e67137daa20fbeafac05",
+    "licenses/npm/safer-buffer/LICENSE": "4bc935e71be198c67ddf3c2b5fddb195f6edc182bfc155a96a6db61b44b494b9",
+    "licenses/npm/safer-buffer/Readme.md": "d4331b7c5af9c02161150daf9451ee6bc7a73ece3ec0312603fae09f46a817d8",
+    "licenses/npm/setimmediate/LICENSE.txt": "c4b4ad3a5746f1f5249a6dd90396ec519264e1bb02e01e48a6522c48a3a97cb4",
+    "licenses/npm/string_decoder/LICENSE": "11f2aafb37d06b3ee5bdaf06e9811141d0da05263c316f3d627f45c20d43261b",
+    "licenses/npm/string_decoder/README.md": "64417fec74bed1e4160c792189c85e6f37f4232a179e2beb04f32d80df76c4cf",
+    "licenses/npm/style-mod/LICENSE": "cb4474e26547397169061d3586c00022cda5330a1b64fa13e872319f3b63aff1",
+    "licenses/npm/style-mod/README.md": "0f8488fefaed53d44c8a3aa1f68273b3e543635c1dbd95798b173cbfe9e9d7e2",
+    "licenses/npm/stylis/LICENSE": "88c579c6ee44b41137a21321190d177982e5b17d4fa1b83a4a2e3ea325a8fc9a",
+    "licenses/npm/stylis/README.md": "e3dd09a0366538f948087bc51c07a7458de37bdebfb54664a957f4cc9edf7857",
+    "licenses/npm/tinyexec/LICENSE": "f95f668fe64081ddb4153b322e34fdd719b991285ed08177d5ad7133b7988d92",
+    "licenses/npm/tinyexec/README.md": "9a731c250584760e51f33bf6b149f34a51f2bd4d33ad21527c25b10250ed11da",
+    "licenses/npm/ts-dedent/LICENSE": "eff13095d9d762c3bd9dda74370c81e2130c28f2691bc455603abf973bac25b9",
+    "licenses/npm/ts-dedent/README.md": "665693ac23a37aa508a68085489d7e0430c4d23684122e4ecbc10ecfa41424fa",
+    "licenses/npm/type/LICENSE": "010cd06695b486890aa0e080f938ef52b393207b7352baf7f13513b7c272d256",
+    "licenses/npm/type/README.md": "9c12bd7c1709171c2be97099646da738c6e0322665ffce244eb68234fc663a2a",
+    "licenses/npm/util-deprecate/LICENSE": "0154425673db15cdfa80ecba2c9b1f1a867f7197a006764712849bfc3a93cbb7",
+    "licenses/npm/util-deprecate/README.md": "d30a5eca847bc6edc7b9723884def8942a66f89d12a5735dc22d1ee1216ff2ea",
+    "licenses/npm/uuid/LICENSE.md": "beaa6b04fb82e41dd2ad679e19e27953afb5999b1abbb455b6564e78ebfeb332",
+    "licenses/npm/uuid/README.md": "7916cc8c955d5a11f806e0550b2591cb8198717d6c9ad948f33ed4098dff326d",
+    "licenses/npm/w3c-keyname/LICENSE": "869c30f368eb08735e779027b9f4bc9fea2f39624351856aebe42741f0bc0884",
+    "licenses/npm/w3c-keyname/README.md": "59c6a9d986798d0b7e96a6fe8fc5381aa48f0512950d7edcb59c8a96baf338c3",
+    "package-lock.json": "dae41cbd5a726314fdebf6a7927ec7049d69aaa517e776ba46b7473808db3ead",
+    "package.json": "9454b1810c0dcf7a46131b76c2961c39f9d59323af758622b6586d5e1261f03f",
+    "scripts/build.mjs": "e008efcee31c7083be0bd72bcb86e222ee8b584700eaedac2495d6df423ed6dd",
+    "scripts/d2-resource.mjs": "e405beea6e162a9fe6d4cf844f8c34cea1b2f369c1b07152abc88b832e8001bd",
+    "scripts/pdf-assets.mjs": "4a5fddd06eb6a40c663edd19ae98e7e148ab6188a45791179285694e13681a34",
+    "scripts/verify-reader-package.py": "7e3d5b1eedc2410d58aceca38f35d1381e3431819c1d6cde15a639e06a765cc7",
+    "scripts/web-imports.mjs": "947b80045ce8623d22e98592a62656945d19f8f5c30cae2347d649f79140cb17",
+    "src/core/blocks/mod.rs": "c73fd7d992701c0276dbac289734645f72cef74f6a524ac69ab2a15ae5667e22",
+    "src/core/blocks/projection.rs": "dff43e8be8dc74ba17da24ff5a30cd38a3b32db434382753d3d34bc937cf01ed",
+    "src/core/compare.rs": "52a04fa799196b863ab5db35c582caf9055a5d8e15b883e94000274f2f8b3c6b",
+    "src/core/csv_document.rs": "4f126466beaf26face5974725bdb24cca2006cd1477e0dd6012a8a7a6ca10c47",
+    "src/core/document_format.rs": "429c1ff48b250d4f96d50080ac5d4af2212877c1be50602c3b3693f35ed625b7",
+    "src/core/documents/archive.rs": "20d3c9791ba0de089fcaeda2ac6c2c336a6875c967224edb82f54a7742a3196b",
+    "src/core/documents/html.rs": "910b65c5a62f1f68b06a52359f2810f24849bc2d246e69f06efd9db57cfe506d",
+    "src/core/documents/image_animation.rs": "a9e1c5f43a6924af63cd6cc2e439b190a084393bd3653801913bfbdfce562b91",
+    "src/core/documents/image_decode.rs": "0eba8fc188f269a33db74e8202aa30a979f50f40485f0acb56e8f2a5a7a4f916",
+    "src/core/documents/mod.rs": "f898e9ad9a717336524ee7dabe764b90be5c2105522728271b083e611c7189f0",
+    "src/core/documents/pdf.rs": "7e552662fa3558dd18bb1e8e89f75d591d13087c972f3027d6a71027e5f16081",
+    "src/core/documents/structured.rs": "8611c5f724101a38dd0b85ed6d42c6511b148f51b703fec4daca3f386a9c27b5",
+    "src/core/documents/svg_resources.rs": "4d83eea67d7e31e9dd68238dadfa43cf0e3d8bf3538086f9428f7abd65358c8b",
+    "src/core/documents/tests.rs": "579fc9f933b069303bb54e71b4617a33bdf34439f990e81816f30e8b7c68e907",
+    "src/core/edit.rs": "202fab0575a60f5c7d33d143e187269a2dfecc7d376ccd059f1c5b8d002b7cdf",
+    "src/core/highlight.rs": "3f412d0dcc48f412e620337fc1b15fa4f0330550e2a0ae577c1b5bd0fc525a04",
+    "src/core/highlight/budget.rs": "25e8ea50f54d90892b0a5a1ad5155c26fdf4509ccaf25dcea980b24c1816da4c",
+    "src/core/highlight/engine.rs": "46850be8635926c724e3f1eb811ca6011687f60de7329823c6f64605138f9c7e",
+    "src/core/jq_query.rs": "c6bf8eec54c49c3f6a976cafa4817795e622c2a0d8c9989faaeb655c2cd8f753",
+    "src/core/markdown.rs": "eb494833b02cd6cc9c8a09f5a8b19e0ea11ff38fc44afb0bc479dade906d88e3",
+    "src/core/markdown_html.rs": "f478c758685320eabe79e6cfce07549aa0b1dee318a7918ed8b492cce720c329",
+    "src/core/mod.rs": "14934dd418a77688b128fcd7bfb045794f22ceeb2fd2b0a65352bf8a2ae10c09",
+    "src/core/notes.rs": "2f982541cb05c88b3020b30a329b40df2433d92458ba1661634307dec8454adc",
+    "src/core/reader/assets.rs": "c07fb0cf08a6a2b4d940bd53880e798a8ab4821c86ddcb4cfea2c501fabb526a",
+    "src/core/reader/mod.rs": "9cb6ecb17e04e1184d4235affe2cf9015239a952200d4a1460ea7f5dbd40d34c",
+    "src/core/reader/operations.rs": "12326a2b0029f54784958ceb2b57f0b179a0f0ae8c5e690d9c8f50b09602b09a",
+    "src/core/reader/types.rs": "f13f9f24e661b2a3a999c80009665661992c700bbfe8adc97de857853a7de349",
+    "src/core/references.rs": "fd68c8c10f1c3dec40e792487e1514d5a405c1faa9502c06d5d4fa4e4c58dc66",
+    "src/core/source.rs": "37dc7def249db1816d15b8a790e1f3ac9aba5e0e6b6ed8641a6faa1f32c30142",
+    "src/core/table_query.rs": "e4380257e2f2f3b7b7f959210463e3ea05aad927b4f727c6cdab6c5cd9028e73",
+    "src/core/table_query/chart.rs": "880f6abb92b96e904ae0a25d52b5d84c51444006726398cea7016018b18b868a",
+    "src/lib.rs": "936a90be2719c2b3ba1ad828f553aff0e4a9e0b8ca59713878983fcb81445684",
+    "src/runtime/assets.rs": "3863f2edccc547b08d85b3728f38e917bace4b65cea999aa2feaa3c00b6052db",
+    "src/runtime/cache.rs": "6683fd4055a6921f484ad33cdb641880887ae550c71cf36a3cde861b24c72b7c",
+    "src/runtime/config.rs": "30f38b122e882eb739122350ea3c77558ef3f58d9cd893a314581ec27d67e3b0",
+    "src/runtime/diagram_origin.rs": "0ce58adf39bffd51dcaf3a0b801212967c88372c062a7d7b1747cbd4eae132d2",
+    "src/runtime/mod.rs": "584b9eff014acec9a149eaa356487dddc2923dae181e6a2cfedef6828a851da8",
+    "src/runtime/process.rs": "9da4473e9dd5a44cb32e7a75190cade7154a7a6b1fb69fc9abd7c5692ec69d6a",
+    "src/runtime/renderer.rs": "b8e9bdc2dbdf5d81e1ff467930ec89a518ab773cab52266ac1401edcfdd5b2b7",
+    "src/web/compare_runtime.rs": "c6d2ab3a9605347066d8801c1244091c024967331744dae8677f51cdc9f98586",
+    "src/web/document_runtime.rs": "69978b0d21465f8848bd354bdf7ac5b9dd5d8424ea84cef607007e7ea4b6585a",
+    "src/web/edit_runtime.rs": "50af343c073096f0e5a7189fa7e8ecb3d321f28baa95d9853661b191cf29afbe",
+    "src/web/epub_runtime.rs": "94aab795b88ea06bf951177f05c8616224e3e5e3727dd313f393f998092f1ab8",
+    "src/web/files.rs": "f5bbb371818e28e18efaafc1825ba8e9a274464bdcf79ba7c1a870bf9bacd769",
+    "src/web/main.rs": "1dab474f624af823c775e442b2ece90bf2b92ce14fa8add440956980e4d7816d",
+    "src/web/mod.rs": "cd41f50d722f5d56047048869f3e8aa72d0cdd7dee20d614555da0eb197ce145",
+    "src/web/panes.rs": "c62485fded7de18b45aeb19c736de637d0b74e2f147177c998caf44a9b995b90",
+    "src/web/pdf_runtime.rs": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
+    "src/web/references.rs": "2fe69806ec4bfe839c1f43704667841ad4cf2038753441b4c965424d7c94eba4",
+    "src/web/selected_files.rs": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
+    "src/web/service.rs": "c178f30413077a6a64b59ea5a3fa5c4a42b68436f2fe47df6ff6fa8efe8c7d58",
+    "src/web/table_chart_runtime.rs": "1d8365d7176d4d9b67326c2ad1534515bddeafa5bf217b4eb6a5c80656d3b3ca",
+    "src/web/table_query_runtime.rs": "df9a0d157f7094cfc7086c95ac50a8f004d26f47a72f041ac3fd545ebcc6a6b1",
+    "tests/browser/code-search-check.mjs": "b0a9b26929dacacadbfc44f8cde390981ef81260f609fdc69fdb9abf43da5005",
+    "tests/browser/contract-webkit.py": "d3f333a2336c169c09ec8e4546b6307d05bce422a6f105fbf2738321c2f6cf59",
+    "tests/browser/contracts/code-search.mjs": "2e7f44dce8aeab599d2162a44703d3af79099ab7999a51a01b176fe60f02d0bd",
+    "tests/browser/contracts/diagram-engine.mjs": "9d36031459cb11cc59ca2c109d3fe754ddfc4bdfffd7d7a358999d09d37600f6",
+    "tests/browser/contracts/diagram-lifecycle.mjs": "bb419af7d1cc84672a3186f2eadc1de838e17a69d2696444c02ef44058873d33",
+    "tests/browser/contracts/embedded-image.mjs": "5d308b6c8ab19aa05139eefe870700472a91676737d6f9d823da26d3ec969d34",
+    "tests/browser/contracts/embedded-source.mjs": "adc29afeb35c2f203a279dda0aeb9c203a35d4f788a7c7242d608c12f3b2d458",
+    "tests/browser/contracts/epub-reader.mjs": "9e3e10d09cfccba1531c6035ccdfb55cc01dd34364812d0629c685a855553f66",
+    "tests/browser/contracts/file-ui.mjs": "6d4f8d459ed729afc7385ca8580e479417d5e4cf96f38934ce140a4d0cf14424",
+    "tests/browser/contracts/host-client.mjs": "dbcca0c0d613a5cf9d85e07d975423e8ad00043727bb37b8a0b87ffaabaf518b",
+    "tests/browser/contracts/image-view.mjs": "004c55ad7a2ded807b0869dbc1c38fc6c3b18522835072e3fc4e52ae5dac3f1b",
+    "tests/browser/contracts/jq-query.mjs": "543516169b0beb843f7627a294da0762961c6ae9f90e62ed652988977a0c6539",
+    "tests/browser/contracts/markdown-references.mjs": "fddb7703f617c1cf9e85a280add960825ddc26ff093eebd35754b9634350b2c0",
+    "tests/browser/contracts/markdown.mjs": "3ab756e98e07efe5bc1dca52feb565945e8c9fbf8c0fd7a12a6df6902ff7a8be",
+    "tests/browser/contracts/notes.mjs": "3d563e7430f313391cafd581953e68e71d7137ec6d26b1d1aa3f5a8d0c303ad8",
+    "tests/browser/contracts/outline.mjs": "8f7fab27d41e2543b3fa437151f076116a53ea24e8cc74be3229ace97bbf00a8",
+    "tests/browser/contracts/pdf-reader.mjs": "72d31bdcb75cfe30cd06ff54a2d5980296dd032c6769a7d6147a5bd738976b65",
+    "tests/browser/contracts/presentation.mjs": "4d05c0bbb56da73147f618d14bd82a456951725501e8db4095a65242c7d8de4d",
+    "tests/browser/contracts/projection-view.mjs": "7a74861bfd66d1b3d55b097f48e23ad95e1b934001c954a2e110cd2389f250a4",
+    "tests/browser/contracts/raw-resources.mjs": "fa2e12d9eeaca71c92ed4794c8cd06517216254dc9866cb316e9c04b9f5a82a6",
+    "tests/browser/contracts/table-cells.mjs": "e9e77c742fde5a4e0b94c6560eaab59e613b58e8ea38a49f213fa2dd58ead0ed",
+    "tests/browser/contracts/table-controls.mjs": "280b1f420f4819b9b9ccdcead49db4b2430f5809227c511de9e9e0bc6f053a6a",
+    "tests/browser/contracts/table-layout.mjs": "849df90e6b41ecf2570ae0c14ebae49facbd28f53a8beb400d968b3c263f46c6",
+    "tests/browser/contracts/table-plot.mjs": "cafc186fb5e77db09ee99d5f718552d2b04d4d8274f2a0effaf6b8dc606aac5d",
+    "tests/browser/contracts/table-query.mjs": "e706dce9470ef4952bfd37726f8e95c3c36018ebc8a7ea969c76e51e079f9b97",
+    "tests/browser/contracts/table-view.mjs": "04c93064d827f66047988f765c30aaba4f7e37a670a339037c4aa80102910c4d",
+    "tests/browser/contracts/translation.mjs": "65372c231d8f6b39aa1c885deb0c00108040ec41c3b18226514a99c9aff8f145",
+    "tests/browser/dom-component-check.mjs": "c0709a324b626066c9be5331aa0c1b00074367fb0f15dffd2ef3f537da128cb3",
+    "tests/browser/embedded-check.mjs": "d8bac89a742ef004461a097a51413445f8cf9fac1d8ec426ff865fe13f79c2e7",
+    "tests/browser/embedded-jq-check.mjs": "32625a5560460d736b6c67b0ad105421096fa7624049873f21cf206f0cda0683",
+    "tests/browser/epub-progress-corpus-check.mjs": "f7c8a3d32881ca4d9d3f701dc19a8a6aadd3868ad4a4a841608aa5684521b9f2",
+    "tests/browser/epub_fixtures.py": "78dc27c22371cea3ae628716042afb224b4c756d7b1da9f1d6c1134540731c61",
+    "tests/browser/file-ui-check.mjs": "6eb93d7027e26180bf735b06de33bef83defac51f524d0d0b9ca36ce5dd2a0f3",
+    "tests/browser/host-client-check.mjs": "34e029742a73715aa9f961f17d598cac09130a9c6605151b6afe8cd15a679476",
+    "tests/browser/image-view-check.mjs": "a1803dde3d3027fb09f6e5b0b1bf73cce1a09a69859925bef12ad247a0975c03",
+    "tests/browser/jq-query-check.mjs": "de579dec7b2dbbb3a27a942ba1b0f6cec5696992410b4a8d9bcdb06c78c9f68e",
+    "tests/browser/markdown-engines-check.mjs": "d0e3c557982116f5737fde8ec5b5a8147b31f706576074eafbdc5992277997ec",
+    "tests/browser/markdown-references-check.mjs": "01b968af27a6be994af170d5c204719e0035f4e7283dae046db06c351df261c5",
+    "tests/browser/notes-component-check.mjs": "139951b8d2c0f1a4cd374d4619f2ed2c0772c2551ecc9d7589e1c6af297b21d4",
+    "tests/browser/outline-check.mjs": "7f43a2d318eab8e646b71064e5fbf1c418bc0fcc80dff11eba03124224162b3e",
+    "tests/browser/pdf-fixture.mjs": "31eed014b55c4cb8412c62cedfa5da07bd253f12ed7ee7b762b80e2876f67056",
+    "tests/browser/presentation-check.mjs": "f9de034c3028399f190e45d1c1e764ecb48aa8f2d123230fa9797dd419ab19f9",
+    "tests/browser/projection-view-check.mjs": "89be6a7490f8f691bf528ca778859ce3f1bcffd3d1b732bcd4159149ffed58e4",
+    "tests/browser/reader-assets-check.mjs": "dc665f9f1a93b232c36a3c31c08709e1d6f427cec8fdedba0ae549507c844650",
+    "tests/browser/reference-policy-check.mjs": "fb0e308460484acdbd6fbd788b8fff1bdf505ca3b1ae3d7133cb286101b7a460",
+    "tests/browser/table-cells-check.mjs": "e6d8ed7ceca580725ce9b6f613efa16ca29f27a7751d0542ae6f03f8a346012e",
+    "tests/browser/table-controls-check.mjs": "b4a4712e15c19984b375532c4ac321aac8e22993b03931eae8019444677ea3c1",
+    "tests/browser/table-fixture.mjs": "c7695a83bcb6aa64bb3d948a32e722fae3297744d368239ad429cf6eeb4778d4",
+    "tests/browser/table-interactions-check.mjs": "b1e61120ac8761cb5186fa1eb9e690bd5464c9d1204877f708d39dc8c06a3c25",
+    "tests/browser/table-layout-check.mjs": "3fd716780544323d28802b75d785dc98349ba9b0687e3992e3695ffee3c17c71",
+    "tests/browser/table-plot-check.mjs": "d2625483ffb1a1c4df8c948aaf180d5ea16bc8f4c322d4b89e9de53d7eceb76f",
+    "tests/browser/table-query-component-check.mjs": "215a4de6d2ba43705915ab53b07c6299db18f517adac868060bbc99e1872f669",
+    "tests/browser/table-view-check.mjs": "d45e0a97297801e817628fb62988f17e521621a10f5136d55a627636c15dd652",
+    "tests/browser/translation-check.mjs": "02eaaf76435664fbbcc65c3de9bd6e6d6cfe8d26ed8b3bd574b22461158cb4c1",
+    "tests/desktop/table-check.js": "7596720ed6a79004bc7da260daf1df0697765fa19d1295e5a1be81c353f7bc89",
+    "tests/markdown_profile.rs": "1aaa59e77bebeb6dfd82aed419a8552d8cd833ad02337ff0111de4f9636639aa",
+    "tests/reader_api.rs": "f4dfdcbac698d8ec308c72f20d0db5555a4daf23097668ba1796305993bd9e63",
+    "tests/server/host-image-check.mjs": "938299b28866365888be778df8ef6913c485b39d416cb2591e86f9e70b4246a0",
+    "tests/server/image-frames-check.mjs": "599314972adfd67b0d000ea5ea0fd7cc40c08365d79a65a5eff4dabb91cb6c5c",
+    "tests/server/public-core-check.mjs": "fc85cd71e1220a218047395aa4b295e8bb9c9fcff869a9557fd688715241bb23",
+    "tests/server/reader-export-check.py": "becc794123779e0c0922d59406f95b6a67809826677fab692dc9c6a00747744e",
+    "tests/server/source-ranges-check.mjs": "9ed010c9cbfe85ad56aa4dabc13bd2ed2c499b34873dc7e8330077c6b9df619c",
+    "tests/server/web-imports-check.mjs": "8c41b68d2f89b8c51a83d092c052ed2c6b14cd2a1c360a63c3db7092a8d88928",
+    "tests/support/markdown.rs": "13d2d954bc646f19eb2fab6510658de0eb04cbc45edc01a33634821bfd025296",
+    "tests/support/references.rs": "0a21f1bddde836e377562eed53abba9155cd2cacca9a0a1622e7fbd59e041e52",
+    "third-party/README.md": "963bd3545064a8a0f5ec207605db7f3baa8706c423c0b8d3b1a988836355dc2e",
+    "third-party/arborium-MIT.txt": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb",
+    "third-party/arborium-grammar-licenses.md": "16f0983752c47c1471b76ca5c9fa005e1d9dbc6c802e03ab32e05dc0710b9efc",
+    "third-party/codex-thread-studio-MIT.txt": "fac305b8a776bd517fe8b1f641f6809a4a38d0ca9af6dcdf7653f987c447eef1",
+    "third-party/highlighting.md": "71c43b25844686c998183d7327f85b466f60c70352a4b24cef8e6aa1aab3f8bf",
+    "third-party/marks-pane-1.0.9-package.json": "09ad68a28c8d7ec8f115d0d79a1f66f6626d089d7831b983eee23d8d59ed0898",
+    "third-party/path-webpack-0.0.3-package.json": "80ced94cd0276b29e3499ec7c07f1c65f66a6a957d1e01b1a47a45bdd04cfd22",
+    "third-party/path-webpack-Node-v7.0.0-LICENSE.txt": "1914bfb950be8d576ce9e49c8a0e51c9f2402560fe3c19093e69bc1306a56e9e",
+    "third-party/syntax-acknowledgements.md": "b84d429fe219bee3d5e56761e15a31f78d2a41a69ea1c57bd5168531b97585cf",
+    "third-party/tree-sitter-MIT.txt": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78",
+    "third-party/two-face-MIT.txt": "7206e5cec3869d1c394ba80866d1cc25c0a749e3d4e0d229801a722e37b670c6",
+    "web/assets.mjs": "f8b9f39594fe9fbac0b72820592753fd16c066d12b9f422a1e6be542855362b9",
+    "web/checkbox.css": "065916170c66e6866aeea759cbeabd06f9efedf817db7d8b72a52c60976b79e6",
+    "web/clipboard.mjs": "e469ce5774f4a0f2617c3e0aec87a6e95262b9bbf04be0417dd1cc5021d1136c",
+    "web/code-view.mjs": "2c92bb4c980e1b2f2b1dd26f6e801486bed23c68657107488bca2303de5efe67",
+    "web/compare-source.mjs": "e5a1a33c213b10189cc84def7703cfb494c6e090213a5fc9a725faa2b2c07d1d",
+    "web/compare.css": "18413653ab782c61581114b4f47b6abc39f67819fe65e46cfd9b0c278a1e8005",
+    "web/compare.html": "e5de5e643313815c724bc56ddcf69d3d006c2ced208e0dc2c0ee4f6587d8407f",
+    "web/compare.mjs": "7993d0e48f2003e20bc1dcebd71e823154ef970fadb13ed99eb7a68b6935e8f1",
+    "web/component-styles.mjs": "1d903be91d7dcf9d07fc2e0ec3d2de6b746d21db0066a00e608c2adb6aec5c1b",
+    "web/diagrams.mjs": "2af5abd48d73e574059c230105898b45eebfec4be6d0a9b3528c27ebefc59d2d",
+    "web/document-prose.css": "1c048c9bc96e4e3c19f6f1824f249aa4f9984086bbfc8e6902aa6272434b7408",
+    "web/editor.mjs": "83450326b6900349c5dcd4d7373f53340d0dc2a22faf1722242dbbe384f4d8e9",
+    "web/epub-reader.css": "b674d9042fac57f1778bc66a878f2fdeb6c2bb92d6a4dc3a4a26bc2013b1b5ee",
+    "web/epub-reader.mjs": "00cb27171fa159a3552db6b249eb19fb645543d04d461f54017ee17f209a7e15",
+    "web/files.mjs": "56ce3d340ffcf62104d93188e928fb12af68dc6fc1a83c0f5a8a7c9ac4f8d41c",
+    "web/host-client.mjs": "daaa5b6335938847870fb279aef68e7373a6a91ad4322ecad4aa49f9e283e40d",
+    "web/icons.mjs": "673206b23d9975878444a673b09bb9826361c08fd76bd58842f9b1b0519c50ac",
+    "web/image-frames.mjs": "898099ddf70f21dab43c61496565b6ef122d36ac1d14d530bcd053b022c2feef",
+    "web/image-view.css": "172e8815853169b9f7ab269613bda2014016f989a1a5e8b81148f6cf3e04844d",
+    "web/image-view.mjs": "263b514d6672eeff6805745f1d0c6f15de33747d51693d9ee656e4a033c5ae21",
+    "web/index.html": "51270c6db55c991dbae0a7715ec26a43834ec4d6520bc686c19844abd0cd62e9",
+    "web/jq-query.css": "d3e17316a936cc5581545767e3fecf6f183de0be7916fd15f537a676787f8974",
+    "web/jq-query.mjs": "f860f8d0e788addddb21e906ad1c41e0cf67b75946a6dd47139795a50f1a8b5e",
+    "web/notes.css": "b8c735775416a8137abc26a841d32c9d4f552aca16a59300a7d1ae09e76196f6",
+    "web/notes.mjs": "690438c061897c375122dbd800f40cf9e804b498937d10406fe25fd954f7e823",
+    "web/outline.mjs": "848fbf1864f06ca97abbc339c262e5ff9ab98565df32fa5c31464c87e5077c0f",
+    "web/pdf-outline.mjs": "b510f59e713f9e32219959781bd41c24daadc5bb89936346941188059dba3ec6",
+    "web/pdf-reader.css": "9936af204459d2e1fd91182910c4c30f9efd3fd8214f63d141964a1fc05253e9",
+    "web/pdf-reader.mjs": "a2a62ca5451304d96070cbc38d9e4ca73c62f12ef5d05a44b3730e09811a7091",
+    "web/position.mjs": "c676745fa36c76f9f8412c6b3cd94368ccd378edf39dcd74ebd4a813ec615bc0",
+    "web/presentation.mjs": "d6b90ebfaefbde353d84ed1536f07c5fc51fe03cde088985253bb52675cb0dd0",
+    "web/projection-html.mjs": "f85c95dad8a57cd65e074f8e208421a4eef268c2941dbf93ada02bad53532176",
+    "web/projection-view.css": "f5ddc9a12a5d5e61f22c1815de98bb56ccceabe3598e0b5fbbaae2a22fda10d3",
+    "web/projection-view.mjs": "20a2853200ef7e6e97bc2a0e331f99122d4b819c705e1ad9106c6225965835ea",
+    "web/public-reader.mjs": "3042a37da97698156dd71c89b148eb3bb1a739db5f556f2ef45da407becb6658",
+    "web/query-operation.mjs": "057e41d900c5d96e4049ba03bcb3b3b2ac359195bff723e10a4d66a6445d900f",
+    "web/reader-bridge.mjs": "ce45e19cdf5addbd62b597ddeaba231ffa693b2d2354ab6a965c6466dd64134e",
+    "web/reader-tools.mjs": "841845cda27f6fb76bd3ed60d7cb632509445c5714f1b1f88921d17521d844ce",
+    "web/reader-ui.mjs": "777e5a96da63ae280cd16ed5f404125c1c28370d8c5c2e3f04be679c9c436240",
+    "web/reader.mjs": "27120cb990e74b81af50a52fe33dafd0bedfcfa19b6172436f2a1cab8d6c706a",
+    "web/references.mjs": "6ff76fa1609f876390d028ddf80e535d087e07d88bd8dc2528039059c476ddfc",
+    "web/source.mjs": "f3515a81ae6f6b53199d8c8f809b805e6b0284241206a4beae7f1b7609dc75f3",
+    "web/styles.css": "5e10a1c23a24b420f4891a89c1d83e0dbf4508f6cb3e68882c79e19594c375f3",
+    "web/table-cells.css": "ab3174211e27049476f48f03fe654886659f8f1db21e1d4fafb2bdb35d7884ad",
+    "web/table-cells.mjs": "a6a8b50b12e50366588d72980876fb73d63f94f65758214315018b50699289eb",
+    "web/table-controls.mjs": "3f49a0db8e6016e595889319c89c6d6414bdaa792919fdf895d7c72671c0bbf9",
+    "web/table-layout.mjs": "28263be2637bc73394806c3daa26d38454e36c9d0d5a1a9a7ab31acb484959bf",
+    "web/table-plot.css": "fdcfa21d643580b1557e5a0b87072b121c9ed49a2c8149318c0a959a2b4c9bc1",
+    "web/table-plot.mjs": "c6d29511afdcf114a191651629654ba504a011e48b9db86ef50cad7ffb8addb5",
+    "web/table-query.css": "73ebcbcdcce2194b0dcf5bafdd8e1009113e172d5c1810116fa4a782c54d7f60",
+    "web/table-query.mjs": "0d46cd40333f1f5f2c7a805173cd1aa2d9f7f31de814ec3c8b49e0b6c7273324",
+    "web/table-view.css": "7f050a5ee7ee9f58a6bfe964058881368ae7b3f82a0f7585bfcadf96c9ea6060",
+    "web/table-view.mjs": "ebad752af5c1d7dd720410fa0682dfd001b78fba62dcc53c5c79794b9d5013bf",
+    "web/tables.mjs": "31d33c0f025d54636b6a47a0f31f631a013f859f8494af743d25ab28bfdbfd4f",
+    "web/theme.js": "97bbb1ff814b706f96fec950ef64808879ae97736be0a4124a87e87157fef5ba",
+    "web/translation.mjs": "1fa3835794ab920721930ef66431e0fc7e71d771e95256c7552a695a5bb23165",
+    "web/ui-messages.mjs": "d679b54a2a5f87a0e05ebd08fda6113dc208e6698b391ca8e9653e9ea2b5713b",
+    "web/vendor/codemirror-legacy-MIT.txt": "05c6130cda97e7600ca91427a41e8a065efcf82365fc0293e7de80faec494c07",
+    "web/vendor/editor.mjs": "efdbb6ab59c8464c03a24aa97e761d9bc69413dbb4d024457633570a700a191c",
+    "web/vendor/epub-BSD-2-Clause.txt": "8663e726f4194e1a34913b223c2e4745ed06f3ec645a66a41ab70b735070b692",
+    "web/vendor/epub.mjs": "4797f3f0674059248e8251ba1ffb6799bc4094a3e938b9f6ad9a49b558560b61",
+    "web/vendor/pdf-assets.rs": "f24bcebb38f604a7422e7c3310aa4a561686f8a927c525c4d419a785eaf0c7a7",
+    "web/vendor/pdf/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    "web/vendor/pdf/cmaps/78-EUC-H.bcmap": "d92a261336dc18b8c03a46eb4d462382d33f4338fa195d303256b2031434c874",
+    "web/vendor/pdf/cmaps/78-EUC-V.bcmap": "61670bebc4e4827b67230c054fd0d820d6e30c3584d02e386804e62bbedc032a",
+    "web/vendor/pdf/cmaps/78-H.bcmap": "ece6415b853d61e1b2560165151407d35cf16e6556932b85a13ea75276b77402",
+    "web/vendor/pdf/cmaps/78-RKSJ-H.bcmap": "696b1f973c97623496703809eaaa5f9b40696c77540057413f4b826a08edfa7b",
+    "web/vendor/pdf/cmaps/78-RKSJ-V.bcmap": "53cb6d560ab377da48cf65d6dcacb0bdb31f13fab7066c580de38c12a73a7ff9",
+    "web/vendor/pdf/cmaps/78-V.bcmap": "289000f02fd34872b6975503217f33abae6bee676e7d28f640473a67c8db1712",
+    "web/vendor/pdf/cmaps/78ms-RKSJ-H.bcmap": "a2442595218f5f8bd8e1b42188e368587d876cfe0cc4cd87196f077c878f72e2",
+    "web/vendor/pdf/cmaps/78ms-RKSJ-V.bcmap": "f8ddceba96bfd9d3740bd1789ee30d1f47c78371520a8084f71f7df58f19be0b",
+    "web/vendor/pdf/cmaps/83pv-RKSJ-H.bcmap": "44040051ec818fe09b9703472bea72efd2759d5eeb5ff0d77c718d6bb5e6d1df",
+    "web/vendor/pdf/cmaps/90ms-RKSJ-H.bcmap": "c13e043e85ff715b75bb03801e8fd0fb8f3a75e4a48496faa6baaf92b5b48ba1",
+    "web/vendor/pdf/cmaps/90ms-RKSJ-V.bcmap": "499bb916ce1adbe4289b6e5811f4dc20eb238cdc2ffad20cf26ae56716885bab",
+    "web/vendor/pdf/cmaps/90msp-RKSJ-H.bcmap": "7b8b3b8bbf821702e9a4df9f3596ce292380c8c1b0925dedadbb4e4b2d80498b",
+    "web/vendor/pdf/cmaps/90msp-RKSJ-V.bcmap": "6296c2b5c07dca8128e96d5296d621a3268803d4fa0e5812a21e52fe2802aacb",
+    "web/vendor/pdf/cmaps/90pv-RKSJ-H.bcmap": "fb5103f03d3a34547e18d316e52b6d9b26e485c662999222f84d2ba54c2e4fa8",
+    "web/vendor/pdf/cmaps/90pv-RKSJ-V.bcmap": "7bcb5ad2ba55b9662ce379e16c2d9cc2b82d621a579807353741172e4af615c2",
+    "web/vendor/pdf/cmaps/Add-H.bcmap": "a2ffab28b990998181bcca9b0e914bb2207820f100ae31d5c469444892e5ad8e",
+    "web/vendor/pdf/cmaps/Add-RKSJ-H.bcmap": "b29f4b52e2465d0485856d5e69f1ba69927deb2848d8fd328c8035583b35bb7e",
+    "web/vendor/pdf/cmaps/Add-RKSJ-V.bcmap": "2aa2232c283a3f5d0997c2834a36cead0b79ce2657944cfeed08140c293460ff",
+    "web/vendor/pdf/cmaps/Add-V.bcmap": "25125d3b1be64e86b2df5b3344170b45a42bcaa0b46e43a34314ef73c166e542",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-0.bcmap": "8c65be9d51a9f269a547dc12460707aaf4031ab67ebe8a2900f4b4cc6b3e450e",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-1.bcmap": "73152bc1a59cc594b414ac6068be48e5512b96ae85920c40e32a99269fdb0c04",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-2.bcmap": "a1b8d353bdef9584c820464e8f1c9e2013d64ebf433cba0aa831dddf515818c2",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-3.bcmap": "2ffc0c75c79fafde506163d3c08c390d183251009f3fbf6ae50d1167d14b9570",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-4.bcmap": "98a1f470c878c6b9691a4d7aef776af8ac9b55f5587c9fafa00547f3bf655716",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-5.bcmap": "ddd6e29955eb8cb545f2ebd09c628c3bbda5023256eda1b728f743c75fb77829",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-6.bcmap": "317bb2db71e0e5b7b0c47b75de1da915c2e22f65f0c0861507f9ca7ba238f8a2",
+    "web/vendor/pdf/cmaps/Adobe-CNS1-UCS2.bcmap": "e665837f2197c6bd08cd8955ad4d6932cee2398e2e328b25b00e6bfb3bd72af9",
+    "web/vendor/pdf/cmaps/Adobe-GB1-0.bcmap": "8b81cce8a11d510e505704953cfa4e4ab080c1a0cab991145a3512ee433946b9",
+    "web/vendor/pdf/cmaps/Adobe-GB1-1.bcmap": "0426983081788ec7202703e71f1efa4b860f75b936994236010b39d89251a81e",
+    "web/vendor/pdf/cmaps/Adobe-GB1-2.bcmap": "e67b37a83b160ab3831306a71a605893b24454ee81ac9b6123bf2d3984d268d5",
+    "web/vendor/pdf/cmaps/Adobe-GB1-3.bcmap": "aa299afc3e12a28726147305f191be28c7498078c8b182ece7886ac79cd99078",
+    "web/vendor/pdf/cmaps/Adobe-GB1-4.bcmap": "8fbd7d74c2ddb1350c1cecce54a73fde3f5453093d4bed445283ec0033d2097f",
+    "web/vendor/pdf/cmaps/Adobe-GB1-5.bcmap": "c22cb2fcff24112fa31dab2111bdc51957006576d31aad5a25e67793ac01428c",
+    "web/vendor/pdf/cmaps/Adobe-GB1-UCS2.bcmap": "20507620260c0c935c35afc1e70e5888aa7125d5ec7ffc03cef1959feb2c1641",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-0.bcmap": "464f08905236f5703b1f5cf8358767c8b18e6bcc808840d081f1de2c7ab38134",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-1.bcmap": "4c823848722187d1ffe75ae3f5f9126ccd2d7895a05fad14c919fb119e037008",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-2.bcmap": "7810fb808e367e70429e90a9478fe6a3fdc3e214f25c7582ce9c2da6a242315c",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-3.bcmap": "84deb1828711ad3d390c9899c38abce1bf619d65ff7bf1a326ec95acc45f08f8",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-4.bcmap": "3f8a4f974919c2b8bae5d10175ffa2673be140481e00840542c85d48ef184067",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-5.bcmap": "1d3ce4ff28d977f8cf37a912ae4ec811f4175c3167b1ec0b2567feec3e79e1db",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-6.bcmap": "5609797b9401b30be72ef9645da62a87829f058c3be4b5c623383119f584b1d9",
+    "web/vendor/pdf/cmaps/Adobe-Japan1-UCS2.bcmap": "66c5d0dc4964f4093e77b194023f3a0f689324028ec8330e1e1d0570bcba7c2f",
+    "web/vendor/pdf/cmaps/Adobe-Korea1-0.bcmap": "dfb8c3874f0e5a8c3acf597d2c12d2b63e90bc5e4f0fce990ec4c56077d80b32",
+    "web/vendor/pdf/cmaps/Adobe-Korea1-1.bcmap": "62f277b7b1c441c007797ae707d5c37258d029ce4661a2b911e2e1ee35e6adc1",
+    "web/vendor/pdf/cmaps/Adobe-Korea1-2.bcmap": "1d77068af462f96d7ad28ad7e7d43eef6423c685b479d7dc25ff5df38db0380d",
+    "web/vendor/pdf/cmaps/Adobe-Korea1-UCS2.bcmap": "857b723088be97255053562bfa41bd1075a7f7910d3bab59a0645c8bbc7060ff",
+    "web/vendor/pdf/cmaps/B5-H.bcmap": "718ad0ffbef4c34f8f3f31292c462e519cd567a5511fc8b346c60010d64f4ef9",
+    "web/vendor/pdf/cmaps/B5-V.bcmap": "b5c37383517477620ced927b6b4ffd4f4cc6230d8051b5b46a21d6768e07f7d8",
+    "web/vendor/pdf/cmaps/B5pc-H.bcmap": "bab6028aead1d6149400e904ab10cfd319082d826473ed4c582c8eeed920f17e",
+    "web/vendor/pdf/cmaps/B5pc-V.bcmap": "41543142b9767f3b76133899fc8453282b01ad3c653acaeea42d78c5a7d08c63",
+    "web/vendor/pdf/cmaps/CNS-EUC-H.bcmap": "e8f89cd61e6486b948205da46499d659ed0aed949b7095fd3c8e95ffe2b0e7a9",
+    "web/vendor/pdf/cmaps/CNS-EUC-V.bcmap": "cae422bec2ac6dbe86bf921cec942bacd2d0b733ffcca5f91b3ba14e917025a0",
+    "web/vendor/pdf/cmaps/CNS1-H.bcmap": "e8487971ab20cd16f3de3e8ac56ec994b72b658ad113f2818239dfd5108f501a",
+    "web/vendor/pdf/cmaps/CNS1-V.bcmap": "42df8076aaa7574505e7304af83a3323ec032c4177d64b1309db8c043d594a8a",
+    "web/vendor/pdf/cmaps/CNS2-H.bcmap": "bc6024d274d440f0625c69e25f37036ef6cb6689432ceaa160d3432a2a716ca7",
+    "web/vendor/pdf/cmaps/CNS2-V.bcmap": "2e4f70a8afd23a121030fc2e5b5f3816e903b11e7ba8b8c09654b31c80399c38",
+    "web/vendor/pdf/cmaps/ETHK-B5-H.bcmap": "d2f10fa519336bc4efcc7b6deb9604b75429946b40d82e311cb3a97a1994c89a",
+    "web/vendor/pdf/cmaps/ETHK-B5-V.bcmap": "1fea3fd0d9f0f679f80505800851ef2e4131d81127e18c006938ffa2f4c8b247",
+    "web/vendor/pdf/cmaps/ETen-B5-H.bcmap": "87ee6b3f5bfda5fe26fa35431264c7d73070d10dbbf398a75185d63ae322c18d",
+    "web/vendor/pdf/cmaps/ETen-B5-V.bcmap": "47dc0d2c21e3bde317947aec1675ceabc1d5460a60bf9c24334b8c407a17172c",
+    "web/vendor/pdf/cmaps/ETenms-B5-H.bcmap": "d5f5a73da4173b7da9a3a20e16f26f9cd5d12deb1553409919e0cec6fd37fdee",
+    "web/vendor/pdf/cmaps/ETenms-B5-V.bcmap": "18252fca90f472f479af1bddd60d6ab51c8e1b55dcf6845951426504934543e0",
+    "web/vendor/pdf/cmaps/EUC-H.bcmap": "f9939cd57fccdc65c5d9f4c205fd497ebdbd283643308da5663801a8c1d9c595",
+    "web/vendor/pdf/cmaps/EUC-V.bcmap": "1283a50a706507c4436da83ede9ad7a4440be25378f2e96f6c81a430081426a3",
+    "web/vendor/pdf/cmaps/Ext-H.bcmap": "4000ed4e61a1c668ef453bbd0603cfa383defa793abd46a57ed870d7f527350b",
+    "web/vendor/pdf/cmaps/Ext-RKSJ-H.bcmap": "e0d2f0df337660e73813238dd4a725f11f0621b90f3273857db253d0e7694caa",
+    "web/vendor/pdf/cmaps/Ext-RKSJ-V.bcmap": "f617a22b6d67febb187990952006c91a9f5a4db21155d268c656252d0c21985d",
+    "web/vendor/pdf/cmaps/Ext-V.bcmap": "c2087fb845a9e3acea0c2922cd40e6af67e11957bec74dcd597f1285edd490ce",
+    "web/vendor/pdf/cmaps/GB-EUC-H.bcmap": "928bad06fd84a48f5ba7150d7716609119fb660f2aaa73eccad81ddab9b9d203",
+    "web/vendor/pdf/cmaps/GB-EUC-V.bcmap": "a9ad88ac2479da529b16dc48abc5952332e27bc355335f91df5729a587533324",
+    "web/vendor/pdf/cmaps/GB-H.bcmap": "1018c777a8910b5bb46d7d54a4aee9d51ca5cff8addb2b41c969d9101cb3fd1c",
+    "web/vendor/pdf/cmaps/GB-V.bcmap": "0b96789143c0bbf9f1641ae7165b3456dccd14dabffcbb0bd654d5bf6f94f863",
+    "web/vendor/pdf/cmaps/GBK-EUC-H.bcmap": "2103fed28650ede096a2281104a1a8a4304dae0db414342c636867522307123b",
+    "web/vendor/pdf/cmaps/GBK-EUC-V.bcmap": "a7fd35dd14d9dbdb955f34e6c0630618b6620dfd09d4283b2f65a65ce77fcaea",
+    "web/vendor/pdf/cmaps/GBK2K-H.bcmap": "3d919ae72af16c5cc6846ec87a4326a9f125e493c59d3628429d35c2c95fe8c4",
+    "web/vendor/pdf/cmaps/GBK2K-V.bcmap": "b927fdfd595c07ce9158bf2ec13f4641b2e83b01c70989dadfabd6ed7c6ac2dc",
+    "web/vendor/pdf/cmaps/GBKp-EUC-H.bcmap": "d15ebd8e81fb4fe8a244f1b1e877922e03500ac69eddf5001093e502430451d2",
+    "web/vendor/pdf/cmaps/GBKp-EUC-V.bcmap": "fdc736d46e642625dccc8ad8c59f2c69fc7db7a13f2e799c6c6b779e707bb97a",
+    "web/vendor/pdf/cmaps/GBT-EUC-H.bcmap": "dc5f44e48a39f3367ae28665027d8ab1d8cedb5a9dcc5068a900acd6709f60f9",
+    "web/vendor/pdf/cmaps/GBT-EUC-V.bcmap": "a1ad24e63653b8aa388c18fa5e498f007564e43dde699a9f91ccb4645c999be8",
+    "web/vendor/pdf/cmaps/GBT-H.bcmap": "8afda745a505763f3ff54c8126eeb48ef376ea9ed07d9f42ff9a22c5c547ec57",
+    "web/vendor/pdf/cmaps/GBT-V.bcmap": "cdc2ec5c3c7c7033290c9a8894878202f08674eb9b1ae7d36218430326768771",
+    "web/vendor/pdf/cmaps/GBTpc-EUC-H.bcmap": "7b23e2f7bfdb6c918f567b7324bf858f398bd8cd5f268d74ece19a3c91bf4f32",
+    "web/vendor/pdf/cmaps/GBTpc-EUC-V.bcmap": "d7a1b13ead9ab511cf2cd01de6ce8b02aa8e8767e84895337d7a3b67f039f93b",
+    "web/vendor/pdf/cmaps/GBpc-EUC-H.bcmap": "3c4a4eb82f05abe51f6650985c630e180438bfdd491318f5d20d2ec29236e1c3",
+    "web/vendor/pdf/cmaps/GBpc-EUC-V.bcmap": "215bdfa2842705624b4cf4cd29b8e3c720f1e192365e0305c11030a424c84d7c",
+    "web/vendor/pdf/cmaps/H.bcmap": "a0233e21047ec00b852125b243cbcf30abee511155b6d8159c24f944384bc9ee",
+    "web/vendor/pdf/cmaps/HKdla-B5-H.bcmap": "5242bce18fb13ab4cc59b146a03eba36e4ce42667eeff09e10981a9d2aa4996b",
+    "web/vendor/pdf/cmaps/HKdla-B5-V.bcmap": "2e0537f786c0791d41a925f72bad2d4e7268aa6cbf15a1400a722672cec38e2c",
+    "web/vendor/pdf/cmaps/HKdlb-B5-H.bcmap": "fdc8159984bf5dbe475c0d5dfcb621ecee4dea07c38c668bd77f4c679e23b9b3",
+    "web/vendor/pdf/cmaps/HKdlb-B5-V.bcmap": "b249eb9dcb915ab45057c5d4d7aa55ef88d0efbb092af6bae0b2d4705d139abf",
+    "web/vendor/pdf/cmaps/HKgccs-B5-H.bcmap": "ab64c7fc5e9b2e97750cc4f269b0da14fd8649e49151b7598c8df86599bac591",
+    "web/vendor/pdf/cmaps/HKgccs-B5-V.bcmap": "02ebdf7cdffb5395fb21091cd58a013a18ae5388922822f9dc6292ef16b98956",
+    "web/vendor/pdf/cmaps/HKm314-B5-H.bcmap": "bfd8bbde6b36a9da4c1c902c74121a30d9807a7079a00eeea218be6adc223cef",
+    "web/vendor/pdf/cmaps/HKm314-B5-V.bcmap": "2a64a815cfb6fdd480674a868762e3d161fda17543b20c9209978559f0667164",
+    "web/vendor/pdf/cmaps/HKm471-B5-H.bcmap": "49d7c037758826b5b6c0fa329c35bbf25d3943197754e72ecd30c6fb04d745e6",
+    "web/vendor/pdf/cmaps/HKm471-B5-V.bcmap": "be24c109e78aa4fe3c1f27d30aab3ed0741e783fa1b6b6c2719741072b54b132",
+    "web/vendor/pdf/cmaps/HKscs-B5-H.bcmap": "08599378f41d96b40537adef6e6edcc4a787bc63f5accf47c026df4905a13914",
+    "web/vendor/pdf/cmaps/HKscs-B5-V.bcmap": "d073542b7dad1c4cbf01c1af5f0cd13218d1281a491956e310c55702fc8705c4",
+    "web/vendor/pdf/cmaps/Hankaku.bcmap": "b454701f7aecd7856769016dfd04ca64280a060f2c67a2466d50b4395d24974e",
+    "web/vendor/pdf/cmaps/Hiragana.bcmap": "2ed669394756dd9458651cd9995ab29ab691ecb7686659003306cdf22767a414",
+    "web/vendor/pdf/cmaps/KSC-EUC-H.bcmap": "6784e16dbc5861c036c23d3e55f0d4ba0975a3e464da0ee8e49bcfff0be070c4",
+    "web/vendor/pdf/cmaps/KSC-EUC-V.bcmap": "fdb36bad85e9924823d49db374067988e024cf80fc894711f2c9178951cbbe95",
+    "web/vendor/pdf/cmaps/KSC-H.bcmap": "c1f6d61f1d3304fd539a65ae72624fa567ecc3853bf52e283958a7a2515b3eee",
+    "web/vendor/pdf/cmaps/KSC-Johab-H.bcmap": "939993d213f68db763bf156217c217ae23af082b91a0eacecf3d11eb4ff8ef8c",
+    "web/vendor/pdf/cmaps/KSC-Johab-V.bcmap": "5d61967aac0e666def721e8b8d0fed8f95a879a14f2e76ce516c3d11c621e519",
+    "web/vendor/pdf/cmaps/KSC-V.bcmap": "d7da5afd9f1fe74816d79c9325f0139a4efb6438664ebfdf9a7aa92f3034360f",
+    "web/vendor/pdf/cmaps/KSCms-UHC-H.bcmap": "5b70d8f6a4fa9e2283dc649f0ff95d906d56efbee50a20e8d2faec3a8fed078e",
+    "web/vendor/pdf/cmaps/KSCms-UHC-HW-H.bcmap": "a5e6ba22aceb02fdedee11bfb9ed138463d89e85b87810b9f075b469d936f8ec",
+    "web/vendor/pdf/cmaps/KSCms-UHC-HW-V.bcmap": "890332a6a26880d463a12f2a6ff048bf9cf7e45077cfb1ca8815b89baa7bf411",
+    "web/vendor/pdf/cmaps/KSCms-UHC-V.bcmap": "1631b531c9a40c8cbe24c2317dba107362e49fa6e18af620414d627c111d570c",
+    "web/vendor/pdf/cmaps/KSCpc-EUC-H.bcmap": "709480682c55cedbb0124b9960d78e28febeee0df2e34607d61aac6601647ec7",
+    "web/vendor/pdf/cmaps/KSCpc-EUC-V.bcmap": "031707887d6fc2378a36cdb6775334fd7a236c3f95048d8436abf43fe26fc49d",
+    "web/vendor/pdf/cmaps/Katakana.bcmap": "3b6ca6642fbf8822da00d5e58a8aa275216d5c32dbf2bd73e934197fc9fc5c53",
+    "web/vendor/pdf/cmaps/LICENSE": "aa92ab5a472974865a96fd4a4e9c13bb41bf6fe1b309cb6b8da48bc9e19839a2",
+    "web/vendor/pdf/cmaps/NWP-H.bcmap": "286c6c9e335da330928a01edc3c97a3a623f1f7f3c42762b0a7dc2f651b1a78f",
+    "web/vendor/pdf/cmaps/NWP-V.bcmap": "3a75fb7b59adfb172710758c425d8ac6c93fd5360a64dd4afd5dd04e60ab4b4d",
+    "web/vendor/pdf/cmaps/RKSJ-H.bcmap": "a70de61a22a898f693f02cc011c3e3cff2e10aaa7cddb4661e456a21ae859f78",
+    "web/vendor/pdf/cmaps/RKSJ-V.bcmap": "68c1a64506471a524ea5cfc3b3a9f8f70031989a6bd95427b1351f33ccf50b06",
+    "web/vendor/pdf/cmaps/Roman.bcmap": "1c6b3ef9d9e5cb1aa329142ce9414b90f9b6d7f9182a2a9e927378dab8f0d43f",
+    "web/vendor/pdf/cmaps/UniCNS-UCS2-H.bcmap": "779428116752f34e2490a1941d24e4634c71e3c22d053b811d2090ae2fb3c704",
+    "web/vendor/pdf/cmaps/UniCNS-UCS2-V.bcmap": "1e5cc184b850ea44abc2df8ae5674279df668e8edf5e2a1a2ea2bd77adbd280f",
+    "web/vendor/pdf/cmaps/UniCNS-UTF16-H.bcmap": "32ff139b3c7b91d6ad25f994701f3ce7b242906022c418fd73e6493fc228bfe5",
+    "web/vendor/pdf/cmaps/UniCNS-UTF16-V.bcmap": "278eb1e68d1a236c60ef59472cf0176ee0d45f364285e76ca12419a08d46fb9a",
+    "web/vendor/pdf/cmaps/UniCNS-UTF32-H.bcmap": "bf26eb67fe19ee5ba915799e80ca72408400aa8342fdf6a244a4f44de8f97336",
+    "web/vendor/pdf/cmaps/UniCNS-UTF32-V.bcmap": "f7da3caf83ceb1cb37936fa10700d9ba6e9c3f72c5bc9724e3ac79bff0c0179e",
+    "web/vendor/pdf/cmaps/UniCNS-UTF8-H.bcmap": "2f2a742bcd1a84a148a4a518b9eed51a8f9c6ca5ed3bc5e2e41fff97de5dc2d8",
+    "web/vendor/pdf/cmaps/UniCNS-UTF8-V.bcmap": "b7c3f10780a8c62dd1c8ff6c30dc1e4e23b6cdc87c3a96fcd514cc98ffd3af9d",
+    "web/vendor/pdf/cmaps/UniGB-UCS2-H.bcmap": "9201569b402e81ad8860650bd86350c4fa28e5dd5971f05fcacaf40f51de18ed",
+    "web/vendor/pdf/cmaps/UniGB-UCS2-V.bcmap": "f10282335e4d64203bc2a653a3a47d745ec76c8ae04549f4d50180c1899be216",
+    "web/vendor/pdf/cmaps/UniGB-UTF16-H.bcmap": "386fd39581245c034da016a92d23f3df1117d169f996100050b264fc09a84e35",
+    "web/vendor/pdf/cmaps/UniGB-UTF16-V.bcmap": "0473cfbba612b92dd9918f0ff8aee9112897c48e0ffdc0eb82da3144ed8ea84a",
+    "web/vendor/pdf/cmaps/UniGB-UTF32-H.bcmap": "f48a145dc4e3ed1dca1dde7111716a72306a2a4191ab05c6bae3a5c3a961cd2f",
+    "web/vendor/pdf/cmaps/UniGB-UTF32-V.bcmap": "106acc49b7118bdef944e32107b4f348238f3929a0a15d3b7aab7b9101535993",
+    "web/vendor/pdf/cmaps/UniGB-UTF8-H.bcmap": "f217b439c80ee5fa1bc2cf6d1defcc319f8d84483d166a00ee199e05a68588df",
+    "web/vendor/pdf/cmaps/UniGB-UTF8-V.bcmap": "a64df947632878eacc532fa193c735c92a383b7d66e6f8374ac193af7c64fc63",
+    "web/vendor/pdf/cmaps/UniJIS-UCS2-H.bcmap": "ad2352f40870880fbf7f8ee5abadff743fbd025fbf9830b8ada472d1c5e4da0b",
+    "web/vendor/pdf/cmaps/UniJIS-UCS2-HW-H.bcmap": "16e87edca954177c0881c874859d6783220925d821b5cdfb8755b61ebd93f9ce",
+    "web/vendor/pdf/cmaps/UniJIS-UCS2-HW-V.bcmap": "1973457e2c0192819947e56068625b34fb9a72ecc8a476ce6d7eaae5f73e2e5c",
+    "web/vendor/pdf/cmaps/UniJIS-UCS2-V.bcmap": "42a133d8e2ce9dd6d2288018e01592d2bf2435b326d39b94ea0b6e6a44ac33d3",
+    "web/vendor/pdf/cmaps/UniJIS-UTF16-H.bcmap": "f6a89c5688978548c83fcee990e205bc63c74274d5c69b49032a3bd4c49a05ee",
+    "web/vendor/pdf/cmaps/UniJIS-UTF16-V.bcmap": "c67126fc7c73850855186bb0d6482ac0a365057e0b58778c4ab9f234683fef53",
+    "web/vendor/pdf/cmaps/UniJIS-UTF32-H.bcmap": "96195950ce0fe24443d8eb426fa6b88534ec421d7bef9046f0b2362809cfba73",
+    "web/vendor/pdf/cmaps/UniJIS-UTF32-V.bcmap": "ed4dafda402bdd19c4d5d8bf2ab41473c0f86f384552b4c7b963d6627daedeb1",
+    "web/vendor/pdf/cmaps/UniJIS-UTF8-H.bcmap": "798fb0bf06ab0788d1f6a91c2db7de581612eef03c628f10e8f7ecd8f70ab448",
+    "web/vendor/pdf/cmaps/UniJIS-UTF8-V.bcmap": "1021611424f913b2df0bfdbe94bd327c04e224ec89d8e821c6501ea3d21f4265",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF16-H.bcmap": "710a32d7cb43fd6bd9dbf30da5971f8c941590f74441e208d852c2be0e74cc97",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF16-V.bcmap": "3b149aff5c5707b57fb3215d1775852c8b1f413ec0f679ea628f25cf87fe098d",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF32-H.bcmap": "8d2658e18741af7937d586a57c89729a6fec0d86121197c1f8518aa58b29cdfb",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF32-V.bcmap": "6dd475782f2897648a683c48b2fa015a15b8f06856760bddc8a17a63f418bacb",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF8-H.bcmap": "691c614ce432b3e62486efb54e5c84c6da5afe9b51b21253bde4758feb484183",
+    "web/vendor/pdf/cmaps/UniJIS2004-UTF8-V.bcmap": "40a8c7ea2d46711c5f78fc9a878a7db68b1543ba5cd60ecf14f519a2deb829b7",
+    "web/vendor/pdf/cmaps/UniJISPro-UCS2-HW-V.bcmap": "6826f94d789d7bf1960668c1c5819c34c9585c1b23152fbc19ee81c7df08524b",
+    "web/vendor/pdf/cmaps/UniJISPro-UCS2-V.bcmap": "493de9fd1a08f7946065d8ab58f0c3c9fe489f5a0f109f2d05a3169b4bd5789f",
+    "web/vendor/pdf/cmaps/UniJISPro-UTF8-V.bcmap": "6181d382cf736c5e09492e8be9f26f31fa25b7462253f23ab16646af432cad81",
+    "web/vendor/pdf/cmaps/UniJISX0213-UTF32-H.bcmap": "692044e1fb33445668632bc9fe7386805c624864be1ddeb29d65bb0c99fc630c",
+    "web/vendor/pdf/cmaps/UniJISX0213-UTF32-V.bcmap": "dd54e16ca7bffb3a886242549b2bf7d78a277087f7c60d2636f118c21a5b0646",
+    "web/vendor/pdf/cmaps/UniJISX02132004-UTF32-H.bcmap": "f80ea5a989be30ccda5a8804baef6d3b4b044d2b339bf8b31c671b2466171cf6",
+    "web/vendor/pdf/cmaps/UniJISX02132004-UTF32-V.bcmap": "94c22bd99e771c5fbe0dd8dc39850570d4db0075074aca13e272813edd7cc57f",
+    "web/vendor/pdf/cmaps/UniKS-UCS2-H.bcmap": "a1081396ab4adb6f4a5b6c15f896963c244c1c9bcb65ce5616d06096a1b9811c",
+    "web/vendor/pdf/cmaps/UniKS-UCS2-V.bcmap": "6cab547431958fbdc1d401d06ebd4dd61a73f5509a10f974df32bcbca11a2e43",
+    "web/vendor/pdf/cmaps/UniKS-UTF16-H.bcmap": "42d35b396286499dfae1737a07adb3a64500df37b426580bfb1d3ea872938519",
+    "web/vendor/pdf/cmaps/UniKS-UTF16-V.bcmap": "5bdb7390c80dcc136cb47d41dc7460082560969c17322ee739fe3020fb642410",
+    "web/vendor/pdf/cmaps/UniKS-UTF32-H.bcmap": "3a01ec51ed1b828101351e337ffb8250abe11880032e5210f881170fed2588de",
+    "web/vendor/pdf/cmaps/UniKS-UTF32-V.bcmap": "dfda895eceaed081af030dbbb962b49629eea817fc3c02bae15db93d0c68acd7",
+    "web/vendor/pdf/cmaps/UniKS-UTF8-H.bcmap": "3fac9c65145f72d7d42157a3b9c5ed6904632184e6a0888f2b828699afd2002f",
+    "web/vendor/pdf/cmaps/UniKS-UTF8-V.bcmap": "9ecc6cf30dd354b9778ddba163b6cc7302b087ce9f39d1ba73472d2b75ed13ca",
+    "web/vendor/pdf/cmaps/V.bcmap": "b9ad1c0c09ff14bca52f9a28a9767eb857ad0e8946e64ba14c7387a7eb69866a",
+    "web/vendor/pdf/cmaps/WP-Symbol.bcmap": "543923bead225732aba30976690ee89095a19628277b5863efecc2c728d5d7bf",
+    "web/vendor/pdf/pdf-viewer.css": "1f3c7c3c692d4da2334d0386d2286ec040a37db8654e02b8704b11262bc9bf49",
+    "web/vendor/pdf/pdf.mjs": "57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2",
+    "web/vendor/pdf/pdf.worker.mjs": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18",
+    "web/vendor/pdf/standard_fonts/FoxitDingbats.pfb": "845c752392b6c914fb989c75a08b7792b88f542d2499042ef2889f8c814a16ed",
+    "web/vendor/pdf/standard_fonts/FoxitFixed.pfb": "b6c8fe53f134b8b6d4578cd2d544df4cee9624c4efa8d51a560fb40ea296101b",
+    "web/vendor/pdf/standard_fonts/FoxitFixedBold.pfb": "f1b7159702973f54fc86254ea38bcf3712b2a736eb3a0995751e9f4bb45ad603",
+    "web/vendor/pdf/standard_fonts/FoxitFixedBoldItalic.pfb": "8a000945843bd31add06aee63bf9fd41b7578b4f3242a4b7cd46349ad9d24d4d",
+    "web/vendor/pdf/standard_fonts/FoxitFixedItalic.pfb": "5007faf8320fa1fcc08b8894b356ad976f60b992ba29ee5272578bbdebaf3876",
+    "web/vendor/pdf/standard_fonts/FoxitSerif.pfb": "4f57d2b9d884af8f907bf22df6019b52d86cbf6214fdbd02b1ae05472a543f35",
+    "web/vendor/pdf/standard_fonts/FoxitSerifBold.pfb": "0bdf4b04e964139818d51eda03d566ba999fc3ba2421b1c6c51f9dc969022e80",
+    "web/vendor/pdf/standard_fonts/FoxitSerifBoldItalic.pfb": "a406cac82583bf98175cb62c87ed5e95c45fbb34eece63a10b0a13e793cb2e10",
+    "web/vendor/pdf/standard_fonts/FoxitSerifItalic.pfb": "610ae0687198045c4db5d1a6650fd5e92536631706382eb8b72e38df578d0ae9",
+    "web/vendor/pdf/standard_fonts/FoxitSymbol.pfb": "47967d055530e7357088a08403115425643ec2cdfd6201ba8af0fbd7116c1539",
+    "web/vendor/pdf/standard_fonts/LICENSE_FOXIT": "b578cdd2345840ada550bd12519533812320d5f1d21cf4c1c7e1b1b0a31c98b7",
+    "web/vendor/pdf/standard_fonts/LICENSE_LIBERATION": "d2c4d5b3e115a519cb58eb691aa64538397e2611f9ebe801392cf9667997e7dc",
+    "web/vendor/pdf/standard_fonts/LiberationSans-Bold.ttf": "361c61b82d575c5c35fd9157fda8b0194bcfcd0d88ea8521a4fb5dd53d33dddc",
+    "web/vendor/pdf/standard_fonts/LiberationSans-BoldItalic.ttf": "a224075ac17495ad0a3af3bc0a419ac0704a8b3fd1095456201fb9b095fc281d",
+    "web/vendor/pdf/standard_fonts/LiberationSans-Italic.ttf": "832b4406dbef23628800d3aaad21048534ac84d7e3ad955be83b8172ed8ef512",
+    "web/vendor/pdf/standard_fonts/LiberationSans-Regular.ttf": "f8ace1f892b2bd9dc1792ba7f097fa7588f84fed48321480e04de5390828221f",
+    "web/vendor/pdf/wasm/LICENSE_JBIG2": "9e66b7f1b934a28b37f3bc4dac97915de1674271e79a0a88182a18ed9731b4d1",
+    "web/vendor/pdf/wasm/LICENSE_OPENJPEG": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6",
+    "web/vendor/pdf/wasm/LICENSE_PDFJS_JBIG2": "aad3cce09842e00e9e11ad5e8fef8cc02fbc3a3768fe2f007443b9cee37aaee5",
+    "web/vendor/pdf/wasm/LICENSE_PDFJS_OPENJPEG": "717fc62da03292dbb4dd0c8280bd4ce7bb8550dcf31d772bc93455fb50313425",
+    "web/vendor/pdf/wasm/LICENSE_PDFJS_QCMS": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+    "web/vendor/pdf/wasm/LICENSE_QCMS": "36d847ae882f6574ebc72f56a4f354e4f104fde4a584373496482e97d52d31bc",
+    "web/vendor/pdf/wasm/jbig2.wasm": "466f45c2a61a698152fb5400c27e56ff2ceb73dcb71fde3fc366a502308eaab0",
+    "web/vendor/pdf/wasm/jbig2_nowasm_fallback.js": "68686ced624a48c42f84cdaa482ec44b72b0de4dc84a0df903af1fb7b45b5d9a",
+    "web/vendor/pdf/wasm/openjpeg.wasm": "95e5002597af0824004aa57b1900fe019715db389e37640b1e58395e42f00cc5",
+    "web/vendor/pdf/wasm/openjpeg_nowasm_fallback.js": "9047b34b6bc142d85e4b0aa1b08b0b9baad4c6f8b7ac87641b9e8f90eb6fd23e",
+    "web/vendor/pdf/wasm/qcms_bg.wasm": "663d86126d5f5fcb1c61490f94353e2a8375660b8c5498ab3ebab5a34b08800e",
+    "web/vendor/purify-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "web/vendor/purify.mjs": "60c5d5ccbb466de3de3ba863461a92bf134f8c156cef7992da43e0f659bc5cbd",
+    "web/vendor/virtual-MIT.txt": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7",
+    "web/vendor/virtual-core.mjs": "c494a5f4621df215a30fa42be0b5bea539e5ce1756d7bd6860a2b236f4f48b20"
+  },
+  "license": {
+    "firstParty": "MIT (allowlist only)",
+    "notices": "licenses/npm-packages.json",
+    "npmPackages": 192,
+    "provenance": "third-party/README.md"
+  },
+  "locks": {
+    "cargoSha256": "8f26dcbbb269f780eb4e10513994ce96441abb856026b94976faf885264d0b8b",
+    "derivation": "Web-only root; Cargo canonical subset; original versions/checksums verified",
+    "npmSha256": "dae41cbd5a726314fdebf6a7927ec7049d69aaa517e776ba46b7473808db3ead",
+    "upstreamCargoSha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3"
+  },
+  "resources": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-cpp": "6.0.3",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/lang-python": "6.2.1",
+    "@codemirror/lang-rust": "6.0.2",
+    "@codemirror/lang-yaml": "6.1.3",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/legacy-modes": "6.5.5",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/theme-one-dark": "6.1.3",
+    "@codemirror/view": "6.43.15",
+    "@d2lang/d2": "0.1.34",
+    "@plantuml/core": "1.2026.9",
+    "@tanstack/virtual-core": "3.19.7",
+    "dompurify": "3.4.17",
+    "epubjs": "0.3.93",
+    "esbuild": "0.28.2",
+    "mermaid": "12.2.0",
+    "overrides": {
+      "@xmldom/xmldom": "0.8.15",
+      "lodash-es": "4.18.1"
+    },
+    "pdfjs-dist": "6.4.299"
+  },
+  "revision": "bc4ba04d280cbe45b9235fbc8be684a0a00cb2fb",
+  "sourceFiles": {
+    ".cargo/config.toml": {
+      "sha256": "21dcca0383c3d1208eb87a4191be20b580d75150504f611e1ed5c702544633c8",
+      "source": ".cargo/config.toml"
+    },
+    ".gitattributes": {
+      "sha256": "bf507ae436f5eaee3cb31e55277c5c18647dc1a980c9cd33d4b68be1b1c2ce8c",
+      "source": "distribution/public-gitattributes.txt"
+    },
+    ".gitignore": {
+      "sha256": "765a82b9f33eb96e723eaa39a0b8f565f69fa0c4a2153112b705ae54cc54db90",
+      "source": "distribution/public-gitignore.txt"
+    },
+    "Cargo.lock": {
+      "sha256": "12b8d783661bb03573ae1da83c34088fefbd9b3c1c68779876fced7887f936a3",
+      "source": "Cargo.lock"
+    },
+    "Cargo.toml": {
+      "sha256": "8598d353682676ca1c1e2fc06848b49c800262844f4a4f0496a52a1ba70620a4",
+      "source": "distribution/public-Cargo.toml"
+    },
+    "DISTRIBUTION.md": {
+      "sha256": "6e0a159fde75d39c2da05ebbdf762a568acbcec50b8eadc5930ad2a753912e03",
+      "source": "distribution/POLICY.md"
+    },
+    "LICENSE": {
+      "sha256": "cf3d3312057275ec7758d30a1ee308b7f45ead216b695f16bd36299aa0e9b523",
+      "source": "distribution/LICENSE-MIT.txt"
+    },
+    "README.md": {
+      "sha256": "361e42f6f8d6e7b9e2885a3f88a83f5047e6d3430e00284d69ab1f04912193d5",
+      "source": "distribution/README-reader.md"
+    },
+    "assets/diagrams/engine.mjs": {
+      "sha256": "b8e8fae1ae28136b57c97368c5e50f573f2573459bb00b18a94be73b5873d995",
+      "source": "assets/diagrams/engine.mjs"
+    },
+    "assets/diagrams/render.html": {
+      "sha256": "eb91203b6d413b0410763dc75e3adc86487840fe0a295d515cd8d4ff23be0ef9",
+      "source": "assets/diagrams/render.html"
+    },
+    "crates/syntax/Cargo.toml": {
+      "sha256": "b0cab109ce632f2288d81e43e35cb71402993187b560f1043a3b0a254bbbe306",
+      "source": "crates/syntax/Cargo.toml"
+    },
+    "crates/syntax/src/lib.rs": {
+      "sha256": "f5a0ac91aca63d13d1e5ebed7d8151b4e2edd3625ea96e6c9d171096fdd8fcea",
+      "source": "crates/syntax/src/lib.rs"
+    },
+    "docs/embedding.md": {
+      "sha256": "b376aa1818276d8209a75da7f6b15a17895b4dc68cdc8203851199dbda945ae0",
+      "source": "docs/embedding.md"
+    },
+    "docs/image-components.md": {
+      "sha256": "f2422817ee1b9a889807e4165da3b64f7c86be7703c9a692283ee3a1d68bb03f",
+      "source": "docs/image-components.md"
+    },
+    "docs/jq-components.md": {
+      "sha256": "3171ff64e8f4866a6a72569fe37724f3a79f5e31d5d6af27bdf50a34a50d1441",
+      "source": "docs/jq-components.md"
+    },
+    "docs/markdown-profile.md": {
+      "sha256": "0593167114c0aa00f369cdeaadcbd9950404f1dcdca290f03e68eda2b9acb648",
+      "source": "docs/markdown-profile.md"
+    },
+    "docs/markdown-references.md": {
+      "sha256": "17688c70f81bb753b03cb8e6463eea10647d62bd7e4eed26eb554e5f645b9e5c",
+      "source": "docs/markdown-references.md"
+    },
+    "docs/notes-components.md": {
+      "sha256": "f2f2a266c7466376a235344520ce4afa19a273b6dc1223867b900db550222504",
+      "source": "docs/notes-components.md"
+    },
+    "docs/projection-components.md": {
+      "sha256": "c56897594903bc6f8bc21682f5368f4df719f97c14221811ed7648d41cafed0e",
+      "source": "docs/projection-components.md"
+    },
+    "docs/reader-api.md": {
+      "sha256": "ada9ab56f9e115f3417e5369203d23f499aefbf419011db4d30647b4282946f9",
+      "source": "docs/reader-api.md"
+    },
+    "docs/reader-assets.md": {
+      "sha256": "d66eb4db3945514c6a48277f11eae94dec63b99d799801df0fdf201bfa7a5001",
+      "source": "docs/reader-assets.md"
+    },
+    "docs/table-components.md": {
+      "sha256": "4a3209e064bc2050a53e148a32cf9d86c6034e71bf4b9bf26697a4250da71a15",
+      "source": "docs/table-components.md"
+    },
+    "docs/translation.md": {
+      "sha256": "8d6efb70648384b972adc1e3154252254282c12fe0e7c16dac55a74df51e5adf",
+      "source": "docs/translation.md"
+    },
+    "docs/web-parity.md": {
+      "sha256": "b54cc1795cd19c736a78199c34ce17b86eef06affe7a39be8f383d821e660c7f",
+      "source": "docs/web-parity.md"
+    },
+    "examples/embedded-host.rs": {
+      "sha256": "712dc746b14cd3a19585cb7abcfa0f6a2f6f443200317a25ef5cb0451fd3525e",
+      "source": "examples/embedded-host.rs"
+    },
+    "examples/reader-assets-host.rs": {
+      "sha256": "172e770c6d9b4c3d3fc4ab2ca2bedfad9168dd621a012c90683325e09855d050",
+      "source": "examples/reader-assets-host.rs"
+    },
+    "examples/reader-corpus.rs": {
+      "sha256": "c335b6ed1bc62ebc53d234e073413ede69aa73942d81fa6d4b2428c4c35efbc5",
+      "source": "examples/reader-corpus.rs"
+    },
+    "examples/reader-host.rs": {
+      "sha256": "19b04a4e3d027caa6a8468c463ecdc86eb586136fbd212cdfce07c79c68d656c",
+      "source": "examples/reader-host.rs"
+    },
+    "package-lock.json": {
+      "sha256": "dae41cbd5a726314fdebf6a7927ec7049d69aaa517e776ba46b7473808db3ead",
+      "source": "package-lock.json"
+    },
+    "package.json": {
+      "sha256": "9454b1810c0dcf7a46131b76c2961c39f9d59323af758622b6586d5e1261f03f",
+      "source": "distribution/public-package.json"
+    },
+    "scripts/build.mjs": {
+      "sha256": "e008efcee31c7083be0bd72bcb86e222ee8b584700eaedac2495d6df423ed6dd",
+      "source": "scripts/build.mjs"
+    },
+    "scripts/d2-resource.mjs": {
+      "sha256": "e405beea6e162a9fe6d4cf844f8c34cea1b2f369c1b07152abc88b832e8001bd",
+      "source": "scripts/d2-resource.mjs"
+    },
+    "scripts/pdf-assets.mjs": {
+      "sha256": "4a5fddd06eb6a40c663edd19ae98e7e148ab6188a45791179285694e13681a34",
+      "source": "scripts/pdf-assets.mjs"
+    },
+    "scripts/verify-reader-package.py": {
+      "sha256": "7e3d5b1eedc2410d58aceca38f35d1381e3431819c1d6cde15a639e06a765cc7",
+      "source": "scripts/verify-reader-package.py"
+    },
+    "scripts/web-imports.mjs": {
+      "sha256": "947b80045ce8623d22e98592a62656945d19f8f5c30cae2347d649f79140cb17",
+      "source": "scripts/web-imports.mjs"
+    },
+    "src/core/blocks/mod.rs": {
+      "sha256": "c73fd7d992701c0276dbac289734645f72cef74f6a524ac69ab2a15ae5667e22",
+      "source": "src/core/blocks/mod.rs"
+    },
+    "src/core/blocks/projection.rs": {
+      "sha256": "dff43e8be8dc74ba17da24ff5a30cd38a3b32db434382753d3d34bc937cf01ed",
+      "source": "src/core/blocks/projection.rs"
+    },
+    "src/core/compare.rs": {
+      "sha256": "52a04fa799196b863ab5db35c582caf9055a5d8e15b883e94000274f2f8b3c6b",
+      "source": "src/core/compare.rs"
+    },
+    "src/core/csv_document.rs": {
+      "sha256": "4f126466beaf26face5974725bdb24cca2006cd1477e0dd6012a8a7a6ca10c47",
+      "source": "src/core/csv_document.rs"
+    },
+    "src/core/document_format.rs": {
+      "sha256": "429c1ff48b250d4f96d50080ac5d4af2212877c1be50602c3b3693f35ed625b7",
+      "source": "src/core/document_format.rs"
+    },
+    "src/core/documents/archive.rs": {
+      "sha256": "20d3c9791ba0de089fcaeda2ac6c2c336a6875c967224edb82f54a7742a3196b",
+      "source": "src/core/documents/archive.rs"
+    },
+    "src/core/documents/html.rs": {
+      "sha256": "910b65c5a62f1f68b06a52359f2810f24849bc2d246e69f06efd9db57cfe506d",
+      "source": "src/core/documents/html.rs"
+    },
+    "src/core/documents/image_animation.rs": {
+      "sha256": "a9e1c5f43a6924af63cd6cc2e439b190a084393bd3653801913bfbdfce562b91",
+      "source": "src/core/documents/image_animation.rs"
+    },
+    "src/core/documents/image_decode.rs": {
+      "sha256": "0eba8fc188f269a33db74e8202aa30a979f50f40485f0acb56e8f2a5a7a4f916",
+      "source": "src/core/documents/image_decode.rs"
+    },
+    "src/core/documents/mod.rs": {
+      "sha256": "f898e9ad9a717336524ee7dabe764b90be5c2105522728271b083e611c7189f0",
+      "source": "src/core/documents/mod.rs"
+    },
+    "src/core/documents/pdf.rs": {
+      "sha256": "7e552662fa3558dd18bb1e8e89f75d591d13087c972f3027d6a71027e5f16081",
+      "source": "src/core/documents/pdf.rs"
+    },
+    "src/core/documents/structured.rs": {
+      "sha256": "8611c5f724101a38dd0b85ed6d42c6511b148f51b703fec4daca3f386a9c27b5",
+      "source": "src/core/documents/structured.rs"
+    },
+    "src/core/documents/svg_resources.rs": {
+      "sha256": "4d83eea67d7e31e9dd68238dadfa43cf0e3d8bf3538086f9428f7abd65358c8b",
+      "source": "src/core/documents/svg_resources.rs"
+    },
+    "src/core/documents/tests.rs": {
+      "sha256": "579fc9f933b069303bb54e71b4617a33bdf34439f990e81816f30e8b7c68e907",
+      "source": "src/core/documents/tests.rs"
+    },
+    "src/core/edit.rs": {
+      "sha256": "202fab0575a60f5c7d33d143e187269a2dfecc7d376ccd059f1c5b8d002b7cdf",
+      "source": "src/core/edit.rs"
+    },
+    "src/core/highlight.rs": {
+      "sha256": "3f412d0dcc48f412e620337fc1b15fa4f0330550e2a0ae577c1b5bd0fc525a04",
+      "source": "src/core/highlight.rs"
+    },
+    "src/core/highlight/budget.rs": {
+      "sha256": "25e8ea50f54d90892b0a5a1ad5155c26fdf4509ccaf25dcea980b24c1816da4c",
+      "source": "src/core/highlight/budget.rs"
+    },
+    "src/core/highlight/engine.rs": {
+      "sha256": "46850be8635926c724e3f1eb811ca6011687f60de7329823c6f64605138f9c7e",
+      "source": "src/core/highlight/engine.rs"
+    },
+    "src/core/jq_query.rs": {
+      "sha256": "c6bf8eec54c49c3f6a976cafa4817795e622c2a0d8c9989faaeb655c2cd8f753",
+      "source": "src/core/jq_query.rs"
+    },
+    "src/core/markdown.rs": {
+      "sha256": "eb494833b02cd6cc9c8a09f5a8b19e0ea11ff38fc44afb0bc479dade906d88e3",
+      "source": "src/core/markdown.rs"
+    },
+    "src/core/markdown_html.rs": {
+      "sha256": "f478c758685320eabe79e6cfce07549aa0b1dee318a7918ed8b492cce720c329",
+      "source": "src/core/markdown_html.rs"
+    },
+    "src/core/mod.rs": {
+      "sha256": "14934dd418a77688b128fcd7bfb045794f22ceeb2fd2b0a65352bf8a2ae10c09",
+      "source": "src/core/mod.rs"
+    },
+    "src/core/notes.rs": {
+      "sha256": "2f982541cb05c88b3020b30a329b40df2433d92458ba1661634307dec8454adc",
+      "source": "src/core/notes.rs"
+    },
+    "src/core/reader/assets.rs": {
+      "sha256": "c07fb0cf08a6a2b4d940bd53880e798a8ab4821c86ddcb4cfea2c501fabb526a",
+      "source": "src/core/reader/assets.rs"
+    },
+    "src/core/reader/mod.rs": {
+      "sha256": "9cb6ecb17e04e1184d4235affe2cf9015239a952200d4a1460ea7f5dbd40d34c",
+      "source": "src/core/reader/mod.rs"
+    },
+    "src/core/reader/operations.rs": {
+      "sha256": "12326a2b0029f54784958ceb2b57f0b179a0f0ae8c5e690d9c8f50b09602b09a",
+      "source": "src/core/reader/operations.rs"
+    },
+    "src/core/reader/types.rs": {
+      "sha256": "f13f9f24e661b2a3a999c80009665661992c700bbfe8adc97de857853a7de349",
+      "source": "src/core/reader/types.rs"
+    },
+    "src/core/references.rs": {
+      "sha256": "fd68c8c10f1c3dec40e792487e1514d5a405c1faa9502c06d5d4fa4e4c58dc66",
+      "source": "src/core/references.rs"
+    },
+    "src/core/source.rs": {
+      "sha256": "37dc7def249db1816d15b8a790e1f3ac9aba5e0e6b6ed8641a6faa1f32c30142",
+      "source": "src/core/source.rs"
+    },
+    "src/core/table_query.rs": {
+      "sha256": "e4380257e2f2f3b7b7f959210463e3ea05aad927b4f727c6cdab6c5cd9028e73",
+      "source": "src/core/table_query.rs"
+    },
+    "src/core/table_query/chart.rs": {
+      "sha256": "880f6abb92b96e904ae0a25d52b5d84c51444006726398cea7016018b18b868a",
+      "source": "src/core/table_query/chart.rs"
+    },
+    "src/lib.rs": {
+      "sha256": "936a90be2719c2b3ba1ad828f553aff0e4a9e0b8ca59713878983fcb81445684",
+      "source": "distribution/public-lib.rs"
+    },
+    "src/runtime/assets.rs": {
+      "sha256": "3863f2edccc547b08d85b3728f38e917bace4b65cea999aa2feaa3c00b6052db",
+      "source": "src/runtime/assets.rs"
+    },
+    "src/runtime/cache.rs": {
+      "sha256": "6683fd4055a6921f484ad33cdb641880887ae550c71cf36a3cde861b24c72b7c",
+      "source": "src/runtime/cache.rs"
+    },
+    "src/runtime/config.rs": {
+      "sha256": "30f38b122e882eb739122350ea3c77558ef3f58d9cd893a314581ec27d67e3b0",
+      "source": "src/runtime/config.rs"
+    },
+    "src/runtime/diagram_origin.rs": {
+      "sha256": "0ce58adf39bffd51dcaf3a0b801212967c88372c062a7d7b1747cbd4eae132d2",
+      "source": "src/runtime/diagram_origin.rs"
+    },
+    "src/runtime/mod.rs": {
+      "sha256": "584b9eff014acec9a149eaa356487dddc2923dae181e6a2cfedef6828a851da8",
+      "source": "src/runtime/mod.rs"
+    },
+    "src/runtime/process.rs": {
+      "sha256": "9da4473e9dd5a44cb32e7a75190cade7154a7a6b1fb69fc9abd7c5692ec69d6a",
+      "source": "src/runtime/process.rs"
+    },
+    "src/runtime/renderer.rs": {
+      "sha256": "b8e9bdc2dbdf5d81e1ff467930ec89a518ab773cab52266ac1401edcfdd5b2b7",
+      "source": "src/runtime/renderer.rs"
+    },
+    "src/web/compare_runtime.rs": {
+      "sha256": "c6d2ab3a9605347066d8801c1244091c024967331744dae8677f51cdc9f98586",
+      "source": "src/web/compare_runtime.rs"
+    },
+    "src/web/document_runtime.rs": {
+      "sha256": "69978b0d21465f8848bd354bdf7ac5b9dd5d8424ea84cef607007e7ea4b6585a",
+      "source": "src/web/document_runtime.rs"
+    },
+    "src/web/edit_runtime.rs": {
+      "sha256": "50af343c073096f0e5a7189fa7e8ecb3d321f28baa95d9853661b191cf29afbe",
+      "source": "src/web/edit_runtime.rs"
+    },
+    "src/web/epub_runtime.rs": {
+      "sha256": "94aab795b88ea06bf951177f05c8616224e3e5e3727dd313f393f998092f1ab8",
+      "source": "src/web/epub_runtime.rs"
+    },
+    "src/web/files.rs": {
+      "sha256": "f5bbb371818e28e18efaafc1825ba8e9a274464bdcf79ba7c1a870bf9bacd769",
+      "source": "src/web/files.rs"
+    },
+    "src/web/main.rs": {
+      "sha256": "1dab474f624af823c775e442b2ece90bf2b92ce14fa8add440956980e4d7816d",
+      "source": "src/web/main.rs"
+    },
+    "src/web/mod.rs": {
+      "sha256": "cd41f50d722f5d56047048869f3e8aa72d0cdd7dee20d614555da0eb197ce145",
+      "source": "src/web/mod.rs"
+    },
+    "src/web/panes.rs": {
+      "sha256": "c62485fded7de18b45aeb19c736de637d0b74e2f147177c998caf44a9b995b90",
+      "source": "src/web/panes.rs"
+    },
+    "src/web/pdf_runtime.rs": {
+      "sha256": "096068acb2130fd28dbf9b07b73baadf21f84c0ac0dbb0cbc714c1c8e1f5163c",
+      "source": "src/web/pdf_runtime.rs"
+    },
+    "src/web/references.rs": {
+      "sha256": "2fe69806ec4bfe839c1f43704667841ad4cf2038753441b4c965424d7c94eba4",
+      "source": "src/web/references.rs"
+    },
+    "src/web/selected_files.rs": {
+      "sha256": "c97007129c17010fee6417c2dcb3f86a05439a702b3e2ec33564b3b8f3b2ce23",
+      "source": "src/web/selected_files.rs"
+    },
+    "src/web/service.rs": {
+      "sha256": "c178f30413077a6a64b59ea5a3fa5c4a42b68436f2fe47df6ff6fa8efe8c7d58",
+      "source": "src/web/service.rs"
+    },
+    "src/web/table_chart_runtime.rs": {
+      "sha256": "1d8365d7176d4d9b67326c2ad1534515bddeafa5bf217b4eb6a5c80656d3b3ca",
+      "source": "src/web/table_chart_runtime.rs"
+    },
+    "src/web/table_query_runtime.rs": {
+      "sha256": "df9a0d157f7094cfc7086c95ac50a8f004d26f47a72f041ac3fd545ebcc6a6b1",
+      "source": "src/web/table_query_runtime.rs"
+    },
+    "tests/browser/code-search-check.mjs": {
+      "sha256": "b0a9b26929dacacadbfc44f8cde390981ef81260f609fdc69fdb9abf43da5005",
+      "source": "tests/browser/code-search-check.mjs"
+    },
+    "tests/browser/contract-webkit.py": {
+      "sha256": "d3f333a2336c169c09ec8e4546b6307d05bce422a6f105fbf2738321c2f6cf59",
+      "source": "tests/browser/contract-webkit.py"
+    },
+    "tests/browser/contracts/code-search.mjs": {
+      "sha256": "2e7f44dce8aeab599d2162a44703d3af79099ab7999a51a01b176fe60f02d0bd",
+      "source": "tests/browser/contracts/code-search.mjs"
+    },
+    "tests/browser/contracts/diagram-engine.mjs": {
+      "sha256": "9d36031459cb11cc59ca2c109d3fe754ddfc4bdfffd7d7a358999d09d37600f6",
+      "source": "tests/browser/contracts/diagram-engine.mjs"
+    },
+    "tests/browser/contracts/diagram-lifecycle.mjs": {
+      "sha256": "bb419af7d1cc84672a3186f2eadc1de838e17a69d2696444c02ef44058873d33",
+      "source": "tests/browser/contracts/diagram-lifecycle.mjs"
+    },
+    "tests/browser/contracts/embedded-image.mjs": {
+      "sha256": "5d308b6c8ab19aa05139eefe870700472a91676737d6f9d823da26d3ec969d34",
+      "source": "tests/browser/contracts/embedded-image.mjs"
+    },
+    "tests/browser/contracts/embedded-source.mjs": {
+      "sha256": "adc29afeb35c2f203a279dda0aeb9c203a35d4f788a7c7242d608c12f3b2d458",
+      "source": "tests/browser/contracts/embedded-source.mjs"
+    },
+    "tests/browser/contracts/epub-reader.mjs": {
+      "sha256": "9e3e10d09cfccba1531c6035ccdfb55cc01dd34364812d0629c685a855553f66",
+      "source": "tests/browser/contracts/epub-reader.mjs"
+    },
+    "tests/browser/contracts/file-ui.mjs": {
+      "sha256": "6d4f8d459ed729afc7385ca8580e479417d5e4cf96f38934ce140a4d0cf14424",
+      "source": "tests/browser/contracts/file-ui.mjs"
+    },
+    "tests/browser/contracts/host-client.mjs": {
+      "sha256": "dbcca0c0d613a5cf9d85e07d975423e8ad00043727bb37b8a0b87ffaabaf518b",
+      "source": "tests/browser/contracts/host-client.mjs"
+    },
+    "tests/browser/contracts/image-view.mjs": {
+      "sha256": "004c55ad7a2ded807b0869dbc1c38fc6c3b18522835072e3fc4e52ae5dac3f1b",
+      "source": "tests/browser/contracts/image-view.mjs"
+    },
+    "tests/browser/contracts/jq-query.mjs": {
+      "sha256": "543516169b0beb843f7627a294da0762961c6ae9f90e62ed652988977a0c6539",
+      "source": "tests/browser/contracts/jq-query.mjs"
+    },
+    "tests/browser/contracts/markdown-references.mjs": {
+      "sha256": "fddb7703f617c1cf9e85a280add960825ddc26ff093eebd35754b9634350b2c0",
+      "source": "tests/browser/contracts/markdown-references.mjs"
+    },
+    "tests/browser/contracts/markdown.mjs": {
+      "sha256": "3ab756e98e07efe5bc1dca52feb565945e8c9fbf8c0fd7a12a6df6902ff7a8be",
+      "source": "tests/browser/contracts/markdown.mjs"
+    },
+    "tests/browser/contracts/notes.mjs": {
+      "sha256": "3d563e7430f313391cafd581953e68e71d7137ec6d26b1d1aa3f5a8d0c303ad8",
+      "source": "tests/browser/contracts/notes.mjs"
+    },
+    "tests/browser/contracts/outline.mjs": {
+      "sha256": "8f7fab27d41e2543b3fa437151f076116a53ea24e8cc74be3229ace97bbf00a8",
+      "source": "tests/browser/contracts/outline.mjs"
+    },
+    "tests/browser/contracts/pdf-reader.mjs": {
+      "sha256": "72d31bdcb75cfe30cd06ff54a2d5980296dd032c6769a7d6147a5bd738976b65",
+      "source": "tests/browser/contracts/pdf-reader.mjs"
+    },
+    "tests/browser/contracts/presentation.mjs": {
+      "sha256": "4d05c0bbb56da73147f618d14bd82a456951725501e8db4095a65242c7d8de4d",
+      "source": "tests/browser/contracts/presentation.mjs"
+    },
+    "tests/browser/contracts/projection-view.mjs": {
+      "sha256": "7a74861bfd66d1b3d55b097f48e23ad95e1b934001c954a2e110cd2389f250a4",
+      "source": "tests/browser/contracts/projection-view.mjs"
+    },
+    "tests/browser/contracts/raw-resources.mjs": {
+      "sha256": "fa2e12d9eeaca71c92ed4794c8cd06517216254dc9866cb316e9c04b9f5a82a6",
+      "source": "tests/browser/contracts/raw-resources.mjs"
+    },
+    "tests/browser/contracts/table-cells.mjs": {
+      "sha256": "e9e77c742fde5a4e0b94c6560eaab59e613b58e8ea38a49f213fa2dd58ead0ed",
+      "source": "tests/browser/contracts/table-cells.mjs"
+    },
+    "tests/browser/contracts/table-controls.mjs": {
+      "sha256": "280b1f420f4819b9b9ccdcead49db4b2430f5809227c511de9e9e0bc6f053a6a",
+      "source": "tests/browser/contracts/table-controls.mjs"
+    },
+    "tests/browser/contracts/table-layout.mjs": {
+      "sha256": "849df90e6b41ecf2570ae0c14ebae49facbd28f53a8beb400d968b3c263f46c6",
+      "source": "tests/browser/contracts/table-layout.mjs"
+    },
+    "tests/browser/contracts/table-plot.mjs": {
+      "sha256": "cafc186fb5e77db09ee99d5f718552d2b04d4d8274f2a0effaf6b8dc606aac5d",
+      "source": "tests/browser/contracts/table-plot.mjs"
+    },
+    "tests/browser/contracts/table-query.mjs": {
+      "sha256": "e706dce9470ef4952bfd37726f8e95c3c36018ebc8a7ea969c76e51e079f9b97",
+      "source": "tests/browser/contracts/table-query.mjs"
+    },
+    "tests/browser/contracts/table-view.mjs": {
+      "sha256": "04c93064d827f66047988f765c30aaba4f7e37a670a339037c4aa80102910c4d",
+      "source": "tests/browser/contracts/table-view.mjs"
+    },
+    "tests/browser/contracts/translation.mjs": {
+      "sha256": "65372c231d8f6b39aa1c885deb0c00108040ec41c3b18226514a99c9aff8f145",
+      "source": "tests/browser/contracts/translation.mjs"
+    },
+    "tests/browser/dom-component-check.mjs": {
+      "sha256": "c0709a324b626066c9be5331aa0c1b00074367fb0f15dffd2ef3f537da128cb3",
+      "source": "tests/browser/dom-component-check.mjs"
+    },
+    "tests/browser/embedded-check.mjs": {
+      "sha256": "d8bac89a742ef004461a097a51413445f8cf9fac1d8ec426ff865fe13f79c2e7",
+      "source": "tests/browser/embedded-check.mjs"
+    },
+    "tests/browser/embedded-jq-check.mjs": {
+      "sha256": "32625a5560460d736b6c67b0ad105421096fa7624049873f21cf206f0cda0683",
+      "source": "tests/browser/embedded-jq-check.mjs"
+    },
+    "tests/browser/epub-progress-corpus-check.mjs": {
+      "sha256": "f7c8a3d32881ca4d9d3f701dc19a8a6aadd3868ad4a4a841608aa5684521b9f2",
+      "source": "tests/browser/epub-progress-corpus-check.mjs"
+    },
+    "tests/browser/epub_fixtures.py": {
+      "sha256": "78dc27c22371cea3ae628716042afb224b4c756d7b1da9f1d6c1134540731c61",
+      "source": "tests/browser/epub_fixtures.py"
+    },
+    "tests/browser/file-ui-check.mjs": {
+      "sha256": "6eb93d7027e26180bf735b06de33bef83defac51f524d0d0b9ca36ce5dd2a0f3",
+      "source": "tests/browser/file-ui-check.mjs"
+    },
+    "tests/browser/host-client-check.mjs": {
+      "sha256": "34e029742a73715aa9f961f17d598cac09130a9c6605151b6afe8cd15a679476",
+      "source": "tests/browser/host-client-check.mjs"
+    },
+    "tests/browser/image-view-check.mjs": {
+      "sha256": "a1803dde3d3027fb09f6e5b0b1bf73cce1a09a69859925bef12ad247a0975c03",
+      "source": "tests/browser/image-view-check.mjs"
+    },
+    "tests/browser/jq-query-check.mjs": {
+      "sha256": "de579dec7b2dbbb3a27a942ba1b0f6cec5696992410b4a8d9bcdb06c78c9f68e",
+      "source": "tests/browser/jq-query-check.mjs"
+    },
+    "tests/browser/markdown-engines-check.mjs": {
+      "sha256": "d0e3c557982116f5737fde8ec5b5a8147b31f706576074eafbdc5992277997ec",
+      "source": "tests/browser/markdown-engines-check.mjs"
+    },
+    "tests/browser/markdown-references-check.mjs": {
+      "sha256": "01b968af27a6be994af170d5c204719e0035f4e7283dae046db06c351df261c5",
+      "source": "tests/browser/markdown-references-check.mjs"
+    },
+    "tests/browser/notes-component-check.mjs": {
+      "sha256": "139951b8d2c0f1a4cd374d4619f2ed2c0772c2551ecc9d7589e1c6af297b21d4",
+      "source": "tests/browser/notes-component-check.mjs"
+    },
+    "tests/browser/outline-check.mjs": {
+      "sha256": "7f43a2d318eab8e646b71064e5fbf1c418bc0fcc80dff11eba03124224162b3e",
+      "source": "tests/browser/outline-check.mjs"
+    },
+    "tests/browser/pdf-fixture.mjs": {
+      "sha256": "31eed014b55c4cb8412c62cedfa5da07bd253f12ed7ee7b762b80e2876f67056",
+      "source": "tests/browser/pdf-fixture.mjs"
+    },
+    "tests/browser/presentation-check.mjs": {
+      "sha256": "f9de034c3028399f190e45d1c1e764ecb48aa8f2d123230fa9797dd419ab19f9",
+      "source": "tests/browser/presentation-check.mjs"
+    },
+    "tests/browser/projection-view-check.mjs": {
+      "sha256": "89be6a7490f8f691bf528ca778859ce3f1bcffd3d1b732bcd4159149ffed58e4",
+      "source": "tests/browser/projection-view-check.mjs"
+    },
+    "tests/browser/reader-assets-check.mjs": {
+      "sha256": "dc665f9f1a93b232c36a3c31c08709e1d6f427cec8fdedba0ae549507c844650",
+      "source": "tests/browser/reader-assets-check.mjs"
+    },
+    "tests/browser/reference-policy-check.mjs": {
+      "sha256": "fb0e308460484acdbd6fbd788b8fff1bdf505ca3b1ae3d7133cb286101b7a460",
+      "source": "tests/browser/reference-policy-check.mjs"
+    },
+    "tests/browser/table-cells-check.mjs": {
+      "sha256": "e6d8ed7ceca580725ce9b6f613efa16ca29f27a7751d0542ae6f03f8a346012e",
+      "source": "tests/browser/table-cells-check.mjs"
+    },
+    "tests/browser/table-controls-check.mjs": {
+      "sha256": "b4a4712e15c19984b375532c4ac321aac8e22993b03931eae8019444677ea3c1",
+      "source": "tests/browser/table-controls-check.mjs"
+    },
+    "tests/browser/table-fixture.mjs": {
+      "sha256": "c7695a83bcb6aa64bb3d948a32e722fae3297744d368239ad429cf6eeb4778d4",
+      "source": "tests/browser/table-fixture.mjs"
+    },
+    "tests/browser/table-interactions-check.mjs": {
+      "sha256": "b1e61120ac8761cb5186fa1eb9e690bd5464c9d1204877f708d39dc8c06a3c25",
+      "source": "tests/browser/table-interactions-check.mjs"
+    },
+    "tests/browser/table-layout-check.mjs": {
+      "sha256": "3fd716780544323d28802b75d785dc98349ba9b0687e3992e3695ffee3c17c71",
+      "source": "tests/browser/table-layout-check.mjs"
+    },
+    "tests/browser/table-plot-check.mjs": {
+      "sha256": "d2625483ffb1a1c4df8c948aaf180d5ea16bc8f4c322d4b89e9de53d7eceb76f",
+      "source": "tests/browser/table-plot-check.mjs"
+    },
+    "tests/browser/table-query-component-check.mjs": {
+      "sha256": "215a4de6d2ba43705915ab53b07c6299db18f517adac868060bbc99e1872f669",
+      "source": "tests/browser/table-query-component-check.mjs"
+    },
+    "tests/browser/table-view-check.mjs": {
+      "sha256": "d45e0a97297801e817628fb62988f17e521621a10f5136d55a627636c15dd652",
+      "source": "tests/browser/table-view-check.mjs"
+    },
+    "tests/browser/translation-check.mjs": {
+      "sha256": "02eaaf76435664fbbcc65c3de9bd6e6d6cfe8d26ed8b3bd574b22461158cb4c1",
+      "source": "tests/browser/translation-check.mjs"
+    },
+    "tests/desktop/table-check.js": {
+      "sha256": "7596720ed6a79004bc7da260daf1df0697765fa19d1295e5a1be81c353f7bc89",
+      "source": "tests/desktop/table-check.js"
+    },
+    "tests/markdown_profile.rs": {
+      "sha256": "1aaa59e77bebeb6dfd82aed419a8552d8cd833ad02337ff0111de4f9636639aa",
+      "source": "tests/markdown_profile.rs"
+    },
+    "tests/reader_api.rs": {
+      "sha256": "f4dfdcbac698d8ec308c72f20d0db5555a4daf23097668ba1796305993bd9e63",
+      "source": "tests/reader_api.rs"
+    },
+    "tests/server/host-image-check.mjs": {
+      "sha256": "938299b28866365888be778df8ef6913c485b39d416cb2591e86f9e70b4246a0",
+      "source": "tests/server/host-image-check.mjs"
+    },
+    "tests/server/image-frames-check.mjs": {
+      "sha256": "599314972adfd67b0d000ea5ea0fd7cc40c08365d79a65a5eff4dabb91cb6c5c",
+      "source": "tests/server/image-frames-check.mjs"
+    },
+    "tests/server/public-core-check.mjs": {
+      "sha256": "fc85cd71e1220a218047395aa4b295e8bb9c9fcff869a9557fd688715241bb23",
+      "source": "tests/server/public-core-check.mjs"
+    },
+    "tests/server/reader-export-check.py": {
+      "sha256": "becc794123779e0c0922d59406f95b6a67809826677fab692dc9c6a00747744e",
+      "source": "tests/server/reader-export-check.py"
+    },
+    "tests/server/source-ranges-check.mjs": {
+      "sha256": "9ed010c9cbfe85ad56aa4dabc13bd2ed2c499b34873dc7e8330077c6b9df619c",
+      "source": "tests/server/source-ranges-check.mjs"
+    },
+    "tests/server/web-imports-check.mjs": {
+      "sha256": "8c41b68d2f89b8c51a83d092c052ed2c6b14cd2a1c360a63c3db7092a8d88928",
+      "source": "tests/server/web-imports-check.mjs"
+    },
+    "tests/support/markdown.rs": {
+      "sha256": "13d2d954bc646f19eb2fab6510658de0eb04cbc45edc01a33634821bfd025296",
+      "source": "tests/support/markdown.rs"
+    },
+    "tests/support/references.rs": {
+      "sha256": "0a21f1bddde836e377562eed53abba9155cd2cacca9a0a1622e7fbd59e041e52",
+      "source": "tests/support/references.rs"
+    },
+    "third-party/README.md": {
+      "sha256": "963bd3545064a8a0f5ec207605db7f3baa8706c423c0b8d3b1a988836355dc2e",
+      "source": "third-party/README.md"
+    },
+    "third-party/arborium-MIT.txt": {
+      "sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb",
+      "source": "third-party/arborium-MIT.txt"
+    },
+    "third-party/arborium-grammar-licenses.md": {
+      "sha256": "16f0983752c47c1471b76ca5c9fa005e1d9dbc6c802e03ab32e05dc0710b9efc",
+      "source": "third-party/arborium-grammar-licenses.md"
+    },
+    "third-party/codex-thread-studio-MIT.txt": {
+      "sha256": "fac305b8a776bd517fe8b1f641f6809a4a38d0ca9af6dcdf7653f987c447eef1",
+      "source": "third-party/codex-thread-studio-MIT.txt"
+    },
+    "third-party/highlighting.md": {
+      "sha256": "71c43b25844686c998183d7327f85b466f60c70352a4b24cef8e6aa1aab3f8bf",
+      "source": "third-party/highlighting.md"
+    },
+    "third-party/marks-pane-1.0.9-package.json": {
+      "sha256": "09ad68a28c8d7ec8f115d0d79a1f66f6626d089d7831b983eee23d8d59ed0898",
+      "source": "third-party/marks-pane-1.0.9-package.json"
+    },
+    "third-party/path-webpack-0.0.3-package.json": {
+      "sha256": "80ced94cd0276b29e3499ec7c07f1c65f66a6a957d1e01b1a47a45bdd04cfd22",
+      "source": "third-party/path-webpack-0.0.3-package.json"
+    },
+    "third-party/path-webpack-Node-v7.0.0-LICENSE.txt": {
+      "sha256": "1914bfb950be8d576ce9e49c8a0e51c9f2402560fe3c19093e69bc1306a56e9e",
+      "source": "third-party/path-webpack-Node-v7.0.0-LICENSE.txt"
+    },
+    "third-party/syntax-acknowledgements.md": {
+      "sha256": "b84d429fe219bee3d5e56761e15a31f78d2a41a69ea1c57bd5168531b97585cf",
+      "source": "third-party/syntax-acknowledgements.md"
+    },
+    "third-party/tree-sitter-MIT.txt": {
+      "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78",
+      "source": "third-party/tree-sitter-MIT.txt"
+    },
+    "third-party/two-face-MIT.txt": {
+      "sha256": "7206e5cec3869d1c394ba80866d1cc25c0a749e3d4e0d229801a722e37b670c6",
+      "source": "third-party/two-face-MIT.txt"
+    },
+    "web/assets.mjs": {
+      "sha256": "f8b9f39594fe9fbac0b72820592753fd16c066d12b9f422a1e6be542855362b9",
+      "source": "web/assets.mjs"
+    },
+    "web/checkbox.css": {
+      "sha256": "065916170c66e6866aeea759cbeabd06f9efedf817db7d8b72a52c60976b79e6",
+      "source": "web/checkbox.css"
+    },
+    "web/clipboard.mjs": {
+      "sha256": "e469ce5774f4a0f2617c3e0aec87a6e95262b9bbf04be0417dd1cc5021d1136c",
+      "source": "web/clipboard.mjs"
+    },
+    "web/code-view.mjs": {
+      "sha256": "2c92bb4c980e1b2f2b1dd26f6e801486bed23c68657107488bca2303de5efe67",
+      "source": "web/code-view.mjs"
+    },
+    "web/compare-source.mjs": {
+      "sha256": "e5a1a33c213b10189cc84def7703cfb494c6e090213a5fc9a725faa2b2c07d1d",
+      "source": "web/compare-source.mjs"
+    },
+    "web/compare.css": {
+      "sha256": "18413653ab782c61581114b4f47b6abc39f67819fe65e46cfd9b0c278a1e8005",
+      "source": "web/compare.css"
+    },
+    "web/compare.html": {
+      "sha256": "e5de5e643313815c724bc56ddcf69d3d006c2ced208e0dc2c0ee4f6587d8407f",
+      "source": "web/compare.html"
+    },
+    "web/compare.mjs": {
+      "sha256": "7993d0e48f2003e20bc1dcebd71e823154ef970fadb13ed99eb7a68b6935e8f1",
+      "source": "web/compare.mjs"
+    },
+    "web/component-styles.mjs": {
+      "sha256": "1d903be91d7dcf9d07fc2e0ec3d2de6b746d21db0066a00e608c2adb6aec5c1b",
+      "source": "web/component-styles.mjs"
+    },
+    "web/diagrams.mjs": {
+      "sha256": "2af5abd48d73e574059c230105898b45eebfec4be6d0a9b3528c27ebefc59d2d",
+      "source": "web/diagrams.mjs"
+    },
+    "web/document-prose.css": {
+      "sha256": "1c048c9bc96e4e3c19f6f1824f249aa4f9984086bbfc8e6902aa6272434b7408",
+      "source": "web/document-prose.css"
+    },
+    "web/editor.mjs": {
+      "sha256": "83450326b6900349c5dcd4d7373f53340d0dc2a22faf1722242dbbe384f4d8e9",
+      "source": "web/editor.mjs"
+    },
+    "web/epub-reader.css": {
+      "sha256": "b674d9042fac57f1778bc66a878f2fdeb6c2bb92d6a4dc3a4a26bc2013b1b5ee",
+      "source": "web/epub-reader.css"
+    },
+    "web/epub-reader.mjs": {
+      "sha256": "00cb27171fa159a3552db6b249eb19fb645543d04d461f54017ee17f209a7e15",
+      "source": "web/epub-reader.mjs"
+    },
+    "web/files.mjs": {
+      "sha256": "56ce3d340ffcf62104d93188e928fb12af68dc6fc1a83c0f5a8a7c9ac4f8d41c",
+      "source": "web/files.mjs"
+    },
+    "web/host-client.mjs": {
+      "sha256": "daaa5b6335938847870fb279aef68e7373a6a91ad4322ecad4aa49f9e283e40d",
+      "source": "web/host-client.mjs"
+    },
+    "web/icons.mjs": {
+      "sha256": "673206b23d9975878444a673b09bb9826361c08fd76bd58842f9b1b0519c50ac",
+      "source": "web/icons.mjs"
+    },
+    "web/image-frames.mjs": {
+      "sha256": "898099ddf70f21dab43c61496565b6ef122d36ac1d14d530bcd053b022c2feef",
+      "source": "web/image-frames.mjs"
+    },
+    "web/image-view.css": {
+      "sha256": "172e8815853169b9f7ab269613bda2014016f989a1a5e8b81148f6cf3e04844d",
+      "source": "web/image-view.css"
+    },
+    "web/image-view.mjs": {
+      "sha256": "263b514d6672eeff6805745f1d0c6f15de33747d51693d9ee656e4a033c5ae21",
+      "source": "web/image-view.mjs"
+    },
+    "web/index.html": {
+      "sha256": "51270c6db55c991dbae0a7715ec26a43834ec4d6520bc686c19844abd0cd62e9",
+      "source": "web/index.html"
+    },
+    "web/jq-query.css": {
+      "sha256": "d3e17316a936cc5581545767e3fecf6f183de0be7916fd15f537a676787f8974",
+      "source": "web/jq-query.css"
+    },
+    "web/jq-query.mjs": {
+      "sha256": "f860f8d0e788addddb21e906ad1c41e0cf67b75946a6dd47139795a50f1a8b5e",
+      "source": "web/jq-query.mjs"
+    },
+    "web/notes.css": {
+      "sha256": "b8c735775416a8137abc26a841d32c9d4f552aca16a59300a7d1ae09e76196f6",
+      "source": "web/notes.css"
+    },
+    "web/notes.mjs": {
+      "sha256": "690438c061897c375122dbd800f40cf9e804b498937d10406fe25fd954f7e823",
+      "source": "web/notes.mjs"
+    },
+    "web/outline.mjs": {
+      "sha256": "848fbf1864f06ca97abbc339c262e5ff9ab98565df32fa5c31464c87e5077c0f",
+      "source": "web/outline.mjs"
+    },
+    "web/pdf-outline.mjs": {
+      "sha256": "b510f59e713f9e32219959781bd41c24daadc5bb89936346941188059dba3ec6",
+      "source": "web/pdf-outline.mjs"
+    },
+    "web/pdf-reader.css": {
+      "sha256": "9936af204459d2e1fd91182910c4c30f9efd3fd8214f63d141964a1fc05253e9",
+      "source": "web/pdf-reader.css"
+    },
+    "web/pdf-reader.mjs": {
+      "sha256": "a2a62ca5451304d96070cbc38d9e4ca73c62f12ef5d05a44b3730e09811a7091",
+      "source": "web/pdf-reader.mjs"
+    },
+    "web/position.mjs": {
+      "sha256": "c676745fa36c76f9f8412c6b3cd94368ccd378edf39dcd74ebd4a813ec615bc0",
+      "source": "web/position.mjs"
+    },
+    "web/presentation.mjs": {
+      "sha256": "d6b90ebfaefbde353d84ed1536f07c5fc51fe03cde088985253bb52675cb0dd0",
+      "source": "web/presentation.mjs"
+    },
+    "web/projection-html.mjs": {
+      "sha256": "f85c95dad8a57cd65e074f8e208421a4eef268c2941dbf93ada02bad53532176",
+      "source": "web/projection-html.mjs"
+    },
+    "web/projection-view.css": {
+      "sha256": "f5ddc9a12a5d5e61f22c1815de98bb56ccceabe3598e0b5fbbaae2a22fda10d3",
+      "source": "web/projection-view.css"
+    },
+    "web/projection-view.mjs": {
+      "sha256": "20a2853200ef7e6e97bc2a0e331f99122d4b819c705e1ad9106c6225965835ea",
+      "source": "web/projection-view.mjs"
+    },
+    "web/public-reader.mjs": {
+      "sha256": "3042a37da97698156dd71c89b148eb3bb1a739db5f556f2ef45da407becb6658",
+      "source": "web/public-reader.mjs"
+    },
+    "web/query-operation.mjs": {
+      "sha256": "057e41d900c5d96e4049ba03bcb3b3b2ac359195bff723e10a4d66a6445d900f",
+      "source": "web/query-operation.mjs"
+    },
+    "web/reader-bridge.mjs": {
+      "sha256": "ce45e19cdf5addbd62b597ddeaba231ffa693b2d2354ab6a965c6466dd64134e",
+      "source": "web/reader-bridge.mjs"
+    },
+    "web/reader-tools.mjs": {
+      "sha256": "841845cda27f6fb76bd3ed60d7cb632509445c5714f1b1f88921d17521d844ce",
+      "source": "web/reader-tools.mjs"
+    },
+    "web/reader-ui.mjs": {
+      "sha256": "777e5a96da63ae280cd16ed5f404125c1c28370d8c5c2e3f04be679c9c436240",
+      "source": "web/reader-ui.mjs"
+    },
+    "web/reader.mjs": {
+      "sha256": "27120cb990e74b81af50a52fe33dafd0bedfcfa19b6172436f2a1cab8d6c706a",
+      "source": "web/reader.mjs"
+    },
+    "web/references.mjs": {
+      "sha256": "6ff76fa1609f876390d028ddf80e535d087e07d88bd8dc2528039059c476ddfc",
+      "source": "web/references.mjs"
+    },
+    "web/source.mjs": {
+      "sha256": "f3515a81ae6f6b53199d8c8f809b805e6b0284241206a4beae7f1b7609dc75f3",
+      "source": "web/source.mjs"
+    },
+    "web/styles.css": {
+      "sha256": "5e10a1c23a24b420f4891a89c1d83e0dbf4508f6cb3e68882c79e19594c375f3",
+      "source": "web/styles.css"
+    },
+    "web/table-cells.css": {
+      "sha256": "ab3174211e27049476f48f03fe654886659f8f1db21e1d4fafb2bdb35d7884ad",
+      "source": "web/table-cells.css"
+    },
+    "web/table-cells.mjs": {
+      "sha256": "a6a8b50b12e50366588d72980876fb73d63f94f65758214315018b50699289eb",
+      "source": "web/table-cells.mjs"
+    },
+    "web/table-controls.mjs": {
+      "sha256": "3f49a0db8e6016e595889319c89c6d6414bdaa792919fdf895d7c72671c0bbf9",
+      "source": "web/table-controls.mjs"
+    },
+    "web/table-layout.mjs": {
+      "sha256": "28263be2637bc73394806c3daa26d38454e36c9d0d5a1a9a7ab31acb484959bf",
+      "source": "web/table-layout.mjs"
+    },
+    "web/table-plot.css": {
+      "sha256": "fdcfa21d643580b1557e5a0b87072b121c9ed49a2c8149318c0a959a2b4c9bc1",
+      "source": "web/table-plot.css"
+    },
+    "web/table-plot.mjs": {
+      "sha256": "c6d29511afdcf114a191651629654ba504a011e48b9db86ef50cad7ffb8addb5",
+      "source": "web/table-plot.mjs"
+    },
+    "web/table-query.css": {
+      "sha256": "73ebcbcdcce2194b0dcf5bafdd8e1009113e172d5c1810116fa4a782c54d7f60",
+      "source": "web/table-query.css"
+    },
+    "web/table-query.mjs": {
+      "sha256": "0d46cd40333f1f5f2c7a805173cd1aa2d9f7f31de814ec3c8b49e0b6c7273324",
+      "source": "web/table-query.mjs"
+    },
+    "web/table-view.css": {
+      "sha256": "7f050a5ee7ee9f58a6bfe964058881368ae7b3f82a0f7585bfcadf96c9ea6060",
+      "source": "web/table-view.css"
+    },
+    "web/table-view.mjs": {
+      "sha256": "ebad752af5c1d7dd720410fa0682dfd001b78fba62dcc53c5c79794b9d5013bf",
+      "source": "web/table-view.mjs"
+    },
+    "web/tables.mjs": {
+      "sha256": "31d33c0f025d54636b6a47a0f31f631a013f859f8494af743d25ab28bfdbfd4f",
+      "source": "web/tables.mjs"
+    },
+    "web/theme.js": {
+      "sha256": "97bbb1ff814b706f96fec950ef64808879ae97736be0a4124a87e87157fef5ba",
+      "source": "web/theme.js"
+    },
+    "web/translation.mjs": {
+      "sha256": "1fa3835794ab920721930ef66431e0fc7e71d771e95256c7552a695a5bb23165",
+      "source": "web/translation.mjs"
+    },
+    "web/ui-messages.mjs": {
+      "sha256": "d679b54a2a5f87a0e05ebd08fda6113dc208e6698b391ca8e9653e9ea2b5713b",
+      "source": "web/ui-messages.mjs"
+    }
+  },
+  "support": {
+    "acceptance": "delivery mechanism; downstream adoption/parity/CI evidence required separately",
+    "excluded": [
+      "GTK",
+      "AppKit",
+      "WinUI",
+      "Tao/Wry shell",
+      "FFI"
+    ],
+    "features": [
+      "no-default-features",
+      "web"
+    ],
+    "platforms": [
+      "linux",
+      "macos",
+      "windows"
+    ]
+  },
+  "tools": {
+    "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+    "node": "v24.5.0",
+    "npm": "11.5.1",
+    "python": "3.14.4",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+  },
+  "treeSha256": "7e77bf278fbf8f82ebe10347253c831d2522f1a58cad684eeed30cd63f6e8720",
+  "version": 1
+}

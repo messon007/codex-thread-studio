@@ -93,6 +93,11 @@ impl CodexAppServer {
     }
 
     #[cfg(windows)]
+    pub fn reader_runtime(&self) -> BackendRuntime {
+        self.runtime.as_ref().clone()
+    }
+
+    #[cfg(windows)]
     pub async fn read_wsl_file(
         &self,
         root: &str,

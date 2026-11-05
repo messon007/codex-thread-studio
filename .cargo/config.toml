@@ -1,0 +1,10 @@
+# Tree-sitter symbol names and scanners contain Unicode. MSVC's locale-dependent
+# source/execution encoding otherwise corrupts their node names and queries.
+# Target-specific flags leave Linux, macOS and MinGW toolchains unchanged.
+[env]
+CFLAGS_x86_64_pc_windows_msvc = "/utf-8"
+CXXFLAGS_x86_64_pc_windows_msvc = "/utf-8"
+CFLAGS_aarch64_pc_windows_msvc = "/utf-8"
+CXXFLAGS_aarch64_pc_windows_msvc = "/utf-8"
+CFLAGS_i686_pc_windows_msvc = "/utf-8"
+CXXFLAGS_i686_pc_windows_msvc = "/utf-8"

@@ -5,7 +5,10 @@ let cacheBytes = 0
 const browserDiagrams = new URLSearchParams(location.search).get('diagrams') === 'browser'
 export const diagramMetrics = { renders: 0, hits: 0, errors: 0, cacheBytes: 0, renderMs: [], svgElements: 0, mode: browserDiagrams ? 'browser' : 'backend' }
 
-async function result(key) {
+async function result(id, context) {
+  const { documentId, revision, token, signal, browserDiagrams } = context
+  signal.throwIfAborted()
+  const key = JSON.stringify([documentId, revision, browserDiagrams, id])
   if (cache.has(key)) {
     const entry = cache.get(key)
     cache.delete(key)
@@ -16,18 +19,22 @@ async function result(key) {
   const started = performance.now()
   let response
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    response = await fetch(new URL(`./api/${browserDiagrams ? 'diagram-source' : 'diagram'}?id=${key}`, import.meta.url), { headers: { 'x-reader-token': location.hash.slice(1), 'x-reader-document': window.readerExperiment.documentId } })
+    response = await fetch(new URL(`./api/${browserDiagrams ? 'diagram-source' : 'diagram'}?id=${encodeURIComponent(id)}`, import.meta.url), { signal, headers: { 'x-reader-token': token, 'x-reader-document': documentId } })
     if (response.status !== 429 || attempt === 3) break
     await new Promise(resolve => setTimeout(resolve, 50 * 2 ** attempt))
   }
   if (!response.ok) throw new Error((await response.text()).slice(0, 800))
   const payload = await response.json()
-  if (payload.id !== Number(key) || payload.revision !== window.readerExperiment.index.revision) throw new Error('Stale diagram response')
+  signal.throwIfAborted()
+  if (payload.id !== Number(id) || payload.revision !== revision) throw new Error('Stale diagram response')
   const entry = browserDiagrams
-    ? { ...await (await import('./engine.mjs')).render(payload.kind, payload.source, `reader-diagram-${key}`), renderMs: performance.now() - started, cached: false }
+    ? { ...await (await context.engine()).render(payload.kind, payload.source, `reader-diagram-${crypto.randomUUID()}`), renderMs: performance.now() - started, cached: false }
     : payload.result
+  signal.throwIfAborted()
   if (typeof entry.svg !== 'string' || entry.svg.length * 2 > MAX_SVG || entry.elements > 20_000) throw new Error('Diagram exceeds its SVG budget')
   entry.bytes = entry.svg.length * 2
+  const previous = cache.get(key)
+  if (previous) cacheBytes -= previous.bytes
   cache.set(key, entry)
   cacheBytes += entry.bytes
   while (cacheBytes > CACHE_LIMIT) {
@@ -43,7 +50,17 @@ async function result(key) {
   return entry
 }
 
-export function diagramController(viewport, resized) {
+export function diagramController(viewport, resized, documentContext) {
+  if (!documentContext?.documentId || !documentContext?.revision) throw new Error('A diagram requires its owning document and revision')
+  const abort = new AbortController()
+  let engine
+  async function ownedEngine() {
+    const { createDiagramRenderer } = await import('./engine.mjs')
+    abort.signal.throwIfAborted()
+    return engine ||= createDiagramRenderer()
+  }
+  // Freeze the owner at mount time; never read a later document's diagnostic state.
+  const context = Object.freeze({ ...documentContext, signal: abort.signal, engine: ownedEngine, browserDiagrams: documentContext.browserDiagrams ?? browserDiagrams })
   const tracked = new Map()
   const pending = new Set()
   let working = false
@@ -65,26 +82,35 @@ export function diagramController(viewport, resized) {
           observer.observe(target)
           continue
         }
-        const canvas = target.querySelector('.diagram-canvas')
+        const owner = tracked.get(target)
+        if (!owner) continue
+        const canvas = owner.canvas
         target.dataset.diagramState = 'rendering'
         try {
-          const entry = await result(target.dataset.diagramId)
-          if (!target.isConnected || disposed) continue
+          const entry = await result(target.dataset.diagramId, context)
+          if (!target.isConnected || disposed || tracked.get(target) !== owner) continue
           const image = document.createElement('img')
           image.alt = `${target.dataset.diagramKind} diagram`
           const url = URL.createObjectURL(new Blob([entry.svg], { type: 'image/svg+xml' }))
-          tracked.get(target).url = url
+          owner.url = url
           await new Promise((resolve, reject) => {
-            image.onload = resolve
-            image.onerror = () => reject(new Error('Browser could not decode the diagram SVG'))
+            const finish = error => {
+              image.onload = image.onerror = null
+              abort.signal.removeEventListener('abort', cancelled)
+              error ? reject(error) : resolve()
+            }
+            const cancelled = () => finish(new DOMException('Diagram disposed', 'AbortError'))
+            abort.signal.addEventListener('abort', cancelled, { once: true })
+            image.onload = () => finish()
+            image.onerror = () => finish(new Error('Browser could not decode the diagram SVG'))
             image.src = url
           })
-          if (!target.isConnected || disposed) continue
+          if (!target.isConnected || disposed || tracked.get(target) !== owner) continue
           canvas.replaceChildren(image)
           target.dataset.diagramState = 'rendered'
           target.dataset.svgElements = String(entry.elements)
         } catch (error) {
-          if (!target.isConnected || disposed) continue
+          if (!target.isConnected || disposed || tracked.get(target) !== owner) continue
           const entry = tracked.get(target)
           if (entry?.url) { URL.revokeObjectURL(entry.url); entry.url = null }
           target.dataset.diagramState = 'error'
@@ -100,41 +126,54 @@ export function diagramController(viewport, resized) {
   }
   const observer = new IntersectionObserver(entries => {
     for (const { target, isIntersecting } of entries) {
-      if (!isIntersecting || target.dataset.diagramState !== 'pending') continue
+      if (!isIntersecting || !tracked.has(target) || target.dataset.diagramState !== 'pending') continue
       target.dataset.diagramState = 'queued'
       observer.unobserve(target)
       pending.add(target)
     }
     void drain()
   }, { root: viewport, rootMargin: '300px 0px' })
+  function release(figure, entry) {
+    if (entry.url) URL.revokeObjectURL(entry.url)
+    entry.button.removeEventListener('click', entry.onSource); entry.zoom.removeEventListener('click', entry.onZoom)
+    entry.canvas.remove(); entry.button.remove(); entry.zoom.remove()
+    entry.pre.hidden = entry.previousHidden
+    if (entry.previousState == null) delete figure.dataset.diagramState
+    else figure.dataset.diagramState = entry.previousState
+    delete figure.dataset.svgElements
+  }
   return {
     mount(article) {
       for (const figure of article.querySelectorAll('figure[data-diagram-kind]')) {
+        if (tracked.has(figure)) continue
         const pre = figure.querySelector('pre')
+        const previousHidden = pre.hidden, previousState = figure.dataset.diagramState
         pre.hidden = true
         const button = document.createElement('button')
         button.textContent = 'Source code'
         button.setAttribute('aria-expanded', 'false')
-        button.addEventListener('click', () => {
+        const onSource = () => {
           pre.hidden = !pre.hidden
           button.setAttribute('aria-expanded', String(!pre.hidden))
           resized(article)
-        })
+        }
+        button.addEventListener('click', onSource)
         const canvas = document.createElement('div')
         canvas.className = 'diagram-canvas'
         canvas.textContent = 'Rendering nearby diagram…'
         const zoom = document.createElement('button')
         zoom.textContent = 'Actual size'
         zoom.setAttribute('aria-pressed', 'false')
-        zoom.addEventListener('click', () => {
+        const onZoom = () => {
           const natural = canvas.classList.toggle('natural')
           zoom.textContent = natural ? 'Fit width' : 'Actual size'
           zoom.setAttribute('aria-pressed', String(natural))
           resized(article)
-        })
+        }
+        zoom.addEventListener('click', onZoom)
         figure.prepend(button, zoom, canvas)
         figure.dataset.diagramState = 'pending'
-        tracked.set(figure, { url: null })
+        tracked.set(figure, { url: null, canvas, button, zoom, pre, previousHidden, previousState, onSource, onZoom })
         observer.observe(figure)
       }
     },
@@ -143,15 +182,17 @@ export function diagramController(viewport, resized) {
         if (figure.isConnected) continue
         observer.unobserve(figure)
         pending.delete(figure)
-        if (entry.url) URL.revokeObjectURL(entry.url)
+        release(figure, entry)
         tracked.delete(figure)
       }
     },
     dispose() {
       disposed = true
+      abort.abort()
+      engine?.dispose(); engine = null
       pending.clear()
       observer.disconnect()
-      for (const entry of tracked.values()) if (entry.url) URL.revokeObjectURL(entry.url)
+      for (const [figure, entry] of tracked) release(figure, entry)
       tracked.clear()
     },
     get tracked() { return tracked.size },

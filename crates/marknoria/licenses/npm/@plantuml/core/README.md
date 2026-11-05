@@ -1,0 +1,102 @@
+# @plantuml/core
+
+The [PlantUML](https://plantuml.com/) diagram engine, compiled to JavaScript
+with [TeaVM](https://github.com/konsoletyper/teavm). It renders UML and many
+other diagrams **entirely in the browser** -- no server, no Java, no Graphviz
+binary required.
+
+This package is generated from the official PlantUML build (issue
+[#2715](https://github.com/plantuml/plantuml/issues/2715)).
+
+## Install
+
+```sh
+npm install @plantuml/core
+```
+
+Or import straight from a CDN:
+
+```html
+<script src="https://unpkg.com/@plantuml/core@1.2026.9/viz-global.js"></script>
+<script type="module">
+  import { render } from "https://unpkg.com/@plantuml/core@1.2026.9/plantuml.js";
+  render("@startuml\nAlice -> Bob : Hello\n@enduml".split("\n"), "out");
+</script>
+<div id="out"></div>
+```
+
+## API
+
+The public surface is two functions exported from the `plantuml.js`
+ES2015 module. `viz-global.js` (the Graphviz layout engine) must be loaded
+as a classic script beforehand.
+
+If you bundle your host into a single file, `viz-global.js` (a UMD) attaches
+`Viz` to your bundle's exports instead of `globalThis`, and the engine does
+not see it. Hand it over yourself, before the first render:
+`globalThis.PLANTUML_VIZ = Viz;` (where `Viz` is however you obtained it,
+for example `@viz-js/viz`). It takes precedence over a global `Viz`.
+
+- `render(lines, targetId)` -- render into the DOM element with that `id`.
+  `lines` is an `Array<string>`.
+- `render(lines, targetId, { dark: true })` -- same, in dark mode.
+- `renderToString(lines, onSuccess, onError)` -- deliver the SVG as a string
+  to `onSuccess(svg)`; errors go to `onError(message)`. Calls may overlap:
+  each is queued, and exactly one of its callbacks is called, once, in the
+  order of the calls. (`render()` keeps only the latest waiting call.)
+- `renderToString(lines, onSuccess, onError, options)` -- same, with the
+  optional `options` object that `render()` also accepts as its last argument:
+  `dark` (boolean, default `false`) for a dark-mode SVG, and `maxSvgSize`
+  (pixels, default `8192`) above which a diagram fails with an error instead of
+  producing a huge SVG; `0` disables the check.
+
+Rendering is asynchronous: `render()` returns immediately and writes the SVG
+into the target element later. See
+[GITHUB_INTEGRATION.md](./GITHUB_INTEGRATION.md) for details and a full
+GitHub-style integration example.
+
+## What's included
+
+- `plantuml.js` -- the engine
+- `viz-global.js` -- Graphviz / Viz.js layout engine (required)
+- `themes.js` -- the bundled `!theme` definitions, fetched on demand from the
+  same directory as the page; serve it next to the engine, or register
+  `globalThis.PLANTUML_THEMES` yourself, e.g. inside a Web Worker. Without it,
+  `!theme` renders the diagram unthemed and warns on the console; an unknown
+  theme name in a loaded themes.js still reports "Cannot load theme"
+- demo pages: `index.html` (playground, with its `main.js`,
+  `plantuml-codec.js`, `zoom.js` and `vendor/fflate`), `index-basic.html`,
+  `index-basic-dark.html`, `index-collection.html`, and two GitHub
+  integration proofs of concept
+
+Heavy optional sprite libraries (IBM, tupadr3, material, AWS...) are **not**
+bundled here to keep the package small. To use them (and the rest of the
+standard library: `!include <C4/C4_Context>`, azure, kubernetes, ...), point
+the engine at wherever the bundles are hosted before rendering; they are
+fetched lazily, one bundle per library, only when a diagram includes it:
+
+```html
+<script>
+  window.PLANTUML_STDLIB_BASE = "https://plantuml.github.io/plantuml/js-plantuml/";
+</script>
+```
+
+(Note the trailing slash: the value is a plain URL prefix.) For production,
+self-host the bundles your diagrams use and point the base at your own
+assets. Hosts that cannot load scripts at all (Web Workers, browser
+extensions) set a `PLANTUML_STDLIB_LOADER` callback instead -- see
+[GITHUB_INTEGRATION.md](./GITHUB_INTEGRATION.md).
+
+The engine has no file system, so a local `!include styles/common.puml`
+fails unless the host delivers the file: set a `PLANTUML_FILE_LOADER`
+callback, which also decides which files may be read -- see
+[GITHUB_INTEGRATION.md](./GITHUB_INTEGRATION.md).
+
+## License
+
+[MIT](https://opensource.org/license/mit/).
+
+**Versions ≥ 1.2026.6 are MIT-licensed; earlier versions are
+GPL-3.0-or-later.** npm only displays the license of the latest version,
+so if you are pinned to an older release, check the license of that
+specific version.

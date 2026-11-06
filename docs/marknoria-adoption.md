@@ -1,8 +1,10 @@
 # Fixed public reader adoption
 
-The current pin and functional followup evidence are in
-[studio-issue-followups.md](studio-issue-followups.md). The PR #55 baseline
-record below is historical; the current source revision is `5e5d4de`.
+The current pin and November 6 verification are in
+[marknoria-sync-20261106.md](marknoria-sync-20261106.md). The PR #55 baseline
+record below is historical; the current source revision is `89a3210`.
+Earlier functional followup evidence remains in
+[studio-issue-followups.md](studio-issue-followups.md).
 
 The PR #55 baseline used the pin in `scripts/marknoria-release.json`;  the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:
@@ -55,9 +57,10 @@ child is temporarily inert behind a loading cover, preventing duplicate chrome.
 The public client's delayed-child WebKit handshake preserves its caller realm
 without weakening exact-window/origin validation.
 
-Shared Notes owns document comments/favorites through Studio's scoped durable
-store and toolbar slot; Ask AI calls the existing Studio workflow. Session/chat
-annotations remain Studio-owned. Live en/zh/en settings update reader controls,
+The November 6 integration supersedes the original Notes toolbar adoption:
+Studio owns the document Copy/Comment/Translate popup and existing comment workflow;
+the reader Notes/Favorite entry and its popup are not mounted. Existing scoped Notes
+storage and session/chat favorites are retained. Live en/zh/en settings update reader controls,
 including Notes and CodeMirror, while literal saved text such as `Close` stays
 unchanged. Synonymous translation keys preserve their English control names.
 

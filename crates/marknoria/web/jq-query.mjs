@@ -1,4 +1,5 @@
 // Rust/provider owns the complete input and immutable jq results.
+import { jqHelp, queryError } from './query-help.mjs'
 import { queryOperation } from './query-operation.mjs'
 import { dialogClose } from './icons.mjs'
 import { copyText } from './clipboard.mjs'
@@ -112,15 +113,17 @@ export function mountJqQuery(
   editor.maxLength = JQ_WINDOW_PROFILE.maxFilterUnits
   editor.spellcheck = false
   labels.set(editor, 'jq filter', {}, 'aria-label')
-  const help = document.createElement('p')
-  help.className = 'jq-help'
-  // Syntax examples remain literal code; only their explanation is translated.
-  const helpLabel = document.createElement('span'),
-    examples = document.createElement('code')
-  labels.set(helpLabel, 'Examples')
-  examples.textContent =
-    'JSON: .items[] | select(.active) · JSONL: select(.level == "error") · Slurp: map(.value) | add'
-  help.append(helpLabel, ': ', examples)
+  const help = document.createElement('details'),
+    helpSummary = document.createElement('summary'),
+    helpBody = document.createElement('div')
+  help.className = 'table-query-schema jq-help'
+  helpBody.className = 'query-help-content'
+  labels.set(helpSummary, 'jq syntax and query help')
+  jqHelp(helpBody, labels, (filter) => {
+    editor.value = filter
+    editor.focus()
+  })
+  help.append(helpSummary, helpBody)
   const actions = document.createElement('div')
   actions.className = 'table-query-actions'
   const run = document.createElement('button'),
@@ -233,7 +236,7 @@ export function mountJqQuery(
         await release(candidate.id)
       if (!stopped && ticket === generation && error.name !== 'AbortError') {
         labels.clear(status)
-        status.textContent = String(error.message || error).slice(0, 800)
+        status.textContent = queryError(error, 'jq')
       }
       throw error
     } finally {
@@ -260,7 +263,7 @@ export function mountJqQuery(
   const report = (error) => {
     if (!stopped && error.name !== 'AbortError') {
       labels.clear(status)
-      status.textContent = String(error.message || error).slice(0, 800)
+      status.textContent = queryError(error, 'jq')
     }
   }
   const on = (node, type, handler) => node.addEventListener(type, handler, { signal })

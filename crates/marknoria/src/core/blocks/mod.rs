@@ -83,12 +83,19 @@ pub fn read_blocks(directory: &Path, index: &crate::core::Index, page: usize) ->
         .get(page)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Page out of range"))?;
     if index.text_pages {
-        return Ok(vec![Block::Code {
+        let mut blocks = Vec::new();
+        if page == 0 {
+            if let Some(note) = crate::core::documents::preview_note(directory)? {
+                blocks.push(Block::Paragraph { quote: false, runs: vec![Span { text: note, ..Default::default() }] });
+            }
+        }
+        blocks.push(Block::Code {
             language: Some(crate::core::highlight::language_for_name(&index.name)),
             text: crate::core::read_cached_page(directory, index, page)?,
             document: true,
             syntax: vec![],
-        }]);
+        });
+        return Ok(blocks);
     }
     if metadata.table.is_some() {
         let id = metadata.table.unwrap();

@@ -453,8 +453,9 @@ export async function createEpubReader({
     textUtf16: 0,
     error: null
   }
-  let lastSelection = null
+  let lastSelection = null, lastSelectionContents = null
   let selectionBoundaries = new WeakMap()
+  const dismissedSelections = new WeakMap()
   const lifetime = new AbortController()
   const destroy = () => {
     if (destroyed) return
@@ -819,29 +820,67 @@ export async function createEpubReader({
         { signal: viewLifetime.signal, capture: true }
       )
     })
-    contents.window?.addEventListener('keydown', handleKeydown, { signal: viewLifetime.signal })
+    contents.document.addEventListener('pointerdown', () => dismissedSelections.delete(contents), { signal: viewLifetime.signal })
+    contents.window?.addEventListener('keydown', event => {
+      dismissedSelections.delete(contents)
+      handleKeydown(event)
+    }, { signal: viewLifetime.signal })
     // Capture in the owning reader realm. WebKit can clear an iframe selection
     // before epub.js's delayed selected event reaches the parent rendition.
     contents.document.addEventListener('selectionchange', () => selected(null, contents), {
       signal: viewLifetime.signal
     })
-    contents.document.addEventListener('pointerup', () => selected(null, contents), {
+    for (const type of ['pointerup', 'keyup']) contents.document.addEventListener(type, () => selected(null, contents), {
       signal: viewLifetime.signal
+    })
+    contents.window?.addEventListener('scroll', () => clearEpubSelection(), {
+      capture: true, passive: true, signal: viewLifetime.signal
     })
   }
 
+  function clearEpubSelection(removeRanges = false) {
+    const hadSelection = lastSelection !== null
+    if (lastSelectionContents && !removeRanges) dismissedSelections.set(lastSelectionContents, selectionBoundary(lastSelectionContents.window?.getSelection?.()))
+    lastSelection = lastSelectionContents = null
+    if (removeRanges) {
+      for (const contents of rendition?.getContents() || []) {
+        dismissedSelections.delete(contents)
+        contents.window?.getSelection?.()?.removeAllRanges()
+      }
+    }
+    if (hadSelection) onSelection(null)
+  }
+  const selectionBoundary = value => ({
+    anchor: value?.anchorNode, focus: value?.focusNode,
+    from: value?.anchorOffset, to: value?.focusOffset,
+    collapsed: !value?.rangeCount || value.isCollapsed
+  })
   const selected = (cfiRange, contents) => {
+    if (destroyed || !(rendition?.getContents() || []).includes(contents)) return
     try {
       const selection = contents?.window?.getSelection?.()
+      const boundary = selectionBoundary(selection), dismissed = dismissedSelections.get(contents)
+      selectionBoundaries.set(contents, boundary)
+      if (dismissed && Object.keys(boundary).every(key => dismissed[key] === boundary[key])) return
+      dismissedSelections.delete(contents)
       const rawQuote = String(selection?.toString() || '')
       const end = Math.min(rawQuote.length, MAX_SELECTION)
       const quote = rawQuote.slice(
         0,
         end && /[\uD800-\uDBFF]/.test(rawQuote[end - 1]) ? end - 1 : end
       )
-      if (!quote.trim() || !selection.rangeCount) return
+      if (!quote.trim() || !selection?.rangeCount || selection.isCollapsed) {
+        if (lastSelection && lastSelectionContents === contents) {
+          clearEpubSelection()
+        }
+        return
+      }
       const rangeRect = selection.getRangeAt(0).getBoundingClientRect()
       const sourceRange = selection.getRangeAt(0)
+      if (!contents.document.body.contains(sourceRange.startContainer) || !contents.document.body.contains(sourceRange.endContainer)) {
+        clearEpubSelection()
+        return
+      }
       let cfiSelection = sourceRange
       // epub.js treats an element child offset as a character offset. Normalize
       // element-boundary selections (Ctrl+A/triple-click) before creating the CFI.
@@ -867,7 +906,7 @@ export async function createEpubReader({
           first ||= { node, from }
           last = { node, to }
         }
-        if (!first || !last) return
+        if (!first || !last) { clearEpubSelection(); return }
         cfiSelection = contents.document.createRange()
         cfiSelection.setStart(first.node, first.from)
         cfiSelection.setEnd(last.node, last.to)
@@ -881,7 +920,7 @@ export async function createEpubReader({
         quote,
         quoteTruncated: quote.length < rawQuote.length,
         cfiRange: checkedCfi(cfiRange),
-        href: currentHref,
+        href: book.spine.get(contents.sectionIndex)?.href || currentHref,
         chapterLabel: readerState.chapterLabel,
         rect: {
           left: frameRect.left + rangeRect.left,
@@ -895,19 +934,21 @@ export async function createEpubReader({
         lastSelection?.quote !== captured.quote
       ) {
         lastSelection = captured
+        lastSelectionContents = contents
         onSelection(captured)
       }
     } catch (error) {
+      clearEpubSelection()
       onError(error)
     }
   }
+  shell.viewer.addEventListener('scroll', () => clearEpubSelection(), {
+    capture: true, passive: true, signal: lifetime.signal
+  })
 
   const relocated = (location) => {
     if (!location?.start) return
-    if (currentHref && currentHref !== location.start.href) {
-      lastSelection = null
-      onSelection(null)
-    }
+    if (currentHref && currentHref !== location.start.href) clearEpubSelection()
     readerState.cfi = checkedCfi(location.start.cfi)
     currentHref = checkedText(location.start.href || '', 8192, 'EPUB chapter')
     readerState.chapterLabel =
@@ -940,12 +981,14 @@ export async function createEpubReader({
     await awaitBounded(updated, 'EPUB position update')
   }
   async function displayTarget(target) {
+    clearEpubSelection(true)
     await awaitBounded(rendition.display(target), 'EPUB navigation')
     await reportPosition()
   }
 
   const mountRendition = async (target = '') => {
-    lastSelection = null
+    if (lastSelection) onSelection(null)
+    lastSelection = lastSelectionContents = null
     selectionBoundaries = new WeakMap()
     viewLifetime.abort()
     viewLifetime = new AbortController()
@@ -978,13 +1021,23 @@ export async function createEpubReader({
     await reportPosition()
   }
 
+  let changingFlow = false
   const changeFlow = async (flow) => {
     if (!FLOWS.has(flow) || readerState.flow === flow) return
+    if (changingFlow) throw Error('EPUB reading flow is changing')
     const target = readerState.cfi
-    readerState.flow = flow
-    updateSettings(shell, readerState)
-    await mountRendition(target)
-    notifyRelocate()
+    changingFlow = true
+    const controls = [shell.continuous, ...shell.settings.querySelectorAll('[data-epub-flow]')]
+    controls.forEach(control => { control.disabled = true })
+    try {
+      readerState.flow = flow
+      updateSettings(shell, readerState)
+      await mountRendition(target)
+      notifyRelocate()
+    } finally {
+      changingFlow = false
+      controls.forEach(control => { control.disabled = false })
+    }
   }
 
   const changeTheme = (theme) => {
@@ -1003,7 +1056,9 @@ export async function createEpubReader({
   }
 
   function handleKeydown(event) {
-    if (event.defaultPrevented || event.altKey) return
+    if (event.defaultPrevented || event.altKey || event.isComposing) return
+    // Shift+Arrow belongs to native text-selection extension in the book.
+    if (event.shiftKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
     if (event.ctrlKey || event.metaKey) {
       const key = event.key.toLowerCase()
       if (onShortcut && ['f','o'].includes(key)) { event.preventDefault(); event.stopPropagation(); onShortcut(key) }
@@ -1016,9 +1071,11 @@ export async function createEpubReader({
       return
     if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
       event.preventDefault()
+      clearEpubSelection(true)
       rendition?.prev()
     } else if (event.key === 'ArrowRight' || event.key === 'PageDown') {
       event.preventDefault()
+      clearEpubSelection(true)
       rendition?.next()
     } else if (event.key === 'Escape') {
       shell.settings.classList.add('hidden')
@@ -1026,8 +1083,8 @@ export async function createEpubReader({
   }
 
   shell.root.addEventListener('keydown', handleKeydown, { signal: lifetime.signal })
-  shell.previous.addEventListener('click', () => rendition?.prev(), { signal: lifetime.signal })
-  shell.next.addEventListener('click', () => rendition?.next(), { signal: lifetime.signal })
+  shell.previous.addEventListener('click', () => { clearEpubSelection(true); rendition?.prev() }, { signal: lifetime.signal })
+  shell.next.addEventListener('click', () => { clearEpubSelection(true); rendition?.next() }, { signal: lifetime.signal })
   shell.progressBuild.addEventListener(
     'click',
     () => {
@@ -1051,6 +1108,9 @@ export async function createEpubReader({
     { signal: lifetime.signal }
   )
   updateProgressControls()
+  shell.continuous.addEventListener('click', () => {
+    void changeFlow(readerState.flow === 'scrolled' ? 'paginated' : 'scrolled').catch(onError)
+  }, { signal: lifetime.signal })
   shell.settingsToggle.addEventListener('click', () => shell.settings.classList.toggle('hidden'))
   shell.fontDecrease.addEventListener('click', () => changeFont(-0.1))
   shell.fontIncrease.addEventListener('click', () => changeFont(0.1))
@@ -1058,36 +1118,23 @@ export async function createEpubReader({
     const theme = event.target.closest('[data-epub-theme]')?.dataset.epubTheme
     const flow = event.target.closest('[data-epub-flow]')?.dataset.epubFlow
     if (theme) changeTheme(theme)
-    if (flow) changeFlow(flow).catch(() => {})
+    if (flow) changeFlow(flow).catch(onError)
   })
   // Some WebKit iframe selections do not deliver selectionchange outside the
   // script-disabled book document. Poll only the focused visible reader, compare
   // boundary identities first, and never traverse unchanged text/CFIs.
   const selectionPoll = setInterval(() => {
-    if (
-      destroyed ||
-      document.hidden ||
-      !shell.root.isConnected ||
-      document.activeElement?.tagName !== 'IFRAME'
-    )
-      return
-    for (const contents of rendition?.getContents() || []) {
-      const value = contents.window?.getSelection()
-      if (!value?.rangeCount || value.isCollapsed) continue
+    if (destroyed || document.hidden || !shell.root.isConnected) return
+    const contentsList = rendition?.getContents() || []
+    if (lastSelection && !contentsList.includes(lastSelectionContents)) clearEpubSelection()
+    if (document.activeElement?.tagName !== 'IFRAME') return
+    for (const contents of contentsList) {
+      const value = contents.window?.getSelection(), boundary = selectionBoundary(value)
       const previous = selectionBoundaries.get(contents)
-      if (
-        previous?.anchor === value.anchorNode &&
-        previous?.focus === value.focusNode &&
-        previous?.from === value.anchorOffset &&
-        previous?.to === value.focusOffset
-      )
-        continue
-      selectionBoundaries.set(contents, {
-        anchor: value.anchorNode,
-        focus: value.focusNode,
-        from: value.anchorOffset,
-        to: value.focusOffset
-      })
+      if (previous && Object.keys(boundary).every(key => previous[key] === boundary[key])) continue
+      // Empty/collapsed transitions are just as significant as new selections.
+      // Book iframe events are not guaranteed to escape its script sandbox.
+      selectionBoundaries.set(contents, boundary)
       selected(null, contents)
     }
   }, 150)
@@ -1127,7 +1174,12 @@ export async function createEpubReader({
       progressProfile: EPUB_PROGRESS_PROFILE
     }),
     selection: () => {
-      for (const contents of rendition?.getContents() || []) selected(null, contents)
+      const activeContents = rendition?.getContents() || []
+      if (lastSelection && !activeContents.includes(lastSelectionContents)) {
+        lastSelection = lastSelectionContents = null
+        onSelection(null)
+      }
+      for (const contents of activeContents) selected(null, contents)
       return lastSelection
     },
     outline: () =>
@@ -1260,6 +1312,7 @@ function buildShell(container, translate) {
       <div class="epub-page-actions">
         <button class="epub-tool-button epub-previous" type="button" title="${escapeHtml(translate('Previous'))}" aria-label="${escapeHtml(translate('Previous'))}">←</button>
         <button class="epub-tool-button epub-next" type="button" title="${escapeHtml(translate('Next'))}" aria-label="${escapeHtml(translate('Next'))}">→</button>
+        <button class="epub-tool-button epub-continuous" type="button" aria-pressed="false">${escapeHtml(translate('Continuous'))}</button>
         <button class="epub-tool-button epub-settings-toggle" type="button" title="${escapeHtml(translate('Reading settings'))}" aria-label="${escapeHtml(translate('Reading settings'))}">Aa</button>
       </div>
       <div class="epub-settings-popover hidden">
@@ -1282,6 +1335,7 @@ function buildShell(container, translate) {
   for (const [selector, key] of [
     ['.epub-previous', 'Previous'],
     ['.epub-next', 'Next'],
+    ['.epub-continuous', 'Continuous reading'],
     ['.epub-settings-toggle', 'Reading settings'],
     ['.epub-font-decrease', 'Decrease type size'],
     ['.epub-font-increase', 'Increase type size']
@@ -1300,7 +1354,8 @@ function buildShell(container, translate) {
     ['[data-epub-theme="dark"]', 'Dark'],
     ['[data-epub-flow="paginated"]', 'Pages'],
     ['[data-epub-flow="scrolled"]', 'Scroll'],
-    ['.epub-progress-build', 'Build progress index']
+    ['.epub-progress-build', 'Build progress index'],
+    ['.epub-continuous', 'Continuous']
   ])
     labels.set(root.querySelector(selector), key)
   labels.set(root.querySelector('.epub-progress-seek'), 'Reading progress', {}, 'aria-label')
@@ -1311,6 +1366,7 @@ function buildShell(container, translate) {
     viewer: root.querySelector('.epub-viewer'),
     previous: root.querySelector('.epub-previous'),
     next: root.querySelector('.epub-next'),
+    continuous: root.querySelector('.epub-continuous'),
     settingsToggle: root.querySelector('.epub-settings-toggle'),
     settings: root.querySelector('.epub-settings-popover'),
     fontDecrease: root.querySelector('.epub-font-decrease'),
@@ -1337,6 +1393,9 @@ function renderPosition(shell, state, translate) {
 }
 
 function updateSettings(shell, state) {
+  shell.root.dataset.flow = state.flow
+  shell.continuous.setAttribute('aria-pressed', String(state.flow === 'scrolled'))
+  shell.continuous.classList.toggle('active', state.flow === 'scrolled')
   shell.labels.set(shell.fontValue, '{percent}%', { percent: Math.round(state.fontScale * 100) })
   shell.settings
     .querySelectorAll('[data-epub-theme]')

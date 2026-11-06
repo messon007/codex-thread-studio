@@ -53,6 +53,8 @@ export function readerUiLabels(root, translate, options) {
     '.reader-settings > summary',
     '#query',
     '#search-close',
+    '#search-previous',
+    '#search-next',
     '#contents-backdrop',
     '#contents-close',
     '#toc',

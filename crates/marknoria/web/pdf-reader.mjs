@@ -170,8 +170,8 @@ export function mountPdfReader(root, options) {
           timer = setTimeout(() => {
             const error = Error(`${label} exceeded ${milliseconds / 1000} seconds`)
             fail(error)
-            dispose()
             reject(error)
+            dispose()
           }, milliseconds)
         })
       ])

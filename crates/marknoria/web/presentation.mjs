@@ -26,6 +26,7 @@ export function readerPresentation(
       theme: themeRoot.dataset.theme === 'dark' ? 'dark' : 'light',
       toolbar: 'reader',
       notes: 'reader',
+      selectionMenu: 'reader',
       fontFamily: null,
       codeFontFamily: null,
       contentFontFamily: null,
@@ -79,6 +80,10 @@ export function readerPresentation(
       if (patch.notes != null) {
         if (!['reader', 'host'].includes(patch.notes)) throw TypeError('Invalid Notes owner')
         next.notes = patch.notes
+      }
+      if (patch.selectionMenu != null) {
+        if (!['reader', 'host'].includes(patch.selectionMenu)) throw TypeError('Invalid selection menu owner')
+        next.selectionMenu = patch.selectionMenu
       }
       for (const key of Object.keys(fonts))
         if (patch[key] !== undefined) {

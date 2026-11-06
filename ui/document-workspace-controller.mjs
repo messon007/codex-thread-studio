@@ -3,7 +3,7 @@ import { fileDisplayName } from './document-review.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { documentCommentSource } from './comment-source-providers.mjs'
 import { getLocale, onLanguageChange, t } from './i18n.mjs'
-import { createLargeMarkdownHost, createReaderNotesHost, createReaderJqHost } from './large-markdown-host.mjs'
+import { createLargeMarkdownHost, createReaderSelectionHost, createReaderJqHost } from './large-markdown-host.mjs'
 
 // Candidate resolution only; the WSL transport rechecks canonical file grants.
 export function resolveWslDocumentLink(file, target) {
@@ -25,6 +25,8 @@ export function createDocumentWorkspaceState() {
     artifactView: 'preview',
     artifactSearch: '',
     artifactSearchMatches: [],
+    artifactSearchTotal: 0,
+    artifactSearchComplete: true,
     artifactSearchIndex: -1,
     artifactSearchOpen: false,
     artifactOutlineOpen: false,
@@ -52,7 +54,6 @@ export function createDocumentWorkspaceController({
     applyRightRailWidth,
     hideSelection,
     setSelection,
-    openCommentForSelection,
     openWorkspaceTool,
     openResources,
     renderSessionMap,
@@ -80,7 +81,7 @@ export function createDocumentWorkspaceController({
   let largeMarkdownFrame = null
   let largeMarkdownFile = null
   let largeMarkdownHost = null
-  let readerNotesHost = null
+  let readerSelectionHost = null
   let readerJqHost = null
 
   function releaseLargeMarkdown(file) {
@@ -94,7 +95,7 @@ export function createDocumentWorkspaceController({
 
   function disposeLargeMarkdown() {
     readerJqHost?.dispose(); readerJqHost = null
-    readerNotesHost?.dispose(); readerNotesHost = null
+    readerSelectionHost?.dispose(); readerSelectionHost = null
     if (largeMarkdownFile?.format === 'epub' && largeMarkdownFile.readingState) {
       clearTimeout(epubReadingStateTimer); epubReadingStateTimer = null
       persistEpubReadingState(largeMarkdownFile).catch(error => reportClientError(error))
@@ -485,29 +486,32 @@ function renderArtifact() {
       largeMarkdownFrame.setAttribute('aria-hidden','true')
       largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
       largeMarkdownFrame.setAttribute('referrerpolicy', 'no-referrer')
-      largeMarkdownFrame.src = file.largeMarkdown.url
+      const readerUrl = new URL(file.largeMarkdown.url, document.baseURI)
+      readerUrl.searchParams.set('notes', 'host')
+      readerUrl.searchParams.set('selectionMenu', 'host')
+      largeMarkdownFrame.src = readerUrl.href
       largeMarkdownFrame.addEventListener('load', () => {
         syncLargeMarkdownTheme()
         if (state.artifact === file && file.readerLine) largeMarkdownHost?.navigateLine(file.readerLine).catch(showError)
       })
       content.replaceChildren(largeMarkdownFrame)
-      const commentSelection = selection => ({ quote: selection.quote, itemId: null, turnId: null,
+      const commentSelection = selection => ({ quote: selection.quote, copyText: selection.copyText, itemId: null, turnId: null,
         source: selection.location?.kind === 'epub' ? epubCommentSource({ root: file.root, filePath: file.path,
           bookHash: file.hash, cfiRange: selection.location.cfi, href: selection.location.href,
           chapterLabel: file.readingState?.chapterLabel, readerReference: selection })
           : documentCommentSource({ kind: 'fileRange', root: file.root, filePath: file.path,
           baseHash: selection.revision, startLine: selection.startLine, endLine: selection.endLine,
           readerReference: selection }) })
-      readerNotesHost = createReaderNotesHost($('#artifact-reader-shell'), $('#artifact-notes-tools'), {
-        translate: hostTranslate, onError: showError,
-        onAction: openCommentForSelection ? selection => openCommentForSelection(commentSelection(selection)) : undefined,
+      readerSelectionHost = createReaderSelectionHost({
+        onError: showError,
+        onSelection: selection => setSelection(selection ? commentSelection(selection) : null, selection?.rect),
       })
       readerJqHost = createReaderJqHost($('#artifact-reader-shell'), $('#artifact-query-tools'), {
         translate: hostTranslate, onError: showError,
       })
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
-        void readerNotesHost?.update(snapshot, largeMarkdownHost).catch(showError)
+        readerSelectionHost?.update(snapshot, largeMarkdownHost)
         readerJqHost?.update(snapshot, largeMarkdownHost)
         if (snapshot.initialized && largeMarkdownFrame) {
           largeMarkdownFrame.inert = false
@@ -542,7 +546,7 @@ function renderArtifact() {
         renderArtifact()
       }, selection => {
         if (state.artifact !== file) return
-        if (!readerNotesHost?.capture(selection)) setSelection(commentSelection(selection), selection.rect)
+        void readerSelectionHost?.capture(selection)
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
         initialReference: file.readerReference, initialFragment: file.readerFragment,
@@ -623,6 +627,8 @@ function resetArtifactSearch() {
   state.artifactSearch = ''
   state.artifactSearchIndex = -1
   state.artifactSearchMatches = []
+  state.artifactSearchTotal = 0
+  state.artifactSearchComplete = true
   state.artifactSearchOpen = false
   const searchInput = $('#artifact-search-input')
   if (searchInput) searchInput.value = ''
@@ -641,13 +647,18 @@ function handleArtifactSearchInput(event) {
     const file = state.artifact
     const query = state.artifactSearch
     state.artifactSearchMatches = []
+    state.artifactSearchTotal = 0
+    state.artifactSearchComplete = true
     state.artifactSearchIndex = -1
     renderArtifactSearchStatus()
     artifactSearchTimer = setTimeout(async () => {
       try {
-        const matches = await largeMarkdownHost?.search(query) || []
+        const result = await largeMarkdownHost?.search(query) || { matches: [], total: 0, complete: true }
+        const matches = result.matches
         if (state.artifact !== file || state.artifactSearch !== query) return
         state.artifactSearchMatches = matches
+        state.artifactSearchTotal = result.total
+        state.artifactSearchComplete = result.complete
         state.artifactSearchIndex = matches.length ? 0 : -1
         if (matches.length) scrollArtifactSearchToMatch(0)
         else renderArtifactSearchStatus()
@@ -666,7 +677,8 @@ function handleArtifactSearchKeydown(event) {
 
 function renderArtifactSearchStatus() {
   const summary = $('#artifact-search-summary')
-  const total = state.artifactSearchMatches.length
+  const loaded = state.artifactSearchMatches.length
+  const total = state.artifactSearchTotal ?? loaded
   const query = state.artifactSearch.trim()
   if (!summary) return
   if (!query || state.artifact?.kind !== 'large-markdown') {
@@ -676,10 +688,11 @@ function renderArtifactSearchStatus() {
     return
   }
   summary.textContent = total
-    ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total })
+    ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total: `${total}${state.artifactSearchComplete ? '' : '+'}` })
     : t('No matches found')
-  $('#artifact-search-prev').disabled = total === 0
-  $('#artifact-search-next').disabled = total === 0
+  if (total > loaded || !state.artifactSearchComplete) summary.textContent += ` · ${t('Navigation limited to first {count} results', { count: loaded })}`
+  $('#artifact-search-prev').disabled = loaded === 0
+  $('#artifact-search-next').disabled = loaded === 0
 }
 
 function scrollArtifactSearchToMatch(index) {

@@ -61,7 +61,12 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 #document-name { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
 .reader-identity p { font-size: 10px; color: var(--reader-faint); margin: 2px 0 0; }
 .reader-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.reader-document-tools { display: flex; align-items: center; gap: 3px; margin-left: 5px; padding-left: 8px; border-left: 1px solid var(--reader-border); }
+#reader-notes-tools:not(:empty) { display: flex; align-items: center; }
+#reader-notes-tools:empty { display: none; }
+.reader-shell #reader-notes-tools .notes-open { display: grid; place-items: center; gap: 0; }
+.reader-shell #reader-notes-tools .notes-favorite-icon { width: 17px; height: 17px; fill: currentColor; stroke: none; }
+.reader-toolbar-separator { width: 1px; height: 22px; margin: 0 5px; background: var(--reader-border); flex-shrink: 0; }
+.reader-document-tools { display: flex; align-items: center; gap: 3px; }
 .reader-document-tools:empty { display: none; }
 .reader-shell .reader-document-tools .reader-action { border-color: transparent; background: transparent; }
 .view-modes { display: flex; align-items: stretch; flex-shrink: 0; height: var(--reader-control-height); padding: 2px; border: 1px solid var(--reader-border); border-radius: 7px; background: var(--reader-soft); }
@@ -124,9 +129,14 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 .reader-settings-panel label { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--reader-faint); }
 #column-width,.reader-shell .reader-column-width { width: 66px; padding: 4px 6px; font-size: 12px; }
 #search { min-width: 0; display: flex; gap: 6px; padding: 9px 18px; border-bottom: 1px solid var(--reader-border); background: var(--reader-soft); }
-#query { flex: 1; font-size: 12px; }
-#search button { font-size: 12px; }
+#query { flex: 1; min-width: 0; font-size: 12px; }
+#search-count { align-self: center; flex: 0 0 auto; font-size: 12px; color: var(--reader-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#search button { flex-shrink: 0; font-size: 12px; }
 #search-close { border: 0; font-size: 20px !important; }
+@container markdown-reader (max-width: 480px) {
+  #search { display: grid; grid-template-columns: minmax(0,1fr) repeat(4,auto); padding: 8px; gap: 4px; }
+  #query { grid-column: 1 / -1; width: 100%; }
+}
 #workspace { min-width: 0; min-height: 0; position: relative; display: flex; overflow: hidden; }
 #contents-backdrop { position: absolute; inset: 0; z-index: 20; background: #14232b18; border: 0; border-radius: 0; }
 #reader-outline { width: min(360px,calc(100% - 24px)); min-width: 0; position: absolute; inset: 12px auto 12px 12px; z-index: 21; display: flex; flex-direction: column; background: var(--reader-panel); border: 1px solid var(--reader-border); border-radius: 11px; box-shadow: 10px 0 34px #14232b24; overflow: hidden; }
@@ -174,7 +184,7 @@ figure[data-diagram-state="error"] .diagram-canvas { color: var(--red,#b83a45); 
   .reader-header:has(#view-modes:not([hidden])) .reader-identity { flex-basis: 100%; }
   .reader-header:has(#view-modes:not([hidden])) .reader-header-actions { width: 100%; justify-content: flex-end; }
   .reader-header-actions { flex-wrap: wrap; max-width: 100%; row-gap: 6px; }
-  .reader-header-actions :is(#compare-files,[data-open-server],.reader-document-tools button) > span { display: none; }
+  .reader-header-actions :is(#compare-files,[data-open-server],#reader-notes-tools button,.reader-document-tools button) > span { display: none; }
   .reader-identity { gap: 8px; }
   .reader-identity p { font-size: 9px; }
   .reader-footer { padding-inline: 14px; }
@@ -193,3 +203,10 @@ html[data-theme="dark"] .diagram-canvas { background: white; }
 /* The embedding host may own the document toolbar through the public protocol. */
 .reader-shell.host-toolbar > :is(.reader-header, .reader-footer) { display: none; }
 .reader-shell.host-toolbar :is(#edit-save, #edit-reload, #edit-status) { display: none; }
+
+::highlight(reader-search) { background-color: #f8d66d; color: #242019; }
+::highlight(reader-search-current) { background-color: #ec8c35; color: #21160d; }
+
+.reader-search-paint { position: fixed; inset: 0; z-index: 9; pointer-events: none; }
+.reader-search-paint i { position: absolute; background: #f8d66d55; }
+.reader-search-paint i.current { background: #ec8c3588; z-index: 1; }

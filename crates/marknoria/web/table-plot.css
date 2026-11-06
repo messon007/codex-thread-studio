@@ -60,11 +60,18 @@
   font: inherit;
 }
 .table-plot-dialog .dialog-close {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   width: 30px;
   height: 30px;
   padding: 0;
-  font-size: 22px;
+  outline-offset: 2px;
 }
+.table-plot-dialog .dialog-close svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.table-plot-dialog .dialog-close:focus-visible { outline: 2px solid var(--reader-brand, #087f72); outline-offset: 2px; }
 .table-plot-status,
 .table-plot-description {
   margin: 8px 0;

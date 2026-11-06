@@ -116,6 +116,8 @@ export async function notesContract(moduleUrl) {
       storage,
       queryNotes,
       translate,
+      // This synthetic provider models a remote textOnly selection response.
+      selectionAllowed: () => true,
       selection: async (signal) => {
         if (mode === 'selection-pending') {
           selectionSignal = signal

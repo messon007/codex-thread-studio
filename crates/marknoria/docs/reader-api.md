@@ -113,9 +113,11 @@ File and memory-table queries cover complete accepted input. Over-budget input o
 results fail explicitly; visible grid paging is not a query dataset. SQL result
 pages declare total rows; jq declares total values/pages. SQL has its own 32 MiB
 result cap; jq uses the existing source-scaled 8–256 MiB cap. Descriptor budgets
-report the actual document-specific values. Search returns at most 100 matching
-lines and declares whether its bounded result is complete, not an unbounded
-occurrence count. Source windows are 128 KiB, edits 512 KiB, and original-byte
+report the actual document-specific values. Source search returns at most 100
+occurrences, including repeated matches on one line, and declares whether its
+bounded result is complete. Matches include original UTF-8 byte `start`/`end`
+coordinates alongside the original line and projection page; formatted display
+lines are not source coordinates. Source windows are 128 KiB, edits 512 KiB, and original-byte
 transport slices at most 512 KiB. The original 128 MiB source limit is retained.
 
 The default view is Preview; Source/Edit require format and host capability.

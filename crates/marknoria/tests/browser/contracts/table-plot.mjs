@@ -23,7 +23,7 @@ export async function tablePlotContract(moduleUrl) {
       valueText: row === 2 ? null : String(row === 1 ? -1 : row)
     }))
   })
-  let plot,
+  let requests = 0, plot,
     mode = 'valid',
     resolveLate,
     lateSignal,
@@ -46,6 +46,7 @@ export async function tablePlotContract(moduleUrl) {
       onSelection: (value) => selections.push(value),
       onState: (value) => states.push(value),
       load: async ({ x, y, signal }) => {
+        requests++
         check(x === 0 && y === 1, 'Plot axes lost original column IDs')
         if (mode === 'pending') {
           lateSignal = signal
@@ -57,6 +58,11 @@ export async function tablePlotContract(moduleUrl) {
       }
     })
     await plot.ready
+    check(requests === 0 && root.querySelector('button').disabled, 'Opening a chart guessed a numeric column or ran a query')
+    const numericColumn = root.querySelector('select[aria-label="Numeric column"]')
+    numericColumn.value = '1'
+    numericColumn.dispatchEvent(new Event('change'))
+    await plot.refresh()
     const svg = root.querySelector('svg')
     await until(() => getComputedStyle(svg).display === 'block', 'Plot stylesheet did not load')
     check(

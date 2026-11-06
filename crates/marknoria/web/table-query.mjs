@@ -1,3 +1,4 @@
+import { sqlHelp, queryError } from './query-help.mjs'
 import { queryOperation } from './query-operation.mjs'
 import { dialogClose } from './icons.mjs'
 import { tableLayout } from './table-layout.mjs'
@@ -118,7 +119,8 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   schema.className = 'table-query-schema'
   const summary = document.createElement('summary')
   labels.set(summary, 'Columns and query help')
-  const help = document.createElement('pre')
+  const help = document.createElement('div')
+  help.className = 'query-help-content'
   schema.append(summary, help)
   const actions = document.createElement('div')
   actions.className = 'table-query-actions'
@@ -130,6 +132,24 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   const message = document.createElement('span')
   message.setAttribute('role', 'status')
   actions.append(run, reset, message)
+  const recovery = document.createElement('div'),
+    recoveryHint = document.createElement('span'),
+    fixQuery = document.createElement('button')
+  recovery.className = 'table-query-recovery'
+  recovery.hidden = true
+  labels.set(recoveryHint, 'Choose the intended match: equality (=), a list (IN), or a substring (instr). This button places a substring query in the editor; review it before running.')
+  labels.set(fixQuery, 'Use text contains query')
+  fixQuery.type = 'button'
+  fixQuery.className = 'table-query-fix'
+  let correction = null
+  fixQuery.addEventListener('click', () => {
+    if (correction) {
+      editor.value = correction
+      editor.focus()
+    }
+  }, { signal: lifetime.signal })
+  recovery.append(recoveryHint, fixQuery)
+  actions.append(recovery)
   const controlsSlot = document.createElement('div')
   controlsSlot.className = 'table-query-controls'
   const workspace = document.createElement('div')
@@ -325,6 +345,8 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   }
   async function load(row, sql) {
     if (loading || stopped) return
+    correction = null
+    recovery.hidden = true
     loading = true
     update()
     if (sql == null) labels.set(message, 'Loading results…')
@@ -376,7 +398,18 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
     } catch (error) {
       if (!stopped && error.name !== 'AbortError') {
         labels.clear(message)
-        message.textContent = error.message
+        message.textContent = queryError(error, 'SQL')
+        // Only offer an explicit correction for this unambiguous simple form.
+        // SQLite's IN c2 means membership in a table; never rewrite or run it silently.
+        const contains = /^\s*SELECT\s+\*\s+FROM\s+t\s+WHERE\s+(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')\s+IN\s+(c[1-9]\d*)\s*;?\s*$/i.exec(sql || '')
+        if (contains && Number(contains[3].slice(1)) <= metadata.columns.length && /no such table:\s*c\d+\b/i.test(error.message)) {
+          const value = contains[1] === undefined
+            ? contains[2].replaceAll("''", "'")
+            : contains[1].replaceAll('""', '"')
+          correction = `SELECT * FROM t WHERE instr(${contains[3]}, '${value.replaceAll("'", "''")}') > 0`
+          fixQuery.title = correction
+          recovery.hidden = false
+        }
         if (/no such column:\s*c\d+\b/i.test(error.message)) {
           const hint = document.createElement('span')
           labels.set(hint, 'For c1, c2, … use FROM t; FROM data uses named columns.')
@@ -437,23 +470,10 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
         throw Error('Invalid bounded SQL schema')
       metadata = value
       editor.value = value.defaultSql
-      const instructions = document.createElement('span')
-      labels.set(
-        instructions,
-        'SELECT c1 FROM t  →  positional aliases c1, c2, …\nSELECT * FROM data  →  named columns\n_row: original record · _line: source line\nValues remain text. Use CAST(c2 AS REAL) for numeric comparisons.\n\n'
-      )
-      const quoting = document.createElement('span')
-      const contains = document.createElement('span')
-      const membership = document.createElement('span')
-      labels.set(quoting, 'Use single quotes for text; double quotes name columns.')
-      labels.set(contains, "Contains text: LIKE '%text%' uses wildcards; instr(c1, 'text') > 0 matches a literal substring.")
-      labels.set(membership, "Match a list: c1 IN ('first', 'second'). IN c1 does not search within text.")
-      help.replaceChildren(
-        instructions,
-        value.columns.map((name, i) => `c${i + 1} ↔ "${name.replaceAll('"', '""')}"`).join('\n'),
-        '\n\n', quoting, '\n', contains, '\n', membership,
-        "\n\nSELECT * FROM t WHERE c1 LIKE '%text%'\nSELECT * FROM t WHERE instr(c1, 'text') > 0\nSELECT * FROM t WHERE c1 IN ('first', 'second')\nSELECT c1, SUM(CAST(c2 AS REAL)) FROM t GROUP BY c1"
-      )
+      sqlHelp(help, labels, value.columns, (sql) => {
+        editor.value = sql
+        editor.focus()
+      })
       const loading = load(0, value.defaultSql)
       editor.focus()
       return loading
@@ -461,7 +481,7 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
     .catch((error) => {
       if (!stopped) {
         labels.clear(message)
-        message.textContent = error.message
+        message.textContent = queryError(error, 'SQL')
         labels.set(content, 'Table unavailable.')
       }
     })
@@ -495,7 +515,7 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
     },
     dispose,
     isOpen: () => !stopped,
-    selection: () => (chartDialog?.isOpen() ? chartDialog.selection() : cells.selection())
+    selection: (options = {}) => (chartDialog?.isOpen() ? (options.textOnly ? null : chartDialog.selection()) : cells.selection(options))
   }
 }
 

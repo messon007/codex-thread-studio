@@ -68,6 +68,75 @@ fn plain_and_structured_files_preserve_source_and_exact_formatted_token_mapping(
 }
 
 #[test]
+fn large_json_streams_readable_pages_with_original_spelling_and_anchors() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("large.json");
+    let raw = format!("[{}]", (0..16000).map(|n| format!(r#"{{"id":{n},"n":1e+04,"n":90071992547409931234,"text":"中文😀\u0061"}}"#)).collect::<Vec<_>>().join(","));
+    assert!(raw.len() > structured::FORMAT_BYTES);
+    fs::write(&path, &raw).unwrap();
+    let (cache, i) = index(&path);
+    let display = fs::read_to_string(cache.path().join("pages.txt")).unwrap();
+    assert!(display.contains("\n    \"id\": 15999,"));
+    assert_eq!(display.matches("1e+04").count(), 16000);
+    assert_eq!(display.matches("90071992547409931234").count(), 16000);
+    assert!(display.contains(r#""text": "中文😀\u0061""#));
+    assert!(!cache.path().join("preview-note.txt").exists());
+    for page in [0, i.pages.len() / 2, i.pages.len() - 1] {
+        let text = crate::core::read_cached_page(cache.path(), &i, page).unwrap();
+        for anchor in projection::read(cache.path(), &i, page, &text).unwrap() {
+            assert_eq!(&text[anchor.display.clone()], &raw[anchor.original..anchor.original + anchor.display.len()]);
+        }
+        let html = crate::core::read_page(cache.path(), &i, page).unwrap();
+        assert!(html.contains("data-source-start="));
+        assert!(html.len() <= crate::core::MAX_HTML);
+    }
+    assert_eq!(fs::read_to_string(cache.path().join("source.md")).unwrap(), raw);
+    assert_eq!(fs::read_to_string(path).unwrap(), raw);
+}
+
+#[test]
+fn invalid_or_budget_limited_json_keeps_source_with_cached_feedback() {
+    let d = tempfile::tempdir().unwrap();
+    for (n, raw) in [
+        "{\"a\": 1 \"b\": 2}".to_string(),
+        "[1,]".to_string(),
+        "[1,\u{00a0}2]".to_string(),
+        "[\"line\nfeed\"]".to_string(),
+        "{\"a\": [1, 2}".to_string(),
+        format!("{}0{}", "[".repeat(129), "]".repeat(129)),
+        format!("{{\"long\":\"{}\"}}", "\\u0061".repeat(50000)),
+        format!("[{},]", "0,".repeat(150000)),
+    ].into_iter().enumerate() {
+        let path = d.path().join(format!("invalid{n}.json"));
+        fs::write(&path, &raw).unwrap();
+        let (cache, i) = index(&path);
+        assert_eq!(fs::read_to_string(cache.path().join("pages.txt")).unwrap(), raw);
+        let html = crate::core::read_page(cache.path(), &i, 0).unwrap();
+        assert!(html.contains("preview shows original source:"));
+        for page in 0..i.pages.len() {
+            let text = crate::core::read_cached_page(cache.path(), &i, page).unwrap();
+            for anchor in projection::read(cache.path(), &i, page, &text).unwrap() {
+                assert_eq!(&text[anchor.display.clone()], &raw[anchor.original..anchor.original + anchor.display.len()]);
+            }
+        }
+    }
+}
+
+#[test]
+fn unformatted_source_pages_retain_line_anchors() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("lines.txt");
+    fs::write(&path, "one\n中文😀\nthree\n").unwrap();
+    let (cache, i) = index(&path);
+    let text = crate::core::read_cached_page(cache.path(), &i, 0).unwrap();
+    let anchors = projection::read(cache.path(), &i, 0, &text).unwrap();
+    assert_eq!(anchors.iter().map(|a| a.line).collect::<Vec<_>>(), [1, 2, 3]);
+    let html = crate::core::read_page(cache.path(), &i, 0).unwrap();
+    assert!(html.contains("data-source-line=\"1\" data-source-end-line=\"1\""));
+    assert!(html.contains("data-source-line=\"2\" data-source-end-line=\"2\""));
+}
+
+#[test]
 fn jsonl_formats_beyond_the_whole_file_budget_and_packs_records_without_losing_source() {
     let d=tempfile::tempdir().unwrap();let path=d.path().join("records.JSONL");
     let raw=(0..12000).map(|n|format!("{{\"id\":{n},\"text\":\"中文😀\",\"nested\":{{\"x\":true}}}}\r\n")).collect::<String>();

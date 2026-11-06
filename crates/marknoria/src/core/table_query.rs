@@ -28,6 +28,20 @@ pub(crate) const RESULT_BYTES: u64 = 32 * 1024 * 1024;
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
 }
+// SQLite offsets are UTF-8 bytes; report human-readable character columns.
+fn query_error(e: rusqlite::Error) -> io::Error {
+    if let rusqlite::Error::SqlInputError { msg, sql, offset, .. } = &e {
+        if let Ok(offset) = usize::try_from(*offset) {
+            if let Some(prefix) = sql.get(..offset) {
+                let line = prefix.bytes().filter(|&b| b == b'\n').count() + 1;
+                let column = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                return error(format!("{msg} at line {line}, column {column}"));
+            }
+        }
+        return error(msg);
+    }
+    error(e)
+}
 fn safe_text(value: &str) -> bool {
     !value
         .chars()
@@ -283,6 +297,20 @@ fn build_input(
 mod tests {
     use super::*;
     #[test]
+    fn sqlite_diagnostics_use_engine_offsets_and_unicode_columns() {
+        let db = Connection::open_in_memory().unwrap();
+        let sql = "SELECT '中';\nSELECT )";
+        // A direct second statement demonstrates a real engine-provided offset.
+        let error = db.prepare("SELECT '中',\n )").err().unwrap();
+        let diagnostic = query_error(error).to_string();
+        assert!(diagnostic.contains("line 2, column 2"), "{diagnostic}");
+        let diagnostic = query_error(rusqlite::Error::SqlInputError {
+            error: rusqlite::ffi::Error::new(1), msg: "syntax error".into(),
+            sql: sql.into(), offset: "SELECT '中';\nSELECT ".len() as i32,
+        }).to_string();
+        assert!(diagnostic.ends_with("line 2, column 8"), "{diagnostic}");
+    }
+    #[test]
     fn query_note_provenance_survives_results_and_rejects_forgery() {
         use crate::core::notes::{self, Request};
         let (d, index, cancel) = fixture();
@@ -294,7 +322,9 @@ mod tests {
                 "quote":quote,"revision":index.revision,
                 "anchor":{"location":{"kind":"queryCell","queryId":result.id,"row":0,"column":column}}})).unwrap()
         };
-        assert!(queries.prepare_note(&index, &mut request("1", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("forged", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("01", 0)).is_ok(), "A selected substring must retain its query-cell provenance");
         assert!(queries.prepare_note(&index, &mut request("001", 99)).is_err());
         let other = Queries::default();
         assert!(other.prepare_note(&index, &mut request("001", 0)).is_err());
@@ -660,7 +690,7 @@ impl Queries {
             }),
         )
         .map_err(error)?;
-        let mut statement = db.prepare(sql).map_err(error)?;
+        let mut statement = db.prepare(sql).map_err(query_error)?;
         if !statement.readonly() || statement.column_count() == 0 {
             return Err(error("Only read-only SELECT queries are supported"));
         }
@@ -778,7 +808,9 @@ impl Queries {
             .ok_or_else(|| error("Query note cell is outside its result"))?;
         let value_is_null = value.is_none();
         let value = value.as_deref().unwrap_or("NULL");
-        if !(if request.quote_truncated { value.starts_with(&request.quote) } else { value == request.quote }) {
+        // A cell viewer can quote an exact selected substring. The owned result
+        // remains the authority; unrelated text and empty snippets are rejected.
+        if request.quote.is_empty() || !value.contains(&request.quote) {
             return Err(error("Note quote does not match its query result cell"));
         }
         Ok(QuerySnapshot {

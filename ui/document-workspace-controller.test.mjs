@@ -31,7 +31,7 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
   const previousStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle')
   Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: () => ({ getPropertyValue: () => '' }) })
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
-  Object.defineProperty(globalThis, 'document', { configurable: true, value: { querySelector: element, documentElement: { dataset: {} } } })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { baseURI: 'http://localhost/', querySelector: element, documentElement: { dataset: {} } } })
   let cleanup = () => {}
   context.after(() => {
     cleanup()
@@ -61,6 +61,7 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
       disconnectMarkdownImageObserver() {},
       applyRightRailWidth() {},
       hideSelection() {},
+      setSelection() {},
       renderMarkdownDocument() { markdownRenders += 1; throw new Error('Unexpected Markdown rendering') },
       hydrateMarkdownImages() {},
       ...overrides,
@@ -100,7 +101,12 @@ test('large Markdown uses one retained frame without whole-document rendering an
   assert.equal(fixture.element('#artifact-view-switch').classList.contains('hidden'), false)
   assert.equal(fixture.element('#artifact-edit').classList.contains('hidden'), true)
   assert.equal(frames.length, 1)
-  assert.equal(frames[0].src, result.reader.url)
+  const readerUrl = new URL(frames[0].src)
+  assert.equal(readerUrl.pathname, '/markdown-reader/reader-1/')
+  assert.equal(readerUrl.hash, '#token')
+  assert.equal(readerUrl.searchParams.get('embedded'), '1')
+  assert.equal(readerUrl.searchParams.get('notes'), 'host')
+  assert.equal(readerUrl.searchParams.get('selectionMenu'), 'host')
   fixture.controller.render()
   fixture.controller.setView('edit')
   assert.equal(frames.length, 1)

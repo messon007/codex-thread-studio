@@ -57,6 +57,7 @@ export async function tableQueryContract(moduleUrl) {
         lateSignal = signal
         return await new Promise((resolve) => (late = resolve))
       }
+      if (sql === 'SELECT * FROM t WHERE \"DCDC-1297522\" IN c2') throw Error('Reader request failed (400): no such table: c2 <script>inert</script>')
       if (sql === 'DELETE FROM data') throw Error('not authorized')
       currentId = crypto.randomUUID()
       const result = windowAt(currentId)
@@ -109,6 +110,26 @@ export async function tableQueryContract(moduleUrl) {
         content.querySelector('tbody tr').cells[2].textContent === '<script>inert</script>',
       'SQL text became markup'
     )
+    const help = dialog.querySelector('.table-query-schema')
+    help.open = true
+    check(help.textContent.includes("ESCAPE '!'") && help.textContent.includes('jaq') === false, 'SQL help omitted literal wildcard syntax')
+    const beforeExample = requests
+    help.querySelector('.query-help-example button').click()
+    check(requests === beforeExample && dialog.querySelector('textarea').value === 'SELECT c1 FROM t LIMIT 20', 'Help example executed without explicit Run')
+    const lastExample = help.querySelector('.query-help-example:last-child')
+    lastExample.scrollIntoView({ block: 'nearest' })
+    const helpBounds = help.getBoundingClientRect(), exampleBounds = lastExample.getBoundingClientRect()
+    check(exampleBounds.bottom <= helpBounds.bottom + 1 && exampleBounds.top >= helpBounds.top - 1, 'SQL help examples are clipped or unreachable')
+    check(dialog.scrollWidth <= dialog.clientWidth + 1 && help.scrollWidth <= help.clientWidth + 1, 'SQL help overflowed horizontally')
+    help.open = false
+    dialog.querySelector('.table-query-shell').scrollTop = 0
+    const invalidSql = 'SELECT * FROM t WHERE "DCDC-1297522" IN c2'
+    const resultBeforeError = query.state().id
+    await query.execute(invalidSql)
+    check(query.state().id === resultBeforeError && dialog.querySelector('textarea').value === invalidSql, 'SQL error changed the query or valid results')
+    check(!query.state().message.includes('Reader request failed') && query.state().message.includes('IN expects a list') && !dialog.querySelector('[role="status"] script'), 'SQL diagnostic leaked transport noise or interpreted markup')
+    check(!dialog.querySelector('.table-query-run').disabled, 'SQL diagnostic prevented retry')
+    await query.execute('SELECT * FROM data')
     const handle = dialog.querySelector('.table-column-resize')
     handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     const width = content.querySelector('th').getBoundingClientRect().width
@@ -144,6 +165,7 @@ export async function tableQueryContract(moduleUrl) {
     check(closed.includes(currentId), 'Invalid new result was not released')
     mode = 'normal'
     dialog.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     await wait(() => root.querySelectorAll('.table-plot-dialog rect').length === 123)
     root.querySelector('[data-chart-row="122"]').focus()
     check(
@@ -229,6 +251,7 @@ export async function tableQueryContract(moduleUrl) {
     await query.ready
     const kept = query.state().id
     root.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     await wait(() => root.querySelectorAll('.table-plot-dialog rect').length === 123)
     const fillers = Array.from({ length: 256 - translate.state().subscribers }, () =>
       translate.subscribe(() => {})

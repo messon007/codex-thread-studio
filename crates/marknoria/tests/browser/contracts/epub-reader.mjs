@@ -130,9 +130,46 @@ export async function epubReaderContract(moduleUrl) {
       resolvedQuote === selected.quote,
       `CFI did not resolve to its original text: ${JSON.stringify({ cfi: selected.cfiRange, quote: selected.quote, resolvedQuote })}`
     )
+    selection.collapse(paragraph.firstChild, 0)
+    frame.contentDocument.dispatchEvent(new Event('selectionchange'))
+    check(reader.selection() === null && selections.at(-1) === null, 'Collapsed EPUB text retained a stale CFI selection')
+    selection.removeAllRanges(); selection.addRange(range)
+    frame.contentDocument.dispatchEvent(new Event('selectionchange'))
+    check(reader.selection()?.quote === selected.quote, 'EPUB selection did not recover after collapse')
+    selection.removeAllRanges()
+    frame.contentDocument.dispatchEvent(new Event('selectionchange'))
+    check(reader.selection() === null && selections.at(-1) === null, 'Cleared EPUB range retained text')
+    // Exercise the sandbox fallback, without dispatching selectionchange or
+    // calling reader.selection() (both used to conceal stale invalidation).
+    const suppress = event => event.stopImmediatePropagation()
+    frame.contentDocument.addEventListener('selectionchange', suppress, true)
+    try {
+      selection.removeAllRanges(); selection.addRange(range)
+      await until(() => selections.at(-1)?.quote === selected.quote, 'polled range capture')
+      selection.collapse(paragraph.firstChild, 0)
+      await until(() => selections.at(-1) === null, 'polled collapsed invalidation')
+      selection.removeAllRanges(); selection.addRange(range)
+      await until(() => selections.at(-1)?.quote === selected.quote, 'polled range recapture')
+      selection.removeAllRanges()
+      await until(() => selections.at(-1) === null, 'polled empty invalidation')
+      check(true, 'Collapsed/empty sandbox selections must notify without getter calls')
+    } finally { frame.contentDocument.removeEventListener('selectionchange', suppress, true) }
+    selection.addRange(range)
+    frame.contentDocument.dispatchEvent(new Event('selectionchange'))
+    await until(() => selections.at(-1)?.quote === selected.quote, 'selection before scroll')
+    root.querySelector('.epub-container').dispatchEvent(new Event('scroll'))
+    await until(() => selections.at(-1) === null, 'scroll invalidation')
+    check(reader.selection() === null, 'Unchanged range resurrected a scroll-dismissed selection')
+    const partialRange = frame.contentDocument.createRange()
+    partialRange.setStart(paragraph.firstChild, 0)
+    partialRange.setEnd(paragraph.firstChild, 13)
+    selection.removeAllRanges(); selection.addRange(partialRange)
+    await until(() => selections.at(-1)?.quote === 'EPUB sentinel', 'new range after scroll')
+    check(await reader.quoteForCfi(selections.at(-1).cfiRange) === 'EPUB sentinel', 'Partial reselection lost its exact CFI')
     const saved = reader.state().cfi
     await reader.settings({ theme: 'sepia', fontScale: 1.25, flow: 'scrolled' })
     await reader.display(saved)
+    check(reader.selection() === null, 'Explicit CFI navigation retained the old selection')
     await until(
       () => reader.state().theme === 'sepia' && reader.state().flow === 'scrolled',
       'updated settings'

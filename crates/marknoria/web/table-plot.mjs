@@ -44,6 +44,11 @@ export function mountTablePlot(
   rowOption.value = ''
   labels.set(rowOption, 'Row number')
   x.append(rowOption)
+  const chooseNumeric = document.createElement('option')
+  chooseNumeric.value = ''
+  chooseNumeric.disabled = true
+  labels.set(chooseNumeric, 'Choose a numeric column')
+  y.append(chooseNumeric)
   columns.forEach((name, index) => {
     for (const selector of [x, y]) {
       const option = document.createElement('option')
@@ -53,9 +58,11 @@ export function mountTablePlot(
     }
   })
   x.value = '0'
-  y.value = String(Math.min(1, columns.length - 1))
+  y.value = ''
   draw.type = 'submit'
   labels.set(draw, 'Draw chart')
+  draw.disabled = true
+  y.addEventListener('change', () => { draw.disabled = busy || y.value === '' }, options)
   axes.append(x, y, draw)
   const status = document.createElement('p')
   status.role = 'status'
@@ -242,6 +249,7 @@ export function mountTablePlot(
     graphic.append(svg)
   }
   async function refresh() {
+    if (y.value === '') return state()
     const ticket = ++generation
     request?.abort()
     request = new AbortController()
@@ -277,7 +285,7 @@ export function mountTablePlot(
     } finally {
       if (!stopped && ticket === generation) {
         busy = false
-        draw.disabled = false
+        draw.disabled = y.value === ''
         emit()
       }
     }
@@ -291,8 +299,8 @@ export function mountTablePlot(
     },
     options
   )
-  const ready = refresh()
-  void ready.catch(() => {})
+  labels.set(status, 'Choose a numeric column, then draw the chart. Text columns are not converted to numbers.')
+  const ready = Promise.resolve(state())
   return {
     ready,
     state,

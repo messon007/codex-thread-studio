@@ -22,7 +22,7 @@ for(const [name,text]of cases)await writeFile(join(project,name),text)
 assert.ok(Buffer.byteLength(cases[0][1])>5*1024*1024)
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex')
 const originals=new Map(cases.map(([name,text])=>[name,hash(Buffer.from(text))]))
-const environment={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:cache}
+const environment={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_THREAD_STUDIO_CODEX_BIN:'/intentionally-unavailable-codex',CODEX_THREAD_STUDIO_OPENCODE_BIN:'/intentionally-unavailable-opencode',XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:cache}
 const server=spawn(process.env.STUDIO_REMOTE_BINARY||join(root,'target/release/codex-thread-studio'),['--serve','--listen','127.0.0.1:0'],{env:environment,stdio:['ignore','pipe','pipe']})
 let log='',browser;for(const stream of [server.stdout,server.stderr])stream.on('data',bytes=>{log=(log+bytes).slice(-100000)})
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),results=[]

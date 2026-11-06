@@ -176,11 +176,11 @@ window.runTableChecks = async () => {
   await input({type:'double',x:cellBounds.left+20,y:cellBounds.top+cellBounds.height/2})
   await wait(()=>document.querySelector('.table-cell-dialog')?.open)
   check(document.querySelector('.table-cell-full').textContent===cell.textContent,'Full cell changed the source value')
+  check(reader.tables.selection()===null,'Opening the full-cell viewer selected the whole cell');const range=document.createRange();range.selectNodeContents(document.querySelector('.table-cell-full'));getSelection().removeAllRanges();getSelection().addRange(range);document.querySelector('.table-cell-full').dispatchEvent(new MouseEvent('pointerup',{bubbles:true}))
   check(reader.tables.selection().location.row===0&&reader.tables.selection().location.column===0,'Physical cell selection lost original coordinates')
-  document.querySelector('.table-cell-dialog footer button').click()
+  document.querySelector('.table-cell-dialog .dialog-close').click();article().querySelector('.table-cell-copy').click()
   await wait(()=>article().querySelector('.table-cell-copy').textContent==='Copied')
   check(article().querySelector('.table-cell-copy').textContent==='Copied','Cell clipboard write failed')
-  document.querySelector('.table-cell-dialog button[aria-label="Close"]').click()
   check(document.activeElement===cell,'Full cell close did not restore keyboard focus')
   check(same(widths(),sized),'Cell interaction changed column widths')
   return { assertions, physicalInput: true, floatingScrollbar: true, columns: sized, sourceBytes: reader.index.sourceBytes }

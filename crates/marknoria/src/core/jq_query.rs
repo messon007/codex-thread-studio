@@ -22,6 +22,42 @@ fn bad(message: impl std::fmt::Display) -> io::Error {
     io::Error::other(message.to_string())
 }
 
+// jaq returns borrowed source slices. Only report locations inside this filter,
+// never a guessed substring match or a standard-library definition.
+fn filter_location(source: &str, token: &str) -> String {
+    let Some(offset) = (token.as_ptr() as usize).checked_sub(source.as_ptr() as usize) else {
+        return String::new();
+    };
+    let Some(prefix) = source.get(..offset) else { return String::new() };
+    let line = prefix.bytes().filter(|&b| b == b'\n').count() + 1;
+    let column = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    format!(" at line {line}, column {column}")
+}
+fn load_error(source: &str, errors: jaq_core::load::Errors<&str, ()>) -> io::Error {
+    use jaq_core::load::Error;
+    let Some((_, error)) = errors.first() else { return bad("Invalid jq filter") };
+    let (token, reason) = match error {
+        Error::Lex(errors) => errors.first().map(|(expected, found)|
+            (*found, format!("expected {}", expected.as_str()))),
+        Error::Parse(errors) => errors.first().map(|(expected, found)|
+            (*found, format!("expected {}", expected.as_str()))),
+        Error::Io(errors) => errors.first().map(|(found, _)|
+            (*found, "module imports and includes are unavailable".into())),
+    }.unwrap_or(("", "invalid syntax".into()));
+    bad(format!("Invalid jq filter{}: {reason}", filter_location(source, token)))
+}
+fn compile_error(source: &str, errors: jaq_core::compile::Errors<&str, ()>) -> io::Error {
+    let Some((_, errors)) = errors.first() else { return bad("Invalid jq filter") };
+    let Some((token, undefined)) = errors.first() else { return bad("Invalid jq filter") };
+    let name: String = token.chars().take(120).collect();
+    let reason = match undefined {
+        jaq_core::compile::Undefined::Filter(arity) =>
+            format!("undefined filter {name}/{arity}"),
+        other => format!("undefined {} {name}", other.as_str()),
+    };
+    bad(format!("Invalid jq filter{}: {reason}", filter_location(source, token)))
+}
+
 pub fn supported(name: &str) -> bool {
     name.rsplit_once('.').is_some_and(|(_, ext)| {
         matches!(
@@ -274,11 +310,11 @@ pub fn worker(source: &Path, directory: &Path) -> io::Result<()> {
                 path: (),
             },
         )
-        .map_err(|e| bad(format!("Invalid jq filter: {e:?}")))?;
+        .map_err(|e| load_error(&job.filter, e))?;
     let filter = jaq_core::Compiler::default()
         .with_funs(funs)
         .compile(modules)
-        .map_err(|e| bad(format!("Invalid jq filter: {e:?}")))?;
+        .map_err(|e| compile_error(&job.filter, e))?;
     let mut source_file = fs::File::open(source)?;
     let mut prefix = [0; 3];
     let length = source_file.read(&mut prefix)?;
@@ -344,6 +380,25 @@ pub fn worker_entry() -> Option<io::Result<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn filter_diagnostics_report_actual_spans_without_debug_structures() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.json");
+        fs::write(&source, "{}").unwrap();
+        for (filter, expected) in [
+            (". |\n missing_filter", "line 2, column 2: undefined filter missing_filter/0"),
+            (". |\n (", "expected closing parenthesis"),
+            (". |\n if true then .", "expected else or end"),
+            ("include \"forbidden\"; .", "module imports and includes are unavailable"),
+        ] {
+            fs::write(dir.path().join("job.json"), serde_json::to_vec(&Job { filter: filter.into(), slurp: false }).unwrap()).unwrap();
+            let error = worker(&source, dir.path()).unwrap_err().to_string();
+            assert!(error.contains(expected), "{filter}: {error}");
+            assert!(!error.contains("File {"), "{error}");
+        }
+        let source = "中\n😀 x";
+        assert_eq!(filter_location(source, &source[source.len()-1..]), " at line 2, column 3");
+    }
     #[test]
     fn disk_pages_preserve_utf8_long_lines_and_empty_results() {
         let dir = tempfile::tempdir().unwrap();

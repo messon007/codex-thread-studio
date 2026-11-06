@@ -339,6 +339,7 @@ struct Writer<'a> {
     diagram_offset: u64,
     code_spans: VecDeque<Range<usize>>,
     nested_row_spans: VecDeque<Range<usize>>,
+    text_spans: std::collections::BTreeMap<usize, Range<usize>>,
     tables: Vec<Table>,
     web_references: bool,
 }
@@ -359,7 +360,25 @@ impl Writer<'_> {
                 "An indivisible block exceeds the prototype event budget",
             ));
         }
-        let events = markdown::autolinks(events)?;
+        let original_spans = std::mem::take(&mut self.text_spans);
+        let mut text_spans = std::collections::BTreeMap::new();
+        let mut merged = Vec::with_capacity(events.len());
+        let mut input = events.into_iter().enumerate().peekable();
+        while let Some((position, event)) = input.next() {
+            let mut span = original_spans.get(&position).cloned();
+            let event = if let Event::Text(text) = event {
+                let mut text = text.into_string();
+                while matches!(input.peek(), Some((_, Event::Text(_)))) {
+                    let (position, Event::Text(next)) = input.next().unwrap() else { unreachable!() };
+                    text.push_str(&next);
+                    if let (Some(span), Some(next)) = (&mut span, original_spans.get(&position)) { span.end = next.end; }
+                }
+                Event::Text(text.into())
+            } else { event };
+            if let Some(span) = span { text_spans.insert(merged.len(), span); }
+            merged.push(event);
+        }
+        let events = merged;
         let mut highlight_budget = 0;
         if columns == 0
             && events
@@ -377,14 +396,21 @@ impl Writer<'_> {
         }
         let mut rendered = String::new();
         let mut table_depth = 0usize;
-        let safe_events = events.into_iter().map(|event| {
+        let safe_events = events.into_iter().enumerate().flat_map(|(position, event)| {
             if matches!(event, Event::Start(Tag::Table(_))) {table_depth+=1;}
             let in_table = columns>0 || table_depth>0;
             if matches!(event, Event::End(TagEnd::Table)) {table_depth=table_depth.saturating_sub(1);}
-            if self.web_references && (matches!(event, Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event, Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) {
+            let event = if self.web_references && (matches!(event, Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image)) || matches!(&event, Event::Start(Tag::Link { dest_url, .. }) if dest_url.starts_with(references::PREFIX))) {
                 references::projected(event)
-            } else if in_table {inert_cell_event(event)} else {inert_event(event)}
+            } else if in_table {inert_cell_event(event)} else {inert_event(event)};
+            // Only parser-owned text offsets create anchors, after untrusted HTML
+            // has crossed the sanitizer. Autolinks keep these inline containers.
+            if let Some(span) = text_spans.get(&position) {
+                let range = source_range(&self.starts, span.clone());
+                vec![Event::Html(format!("<span data-source-start=\"{}\" data-source-end=\"{}\" data-source-line=\"{}\" data-source-end-line=\"{}\">", range.start, range.end, range.line, range.end_line).into()), event, Event::Html("</span>".into())]
+            } else { vec![event] }
         });
+        let safe_events = markdown::autolinks(safe_events.collect())?.into_iter();
         if columns > 0 {
             push_markdown_html(&mut rendered, safe_events);
             let anchors = header_span.into_iter().chain(row_spans.iter().cloned());
@@ -480,13 +506,17 @@ impl Writer<'_> {
                         highlight_budget -= extra;
                         true
                     });
+                    push_markdown_html(&mut rendered, ordinary.drain(..));
+                    if let Some(span) = &code_span && self.web_references {
+                        let range = source_range(&self.starts, span.clone());
+                        rendered.push_str(&format!("<div data-source-code-line=\"{}\" data-source-start=\"{}\" data-source-end=\"{}\" data-source-line=\"{}\" data-source-end-line=\"{}\">", range.line + usize::from(matches!(kind, CodeBlockKind::Fenced(_))), range.start, range.end, range.line, range.end_line));
+                    }
                     if let Some(highlighted) = highlighted {
-                        push_markdown_html(&mut rendered, ordinary.drain(..));
                         rendered.push_str(&highlighted);
                     } else {
-                        ordinary.push(event);
-                        ordinary.extend(code);
+                        push_markdown_html(&mut rendered, std::iter::once(event).chain(code));
                     }
+                    if code_span.is_some() && self.web_references { rendered.push_str("</div>"); }
                     continue;
                 }
                 ordinary.push(event);
@@ -600,6 +630,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         diagram_offset: 0,
         code_spans: VecDeque::new(),
         nested_row_spans: VecDeque::new(),
+        text_spans: std::collections::BTreeMap::new(),
         tables: Vec::new(),
         web_references: profile == ProjectionProfile::Web,
     };
@@ -627,6 +658,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
     let mut heading_offsets = Vec::new();
     let mut table_id = 0;
     let mut active_diagram = false;
+    let mut in_code = false;
     while let Some(item) = events.next() {
         let (mut event, span) = item?;
         if let Event::Start(Tag::TableHead) = &event {
@@ -795,7 +827,8 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
             if !pending.is_empty()
                 && (heading
                     || diagram
-                    || pending_span.end.saturating_sub(pending_span.start) >= PAGE_BYTES)
+                    || pending_span.end.saturating_sub(pending_span.start) >= PAGE_BYTES
+                    || (writer.web_references && pending_weight >= PAGE_BYTES))
             {
                 writer.page(
                     std::mem::take(&mut pending),
@@ -844,11 +877,18 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         }
         pending_span.end = span.end;
         pending_weight = pending_weight.saturating_add(references::event_weight(&event));
+        if matches!(event, Event::Start(Tag::CodeBlock(_))) { in_code = true; }
+        if matches!(event, Event::End(TagEnd::CodeBlock)) { in_code = false; }
+        if writer.web_references && !in_code && matches!(event, Event::Text(_) | Event::Code(_)) {
+            pending_weight = pending_weight.saturating_add(160);
+            writer.text_spans.insert(pending.len(), span.clone());
+        }
         pending.push(event);
         if let Some(source) = bare_source {
             pending.push(Event::Text(source.into()));
             pending.push(Event::End(TagEnd::CodeBlock));
             depth = depth.saturating_sub(1);
+            in_code = false;
         }
         if pending.len() > MAX_EVENTS
             || (if profile == ProjectionProfile::Web { pending_weight } else { pending_span.end.saturating_sub(pending_span.start) }) > MAX_HTML
@@ -922,7 +962,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
 pub fn read_page(directory: &Path, index: &Index, page: usize) -> io::Result<String> {
     let text = read_cached_page(directory, index, page)?;
     if index.text_pages {
-        Ok(documents::text_page_html(&highlight::language_for_name(&index.name), &text))
+        documents::text_page_html(directory, index, page, &text)
     } else {
         Ok(text)
     }
@@ -1375,17 +1415,61 @@ pub struct Match {
     pub line: usize,
     pub snippet: String,
     pub table_row: Option<usize>,
+    pub start: usize,
+    pub end: usize,
 }
 
+pub const SEARCH_WINDOW_LIMIT: usize = 100;
+
+/// A UI search window keeps the legacy match wire shape and adds its ordinal
+/// within the original line. A window may begin midway through a minified line.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchWindowMatch {
+    #[serde(flatten)]
+    pub found: Match,
+    pub occurrence: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchWindow {
+    pub offset: usize,
+    pub total: usize,
+    pub limit: usize,
+    pub matches: Vec<SearchWindowMatch>,
+}
+
+/// Legacy callers still receive only the first 100 results and stop scanning
+/// once that limit is reached. Native/public-reader contracts do not change.
 pub fn search(directory: &Path, index: &Index, query: &str) -> io::Result<Vec<Match>> {
+    Ok(scan_search(directory, index, query, 0, false)?.matches.into_iter().map(|item| item.found).collect())
+}
+
+/// Count every occurrence, but materialize at most one bounded result window.
+/// Counting is linear in the existing immutable 128 MiB source budget. Skipped
+/// matches never load projection HTML or allocate snippets/source metadata.
+pub fn search_window(directory: &Path, index: &Index, query: &str, offset: usize) -> io::Result<SearchWindow> {
+    scan_search(directory, index, query, offset, true)
+}
+
+fn scan_search(directory: &Path, index: &Index, query: &str, requested: usize, count_all: bool) -> io::Result<SearchWindow> {
     if query.is_empty() || query.len() > 256 {
         return Err(invalid("Search requires 1–256 UTF-8 bytes"));
     }
-    let source = fs::read_to_string(directory.join("source.md"))?;
-    let mut matches = Vec::new();
+    let file = File::open(directory.join("source.md"))?;
+    let bytes = file.metadata()?.len();
+    if bytes > MAX_SOURCE { return Err(invalid("Search source exceeds the 128 MiB budget")); }
+    let mut source = String::with_capacity(bytes as usize);
+    file.take(MAX_SOURCE + 1).read_to_string(&mut source)?;
+    if source.len() as u64 > MAX_SOURCE { return Err(invalid("Search source exceeds the 128 MiB budget")); }
+    let mut result = SearchWindow { offset: requested, total: 0, limit: SEARCH_WINDOW_LIMIT, matches: Vec::new() };
     let mut offset = 0;
     for (line_index, line) in source.split_inclusive('\n').enumerate() {
-        if let Some(column) = line.find(query) {
+        for (occurrence, (column, _)) in line.match_indices(query).enumerate() {
+            let ordinal = result.total;
+            result.total += 1;
+            if ordinal < requested || result.matches.len() >= SEARCH_WINDOW_LIMIT { continue; }
             let page = index
                 .pages
                 .partition_point(|page| page.end <= offset + column)
@@ -1416,19 +1500,23 @@ pub fn search(directory: &Path, index: &Index, query: &str) -> io::Result<Vec<Ma
             } else {
                 None
             };
-            matches.push(Match {
+            let found = Match {
                 page,
                 line: line_index + 1,
-                snippet: line.chars().take(160).collect(),
+                snippet: {
+                    let start = line[..column].char_indices().rev().nth(60).map_or(0, |(offset, _)| offset);
+                    line[start..].chars().take(160).collect()
+                },
                 table_row,
-            });
-            if matches.len() == 100 {
-                break;
-            }
+                start: offset + column,
+                end: offset + column + query.len(),
+            };
+            result.matches.push(SearchWindowMatch { found, occurrence });
+            if !count_all && result.matches.len() == SEARCH_WINDOW_LIMIT { return Ok(result); }
         }
         offset += line.len();
     }
-    Ok(matches)
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1441,6 +1529,95 @@ mod tests {
         fs::write(&path, source).unwrap();
         let index = build_index(&path, directory.path()).unwrap();
         (directory, index)
+    }
+
+    #[test]
+    fn counted_search_windows_preserve_total_offsets_and_same_line_occurrences() {
+        let source = format!("\u{feff}{}\r\n{}\n", "中文😀needle ".repeat(130), "second needle ".repeat(120));
+        let (directory, index) = fixture(&source);
+        let expected: Vec<_> = source.match_indices("needle").map(|(offset, _)| offset).collect();
+        let first = search_window(directory.path(), &index, "needle", 0).unwrap();
+        assert_eq!(first.total, 250);
+        assert_eq!(first.limit, 100);
+        assert_eq!(first.matches.len(), 100);
+        assert_eq!(first.matches[99].occurrence, 99);
+        let crossing = search_window(directory.path(), &index, "needle", 128).unwrap();
+        assert_eq!(crossing.total, 250);
+        assert_eq!(crossing.offset, 128);
+        assert_eq!(crossing.matches.len(), 100);
+        assert_eq!(crossing.matches[0].occurrence, 128);
+        assert_eq!(crossing.matches[1].occurrence, 129);
+        assert_eq!(crossing.matches[2].occurrence, 0);
+        assert_eq!(crossing.matches[2].found.line, 2);
+        for (ordinal, item) in crossing.matches.iter().enumerate() {
+            assert_eq!(item.found.start, expected[128 + ordinal]);
+            assert_eq!(&source[item.found.start..item.found.end], "needle");
+        }
+        let last = search_window(directory.path(), &index, "needle", 200).unwrap();
+        assert_eq!(last.total, 250);
+        assert_eq!(last.matches.len(), 50);
+        assert_eq!(last.matches[0].occurrence, 70);
+        for offset in [250, usize::MAX] {
+            let outside = search_window(directory.path(), &index, "needle", offset).unwrap();
+            assert_eq!(outside.total, 250);
+            assert_eq!(outside.offset, offset);
+            assert!(outside.matches.is_empty());
+        }
+        let legacy = search(directory.path(), &index, "needle").unwrap();
+        assert_eq!(legacy.len(), 100);
+        assert_eq!(serde_json::to_value(&legacy[0]).unwrap().get("occurrence"), None);
+        let serialized = serde_json::to_value(&crossing.matches[0]).unwrap();
+        assert_eq!(serialized["start"], expected[128]);
+        assert_eq!(serialized["occurrence"], 128);
+        assert!(serialized.get("found").is_none());
+        assert_eq!(search_window(directory.path(), &index, "absent", 0).unwrap().total, 0);
+        assert!(search_window(directory.path(), &index, "", 0).is_err());
+        assert!(search_window(directory.path(), &index, &"中".repeat(86), 0).is_err());
+    }
+
+    #[test]
+    fn counted_search_windows_keep_paged_table_source_anchors() {
+        let source = format!("| Name | Value |\n|---|---|\n{}", (0..350).map(|row| format!("| row-{row} | table-needle |\n")).collect::<String>());
+        let (directory, index) = fixture(&source);
+        let result = search_window(directory.path(), &index, "table-needle", 200).unwrap();
+        assert_eq!(result.total, 350);
+        assert_eq!(result.matches.len(), 100);
+        for (offset, item) in result.matches.iter().enumerate() {
+            assert_eq!(item.occurrence, 0);
+            assert_eq!(item.found.table_row, Some(200 + offset));
+            assert_eq!(item.found.line, 203 + offset);
+            assert_eq!(&source[item.found.start..item.found.end], "table-needle");
+        }
+        let (empty_directory, empty_index) = fixture("");
+        let empty = search_window(empty_directory.path(), &empty_index, "needle", 0).unwrap();
+        assert_eq!(empty.total, 0);
+        assert!(empty.matches.is_empty());
+    }
+
+    #[test]
+    fn web_text_anchors_and_search_occurrences_use_original_utf8_bytes() {
+        let source = "\u{feff}# Heading\r\n\r\n中文 **needle** and needle.\r\nnext line.\r\n\r\nhttps://example.com/?a=1&amp;b=2 and www.example.com/a\\_b\r\n";
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("anchors.md");
+        fs::write(&path, source).unwrap();
+        let index = build_index_with_profile(&path, directory.path(), ProjectionProfile::Web).unwrap();
+        let hits = search(directory.path(), &index, "needle").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits[0].start < hits[1].start);
+        for hit in hits {
+            assert_eq!(&source[hit.start..hit.end], "needle");
+            assert_eq!(hit.line, 3);
+            let html = read_page(directory.path(), &index, hit.page).unwrap();
+            assert!(html.contains("data-source-line=\"3\""));
+            assert!(html.contains("data-source-start="));
+        }
+        let html = (0..index.pages.len()).map(|page| read_page(directory.path(), &index, page).unwrap()).collect::<String>();
+        assert!(html.contains("href=\"https://example.com/?a=1&amp;b=2\""));
+        assert!(html.contains("href=\"http://www.example.com/a_b\""));
+        let many = "needle ".repeat(500);
+        fs::write(&path, &many).unwrap();
+        let index = build_index_with_profile(&path, directory.path(), ProjectionProfile::Web).unwrap();
+        assert_eq!(search(directory.path(), &index, "needle").unwrap().len(), 100);
     }
 
     #[test]

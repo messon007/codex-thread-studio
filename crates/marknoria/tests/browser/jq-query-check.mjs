@@ -1,7 +1,7 @@
 import { runDomContract } from './dom-component-check.mjs'
 const files = new Map([
   ...[
-    'jq-query.mjs',
+    'jq-query.mjs', 'query-help.mjs',
     'jq-query.css',
     'translation.mjs',
     'query-operation.mjs',

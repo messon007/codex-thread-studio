@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 
 const directory = await mkdtemp(join(await realpath('target'), 'embedded-browser-'))
 const binary = resolve(process.argv.slice(2).find(value => !value.startsWith('--')) || 'target/debug/examples/embedded-host')
-const text = '\ufeff# Public 中文😀\r\n\r\nParagraph needle.\r\n\r\n## Data\r\n\r\n| name | value |\r\n| --- | --- |\r\n' + Array.from({ length: 120 }, (_, n) => `| row ${n} | ${n} |\r\n`).join('')
+const text = '\ufeff# Public 中文😀\r\n\r\nParagraph needle.\r\n\r\n## Data\r\n\r\n| name | value |\r\n| --- | --- |\r\n' + Array.from({ length: 120 }, (_, n) => `| row ${n} | ${n} |\r\n`).join('') + '\r\n' + '中😀'.repeat(6000) + '\r\n'
 const sources = [join(directory, 'editable.md'), join(directory, 'readonly.md'), join(directory, 'pixels.png')]
 for (const path of sources.slice(0, 2)) await writeFile(path, text)
 await writeFile(sources[2], Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII=', 'base64'))
@@ -58,11 +58,20 @@ try {
     const { createReaderClient } = await import('/host-client.mjs')
     window.clients = []; window.framesForTest = []; window.eventsForTest = []
     for (const [i, url] of urls.entries()) {
-      const frame = document.createElement('iframe'); frame.title = `Reader ${i}`; frame.src = url; frame.style.cssText = 'width:740px;height:850px;border:0'; document.getElementById('readers').append(frame)
+      const frame = document.createElement('iframe'); frame.title = `Reader ${i}`; const startup = new URL(url); if (i === 1) { startup.searchParams.set('notes', 'host'); startup.searchParams.set('selectionMenu', 'host') }; frame.src = startup.href; frame.style.cssText = 'width:740px;height:850px;border:0'; document.getElementById('readers').append(frame)
       framesForTest.push(frame); clients.push(createReaderClient(frame, { onEvent: (type, payload) => eventsForTest.push({ i, type, payload }) }))
     }
     return Promise.all(clients.map(client => client.ready()))
   }, urls)
+  assert.equal(states[1].presentation.notes, 'host')
+  assert.equal(states[1].presentation.selectionMenu, 'host')
+  assert.equal(states[1].capabilities.presentation.textSelection, true)
+  const noteFrame = page.frames().find(frame => frame.url().startsWith(urls[1].split('#')[0]))
+  assert.ok(noteFrame)
+  assert.deepEqual(await noteFrame.evaluate(() => ({
+    controls: document.querySelectorAll('.notes-toolbar,.notes-open,.notes-status').length,
+    slots: document.querySelector('#reader-notes-tools').getClientRects().length
+  })), { controls: 0, slots: 0 })
   assert.equal(states[0].view, 'preview'); assert.equal(states[0].capabilities.edit, true); assert.equal(states[1].capabilities.edit, false)
   assert.equal(states[0].capabilities.sourceRangeNavigation,true)
   assert.notEqual(states[0].documentId, states[1].documentId)
@@ -152,7 +161,7 @@ try {
     assert.equal(result.image.blobTransport, true)
     assert.equal(result.image.assertions, 8)
     assert.equal(result.source.sourceByteRoundTrip, true)
-    assert.equal(result.source.assertions, 8)
+    assert.equal(result.source.assertions, 10)
   }
 
 
@@ -180,6 +189,16 @@ try {
   assert.equal(projection.pages[0].sourceStartByte,Buffer.byteLength('\ufeff'))
   assert.equal(projection.pages[0].sourceLine,1)
   assert.ok(projection.pages.some(page=>page.table===0))
+  await command('navigate',{location:{kind:'line',line:text.split('\r\n').findIndex(line=>line.startsWith('中😀'))+1}})
+  const longParagraph = page.frameLocator('iframe[title="Reader 0"]').locator('.page p').filter({hasText:'中😀中😀'})
+  await longParagraph.waitFor()
+  await longParagraph.evaluate(node=>{const range=document.createRange();range.selectNodeContents(node);getSelection().removeAllRanges();getSelection().addRange(range)})
+  const unicodeSelection = await command('selection',{textOnly:true})
+  assert.equal(unicodeSelection.quoteTruncated,true)
+  assert.ok(Buffer.byteLength(unicodeSelection.quote)<=32768)
+  assert.ok(unicodeSelection.quote.length<=16384)
+  assert.equal(/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(unicodeSelection.quote),false)
+  await longParagraph.evaluate(()=>getSelection().removeAllRanges())
   const originalSource = await command('sourceWindow',{line:1})
   assert.equal(originalSource.result.text,text)
   assert.equal(originalSource.revision,states[0].revision)
@@ -235,6 +254,7 @@ try {
     const state=query.state(),dialog=document.querySelector('.table-query-dialog')
     const lastRows=dialog.querySelectorAll('tbody tr').length
     dialog.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     const deadline=performance.now()+5000
     while(!document.querySelector('.table-plot-dialog [data-chart-row="119"]')&&performance.now()<deadline)await new Promise(r=>setTimeout(r,20))
     const points=document.querySelectorAll('.table-plot-dialog rect').length
@@ -266,6 +286,23 @@ try {
   assert.equal(queryHistory.snapshot.anchor.location,null)
   assert.equal(queryHistory.nullSnapshot.anchor.query.valueIsNull,true)
   assert.equal(queryHistory.foreign,true);assert.equal(queryHistory.forged,true);assert.equal(queryHistory.expired,true)
+  await page.evaluate(() => clients[1].request('settings', { notes: 'reader', selectionMenu: 'host' }))
+  assert.equal(await noteFrame.locator('.notes-open').count(), 1)
+  assert.equal(await noteFrame.locator('.notes-toolbar').count(), 0)
+  await page.evaluate(() => clients[1].request('navigate', { location: { kind: 'cell', table: 0, row: 0, column: 0 } }))
+  assert.equal((await page.evaluate(() => clients[1].request('selection'))).location.kind, 'cell')
+  assert.equal(await page.evaluate(() => clients[1].request('selection', { textOnly: true })), null)
+  await noteFrame.evaluate(() => {
+    const cell = document.querySelector('.page tbody td'), range = document.createRange()
+    range.setStart(cell.firstChild, 0); range.setEnd(cell.firstChild, 3)
+    getSelection().removeAllRanges(); getSelection().addRange(range)
+    cell.dispatchEvent(new Event('pointerup', { bubbles: true }))
+  })
+  const textCell = await page.evaluate(() => clients[1].request('selection', { textOnly: true }))
+  assert.equal(textCell.quote, 'row'); assert.equal(textCell.location.kind, 'cell')
+  assert.equal(Object.hasOwn(textCell, 'selectionType'), false)
+  await noteFrame.evaluate(() => getSelection().removeAllRanges())
+  assert.equal(await page.evaluate(() => clients[1].request('selection', { textOnly: true })), null)
   const noteOwner = await page.evaluate(async () => {
     const before = await clients[1].request('state')
     const host = await clients[1].request('settings', { notes: 'host' })
@@ -275,6 +312,13 @@ try {
   })
   assert.deepEqual(noteOwner,{capability:true,owner:'host',notes:true,disabled:false})
   assert.equal(await page.frameLocator('iframe').nth(1).locator('.notes-toolbar').count(),0)
+  assert.equal(new URL(noteFrame.url()).searchParams.get('notes'), 'host')
+  await Promise.all([noteFrame.waitForNavigation({waitUntil:'load'}), noteFrame.evaluate(() => location.reload())])
+  const afterPolicyReload = await page.evaluate(() => clients[1].ready())
+  assert.equal(afterPolicyReload.presentation.notes, 'host')
+  assert.equal(afterPolicyReload.presentation.selectionMenu, 'host')
+  assert.equal(await noteFrame.locator('.notes-open,.notes-toolbar').count(), 0)
+
   const durableQueryNote=await page.evaluate(async owner=>{
     const {mountTableQuery,readerQueryProvider}=await import('/table-query.mjs')
     const {mountNotes,readerNoteStorage}=await import('/notes.mjs')
@@ -282,8 +326,10 @@ try {
     const query=mountTableQuery(root,{provider:readerQueryProvider(clients[1],owner,0),revision:owner.revision})
     const notes=mountNotes({owner,root,toolbar,storage:readerNoteStorage(clients[1],owner),queryNotes:owner.capabilities.queryNotes,
       selection:async()=>{const value=query.selection();return value?{...value,documentId:owner.documentId,revision:owner.revision}:null}})
-    await query.ready;await query.execute('SELECT c1,c2 FROM t ORDER BY CAST(c2 AS INTEGER)');await query.go(119)
-    root.querySelector('tbody tr:last-child td:last-child').click();await notes.selectionChanged()
+    await query.ready;await query.execute('SELECT c1,c2 FROM t ORDER BY CAST(c2 AS INTEGER)').catch(error=>{throw Error(error.message+': '+JSON.stringify(query.state()))});await query.go(119)
+    const selectedCell=root.querySelector('tbody tr:last-child td:last-child');selectedCell.click();
+    const range=document.createRange();range.selectNodeContents(selectedCell);getSelection().removeAllRanges();getSelection().addRange(range);
+    await notes.selectionChanged()
     const menu=root.querySelector('.notes-toolbar');[...menu.querySelectorAll('button')].find(button=>button.textContent==='Favorite').click()
     const deadline=performance.now()+5000
     while(notes.state().busy&&performance.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20))
@@ -297,7 +343,7 @@ try {
   assert.equal(durableQueryNote.note.quote,'119');assert.equal(durableQueryNote.note.anchor.query.row,119)
   assert.equal(durableQueryNote.note.anchor.query.column,1);assert.equal(durableQueryNote.note.anchor.query.sourceRows,120)
   assert.equal(durableQueryNote.note.anchor.location,null);assert.ok(durableQueryNote.text.includes('snapshot, not a source cell'))
-  await page.evaluate(() => clients[1].request('settings', { notes: 'reader' }))
+  await page.evaluate(() => clients[1].request('settings', { notes: 'reader', selectionMenu: 'reader' }))
   assert.equal(await page.frameLocator('iframe').nth(1).locator('.notes-toolbar').count(),1)
   assert.equal(await page.evaluate(() => clients[1].request('notes',{request:{operation:'list',offset:0}}).then(value=>value.total)),1)
   const wrongVersion = await page.evaluate(() => new Promise(resolve => {

@@ -1,6 +1,10 @@
 // Finite shared control vocabulary for host-owned translation dictionaries.
 // Document text, filenames, query values and backend errors never enter this list.
 export const readerMessageKeys = Object.freeze([
+  "IN expects a table or a list. To find text within a cell, use instr(column, text).",
+  "Use text contains query",
+  "Choose a numeric column",
+  "Choose a numeric column, then draw the chart. Text columns are not converted to numbers.",
   "Use single quotes for text; double quotes name columns.",
   "Contains text: LIKE '%text%' uses wildcards; instr(c1, 'text') > 0 matches a literal substring.",
   "Match a list: c1 IN ('first', 'second'). IN c1 does not search within text.",
@@ -56,6 +60,7 @@ export const readerMessageKeys = Object.freeze([
   "Compare two server Markdown files (read only)",
   "Computing the complete dataset…",
   "Contents",
+  "Continuous",
   "Continuous reading",
   "Copied",
   "Copied result page",

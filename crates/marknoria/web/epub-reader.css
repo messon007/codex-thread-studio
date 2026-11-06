@@ -69,7 +69,8 @@
   align-items: center;
   gap: 3px;
 }
-.epub-page-actions .epub-tool-button {
+.epub-page-actions .epub-previous,
+.epub-page-actions .epub-next {
   padding: 0;
   font-size: 16px;
 }
@@ -153,8 +154,9 @@
 .epub-reader[data-paper='dark'] .epub-viewer {
   background: #171b1f;
 }
-.epub-viewer > .epub-container,
-.epub-viewer .epub-view {
+/* epub.js expands paginated chapter views across all of their columns.
+   Clamping .epub-view clips those columns and makes Next skip the remainder. */
+.epub-viewer > .epub-container {
   max-width: 100% !important;
 }
 .epub-viewer iframe {

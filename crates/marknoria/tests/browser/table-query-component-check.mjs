@@ -1,7 +1,7 @@
 import { runDomContract } from './dom-component-check.mjs'
 const files = new Map([
   ...[
-    'table-query.mjs',
+    'table-query.mjs', 'query-help.mjs',
     'table-query.css',
     'table-view.css',
     'table-layout.mjs',

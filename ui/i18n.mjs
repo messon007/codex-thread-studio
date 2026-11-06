@@ -598,6 +598,7 @@ const chinese = {
   'Formatted': '已格式化',
   'Source code': '源码',
   'Search document content…': '搜索文档内容…',
+  'Navigation limited to first {count} results': '仅可导航前 {count} 个结果',
   'No matches found': '未找到匹配内容',
   '{current} / {total}': '{current} / {total}',
   'Previous match': '上一个匹配',

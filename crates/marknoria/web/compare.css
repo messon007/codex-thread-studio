@@ -28,7 +28,7 @@
 .reader-shell .compare-cell { border: 0; border-radius: 0; border-bottom: 1px solid color-mix(in srgb,var(--reader-border) 45%,transparent); padding: 0; display: grid; grid-template-columns: 55px 18px minmax(0,1fr) auto; gap: 4px; height: 28px; min-width: 0; text-align: left; color: var(--reader-text); background: var(--reader-panel); font: 12px/28px var(--code-font-family,"JetBrains Mono",Consolas,monospace); }
 .compare-cell + .compare-cell { border-left: 1px solid var(--reader-border); }
 .compare-number { background: var(--reader-soft); color: var(--reader-faint); text-align: right; padding-right: 8px; font-size: 10px; user-select: none; }
-.compare-text { overflow: hidden; text-overflow: ellipsis; white-space: pre; tab-size: 4; }
+.compare-text { user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: pre; tab-size: 4; }
 .compare-sign { text-align: center; user-select: none; }
 .compare-ending { color: var(--reader-faint); font: 9px/28px system-ui,sans-serif; padding-right: 8px; user-select: none; }
 .compare-row.removed .compare-cell.left,.compare-row.changed .compare-cell.left { background: #fceced; }

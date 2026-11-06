@@ -31,6 +31,10 @@ export async function presentationContract(moduleUrl) {
       start.version === 1 && start.locale === 'en' && start.contentFontSize === 15,
       'Missing bounded presentation defaults'
     )
+    check(start.selectionMenu === 'reader', 'Selection menu default changed')
+    let invalidMenu = false
+    try { first.update({ selectionMenu: 'invalid' }) } catch { invalidMenu = true }
+    check(invalidMenu && first.state().selectionMenu === 'reader', 'Invalid menu policy was accepted')
     const changed = first.update({
       locale: 'fr',
       messages: {
@@ -42,6 +46,7 @@ export async function presentationContract(moduleUrl) {
       theme: 'dark',
       toolbar: 'host',
       notes: 'host',
+      selectionMenu: 'host',
       fontFamily: 'Noto Sans, sans-serif',
       contentFontFamily: 'serif',
       codeFontFamily: 'monospace',
@@ -54,7 +59,7 @@ export async function presentationContract(moduleUrl) {
     })
     check(
       changed.locale === 'fr' &&
-        changed.notes === 'host' &&
+        changed.notes === 'host' && changed.selectionMenu === 'host' &&
         root.lang === 'fr' &&
         root.dataset.theme === 'dark' &&
         root.classList.contains('host-toolbar') &&

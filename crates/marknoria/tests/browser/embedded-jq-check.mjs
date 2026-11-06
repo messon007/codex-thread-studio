@@ -21,7 +21,7 @@ await writeFile(source, original)
 const modules = new Set([
   'host-client.mjs',
   'reader-bridge.mjs',
-  'jq-query.mjs',
+  'jq-query.mjs', 'query-help.mjs',
   'jq-query.css',
   'table-query.css',
   'translation.mjs',

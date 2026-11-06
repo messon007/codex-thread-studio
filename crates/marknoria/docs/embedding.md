@@ -133,7 +133,8 @@ mounting its first view.
 | `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
 | `outline` | `offset` (default 0), at most 256 items, total and revision; `resolve:false` returns renderer labels/IDs without PDF destination lookups |
 | `navigateOutline` | `id`: revision-scoped outline identity; resolves only the selected PDF destination or navigates the indexed heading/EPUB chapter |
-| `search` | `query`, 1–256 UTF-8 bytes; bounded source occurrences or complete-document PDF/EPUB search |
+| `search` | `query`, optional validated `offset`; at most 100 results, owned `searchId`, absolute indices, total/precision and paging metadata; empty query clears |
+| `searchActivate`, `searchClear` | `{searchId,index}` activates a verified occurrence in the current reading view; `{}` clears owned search state/highlights; see [reader-search.md](reader-search.md) |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
 | `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |
 | `sourceWindow`, `sourceSelection` | Bounded original source by `line`, `offset,previous`, or explicit `offset,end` (at most 128 KiB); exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
@@ -159,11 +160,23 @@ until its renderer resolves it. Source search results include a navigation
 `location` and `locationPrecision` (`line` or `row`); a row target uses the first
 original column as its navigation anchor, without claiming that the match was
 in that column.
-Source matches also expose original UTF-8 byte `start`/`end` offsets and include
-repeated occurrences on one line, up to the existing 100-result cap. These are
-independent of Preview's formatted line breaks. The built-in reader uses them for
-current-match highlights and position restoration; hosts retain revision checks
-when navigating a byte range.
+`capabilities.search.version:1` declares shared search paging and activation.
+Source-backed documents provide an exact total while retaining at most one
+100-result window plus the active occurrence. PDF/EPUB expose bounded renderer
+results with honest `totalExact` and `available` metadata. `state.search` and
+ordinary `state` events report the owned query, zero-based current index,
+counts, loading/error state and verified active result. A host-owned toolbar
+uses the same controller and highlighting as standalone controls; public commands
+do not open the child's search UI.
+
+For formats with original Source navigation, search results additionally expose
+`sourceLocation:{kind:'source',startByte,endByte}`. These original UTF-8 offsets
+are independent of formatted Preview line breaks. Container projections retain
+their typed row/page/CFI coordinates without fabricating original byte ranges.
+Use `searchActivate` with the owned identity and absolute occurrence index to
+retain the current view and shared highlights. Hosts cannot override the stored
+coordinates. Clearing, cancellation, mode changes, capped results and compatibility
+are specified in [reader-search.md](reader-search.md).
 The client supplies its latest state by default; explicitly supplied expectations
 are retained, so stale commands fail. Events are `ready`, `state`, `saved`,
 `selection`, `error`, `openRequested`, `linkRequested`, and `disposed`. Repeated identical state is suppressed.
@@ -201,7 +214,7 @@ backpressured response and closes its file before removing the cache.
 The component keeps at most three page canvases (8 Mi pixels each), 5,000 text
 items/512 Ki characters per page, 2,000 original pages, 2,000 outline items and
 256 selection rectangles. Outline transport is paged at 256 entries. A search
-scans all pages until its visible 500-page result cap, reporting `complete:false`
+scans all pages until its 500-occurrence result cap, reporting `complete:false`
 if that cap stops the scan; query cancellation never masquerades as empty results.
 Document/page work has deadlines and disposal awaits the PDF worker's destruction.
 These are input/DOM/canvas budgets, not a claim of a hard browser-process RSS cap.

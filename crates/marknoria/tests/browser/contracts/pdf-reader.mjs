@@ -121,6 +121,33 @@ export async function pdfReaderContract(moduleUrl) {
       results.complete && results.matches.length === 1 && results.matches[0].page === 12,
       'PDF search did not scan the complete document'
     )
+    await reader.activateSearch({ ...results.matches[0], page: 1 }, { query: 'sentinel page 12' })
+    const pdfOwner = root.querySelector('.marknoria-pdf')
+    check(reader.state().page === 12 && pdfOwner.dataset.searchCurrent === results.matches[0].searchMatchId, 'PDF activation ignored its owned occurrence')
+    const highlightedPdf = CSS.highlights?.get(pdfOwner.dataset.searchHighlight)
+    check(highlightedPdf ? [...highlightedPdf][0].toString() === 'sentinel page 12' : pdfOwner.querySelector('[data-search-current-rect]'), 'PDF current occurrence has no exact visible marker')
+    reader.clearSearch({ keepResults: true })
+    check(!pdfOwner.hasAttribute('data-search-current'), 'PDF presentation clear retained a marker')
+    const repaintPosition = reader.state().page, repaintScroll = viewport.scrollTop
+    check(reader.repaintSearch(results.matches[0], { query: 'sentinel page 12' }) && pdfOwner.dataset.searchCurrent === results.matches[0].searchMatchId && reader.state().page === repaintPosition && viewport.scrollTop === repaintScroll, 'PDF presentation repaint did not restore the owned marker without navigation')
+    await reader.activateSearch(results.matches[0], { query: 'sentinel page 12' })
+    reader.clearSearch()
+    check(!pdfOwner.hasAttribute('data-search-current') && await reader.activateSearch(results.matches[0], { query: 'sentinel page 12' }).then(() => false, () => true), 'PDF cleared occurrence remained active/activatable')
+    check(await reader.search('sentinel', { offset: 100 }).then(() => false, () => true), 'PDF adapter silently ignored unsupported offset')
+    const repeated = await reader.search('needle')
+    check(repeated.complete && repeated.matches.length === 2 && repeated.matches.every(match => match.page === 1 && match.locationPrecision === 'page'), 'PDF did not retain repeated occurrences or honest page precision')
+    check(root.querySelector('.textLayer')?.textContent !== '', 'PDF text disappeared during search')
+    await reader.settings({ continuous: false })
+    await reader.navigate(locationFor(2))
+    await reader.activateSearch(repeated.matches[1], { query: 'needle' })
+    check(root.querySelector('[data-pdf-page="1"] .textLayer').textContent.includes('İ'), 'Unicode search fixture did not preserve its expanding lowercase character')
+    const repeatedHighlight = CSS.highlights?.get(pdfOwner.dataset.searchHighlight)
+    check(repeatedHighlight ? [...repeatedHighlight][0].toString() === 'NEEDLE' : pdfOwner.querySelector('[data-search-current-rect]'), 'Unicode case expansion shifted the PDF occurrence range')
+    if (repeatedHighlight) {
+      const rect = [...repeatedHighlight][0].getBoundingClientRect(), view = viewport.getBoundingClientRect()
+      check(rect.top >= view.top && rect.bottom <= view.bottom, 'A lower occurrence on a previously hidden PDF page remained outside the viewport')
+    }
+    reader.clearSearch()
     const metadata = await reader.outline({ resolve: false })
     check(metadata.total === 2 && metadata.items.every(item => item.navigable && !('location' in item)), 'PDF metadata outline resolved or exposed destinations')
     await reader.navigateOutline(metadata.items[1].id)

@@ -395,7 +395,7 @@ pub(super) async fn serve_reader(mut app: App, path: String, mut request: Reques
     app.editable = false;
     if !matches!(path.as_str(), "" | "styles.css" | "checkbox.css" | "reader.mjs" | "source.mjs" | "position.mjs" | "theme.js" | "syntax-light.css" | "syntax-dark.css" | "vendor/editor.mjs" | "editor.mjs"
         | "presentation.mjs" | "reader-ui.mjs" | "translation.mjs" | "outline.mjs" | "references.mjs" | "notes.css" | "table-query.css" | "table-view.css" | "table-view.mjs" | "component-styles.mjs" | "table-plot.mjs" | "table-plot.css" | "clipboard.mjs" | "table-cells.css" | "table-cells.mjs" | "tables.mjs" | "table-controls.mjs" | "table-layout.mjs" | "table-query.mjs" | "assets.mjs" | "notes.mjs" | "jq-query.mjs" | "jq-query.css" | "icons.mjs" | "files.mjs" | "diagrams.mjs" | "vendor/virtual-core.mjs"
-        | "public-reader.mjs" | "reader-bridge.mjs" | "host-client.mjs" | "query-operation.mjs" | "query-help.mjs" | "search-position.mjs"
+        | "public-reader.mjs" | "reader-bridge.mjs" | "host-client.mjs" | "query-operation.mjs" | "query-help.mjs" | "search-position.mjs" | "search-controller.mjs" | "search-marker.mjs"
         | "projection-html.mjs" | "projection-view.mjs" | "projection-view.css" | "api/projection"
         | "document-prose.css" | "image-frames.mjs" | "image-view.mjs" | "image-view.css"
         | "api/capabilities" | "api/operations" | "api/selection/source" | "api/original" | "pdf-reader.mjs" | "pdf-reader.css"

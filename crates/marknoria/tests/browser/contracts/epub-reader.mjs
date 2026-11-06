@@ -88,6 +88,25 @@ export async function epubReaderContract(moduleUrl) {
       (await reader.quoteForCfi(matches.matches[0].cfi)) === 'EPUB sentinel two',
       'EPUB search lost its exact CFI'
     )
+    const initialSearchCfi = reader.state().cfi
+    await reader.activateSearch({ ...matches.matches[0], cfi: initialSearchCfi }, { query: 'EPUB sentinel two' })
+    const epubOwner = root.querySelector('.epub-reader')
+    check(epubOwner.dataset.searchCurrent === matches.matches[0].searchMatchId && reader.state().href.endsWith('two.xhtml'), 'EPUB activation trusted supplied coordinates instead of its owned CFI')
+    const markedFrame = [...root.querySelectorAll('iframe')].find(frame => frame.contentDocument?.getElementById('target'))
+    const highlightedEpub = markedFrame.contentWindow.CSS?.highlights?.get(epubOwner.dataset.searchHighlight)
+    check(highlightedEpub ? [...highlightedEpub][0].toString() === 'EPUB sentinel two' : epubOwner.querySelector('[data-search-current-rect]'), 'EPUB current CFI has no exact visible marker')
+    await reader.settings({ flow: 'scrolled' })
+    check(epubOwner.dataset.searchCurrent === matches.matches[0].searchMatchId, 'EPUB flow change lost its active original CFI highlight')
+    reader.clearSearch({ keepResults: true })
+    check(!epubOwner.hasAttribute('data-search-current'), 'EPUB presentation clear retained a marker')
+    const repaintCfi = reader.state().cfi, repaintScroll = root.querySelector('.epub-container').scrollTop
+    check(reader.repaintSearch(matches.matches[0], { query: 'EPUB sentinel two' }) && epubOwner.dataset.searchCurrent === matches.matches[0].searchMatchId && reader.state().cfi === repaintCfi && root.querySelector('.epub-container').scrollTop === repaintScroll, 'EPUB presentation repaint did not restore its owned CFI without navigation')
+    await reader.activateSearch(matches.matches[0], { query: 'EPUB sentinel two' })
+    reader.clearSearch()
+    check(!epubOwner.hasAttribute('data-search-current') && await reader.activateSearch(matches.matches[0], { query: 'EPUB sentinel two' }).then(() => false, () => true), 'EPUB cleared occurrence remained active/activatable')
+    check(await reader.search('sentinel', { offset: 100 }).then(() => false, () => true), 'EPUB adapter silently ignored unsupported offset')
+    await reader.settings({ flow: 'paginated' })
+    await reader.display(initialSearchCfi)
     const frame = root.querySelector('iframe')
     check(Boolean(frame), 'EPUB did not use its sandboxed document')
     check(
@@ -154,6 +173,7 @@ export async function epubReaderContract(moduleUrl) {
       await until(() => selections.at(-1) === null, 'polled empty invalidation')
       check(true, 'Collapsed/empty sandbox selections must notify without getter calls')
     } finally { frame.contentDocument.removeEventListener('selectionchange', suppress, true) }
+    frame.contentDocument.dispatchEvent(new Event('pointerdown'))
     selection.addRange(range)
     frame.contentDocument.dispatchEvent(new Event('selectionchange'))
     await until(() => selections.at(-1)?.quote === selected.quote, 'selection before scroll')
@@ -401,6 +421,28 @@ export async function epubReaderContract(moduleUrl) {
     reader.destroy()
     corpusLifetime.abort()
 
+    // Delay the target iframe stylesheet so cancellation lands inside epub.js
+    // display, after source preload but before its asynchronous scroll commit.
+    reader.destroy()
+    reader = await createEpubReader({ container: root,
+      source: new URL('/activation-book/OPS/book.opf', location.href).href,
+      resourceRoot: new URL('/activation-book/', location.href).href,
+      onError: error => errors.push(String(error)) })
+    const abortMatches = await reader.search('EPUB sentinel two'), beforeActivation = reader.state().cfi
+    const activation = reader.activateSearch(abortMatches.matches[0], { query: 'EPUB sentinel two' }).then(() => null, error => error)
+    await until(() => [...root.querySelectorAll('iframe')].some(frame => frame.contentDocument?.getElementById('target')), 'delayed activation target')
+    reader.clearSearch()
+    check((await activation)?.name === 'AbortError', 'Cleared EPUB activation did not cancel promptly')
+    await until(() => reader.state().cfi === beforeActivation && [...root.querySelectorAll('iframe')].some(frame => frame.contentDocument?.getElementById('start')), 'cancelled activation restored its original viewport')
+    await new Promise(resolve => setTimeout(resolve, 650))
+    check(reader.state().cfi === beforeActivation && !root.querySelector('[data-search-current]'), 'A cancelled delayed EPUB display moved or highlighted the viewport later')
+    const supersededMatches = await reader.search('EPUB sentinel two')
+    const superseded = reader.activateSearch(supersededMatches.matches[0], { query: 'EPUB sentinel two' }).then(() => null, error => error)
+    await until(() => [...root.querySelectorAll('iframe')].some(frame => frame.contentDocument?.getElementById('target')), 'superseded activation target')
+    await reader.display(beforeActivation)
+    check((await superseded)?.name === 'AbortError', 'New EPUB navigation did not cancel its preceding activation')
+    await new Promise(resolve => setTimeout(resolve, 650))
+    check(reader.state().cfi === beforeActivation && !root.querySelector('[data-search-current]'), 'An old delayed EPUB activation overwrote newer navigation')
     return {
       assertions,
       firstContentMs,

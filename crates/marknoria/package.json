@@ -12,6 +12,8 @@
     "check:query-help": "node tests/server/query-help-check.mjs",
     "check:epub-layout": "node tests/browser/epub-layout-check.mjs",
     "check:search-count": "node tests/server/search-count-check.mjs",
+    "check:embedded-search": "node tests/browser/embedded-search-check.mjs",
+    "check:search-controller": "node tests/browser/search-controller-check.mjs",
     "check:markdown-references": "node tests/browser/markdown-references-check.mjs",
     "check:reference-policy": "node tests/browser/reference-policy-check.mjs",
     "check:jq-component": "node tests/browser/jq-query-check.mjs",

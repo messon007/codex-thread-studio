@@ -28,10 +28,6 @@ test('host controls use only the public protocol and preserve dirty/save errors'
  setState({dirty:true,error:'Changed outside Studio'})
  await assert.rejects(host.save(),/Changed outside/);assert.equal(host.dirty,true)
  setState({error:null});assert.equal(await host.save(),true);assert.equal(host.dirty,false)
- const {matches}=await host.search('needle');await host.navigateMatch(matches[0])
- assert.deepEqual(requests.at(-1).params.location,{kind:'line',line:8})
- await host.setView('preview');await host.navigateMatch(matches[0])
- assert.deepEqual(requests.at(-1).params.location,{kind:'cell',table:0,row:4,column:0})
  await host.dispose();assert.equal(closed(),1)
  await assert.rejects(host.setView('source'),/disposed/)
 })
@@ -298,33 +294,4 @@ test('jq host uses the shared component and captured owner, and removes late/obs
   assert.equal(mounts[1].options.autoRun,true)
  }finally{adapter.dispose()}
  assert.equal(mounts.at(-1).disposed,true)
-})
-
-
-test('host search distinguishes exact totals from capped legacy windows and retains exact Source ranges',async()=>{
- for(const [response,total,complete] of [
-  [{matches:Array.from({length:100},()=>({line:8,start:13,end:19})),limit:100},100,false],
-  [{matches:[{line:8,start:13,end:19}],total:150,complete:false},150,true],
-  [{matches:[{line:8,start:13,end:19}],complete:true},1,true],
- ]) {
-  const {host,requests}=fixture('source',{}, {searchResponse:response})
-  try {
-   const result=await host.search('needle')
-   assert.equal(result.total,total);assert.equal(result.complete,complete)
-   await host.navigateMatch(result.matches[0])
-   assert.deepEqual(requests.at(-1).params.location,{kind:'source',startByte:13,endByte:19})
-  } finally {await host.dispose()}
- }
-})
-
-
-test('search navigation retains the result revision after the document changes',async()=>{
- const {host,requests,setState}=fixture('source',{}, {searchResponse:{matches:[{line:8,start:13,end:19}],complete:true}})
- try {
-  const {matches}=await host.search('needle')
-  setState({revision:'b'.repeat(64)})
-  await host.navigateMatch(matches[0])
-  assert.equal(requests.at(-1).params.documentId,'doc')
-  assert.equal(requests.at(-1).params.revision,'a'.repeat(64))
- } finally {await host.dispose()}
 })

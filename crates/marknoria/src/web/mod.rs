@@ -507,6 +507,8 @@ fn assets() -> Router {
         .route("/icons.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/icons.mjs")) }))
         .route("/source.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/source.mjs")) }))
         .route("/search-position.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/search-position.mjs")) }))
+        .route("/search-controller.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/search-controller.mjs")) }))
+        .route("/search-marker.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/search-marker.mjs")) }))
         .route(
             "/files.mjs",
             get(|| async {

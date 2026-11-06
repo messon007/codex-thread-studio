@@ -43,6 +43,11 @@ own supervised workers work without another MarkNoria installation. See
 read-only/query/write separation, cancellation and lifecycle. The service grants
 one canonical file; the source's parent folder is never implicitly authorized.
 
+Host search uses `search`, `searchActivate` and `searchClear` through
+`createReaderClient`. See `docs/reader-search.md` for result windows, current/total
+state, typed locations, renderer caps and cancellation. It shares the standalone
+reader's search controller; consumers need no private DOM hooks.
+
 To rebuild Web resources from the included locks, use Node/npm and:
 
 ```sh
@@ -62,6 +67,14 @@ hosts. Install Playwright explicitly in your own test tools directory and set
 `STUDIO_PLAYWRIGHT_MODULE`/`STUDIO_CHROMIUM_PATH`; see exported test entry points.
 `--webkit` uses Python GI/WebKit and the inherited native Wayland session on Linux.
 Synthetic fixtures/screenshots/caches are generated under ignored `target/`.
+
+Search regression checks (after building the `embedded-host` example):
+
+```sh
+npm run check:search-controller
+npm run check:embedded-search
+npm run check:embedded-search -- --webkit
+```
 
 This is a reproducible delivery mechanism, not a claim that downstream Studio has
 adopted the package or that every feature-parity/remote-CI acceptance has passed.

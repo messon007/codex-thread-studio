@@ -3,7 +3,15 @@ export function dialogClose(close, label = 'Close') {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'reader-icon-button dialog-close'
-  button.textContent = '×'
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  icon.setAttribute('viewBox', '0 0 24 24')
+  icon.setAttribute('aria-hidden', 'true')
+  icon.setAttribute('focusable', 'false')
+  icon.style.cssText = 'width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;flex:none'
+  const path = document.createElementNS(icon.namespaceURI, 'path')
+  path.setAttribute('d', 'M6 6l12 12M18 6 6 18')
+  icon.append(path)
+  button.append(icon)
   button.setAttribute('aria-label', label)
   button.title = label
   button.addEventListener('click', close)

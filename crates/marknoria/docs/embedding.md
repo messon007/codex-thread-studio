@@ -286,7 +286,9 @@ The component caches that displayed snapshot, preserves existing tabindex values
 and restores owned focus/style/listener/dialog resources on `dispose()`.
 
 Click/focus selects a cell; arrows move within the displayed grid. Enter or a
-double-click opens the complete bounded cell as inert text. Copy cell and
+double-click opens the complete bounded cell as inert text, with no selection
+actions until text is selected there. A middle substring retains the original
+cell/query-cell coordinates and is checked against the owned value. Copy cell and
 Ctrl/Command+C (without an active text selection) copy the complete cell; a separate selection excerpt is bounded at
 32 KiB UTF-8 without splitting Unicode and declares `quoteTruncated`. Saved notes
 retain that flag and copied references identify excerpts. Column resizing remains

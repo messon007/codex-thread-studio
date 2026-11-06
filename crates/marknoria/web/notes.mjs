@@ -759,7 +759,7 @@ export function notesController(index, api, canSave = () => true, selectionProvi
   return mountNotes({
     owner: { documentId: options.documentId, revision: index.revision, name: index.name },
     root,
-    toolbar: root.querySelector('.reader-document-tools'),
+    toolbar: root.querySelector('#reader-notes-tools'),
     eventRoot: document,
     storage: (request, { signal }) =>
       api('/api/notes', signal, { method: 'POST', body: JSON.stringify(request) }),

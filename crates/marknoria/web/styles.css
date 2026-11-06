@@ -61,7 +61,10 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 #document-name { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
 .reader-identity p { font-size: 10px; color: var(--reader-faint); margin: 2px 0 0; }
 .reader-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.reader-document-tools { display: flex; align-items: center; gap: 3px; margin-left: 5px; padding-left: 8px; border-left: 1px solid var(--reader-border); }
+#reader-notes-tools:not(:empty) { display: flex; align-items: center; }
+.reader-shell #reader-notes-tools svg { width:17px; height:17px; stroke-width:1.65; }
+.reader-toolbar-separator { width: 1px; height: 22px; margin: 0 5px; background: var(--reader-border); flex-shrink: 0; }
+.reader-document-tools { display: flex; align-items: center; gap: 3px; }
 .reader-document-tools:empty { display: none; }
 .reader-shell .reader-document-tools .reader-action { border-color: transparent; background: transparent; }
 .view-modes { display: flex; align-items: stretch; flex-shrink: 0; height: var(--reader-control-height); padding: 2px; border: 1px solid var(--reader-border); border-radius: 7px; background: var(--reader-soft); }
@@ -174,7 +177,7 @@ figure[data-diagram-state="error"] .diagram-canvas { color: var(--red,#b83a45); 
   .reader-header:has(#view-modes:not([hidden])) .reader-identity { flex-basis: 100%; }
   .reader-header:has(#view-modes:not([hidden])) .reader-header-actions { width: 100%; justify-content: flex-end; }
   .reader-header-actions { flex-wrap: wrap; max-width: 100%; row-gap: 6px; }
-  .reader-header-actions :is(#compare-files,[data-open-server],.reader-document-tools button) > span { display: none; }
+  .reader-header-actions :is(#compare-files,[data-open-server],#reader-notes-tools button,.reader-document-tools button) > span { display: none; }
   .reader-identity { gap: 8px; }
   .reader-identity p { font-size: 9px; }
   .reader-footer { padding-inline: 14px; }

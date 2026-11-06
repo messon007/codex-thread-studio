@@ -1,8 +1,10 @@
 # Fixed public reader adoption
 
-The current pin and functional followup evidence are in
-[studio-issue-followups.md](studio-issue-followups.md). The PR #55 baseline
-record below is historical; the current source revision is `5e5d4de`.
+The current pin and acceptance-fix evidence are in
+[reader-acceptance-update.md](reader-acceptance-update.md), source revision
+`4c20b45`. Earlier functional followups are in
+[studio-issue-followups.md](studio-issue-followups.md). The PR #55 record below
+is historical.
 
 The PR #55 baseline used the pin in `scripts/marknoria-release.json`;  the unchanged SDK inventory
 is `crates/marknoria/reader-manifest.json`. Source revision:

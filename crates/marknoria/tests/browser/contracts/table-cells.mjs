@@ -76,6 +76,14 @@ export async function tableCellsContract(moduleUrl) {
       await tick()
     check(getComputedStyle(modal).display === 'flex', 'Shared cell stylesheet did not load')
     const fullBefore = modal.querySelector('pre').textContent
+    check(reader.selection() === null && !modal.querySelector('footer'), 'Opening the cell viewer created a selection or a permanent copy action')
+    const selectedText = document.createRange()
+    selectedText.setStart(modal.querySelector('pre').firstChild, 4)
+    selectedText.setEnd(modal.querySelector('pre').firstChild, fullBefore.length)
+    getSelection().addRange(selectedText)
+    check(reader.selection().quote === '中文😀' && reader.selection().location.column === 7, 'Cell viewer lost the exact Unicode substring or cell identity')
+    getSelection().removeAllRanges()
+    check(reader.selection() === null, 'Collapsed cell selection retained an action target')
     translate.update({
       locale: 'zh-CN',
       messages: {
@@ -93,9 +101,8 @@ export async function tableCellsContract(moduleUrl) {
       'Open full-cell dialog did not update its localized labels'
     )
     check(
-      modal.querySelector('pre').textContent === fullBefore &&
-        modal.querySelector('footer button').textContent === '复制单元格',
-      'Cell locale update changed literal data or missed Copy'
+      modal.querySelector('pre').textContent === fullBefore,
+      'Cell locale update changed literal data'
     )
     modal.querySelector('button[aria-label="关闭"]').click()
     check(translate.state().subscribers === 1, 'Cell dialog retained its translator subscription')
@@ -105,11 +112,15 @@ export async function tableCellsContract(moduleUrl) {
     reader.update()
     first.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
     await tick()
+    const longRange = document.createRange()
+    longRange.selectNodeContents(document.querySelector('.table-cell-full'))
+    longRange.setStart(document.querySelector('.table-cell-full').firstChild, first.textContent.indexOf('中文') + 2)
+    getSelection().addRange(longRange)
     const long = reader.selection()
     check(
       long.quoteTruncated &&
         new TextEncoder().encode(long.quote).length <= 32768 &&
-        first.textContent.startsWith(long.quote),
+        first.textContent.includes(long.quote),
       'Cell excerpt split Unicode or exceeded its budget'
     )
     const bounds = document.querySelector('.table-cell-dialog').getBoundingClientRect()
@@ -125,12 +136,10 @@ export async function tableCellsContract(moduleUrl) {
         !document.querySelector('.table-cell-full script'),
       'Full cell was truncated or interpreted as HTML'
     )
-    document.querySelector('.table-cell-dialog footer button').click()
+    document.querySelector('.table-cell-dialog .dialog-close').click()
+    controls.querySelector('button').click()
     await tick()
-    check(
-      copied.at(-1) === first.textContent,
-      'Copy used the excerpt instead of the complete bounded cell'
-    )
+    check(copied.at(-1) === first.textContent, 'Grid Copy cell lost the complete bounded value')
     reader.update()
     check(
       !reader.selection() &&

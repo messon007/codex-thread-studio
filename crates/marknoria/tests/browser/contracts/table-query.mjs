@@ -144,6 +144,7 @@ export async function tableQueryContract(moduleUrl) {
     check(closed.includes(currentId), 'Invalid new result was not released')
     mode = 'normal'
     dialog.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     await wait(() => root.querySelectorAll('.table-plot-dialog rect').length === 123)
     root.querySelector('[data-chart-row="122"]').focus()
     check(
@@ -229,6 +230,7 @@ export async function tableQueryContract(moduleUrl) {
     await query.ready
     const kept = query.state().id
     root.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     await wait(() => root.querySelectorAll('.table-plot-dialog rect').length === 123)
     const fillers = Array.from({ length: 256 - translate.state().subscribers }, () =>
       translate.subscribe(() => {})

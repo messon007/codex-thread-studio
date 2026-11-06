@@ -53,8 +53,17 @@ export function mountTableCells(
     if (!selected?.isConnected || !content.contains(selected)) return null
     const location = locate(selected)
     if (!location) return null
-    const text = values.get(selected) || '',
+    let text = values.get(selected) || '',
       bounds = selected.getBoundingClientRect()
+    if (dialog) {
+      const full = dialog.querySelector('.table-cell-full'),
+        current = content.ownerDocument.getSelection()
+      const range = current?.rangeCount ? current.getRangeAt(0) : null
+      if (!range || range.collapsed || !full.contains(range.startContainer) || !full.contains(range.endContainer))
+        return null
+      text = range.toString()
+      bounds = range.getBoundingClientRect()
+    }
     // Bound excerpt transport, retaining the full cell in its own dialog/copy.
     let quote = '',
       bytes = 0
@@ -140,16 +149,16 @@ export function mountTableCells(
     full.className = 'table-cell-full'
     full.tabIndex = 0
     full.textContent = values.get(cell) || ''
-    const footer = document.createElement('footer'),
-      copyButton = document.createElement('button')
-    copyButton.type = 'button'
-    dialogLabels.set(copyButton, 'Copy cell')
-    copyButton.addEventListener('click', copySelected, dialogOptions)
-    footer.append(copyButton)
-    dialog.append(header, address, full, footer)
+    dialog.append(header, address, full)
     document.body.append(dialog)
     dialog.addEventListener('cancel', () => close(true), dialogOptions)
+    // Update the owning table before Notes handles the same bubbling input.
+    // selectionchange is intentionally left to the reader/bridge observer.
+    for (const type of ['pointerup', 'keyup'])
+      full.addEventListener(type, () => onSelection(selection()), dialogOptions)
+    content.ownerDocument.getSelection()?.removeAllRanges()
     dialog.showModal()
+    onSelection(null)
   }
   document.addEventListener(
     'pointerdown',

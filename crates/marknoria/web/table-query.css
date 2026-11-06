@@ -76,6 +76,8 @@
 .table-query-actions {
   flex-wrap: wrap;
 }
+.table-query-recovery { display:flex; flex-wrap:wrap; align-items:center; gap:8px; flex:1 1 100%; order:2; padding:8px; border-radius:6px; background:var(--reader-soft,#f7fafb); font-size:12px; }
+.table-query-recovery[hidden] { display:none; }
 .table-query-actions [role='status'] {
   flex: 1 1 200px;
   min-width: 0;

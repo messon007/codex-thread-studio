@@ -827,7 +827,7 @@ impl Reader {
                 }
                 if selection.precision == Precision::Exact {
                     let value = window.rows[*row - window.row_start][*column].as_deref().unwrap_or("NULL");
-                    if !(if selection.quote_truncated { value.starts_with(&selection.quote) } else { value == selection.quote }) {
+                    if selection.quote.is_empty() || !value.contains(&selection.quote) {
                         return Err(invalid("Selection quote does not match its query cell"));
                     }
                 }

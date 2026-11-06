@@ -235,6 +235,7 @@ try {
     const state=query.state(),dialog=document.querySelector('.table-query-dialog')
     const lastRows=dialog.querySelectorAll('tbody tr').length
     dialog.querySelector('.table-chart-open').click()
+    { const plot=document.querySelector('.table-plot-dialog'), y=plot.querySelector('select[aria-label="Numeric column"]');y.value='1';y.dispatchEvent(new Event('change'));plot.querySelector('.table-plot-axes button').click() }
     const deadline=performance.now()+5000
     while(!document.querySelector('.table-plot-dialog [data-chart-row="119"]')&&performance.now()<deadline)await new Promise(r=>setTimeout(r,20))
     const points=document.querySelectorAll('.table-plot-dialog rect').length

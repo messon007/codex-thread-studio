@@ -294,7 +294,9 @@ mod tests {
                 "quote":quote,"revision":index.revision,
                 "anchor":{"location":{"kind":"queryCell","queryId":result.id,"row":0,"column":column}}})).unwrap()
         };
-        assert!(queries.prepare_note(&index, &mut request("1", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("forged", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("", 0)).is_err());
+        assert!(queries.prepare_note(&index, &mut request("01", 0)).is_ok(), "A selected substring must retain its query-cell provenance");
         assert!(queries.prepare_note(&index, &mut request("001", 99)).is_err());
         let other = Queries::default();
         assert!(other.prepare_note(&index, &mut request("001", 0)).is_err());
@@ -778,7 +780,9 @@ impl Queries {
             .ok_or_else(|| error("Query note cell is outside its result"))?;
         let value_is_null = value.is_none();
         let value = value.as_deref().unwrap_or("NULL");
-        if !(if request.quote_truncated { value.starts_with(&request.quote) } else { value == request.quote }) {
+        // A cell viewer can quote an exact selected substring. The owned result
+        // remains the authority; unrelated text and empty snippets are rejected.
+        if request.quote.is_empty() || !value.contains(&request.quote) {
             return Err(error("Note quote does not match its query result cell"));
         }
         Ok(QuerySnapshot {

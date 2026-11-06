@@ -97,11 +97,15 @@ storage authority. `readerNoteStorage` can be used with this capability in an
 ordinary host; the document reader enables the same profile.
 
 On save, the Rust adapter resolves the live document/revision-owned result ID,
-verifies its cell coordinates and exact quote (or declared prefix), and replaces
+verifies its cell coordinates and that the nonempty quote is an exact substring
+of the owned cell, and replaces
 the transient location with `anchor.query`: SQL text, input table and row count,
 result row/column/name, result row count and a null-value flag. It never infers a
 source row for aggregates, joins or reordered results. Client-supplied provenance,
 expired/foreign results, changed revisions and mismatched quotes are rejected.
+An expanded cell viewer can capture a middle substring. If that selection exceeds
+32 KiB UTF-8, its bounded prefix still belongs to the cell and is explicitly
+marked `quoteTruncated`; this flag does not mean the whole cell was selected.
 The immutable query definition comes from the stored result, not the editor's
 current text. These records survive result closure and document reopening; a
 changed document revision is marked stale. Copy labels the data as an SQL result

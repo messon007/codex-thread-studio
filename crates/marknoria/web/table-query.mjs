@@ -130,6 +130,24 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   const message = document.createElement('span')
   message.setAttribute('role', 'status')
   actions.append(run, reset, message)
+  const recovery = document.createElement('div'),
+    recoveryHint = document.createElement('span'),
+    fixQuery = document.createElement('button')
+  recovery.className = 'table-query-recovery'
+  recovery.hidden = true
+  labels.set(recoveryHint, 'IN expects a table or a list. To find text within a cell, use instr(column, text).')
+  labels.set(fixQuery, 'Use text contains query')
+  fixQuery.type = 'button'
+  fixQuery.className = 'table-query-fix'
+  let correction = null
+  fixQuery.addEventListener('click', () => {
+    if (correction) {
+      editor.value = correction
+      editor.focus()
+    }
+  }, { signal: lifetime.signal })
+  recovery.append(recoveryHint, fixQuery)
+  actions.append(recovery)
   const controlsSlot = document.createElement('div')
   controlsSlot.className = 'table-query-controls'
   const workspace = document.createElement('div')
@@ -325,6 +343,8 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   }
   async function load(row, sql) {
     if (loading || stopped) return
+    correction = null
+    recovery.hidden = true
     loading = true
     update()
     if (sql == null) labels.set(message, 'Loading results…')
@@ -377,6 +397,17 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
       if (!stopped && error.name !== 'AbortError') {
         labels.clear(message)
         message.textContent = error.message
+        // Only offer an explicit correction for this unambiguous simple form.
+        // SQLite's IN c2 means membership in a table; never rewrite or run it silently.
+        const contains = /^\s*SELECT\s+\*\s+FROM\s+t\s+WHERE\s+(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')\s+IN\s+(c[1-9]\d*)\s*;?\s*$/i.exec(sql || '')
+        if (contains && Number(contains[3].slice(1)) <= metadata.columns.length && /no such table:\s*c\d+\b/i.test(error.message)) {
+          const value = contains[1] === undefined
+            ? contains[2].replaceAll("''", "'")
+            : contains[1].replaceAll('""', '"')
+          correction = `SELECT * FROM t WHERE instr(${contains[3]}, '${value.replaceAll("'", "''")}') > 0`
+          fixQuery.title = correction
+          recovery.hidden = false
+        }
         if (/no such column:\s*c\d+\b/i.test(error.message)) {
           const hint = document.createElement('span')
           labels.set(hint, 'For c1, c2, … use FROM t; FROM data uses named columns.')

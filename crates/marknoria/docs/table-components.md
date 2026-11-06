@@ -193,6 +193,10 @@ result IDs, state, queries and overlays separate.
 `mountTablePlotDialog(container,{columns,load,...options})` is the public modal
 wrapper for `mountTablePlot`; the HTTP `tableChartDialog` delegates to it. It uses
 only explicit providers/presentation roots and restores focus on disposal.
+Opening the chart makes no data request and does not guess a numeric column.
+The user selects that axis and presses Draw chart; `ready` means the controls
+are mounted, while `state().rows` remains null until the first successful draw.
+String values are never silently converted to zero or dropped.
 
 `table-view.css` and `table-query.css` are the single shared table/query style
 sources. The main HTML loads them before content to avoid layout changes from a

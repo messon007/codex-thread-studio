@@ -343,6 +343,16 @@ Ctrl/Command+C (without an active text selection) copy the complete cell; a sepa
 retain that flag and copied references identify excerpts. Column resizing remains
 the same shared `tableLayout` component, including keyboard resizing/fit.
 
+Public cell navigation restores the original requested column, opens Preview and
+keeps the owning virtual table mounted through layout and reveal. It suppresses
+Source's implicit position restoration because the explicit cell replaces it.
+The selected cell must fit the actual reading viewport (an oversized cell aligns
+to its top/left). Geometry commits, rather than iframe size alone, determine
+visibility. A host AbortSignal, newer location, revision/disposal or user scroll
+interrupts an active reveal; cancellation reports `CANCELLED`. A continuously
+changing layout returns retryable `BUSY` instead of acknowledging an invisible
+target. Notes/selection ownership and toolbar policies are preserved.
+
 Query-cell references carry their owning result ID and expire when that result
 closes, is evicted or changes revision. Core validation checks result ownership
 and coordinates; saved reading positions cannot treat these as durable source

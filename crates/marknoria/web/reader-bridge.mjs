@@ -53,7 +53,7 @@ export function installReaderBridge({ origins, commands, state, onDispose = () =
       if (message.method === 'hello' && state().state === 'ready') publish('ready', state())
       publish('state', state())
     } catch (error) {
-      reply({ error: { code: controller.signal.aborted ? 'CANCELLED' : error.code || 'COMMAND', message: String(error.message).slice(0, 1024) } })
+      reply({ error: { code: controller.signal.aborted || error.name === 'AbortError' ? 'CANCELLED' : error.code || 'COMMAND', message: String(error.message).slice(0, 1024) } })
     } finally { running.delete(message.requestId) }
   }, { signal: lifetime.signal })
   return { publish, dispose, get connected() { return peer != null && !disposed }, get active() { return running.size } }

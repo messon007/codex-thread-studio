@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "revision": "c8947e7eb3a5471780dbdadf9089252c95eaedc8",
-  "treeSha256": "bad66fe99af8a68250f54424bfd0314365f66e67f4fdccc1322853b79fc44208",
+  "revision": "0664d06853d9a3f1a0768b15794cd274cb97e9d1",
+  "treeSha256": "dd899148cd2278c7c444d54aa3eea17d975edbc6b4268d7aa9cba189b2a638ef",
   "apiVersion": 1,
   "bridgeVersion": 1,
-  "archiveSha256": "2018b8ad930fd5dfe75765cdd59b35b8874834718053096b75ff816bc7d2d2c8"
+  "archiveSha256": "3da8ed777a6cf23e12bbb5268a350ef866f0b23e9d463b4c9e7b973c347d505d"
 }

@@ -298,3 +298,23 @@ Workbook headers/records are each bounded at 128 KiB; aggregate streamed table
 JSON across every sheet is bounded at 128 MiB. Rejected records are checked
 before writing, with a shared budget across sheets. This is separate from the
 original ZIP/expanded-member, cell-count, projection and SQL-result budgets.
+
+## Bounded cell reveal
+
+`mountTableView(...).go(row, column, {signal})` restores a hidden original column
+and loads a bounded projection. It waits for two stable geometry transitions
+(up to eight frames/250 ms), then allows two commit frames with at most one
+corrective reveal. Frame waits have a 50 ms fallback so hidden/unpainted frames
+cannot retain the operation indefinitely. No ongoing scroll observer keeps
+pulling the user back. A final visibility check includes actual client bounds;
+oversized cells align to the top/left. Unstable/clipped layouts report `BUSY`.
+New navigation, disposal, abort and wheel/touch/pointer/navigation keys stop the
+operation. Ignored provider aborts cannot commit stale rows or columns.
+
+`npm run check:table-navigation -- PATH_TO_EMBEDDED_HOST [--webkit]` exercises
+the actual public iframe protocol in readonly/editable readers. Test-only browser
+init scripts observe the child viewport, target and consecutive eight animation
+frames plus200 ms; no probe or host DOM workaround enters reader runtime. It
+checks original row/column/quote, hidden-column restoration, cancellation/latest
+requests, user scrolling and host-owned Notes. Ordinary host contracts also cover
+delayed layout, oversized cells, continuously unstable layout and disposal.

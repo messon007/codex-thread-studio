@@ -1,5 +1,7 @@
 # Reduced syntax profile and public translations — 2026-11-06
 
+Historical acceptance for `c8947e7`. The [current navigation adoption](marknoria-navigation-adoption.md) imports the subsequent shared fix for MarkNoria #30; the reduced syntax and translation choices below remain in effect.
+
 Studio starts at main `13f696191bdb073bfcea701eada504ef58a25f3f` and adopts
 unmodified public delivery `c8947e7eb3a5471780dbdadf9089252c95eaedc8`.
 Upstream main `9d882044fde656eec9f54c48bc98cc8404b35bef` only adds acceptance

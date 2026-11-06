@@ -128,7 +128,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     await code.select(from,to)
     signal?.throwIfAborted()
   }
-  function setVisible(open) {
+  function setVisible(open, { restore = true } = {}) {
     // Read while CodeMirror still has layout; hidden panels report line one.
     const resumeLine = !open && visible ? currentLocation() : null
     if (visible !== open) options.onVisibilityChange?.()
@@ -150,7 +150,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       request?.abort()
       loading = false
       text.removeAttribute('aria-busy')
-      return Promise.resolve(preview(line)).then(() => options.onReady?.())
+      return Promise.resolve(restore ? preview(line) : undefined).then(() => options.onReady?.())
     }
   }
   async function show(line = anchor()) {
@@ -177,7 +177,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     get external() { return Boolean(external) },
     selection() { return visible && external ? external.selection?.() ?? null : null },
     get visible() { return visible }, get page() { return page }, currentLine, currentLocation, show, go, goRange,
-    hide() { if (visible) return setVisible(false) },
+    hide(options) { if (visible) return setVisible(false, options) },
     highlightRange(start, end) {
       if (!visible || !code || !page || start < page.start || end > page.end) { this.clearSearch(); return }
       const { from, to } = sourceRangeOffsets(page, start, end)

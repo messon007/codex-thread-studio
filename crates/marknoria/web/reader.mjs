@@ -153,6 +153,7 @@ let mountFrame = null
 let stopped = false
 let forcedPage = null
 let navigation = 0
+let navigationIntent = 0
 let documentError = null
 let loadError = null
 let searchJump = null
@@ -265,6 +266,17 @@ function report() {
 
 function schedule() {
   if (frame == null && !stopped) frame = requestAnimationFrame(() => { frame = null; reconcile() })
+}
+
+// A resize scroll adjustment and the corresponding transforms/sizer must commit
+// together. This only updates mounted geometry; mounting/providers stay scheduled.
+function commitVirtualGeometry(items = virtualizer?.getVirtualItems()) {
+  if (!items || stopped || source?.visible || editor?.visible) return
+  space.style.height = `${virtualizer.getTotalSize()}px`
+  for (const item of items) {
+    const node = nodes.get(item.index)
+    if (node?.isConnected) node.style.transform = `translateY(${item.start}px)`
+  }
 }
 
 function reconcile() {
@@ -386,8 +398,9 @@ async function previewLine(location) {
   return jump(page, null, row, null, location)
 }
 
-async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}) {
-  if (stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
+async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}, { intent = ++navigationIntent, signal, keepMounted = false } = {}) {
+  signal?.throwIfAborted()
+  if (intent !== navigationIntent || stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
   if (editor?.visible) {
     const target = heading == null ? index.pages[sourcePage]?.line : index.toc.find(item => item.id === heading)?.line
     if (await editor.go(target, index.revision)) {
@@ -417,31 +430,41 @@ async function jump(sourcePage, heading = null, row = null, anchor = null, locat
   else tables.refresh(nodes.get(page))
   virtualizer.scrollToIndex(page, { align: 'start', behavior: 'auto' })
   schedule()
-  let stable = 0
-  let previous = null
-  for (let attempt = 0; attempt < 150 && ticket === navigation; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 20))
-    if (stopped || ticket !== navigation || !index || !tables || !virtualizer) return
-    const article = nodes.get(page)
-    const tableRow = row ?? index.pages[sourcePage]?.rowStart
-    const target = location ? sourceTarget(article, location, query, searchOptions) : anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
-      ? (tableRow > Number(article?.dataset.rowStart || 0) ? article?.querySelectorAll('tbody tr')[tableRow - Number(article.dataset.rowStart)] : article)
-      : document.getElementById(`heading-${heading}`)
-    const targetNode = target instanceof Range ? target.startContainer.parentElement : target
-    const diagramsReady = article && targetNode && [...article.querySelectorAll('figure[data-diagram-state]')].every(figure => !(figure.compareDocumentPosition(targetNode) & Node.DOCUMENT_POSITION_FOLLOWING) || ['rendered', 'error'].includes(figure.dataset.diagramState))
-    if (article?.dataset.ready && target && diagramsReady) {
-      virtualizer.cancelScroll()
-      const top = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top
-      const maximum = viewport.scrollHeight - viewport.clientHeight
-      const desired = Math.min(maximum, Math.max(0, viewport.scrollTop + top))
-      const aligned = Math.abs(desired - viewport.scrollTop) < 2
-      stable = aligned && previous != null && Math.abs(previous - top) < 2 ? stable + 1 : 0
-      previous = top
-      if (!aligned) viewport.scrollTo({ top: desired, behavior: 'auto' })
-      if (stable >= 4) break
+  const cancel = () => { if (ticket === navigation) { navigation++; forcePage(null); virtualizer.cancelScroll(); schedule() } }
+  signal?.addEventListener('abort', cancel, { once: true })
+  let completed = false
+  try {
+    let stable = 0
+    let previous = null
+    for (let attempt = 0; attempt < 150 && ticket === navigation; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      signal?.throwIfAborted()
+      if (stopped || intent !== navigationIntent || ticket !== navigation || !index || !tables || !virtualizer) return
+      const article = nodes.get(page)
+      const tableRow = row ?? index.pages[sourcePage]?.rowStart
+      const target = location ? sourceTarget(article, location, query, searchOptions) : anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
+        ? (tableRow > Number(article?.dataset.rowStart || 0) ? article?.querySelectorAll('tbody tr')[tableRow - Number(article.dataset.rowStart)] : article)
+        : document.getElementById(`heading-${heading}`)
+      const targetNode = target instanceof Range ? target.startContainer.parentElement : target
+      const diagramsReady = article && targetNode && [...article.querySelectorAll('figure[data-diagram-state]')].every(figure => !(figure.compareDocumentPosition(targetNode) & Node.DOCUMENT_POSITION_FOLLOWING) || ['rendered', 'error'].includes(figure.dataset.diagramState))
+      if (article?.dataset.ready && target && diagramsReady) {
+        virtualizer.cancelScroll()
+        const top = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+        const maximum = viewport.scrollHeight - viewport.clientHeight
+        const desired = Math.min(maximum, Math.max(0, viewport.scrollTop + top))
+        const aligned = Math.abs(desired - viewport.scrollTop) < 2
+        stable = aligned && previous != null && Math.abs(previous - top) < 2 ? stable + 1 : 0
+        previous = top
+        if (!aligned) viewport.scrollTo({ top: desired, behavior: 'auto' })
+        if (stable >= 4) break
+      }
     }
+    completed = ticket === navigation && intent === navigationIntent
+    if (completed) return ticket
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+    if (ticket === navigation && (!completed || !keepMounted)) { forcePage(null); schedule() }
   }
-  if (ticket === navigation) { forcePage(null); schedule() }
 }
 
 function createOutline(navigate) {
@@ -515,6 +538,7 @@ function setup() {
   }, () => position(), () => {
     clearTextSelection()
     tables?.closeOverlays()
+    navigationIntent += 1
     navigation += 1
     generation += 1
     activeRequest?.abort()
@@ -538,7 +562,7 @@ function setup() {
     observeElementOffset,
     scrollToFn: elementScroll,
     overscan: 1,
-    onChange: schedule,
+    onChange: (_instance, sync) => { if (sync) commitVirtualGeometry(); schedule() },
   })
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = item => item.end <= viewport.scrollTop
   stopReader = virtualizer._didMount()
@@ -550,6 +574,7 @@ function setup() {
   void outlineView.setItems(index.toc).then(() => outlineView?.active(activeHeading)).catch(error => { if (!readerAbort.signal.aborted) setStatus(error.message, null) })
   schedule()
   const cancelNavigation = () => {
+    navigationIntent += 1
     navigation += 1
     forcePage(null)
     virtualizer.cancelScroll()
@@ -757,7 +782,7 @@ async function refreshReading() {
   }
 }
 
-async function switchView(view) {
+async function switchView(view, { restorePreview = true } = {}) {
   if (!editable || switching || editor?.busy) return
   const current = editor.visible ? 'edit' : source?.visible ? 'source' : 'preview'
   if (view === current && index && !editor.needsRefresh) return
@@ -778,9 +803,9 @@ async function switchView(view) {
       if (view === 'source') await source.show(location)
       else {
         const fromSource = source.visible
-        await source.hide()
+        await source.hide({ restore: restorePreview })
         schedule()
-        if (!fromSource && index.pages.length) {
+        if (restorePreview && !fromSource && index.pages.length) {
           await previewLine(location)
         }
       }
@@ -1054,7 +1079,9 @@ function connectBridge() {
       if (publicState().view !== view) throw Error('Could not switch the reader view')
       result.publish('state', publicState())
     },
-    async navigate(location) {
+    async navigate(location, { signal } = {}) {
+      signal?.throwIfAborted()
+      const intent = ++navigationIntent
       if (!location || !index) throw Error('A reading location is required')
       if (formatRenderer) { await formatRenderer.navigate(location); result.publish('state', publicState()); return }
       if (location.kind === 'source') {
@@ -1071,14 +1098,29 @@ function connectBridge() {
       } else if (location.kind === 'cell') {
         const table = Number.isSafeInteger(location.table) && location.table >= 0 ? index.tables[location.table] : null
         if (!table || !Number.isSafeInteger(location.row) || location.row < 0 || location.row >= table.rows || !Number.isSafeInteger(location.column) || location.column < 0 || location.column >= table.columns.length) throw Error('Table cell out of range')
-        const revision = index.revision
-        if (editor?.visible || source?.visible) {
-          if (editable) await switchView('preview')
-          else source.hide()
-          if (index.revision !== revision) throw Object.assign(Error('Document revision changed while opening Preview'), { code: 'REVISION' })
+        const revision = index.revision, owner = readerAbort, controller = tables
+        const current = () => {
+          signal?.throwIfAborted()
+          if (stopped || owner.signal.aborted || readerAbort !== owner || index?.revision !== revision)
+            throw Object.assign(Error('Document revision changed while opening Preview'), { code: 'REVISION' })
+          if (intent !== navigationIntent) throw new DOMException('Navigation superseded', 'AbortError')
+          return true
         }
-        await jump(table.firstPage, null, location.row)
-        await tables.go(location.table, location.row, location.column)
+        // The explicit target replaces Source's implicit position restoration.
+        if (editor?.visible || source?.visible) {
+          if (editable) await switchView('preview', { restorePreview: false })
+          else await source.hide({ restore: false })
+        }
+        current()
+        const ticket = await jump(table.firstPage, null, location.row, null, null, '', {}, { intent, signal, keepMounted: true })
+        try {
+          current()
+          if (ticket == null || ticket !== navigation) throw new DOMException('Navigation superseded', 'AbortError')
+          await controller.go(location.table, location.row, location.column, { signal, isCurrent: () => current() && ticket === navigation })
+          current()
+        } finally {
+          if (ticket != null && ticket === navigation && readerAbort === owner && !owner.signal.aborted) { forcePage(null); schedule() }
+        }
       } else throw Object.assign(Error('This renderer cannot resolve this location yet; retain the original location'), { code: 'UNSUPPORTED_LOCATION' })
       result.publish('state', publicState())
     },

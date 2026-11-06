@@ -1,17 +1,29 @@
 """Mapped native Wayland WebKit host for public ordinary-DOM contracts."""
 import json
 import sys
+from pathlib import Path
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.1')
 from gi.repository import Gtk, WebKit2, GLib
 
+arguments = sys.argv[2:]
+init_script = None
+if '--init-script' in arguments:
+    at = arguments.index('--init-script')
+    init_script = Path(arguments[at + 1]).read_text()
+    if len(init_script.encode()) > 65536:
+        raise ValueError('Test init script exceeds 64 KiB')
+    del arguments[at:at + 2]
 manager = WebKit2.UserContentManager()
+if init_script is not None:
+    manager.add_script(WebKit2.UserScript.new(init_script, WebKit2.UserContentInjectedFrames.ALL_FRAMES,
+                                           WebKit2.UserScriptInjectionTime.START, None, None))
 manager.register_script_message_handler('result')
 view = WebKit2.WebView(web_context=WebKit2.WebContext.new_ephemeral(), user_content_manager=manager)
 window = Gtk.Window()
-window.set_default_size(int(sys.argv[2]) if len(sys.argv) > 2 else 1400,
-                        int(sys.argv[3]) if len(sys.argv) > 3 else 950)
+window.set_default_size(int(arguments[0]) if arguments else 1400,
+                        int(arguments[1]) if len(arguments) > 1 else 950)
 window.add(view)
 result = None
 
@@ -30,8 +42,10 @@ window.show_all()
 view.load_uri(sys.argv[1])
 GLib.timeout_add_seconds(180, lambda: (Gtk.main_quit(), False)[1])
 Gtk.main()
+display_type = window.get_display().__gtype__.name
 window.destroy()
 if result is None or 'error' in result:
     raise RuntimeError(result or 'WebKit contract timed out')
+result['nativeDisplay'] = display_type
 result['browserVersion'] = f'WebKit {WebKit2.get_major_version()}.{WebKit2.get_minor_version()}.{WebKit2.get_micro_version()}'
 print(json.dumps(result))

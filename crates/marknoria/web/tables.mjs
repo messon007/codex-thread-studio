@@ -57,11 +57,12 @@ export function tableController(index, api, changed, options = {}) {
 
   return {
     items, itemForPage, target, columnCount, mount,
-    async go(table, row, column) {
+    async go(table, row, column, navigation) {
       const entry = [...active].find(([article]) => article.isConnected && Number(article.dataset.table) === table)
       if (!entry) throw Error('The requested table is not mounted')
-      await entry[1].go(row, column)
+      const navigated = await entry[1].go(row, column, navigation)
       if (entry[1].state().error) throw Error(entry[1].state().error)
+      if (!navigated) throw new DOMException('Table navigation superseded', 'AbortError')
       selectedTable = entry[1]
     },
     hasOverlay() { return Boolean(chartDialog?.isOpen() || queryDialog?.isOpen()) },

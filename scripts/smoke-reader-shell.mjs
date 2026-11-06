@@ -62,6 +62,7 @@ try{
   await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.shellClient=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await shellClient.ready()})
   const first=await command('state');const initial={...first.timings,hostFirstUsefulMs:performance.now()-started,mounted:await frame.locator('#space *').count()}
   if(first.presentation.toolbar!=='host')throw Error('Duplicate child toolbar')
+  if(await page.locator('#artifact-search-match-case').isChecked() !== (format !== 'pdf'))throw Error('Host Match case default differs from the document format')
   if(await frame.locator('.reader-header').isVisible())throw Error('Child toolbar remains visible')
   for(const theme of ['light','dark']){
    await settings(theme)

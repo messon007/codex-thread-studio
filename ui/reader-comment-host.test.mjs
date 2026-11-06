@@ -17,6 +17,10 @@ test('only owned exact comments paint after reopen, never favorites, stale recor
  const old=structuredClone(draft);delete old.source.anchor.readerReference.textRange
  assert.equal(readerCommentMark(old,file,owner),null)
  assert.equal(old.excerpt,'word','coarse reference is retained, never relocated')
+ old.source.anchor.readerReference.location={kind:'source',startByte:0,endByte:4}
+ assert.equal(readerCommentMark(old,file,owner),null,'declared approximate source positions are never upgraded to exact marks')
+ old.source.anchor.readerReference.precision='exact'
+ assert.ok(readerCommentMark(old,file,owner))
 })
 
 test('replacement is serialized and bounded to the latest owned set; events cannot open stale or foreign comments',async()=>{

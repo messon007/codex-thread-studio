@@ -72,10 +72,14 @@ try{
  await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.reviewClient=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await reviewClient.ready()})
  await page.locator('#artifact-search-toggle').click();await page.locator('#artifact-search-input').fill('ReviewNeedle')
  const summary=page.locator('#artifact-search-summary'),next=page.locator('#artifact-search-next'),prev=page.locator('#artifact-search-prev')
+ async function waitState(predicate){
+  const deadline=Date.now()+30000;let latest
+  while(Date.now()<deadline){latest=await page.evaluate(()=>reviewClient.request('state'));if(predicate(latest))return latest;await pause(20)}
+  throw Error('Public reader state did not reach expected condition: '+JSON.stringify(latest?.search))
+ }
  async function current(index,total=250){
   await page.waitForFunction(({index,total})=>document.querySelector('#artifact-search-summary').textContent.trim()===`${index+1} / ${total}`,{index,total})
-  await page.waitForFunction(async({index,total})=>{const s=await reviewClient.request('state');return s.search?.current===index&&s.search.total===total},{index,total})
-  const s=await page.evaluate(()=>reviewClient.request('state'));assert.equal(s.search.active.index,index);assert.equal(s.search.totalExact,true)
+  const s=await waitState(s=>s.search?.current===index&&s.search.total===total);assert.equal(s.search.active.index,index);assert.equal(s.search.totalExact,true)
   return s
  }
  await current(0);assert.doesNotMatch(await summary.textContent(),/\+|limited/i)
@@ -100,7 +104,7 @@ try{
  await page.screenshot({path:join(dir,'search250-preview.png')})
  await page.locator('#artifact-search-input').fill('paragraph ');await current(0,120);report.checks.push('query replacement gets a new result set without stale occurrence')
  const oldId=(await page.evaluate(()=>reviewClient.request('state'))).search.searchId
- await page.locator('#artifact-search-input').fill('');await page.waitForFunction(async()=>{const s=await reviewClient.request('state');return s.search.searchId===null&&s.search.current===null&&s.search.total===0})
+ await page.locator('#artifact-search-input').fill('');await waitState(s=>s.search.searchId===null&&s.search.current===null&&s.search.total===0)
  assert.equal(await next.isDisabled(),true);assert.equal(await prev.isDisabled(),true);assert.equal((await marker()).length,0)
  const stale=await page.evaluate(async oldId=>{try{await reviewClient.request('searchActivate',{searchId:oldId,index:0});return null}catch(e){return e.code}},oldId);assert.equal(stale,'SEARCH_ID');report.checks.push('clearing query cancels state, removes highlights, disables navigation and invalidates old identity')
  await page.locator('#artifact-search-input').fill('ReviewNeedle');await page.locator('#artifact-search-input').fill('not-found');await page.waitForFunction(()=>/No matches found/.test(document.querySelector('#artifact-search-summary').textContent))
@@ -115,7 +119,7 @@ try{
  await matchCase.uncheck();await current(0,3)
  const folded=await page.evaluate(()=>reviewClient.request('state'));assert.equal(folded.search.matchCase,false);assert.notEqual(folded.search.searchId,strictId)
  assert.equal(bytes.subarray(folded.search.active.sourceLocation.startByte,folded.search.active.sourceLocation.endByte).toString(),'K')
- await page.locator('#artifact-search-input').fill('');await page.waitForFunction(async()=>!(await reviewClient.request('state')).search.searchId)
+ await page.locator('#artifact-search-input').fill('');await waitState(s=>!s.search.searchId)
  await page.locator('#artifact-search-toggle').click();await page.locator('#artifact-search-toggle').click();assert.equal(await matchCase.isChecked(),false)
  await page.locator('#artifact-search-input').fill('reviewneedle');await current(0)
  await page.evaluate(()=>{for(let i=0;i<101;i++)document.querySelector('#artifact-search-next').click()});await current(101)

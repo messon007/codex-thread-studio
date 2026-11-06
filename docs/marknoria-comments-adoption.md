@@ -70,7 +70,32 @@ Chromium (40), forced rectangle fallback (38) and native Wayland WebKit 2.52.6
 (40). The UI tests include original selector/quote round trips, malformed bounds,
 case identity/paging/cancellation and host mark replacement/event isolation.
 
-The adopting PR records final application/independent-SDK Rust results, real
-Studio save/reload/reopen and pointer interaction acceptance, format-specific
-checks, and the final source/binary provenance. Three-platform CI gates merging.
+Application Rust validation passes 151 tests (one existing helper ignored) and
+14 public contracts; the independent SDK passes 171 tests. Public embedded search
+passes 150 Chromium and 69 native WebKit assertions, including configurable-case
+identity and renderer caps. Embedded source/SQL/ownership checks pass; PDF and EPUB
+checks pass 44 and 63 assertions respectively. The latter two upstream wrappers
+are not in the archive: their immutable fbb5ff8 test-only scripts were copied into
+a disposable extraction, without modifying the installed SDK or replacing assets.
+
+The retained Studio selection smoke passes 20 checks, including insensitive
+cross-window activation, case-toggle cancellation, pane retention and original
+Kelvin UTF-8 bytes. Existing actual-app issue regressions pass real Markdown/CSV/SQL
+double-click selection, explicit full-cell controls, SQL correction/chart/source
+checks and large structured documents; the native Wayland structured-text checks
+also pass. The four-format actual Studio shell passes in Chromium and WebKit.
+
+Independent actual Studio acceptance passes nine groups: a selected offline
+session, native double-click on the second repeated word, exact selector storage
+through the real gateway/SQLite, dashed marks surviving cleared selection, owned
+hover actions, page reload/document reopen, case toggles, UI deletion, original
+Source byte marks across views, overlapping records, and Clear Comments. The
+700-pixel viewport keeps the search panel within its bounds. These checks are
+retained in `scripts/smoke-reader-comments.mjs` with a non-inference fixture;
+`STUDIO_REMOTE_BINARY`, `STUDIO_PLAYWRIGHT_MODULE` and `STUDIO_CHROMIUM_PATH`
+select the local binary/browser. Public-state waits use bounded async polling,
+not asynchronous Playwright waitForFunction predicates.
+
+The adopting PR records final source/binary provenance. Three-platform CI gates
+merging.
 QA harness timings are not isolated product latency benchmarks.

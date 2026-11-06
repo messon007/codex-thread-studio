@@ -5,7 +5,7 @@ export function readerCommentMark(draft, file, owner) {
   if (!['document', 'epub'].includes(source?.provider) || anchor?.filePath !== file?.path
     || anchor.root && file.root && anchor.root !== file.root || !reference
     || reference.revision !== owner?.revision || reference.precision === 'draft'
-    || !reference.textRange && !['source', 'pdf', 'epub'].includes(reference.location?.kind)) return null
+    || !reference.textRange && (reference.precision !== 'exact' || !['source', 'pdf', 'epub'].includes(reference.location?.kind))) return null
   return { id: draft.id, kind: 'comment', revision: reference.revision,
     quote: reference.quote ?? draft.excerpt,
     anchor: { location: reference.location, quoteTruncated: reference.quoteTruncated,

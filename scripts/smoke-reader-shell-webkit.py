@@ -84,24 +84,20 @@ def loaded(_view, event):
               }
             }
             try{
-            document.querySelector('#artifact-notes-tools button').click();
-            await until(()=>document.querySelector('.notes-dialog'),'Notes');
-            await stage('Notes-en-US-open');
+            if(document.querySelector('#artifact-notes-tools button')||doc.querySelector('.notes-open,.notes-selection'))throw Error('Unexpected reader Notes/Favorite entry');
+            if((await state()).presentation.notes!=='host'||(await state()).presentation.selectionMenu!=='host')throw Error('Reader selection ownership was not delegated');
+            await stage('host-menu-ownership');
             const localeStart=performance.now();setLanguage('zh-CN');sync.push({locale:'zh-CN',ms:performance.now()-localeStart});
-            await until(()=>[...document.querySelectorAll('.notes-filters button')].some(node=>node.textContent===t('Comments')),'live Notes locale');
             for(let attempt=0;attempt<200&&(await state()).presentation.locale!=='zh-CN';attempt++)await pause();
             if((await state()).presentation.locale!=='zh-CN')throw Error('Child locale did not update');
-            await stage('Notes-zh-CN');
+            await stage('Reader-zh-CN');
             if(cfg.profileInteractions){
               for(const locale of ['en-US','zh-CN']){const start=performance.now();setLanguage(locale);sync.push({locale,ms:performance.now()-start});
-                await until(()=>[...document.querySelectorAll('.notes-filters button')].some(node=>node.textContent===t('Comments')),'repeated Notes locale');
                 for(let attempt=0;attempt<200&&(await state()).presentation.locale!==locale;attempt++)await pause();
                 if((await state()).presentation.locale!==locale)throw Error('Repeated child locale did not update');
-                await stage('Notes-repeat-'+locale);
+                await stage('Reader-repeat-'+locale);
               }
             }
-            document.querySelector('.notes-dialog .notes-close').click();
-            await stage('Notes-closed');
             document.querySelector('#artifact-outline-toggle').click();
             await until(()=>!doc.querySelector('#reader-outline').hidden&&doc.querySelector('#toc-filter').getAttribute('aria-label')===t('Filter contents'),'live Contents locale');
             if(!(await state()).outline.open)throw Error('Public Contents state did not open');

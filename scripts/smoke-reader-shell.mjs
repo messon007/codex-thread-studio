@@ -15,7 +15,7 @@ const file=join(project,'document.md');await writeFile(file,'# Full shell sentin
 const csv=join(project,'wide.csv');await writeFile(csv,['ID,Count,Description,'+Array.from({length:20},(_,i)=>'Field'+i).join(','),...Array.from({length:123},(_,i)=>[i,i+1,'Long cell '+('safe content '.repeat(8)),...Array.from({length:20},(_,n)=>n+i)].join(','))].join('\n'))
 const pdf=join(project,'document.pdf');await writeFile(pdf,pdfFixture())
 const epub=JSON.parse(execFileSync('/usr/bin/python3',[join(root,'crates/marknoria/tests/browser/epub_fixtures.py'),project],{encoding:'utf8'})).book
-const env={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_THREAD_STUDIO_CODEX_BIN:'/intentionally-unavailable-codex',CODEX_THREAD_STUDIO_OPENCODE_BIN:'/intentionally-unavailable-opencode',XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:join(dir,'reader-cache')}
+const env={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),CODEX_THREAD_STUDIO_CODEX_BIN:'/intentionally-unavailable-codex',CODEX_THREAD_STUDIO_OPENCODE_BIN:'/intentionally-unavailable-opencode',XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:join(dir,'reader-cache')}
 const server=spawn(process.env.STUDIO_REMOTE_BINARY||join(root,'target/debug/codex-thread-studio'),['--serve','--listen','127.0.0.1:0'],{env,stdio:['ignore','pipe','pipe']})
 let logs='',browser
 server.stdout.on('data',x=>logs+=x);server.stderr.on('data',()=>{})

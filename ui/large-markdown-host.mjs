@@ -102,15 +102,17 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       request?.abort();const own=++generation
       if(!query.trim()||disposed)return {matches:[],total:0,complete:true}
       const operation=request=new AbortController()
-      const value=await command('search',{query},operation.signal)
+      await ready
+      const owner={documentId:snapshot.documentId,revision:snapshot.revision}
+      const value=await command('search',{query,...owner},operation.signal)
       if (own !== generation || disposed) throw new DOMException('Search superseded','AbortError')
       const exact = Number.isSafeInteger(value.total)
-      return {matches:value.matches,total:exact?value.total:value.matches.length,complete:exact||value.complete===true||value.complete!==false&&value.matches.length<(value.limit||100)}
+      return {matches:value.matches.map(match=>({...match,...owner})),total:exact?value.total:value.matches.length,complete:exact||value.complete===true||value.complete!==false&&value.matches.length<(value.limit||100)}
     },
     navigateMatch(match){
       const range=snapshot.view==='source'&&snapshot.capabilities?.sourceRangeNavigation&&Number.isSafeInteger(match.start)&&Number.isSafeInteger(match.end)
       const location=range?{kind:'source',startByte:match.start,endByte:match.end}:snapshot.view==='preview'&&match.location?match.location:{kind:'line',line:match.line}
-      return command('navigate',{location})
+      return command('navigate',{location,...(match.documentId?{documentId:match.documentId,revision:match.revision}:{})})
     },
     leave(){return this.dispose()},
     dispose(){

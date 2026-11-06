@@ -316,3 +316,15 @@ test('host search distinguishes exact totals from capped legacy windows and reta
   } finally {await host.dispose()}
  }
 })
+
+
+test('search navigation retains the result revision after the document changes',async()=>{
+ const {host,requests,setState}=fixture('source',{}, {searchResponse:{matches:[{line:8,start:13,end:19}],complete:true}})
+ try {
+  const {matches}=await host.search('needle')
+  setState({revision:'b'.repeat(64)})
+  await host.navigateMatch(matches[0])
+  assert.equal(requests.at(-1).params.documentId,'doc')
+  assert.equal(requests.at(-1).params.revision,'a'.repeat(64))
+ } finally {await host.dispose()}
+})

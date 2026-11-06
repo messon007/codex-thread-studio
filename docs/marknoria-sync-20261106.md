@@ -38,6 +38,12 @@ Studio's Cargo/npm locks remain unchanged; no audit ignore is added. The earlier
 syntect/bincode replacement remains the upstream measured decision already adopted
 by PR #55, not a new optimization claim in this update.
 
+The still-open PR #58 (`794a322`, older `4c20b45` pin) is superseded by this
+delivery. Its four Studio translations and explicit SQL-correction, numeric-axis
+and cell-substring regression checks are retained. Its original acceptance
+record is preserved as a clearly historical [checkpoint](reader-acceptance-update.md);
+its older package hashes/results are not evidence for this new pin.
+
 ## Studio selection policy
 
 Before navigation, Studio adds `notes=host&selectionMenu=host` to the existing
@@ -77,11 +83,13 @@ the buffer length. Full standalone/host search parity is not claimed or waived.
 
 ## Verification
 
-Local Linux validation uses isolated targets, config/data/cache directories and
-synthetic documents, with real AI executables explicitly disabled. No real AI
+Local Linux validation uses isolated targets, config/data/cache directories,
+a dedicated Codex config directory only in the tested child process, and synthetic
+documents, with real AI executables explicitly disabled. The agent/shell environment
+and user configuration directories are unchanged. No real AI
 request is part of acceptance.
 
-- TypeScript check and full UI suite: 794 passed.
+- TypeScript check and full UI suite: 795 passed.
 - Studio Rust workspace: 152 passed, one existing ignored helper; 14 public reader
   integration contracts passed.
 - Independent fixed SDK `--workspace --all-targets --locked`: 148 library, 13 API,
@@ -93,18 +101,29 @@ request is part of acceptance.
   no missing lines or page errors.
 - Independent actual Studio selection review: real pointer selection without an
   AI session, Copy/Comment/Translate visibility, hidden Favorite, Unicode clipboard,
-  Studio comment dialog, selection clearing and owner replacement passed. The
+  Studio comment dialog, selection clearing and owner replacement passed. Gateway
+  checks rejected missing credentials, foreign origins and outside-root paths;
+  a reader token could not authenticate the Studio gateway. The
   retained regression is `scripts/smoke-reader-selection.mjs`.
 - Public SDK backend search contract: 250 occurrences, 100-result windows, original
   Unicode byte ranges, stale-revision/auth rejection and pane isolation passed.
-- Actual Studio shell: Markdown/table/PDF/EPUB first-open and reopen, public
+- Actual release structured-file regression in Chromium and native WebKit: 7.8 MB
+  XML, 2.3 MB JSON, 50,000-record JSONL and a 900 KB JSONL record retain Preview,
+  original Source and whole-input jq. Chromium additionally passes PR #58's SQL
+  correction without automatic execution, explicit numeric chart axis and exact
+  cell-substring identity checks. Original files remain unchanged and reader
+  caches are removed.
+- Actual release Studio shell in Chromium and native WebKit: Markdown/table/PDF/EPUB
+  first-open and reopen, public
   settings ownership, hidden reader Notes entry, live locale, themes, outline,
   search shortcut, accessible controls and contained SQL dialogs passed.
 
-The shell's small synthetic first-open samples took 286–327 ms at the host,
-with 32–731 mounted reader elements and SDK indexing RSS of roughly 54–59 MiB.
-One Markdown reopen took 3.23 seconds and EPUB reopen 1.24 seconds; these results
-are not a speedup claim or a cross-platform performance guarantee. The standalone
+The release shell's small synthetic first-open samples took 287–335 ms in Chromium
+and 327–553 ms in WebKit, with 31–731 mounted reader elements and SDK indexing RSS
+of roughly 40–43 MiB. Maximum observed first-open heartbeat gaps were 25–63 ms in
+Chromium and 31–113 ms in WebKit. Earlier debug runs included a 3.23-second Markdown
+reopen and 1.24-second EPUB reopen. These results are not a speedup claim or a
+cross-platform performance guarantee. The standalone
 EPUB continuous fixture's maximum observed step was 88 ms. Serialization/transport
 is included in the real host opening observations, but was not isolated into its
 own benchmark. Required Linux/macOS/Windows PR CI remains the platform gate;

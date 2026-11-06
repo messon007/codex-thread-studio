@@ -1055,7 +1055,6 @@ function bindUI() {
     closeActionMenus()
     toggleSelectedThreadPin()
   })
-  $('#release-thread').addEventListener('click', () => releaseSessionWriteAccess().catch(showError))
   $('#archive-thread').addEventListener('click', () => {
     closeActionMenus()
     archiveSelectedThread()
@@ -6267,7 +6266,6 @@ function renderComposerState() {
       ? t('Draft the next message with local Ollama · Ctrl/Cmd+Shift+Enter')
       : t('Draft the next message with the current session model · Ctrl/Cmd+Shift+Enter')
   $('#continue-thread').disabled = !state.ready || !state.selectedId || active || hasComposerContent || Boolean(queue.length) || draftingContinuation
-  $('#release-thread').disabled = active || !state.ready || !state.selectedId || !isCodexBackend(state.backend) || state.runningMessageQueues.has(selectedStateKey()) || Boolean(turnSupervision.activeFor({ backend: state.backend, id: state.selectedId }))
   $('#archive-thread').disabled = active || state.backend === 'opencode'
   $('#delete-thread').disabled = active
   $('#send-message').textContent = shellMode ? t('Run') : isRouterThread() ? t('Route') : active && isCodexBackend(state.backend) ? 'Steer' : 'Send'
@@ -7340,17 +7338,3 @@ function toast(message, kind = 'info') {
   setTimeout(() => element.remove(), 3200)
 }
 function showError(error) { console.error(error); reportClientError(error); toast(error?.message || String(error), 'error') }
-
-async function releaseSessionWriteAccess() {
-  const model = state.model
-  const ref = { backend: state.backend, id: state.selectedId }
-  if (!ref.id || !isCodexBackend(ref.backend) || state.model.activeTurnId || state.model.status === 'running' || state.runningMessageQueues.has(selectedStateKey()) || turnSupervision.activeFor(ref)) return
-  closeActionMenus()
-  pauseMessageQueue(ref)
-  const result = await dispatchBackendRpc(ref.backend, 'thread/unsubscribe', { threadId: ref.id })
-  if (!['unsubscribed', 'notSubscribed', 'notLoaded'].includes(result?.status)) throw new Error('The backend did not confirm session release')
-  sessionDispatch.clearPreparedSession(ref)
-  markCachedModelUnvalidated(ref.backend, model)
-  toast(t('Session released. Resume it in another client; reload here to write again.'))
-  renderComposerState()
-}

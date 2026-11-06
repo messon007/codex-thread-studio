@@ -16,6 +16,7 @@ const cases=[
  ['large.json',JSON.stringify({items:Array.from({length:count},(_,id)=>({id,name:'中文😀',value:id}))})],
  ['large.jsonl',Array.from({length:count},(_,id)=>JSON.stringify({id,name:'中文😀',active:id%2===0})+'\r\n').join('')],
  ['long-record.jsonl',JSON.stringify({id:7,text:'中文😀'.repeat(90000)})+'\r\n'],
+ ['table.csv',`Name,Value,Signal\nequal,1,${needle}\ncontains,2,prefix ${needle} suffix\nother,3,other\n`],
  ['table.md',`# Filters\n\n| Name | Value | Signal |\n|---|---|---|\n| equal | 1 | ${needle} |\n| contains | 2 | prefix ${needle} suffix |\n| other | 3 | other |\n`],
 ]
 for(const [name,text]of cases)await writeFile(join(project,name),text)
@@ -43,7 +44,7 @@ try{
   const owner=await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.issueClient=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));return issueClient.ready()})
   assert.equal(owner.view,'preview');assert.equal(owner.capabilities.source,true)
   const previewFrame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(e=>e.contentFrame())
-  if(name!=='table.md')await previewFrame.locator('pre[data-document-code]').first().waitFor({state:'visible'})
+  if(!name.startsWith('table.'))await previewFrame.locator('pre[data-document-code]').first().waitFor({state:'visible'})
   const source=(await command('sourceWindow',{line:1})).result
   assert.deepEqual(Buffer.from(source.text),Buffer.from(text).subarray(source.start,source.end))
   assert.equal((await command('setView',{view:'source'})).view,'source')
@@ -62,7 +63,7 @@ try{
    await dialog.getByRole('button',{name:'Close',exact:true}).click()
    assert.equal((await command('state')).documentId,owner.documentId)
   }
-  if(name==='table.md'){
+  if(name.startsWith('table.')){
    assert.equal(await page.locator('#artifact-query-tools button').count(),0)
    const frame=await page.locator('.artifact-large-markdown-frame').elementHandle().then(e=>e.contentFrame())
    await frame.locator('.table-query-open').click()
@@ -83,6 +84,15 @@ try{
     await frame.waitForFunction(id=>document.querySelector('.table-content')?.dataset.queryId!==id&&!document.querySelector('.table-query-run')?.disabled,before)
     assert.deepEqual(await dialog.locator('tbody tr td').allTextContents(),expected)
    }
+   const queryCell=dialog.locator('tbody tr td').first()
+   await queryCell.dblclick()
+   const querySelection=await command('selection',{textOnly:true})
+   assert.equal(querySelection.location.kind,'queryCell');assert.ok(querySelection.textRange.segments.length)
+   assert.equal(await frame.locator('.table-cell-dialog').count(),0)
+   await page.locator('#selection-copy').waitFor({state:'visible'});assert.equal(await page.locator('#selection-comment').isVisible(),true);assert.equal(await page.locator('#selection-favorite').isVisible(),false)
+   await dialog.locator('.table-cell-view').click();await frame.locator('.table-cell-full').waitFor({state:'visible'})
+   assert.equal(await frame.locator('.table-cell-full').textContent(),'equal')
+   await frame.locator('.table-cell-dialog').getByRole('button',{name:'Close',exact:true}).click()
    await dialog.getByRole('button',{name:'Close',exact:true}).click()
    await dialog.waitFor({state:'detached'})
    await frame.locator('.table-chart-open').click()
@@ -93,7 +103,17 @@ try{
    await plot.locator('[data-chart-row="2"]').waitFor()
    assert.equal(await plot.locator('rect').count(),3)
    await plot.getByRole('button',{name:'Close',exact:true}).click()
-   await frame.locator('tbody tr').first().locator('td').nth(2).dblclick()
+   const cell=frame.locator('tbody tr').first().locator('td').nth(2)
+   await cell.dblclick()
+   const wordSelection=await command('selection',{textOnly:true})
+   assert.equal(wordSelection.location.kind,'cell');assert.ok(wordSelection.quote);assert.ok(wordSelection.textRange.segments.length)
+   assert.equal(await frame.locator('.table-cell-dialog').count(),0)
+   await page.locator('#selection-copy').waitFor({state:'visible'});assert.equal(await page.locator('#selection-comment').isVisible(),true);assert.equal(await page.locator('#selection-favorite').isVisible(),false)
+   await frame.locator('.table-cell-view').click();await frame.locator('.table-cell-full').waitFor({state:'visible'})
+   assert.equal(await frame.locator('.table-cell-full').textContent(),needle)
+   await frame.locator('.table-cell-dialog').getByRole('button',{name:'Close',exact:true}).click()
+   await cell.focus();await frame.evaluate(()=>getSelection()?.removeAllRanges());await cell.press('Enter')
+   await frame.locator('.table-cell-full').waitFor({state:'visible'})
    assert.equal(await command('selection'),null)
    assert.equal(await frame.locator('.table-cell-dialog footer').count(),0)
    await frame.locator('.table-cell-full').evaluate(full=>{const range=document.createRange();range.setStart(full.firstChild,5);range.setEnd(full.firstChild,12);getSelection().removeAllRanges();getSelection().addRange(range);full.dispatchEvent(new MouseEvent('pointerup',{bubbles:true}))})
@@ -122,7 +142,7 @@ try{
  await page.screenshot({path:join(dir,'attachment-remove.png')})
  let webkit
  if(process.argv.includes('--webkit')){
-  const config={project,attachmentMarkup:markup.innerHTML,cases:cases.filter(([name])=>name!=='table.md').map(([name,text])=>({name,prefix:text.slice(0,24),filter:name==='large.json'?'.items | length':name==='large.jsonl'?`select(.id == ${count-1}) | .id`:name==='long-record.jsonl'?'.id':null,expected:name==='large.json'?String(count):name==='large.jsonl'?String(count-1):'7'}))}
+  const config={project,attachmentMarkup:markup.innerHTML,cases:cases.filter(([name])=>!name.startsWith('table.')).map(([name,text])=>({name,prefix:text.slice(0,24),filter:name==='large.json'?'.items | length':name==='large.jsonl'?`select(.id == ${count-1}) | .id`:name==='long-record.jsonl'?'.id':null,expected:name==='large.json'?String(count):name==='large.jsonl'?String(count-1):'7'}))}
   const run=await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-issue-regressions-webkit.py'),url,JSON.stringify(config)],{timeout:175000,maxBuffer:1000000})
   webkit=JSON.parse(run.stdout.split('\n').findLast(line=>line.startsWith('{"ok"')));assert.equal(webkit.ok,true)
  }

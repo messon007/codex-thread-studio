@@ -194,8 +194,43 @@ export function normalizeReaderReference(value) {
         documentId: input.documentId, revision: input.revision,
         precision: input.precision, location: JSON.parse(encoded),
         quoteTruncated: Boolean(input.quoteTruncated),
+        ...(typeof input.quote === 'string' && input.quote.length <= 16000 && new TextEncoder().encode(input.quote).length <= 16384 ? { quote: input.quote } : {}),
+        ...(input.textRange != null ? { textRange: normalizeReaderTextRange(input.textRange) } : {}),
         ...(input.querySnapshot ? { querySnapshot: normalizeQuerySnapshot(input.querySnapshot, input.revision, location) } : {}),
     };
+}
+// Public rendered offsets are scoped UTF-16 positions, never source bytes.
+export function normalizeReaderTextRange(value) {
+    const range = record(value), scopes = new Set();
+    const number = (value) => Number.isSafeInteger(value) && Number(value) >= 0;
+    const keys = (value, allowed) => Object.keys(value).every(key => allowed.includes(key));
+    const invalid = () => { throw new TypeError('Invalid public reader text range'); };
+    if (!keys(range, ['version', 'segments']) || range.version !== 1 || !Array.isArray(range.segments)
+        || !range.segments.length || range.segments.length > 32 || new TextEncoder().encode(JSON.stringify(range)).length > 16384)
+        return invalid();
+    const segments = range.segments.map((value) => {
+        const segment = record(value), scope = record(segment.scope);
+        if (!keys(segment, ['scope', 'startUtf16', 'endUtf16', 'textHash'])
+            || !number(segment.startUtf16) || !number(segment.endUtf16) || Number(segment.endUtf16) <= Number(segment.startUtf16)
+            || Number(segment.endUtf16) > 262144 || typeof segment.textHash !== 'string' || !/^[a-f0-9]{64}$/u.test(segment.textHash))
+            return invalid();
+        let normalized;
+        if (scope.kind === 'projection' && keys(scope, ['kind', 'page']) && number(scope.page))
+            normalized = { kind: scope.kind, page: scope.page };
+        else if (scope.kind === 'cell' && keys(scope, ['kind', 'table', 'row', 'column']) && [scope.table, scope.row, scope.column].every(number))
+            normalized = { kind: scope.kind, table: scope.table, row: scope.row, column: scope.column };
+        else if (scope.kind === 'queryCell' && keys(scope, ['kind', 'queryId', 'row', 'column']) && [scope.row, scope.column].every(number)
+            && typeof scope.queryId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/u.test(scope.queryId))
+            normalized = { kind: scope.kind, queryId: scope.queryId, row: scope.row, column: scope.column };
+        else
+            return invalid();
+        const key = JSON.stringify(normalized);
+        if (scopes.has(key))
+            return invalid();
+        scopes.add(key);
+        return { scope: normalized, startUtf16: segment.startUtf16, endUtf16: segment.endUtf16, textHash: segment.textHash };
+    });
+    return { version: 1, segments };
 }
 function normalizeQuerySnapshot(value, revision, location) {
     const snapshot = record(value), anchor = record(snapshot.anchor), query = record(anchor.query);

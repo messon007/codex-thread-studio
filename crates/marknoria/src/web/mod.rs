@@ -23,7 +23,7 @@ mod references;
 pub use service::{Service, ServiceOptions, DiagramMode};
 pub use references::HostImage;
 use crate::core::{
-    Index, audit_tables, build_index, read_diagram, read_page, read_table, search, search_window,
+    Index, audit_tables, build_index, read_diagram, read_page, read_table, search_with_options, search_window_with_options,
 };
 use crate::core::source::read_source;
 use serde::Deserialize;
@@ -325,11 +325,13 @@ async fn projection_window(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SearchQuery {
     query: String,
     /// Presence opts the browser UI into counted, bounded result windows.
     offset: Option<usize>,
     revision: Option<String>,
+    match_case: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -420,15 +422,17 @@ async fn find(
             return Err((StatusCode::CONFLICT, "Search revision changed; run the search again".into()));
         }
         if let Some(offset) = query.offset {
-            let window = search_window(&document.directory, &index, &query.query, offset).map_err(failure)?;
+            let match_case = query.match_case.unwrap_or(true);
+            let window = search_window_with_options(&document.directory, &index, &query.query, offset, match_case).map_err(failure)?;
             // `total` is exact because the count scan completed. `complete`
             // describes whether this result window reaches the final match.
             let complete = window.offset.saturating_add(window.matches.len()) >= window.total;
-            return Ok(Json(json!({"revision":index.revision,"matches":window.matches,"offset":window.offset,"total":window.total,"limit":window.limit,"complete":complete,"mode":"case-sensitive-source-lines"})));
+            return Ok(Json(json!({"revision":index.revision,"matches":window.matches,"offset":window.offset,"total":window.total,"limit":window.limit,"complete":complete,"matchCase":match_case,"mode":if match_case { "case-sensitive-source-lines" } else { "case-insensitive-source-lines" }})));
         }
-        let matches = search(&document.directory, &index, &query.query).map_err(failure)?;
+        let match_case = query.match_case.unwrap_or(true);
+        let matches = search_with_options(&document.directory, &index, &query.query, match_case).map_err(failure)?;
         Ok(Json(
-            json!({"matches":matches,"limit":100,"mode":"case-sensitive-source-lines"}),
+            json!({"matches":matches,"limit":100,"matchCase":match_case,"mode":if match_case { "case-sensitive-source-lines" } else { "case-insensitive-source-lines" }}),
         ))
     })
     .await
@@ -495,6 +499,9 @@ fn assets() -> Router {
         .route("/reader-ui.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-ui.mjs")) }))
         .route("/ui-messages.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/ui-messages.mjs")) }))
         .route("/translation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/translation.mjs")) }))
+        .route("/comment-ranges.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/comment-ranges.mjs")) }))
+        .route("/comment-marks.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/comment-marks.mjs")) }))
+        .route("/source-comment-marks.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/source-comment-marks.mjs")) }))
         .route("/notes.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/notes.mjs")) }))
         .route("/jq-query.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/jq-query.css")) }))
         .route("/jq-query.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/jq-query.mjs")) }))

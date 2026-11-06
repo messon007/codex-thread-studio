@@ -143,3 +143,7 @@ complete-input SQL and source auditing. Delimiter detection is bounded to 64
 records / 256 KiB; all accepted data records are then processed. Workbook dates
 and cached/uncached formulas use the documented shared
 [table scalar contract](table-components.md#delimited-input-and-workbook-scalar-compatibility).
+
+The optional [comment mark selectors and scoped Notes view](comment-marks.md)
+preserve typed source/PDF/EPUB locations. `Reader::notes` accepts `Marks` and `Get`
+under the existing Notes grant; display coordinates never authorize source bytes.

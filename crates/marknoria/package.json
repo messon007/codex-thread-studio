@@ -34,7 +34,9 @@
     "check:outline": "node tests/browser/outline-check.mjs",
     "check:file-ui": "node tests/browser/file-ui-check.mjs",
     "check:code-search": "node tests/browser/code-search-check.mjs",
-    "check:host-client": "node tests/browser/host-client-check.mjs"
+    "check:host-client": "node tests/browser/host-client-check.mjs",
+    "check:comment-marks": "node tests/browser/comment-marks-check.mjs",
+    "check:comment-notes": "node tests/browser/comment-notes-check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

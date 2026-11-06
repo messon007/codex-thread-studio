@@ -1,4 +1,4 @@
-import { createSearchMarker } from './search-marker.mjs'
+import { createSearchMarker, literalSearchPattern } from './search-marker.mjs'
 import { createPdfOutline } from './pdf-outline.mjs'
 // DOM/layout adapter around pinned PDF.js. See third-party/README.md.
 import { uiLabels } from './translation.mjs'
@@ -9,7 +9,7 @@ const MAX_PAGES = 2000,
   MAX_PIXELS = 8 * 1024 * 1024,
   MAX_TEXT = 512 * 1024
 const clamp = (value) => Math.max(0, Math.min(1, value))
-const aborted = () => new DOMException('PDF reader disposed', 'AbortError')
+const aborted = () => new DOMException('PDF operation cancelled', 'AbortError')
 const pause = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 export function mountPdfReader(root, options) {
@@ -65,8 +65,9 @@ export function mountPdfReader(root, options) {
     lastError = null,
     disposal
   const pages = []
+  let layoutWidth = 0
   const searchMarker = createSearchMarker(sheet)
-  let searchQuery = '', searchMatches = new Map(), activeSearch = null, activationTicket = 0, activationPage = null, activationController = null
+  let searchQuery = '', searchMatchCase = false, searchMatches = new Map(), activeSearch = null, activationTicket = 0, activationPage = null, activationController = null
   const clearCurrentSearch = () => { activationController?.abort(); activationController = null; activationTicket++; activationPage = null; activeSearch = null; searchMarker.clear() }
   const clearSearch = ({ keepResults = false } = {}) => { if (!keepResults) { searchTicket++; searchQuery = ''; searchMatches.clear() } clearCurrentSearch() }
   function searchRange(entry, match) {
@@ -393,6 +394,7 @@ export function mountPdfReader(root, options) {
     zoom = patch.zoom ?? zoom
     continuous = patch.continuous ?? continuous
     checkFlow.checked = continuous
+    layoutWidth = viewport.clientWidth
     generation++
     pending.clear()
     for (const number of [...mounted.keys()]) release(number)
@@ -426,7 +428,7 @@ export function mountPdfReader(root, options) {
     { passive: true, signal }
   )
   const resize = new ResizeObserver(() => {
-    if (zoom === 'width' && readyState && !disposed) void apply({}).catch(fail)
+    if (zoom === 'width' && readyState && !disposed && viewport.clientWidth !== layoutWidth) void apply({}).catch(fail)
   })
   resize.observe(viewport)
   function normalized(rect, bounds) {
@@ -656,6 +658,7 @@ export function mountPdfReader(root, options) {
       bounds = first.getViewport({ scale: 1 })
     pageWidth = bounds.width
     pageHeight = bounds.height
+    layoutWidth = viewport.clientWidth
     for (let number = 1; number <= pdf.numPages; number++) {
       const node = document.createElement('div')
       node.className = 'pdf-page'
@@ -671,6 +674,13 @@ export function mountPdfReader(root, options) {
       pages.push(node)
       pagesRoot.append(node)
       observer.observe(node)
+    }
+    // Appending the first tall page may introduce the vertical scrollbar.
+    // Finish the initial fit before publishing ready, rather than invalidating
+    // a host's first activation in the observer's initial/height-only delivery.
+    if (zoom === 'width' && layoutWidth !== viewport.clientWidth) {
+      layoutWidth = viewport.clientWidth
+      for (const node of pages) dimensions(node)
     }
     pageInput.max = String(pdf.numPages)
     readyState = true
@@ -688,6 +698,21 @@ export function mountPdfReader(root, options) {
     ready,
     state,
     selection: captured,
+    commentScopes: () => [...mounted].filter(([,entry]) => entry.node.isConnected && entry.node.dataset.state === 'ready').map(([page]) => ({ key: `pdf:${page}` })),
+    resolveCommentMarks(notes) {
+      const shapes = []
+      for (const note of notes) {
+        if (note.anchor?.location?.kind !== 'pdf') continue
+        for (const page of note.anchor.location.pages) {
+          const node = mounted.get(page.page)?.node
+          if (!node?.isConnected || node.dataset.state !== 'ready') continue
+          const box = node.getBoundingClientRect()
+          const rects = page.rects.filter(r => [r.x,r.y,r.width,r.height].every(Number.isFinite) && r.x >= 0 && r.y >= 0 && r.width > 0 && r.height > 0 && r.x+r.width <= 1.001 && r.y+r.height <= 1.001).map(r => ({ left:box.left+r.x*box.width, top:box.top+r.y*box.height, width:r.width*box.width, height:r.height*box.height }))
+          shapes.push({ id:note.id,rects,clip:viewport })
+        }
+      }
+      return shapes
+    },
     settings: apply,
     dispose,
     async navigate(location) {
@@ -700,17 +725,17 @@ export function mountPdfReader(root, options) {
       await go(target.page, fraction)
     },
     clearSearch,
-    repaintSearch(match, { query } = {}) {
+    repaintSearch(match, { query, matchCase = searchMatchCase } = {}) {
       const owned = searchMatches.get(match?.searchMatchId)
-      if (disposed || !owned || query !== searchQuery) return false
+      if (disposed || !owned || query !== searchQuery || matchCase !== searchMatchCase) return false
       activeSearch = owned
       showCurrentSearch()
       return true
     },
-    async activateSearch(match, { query, signal: requestSignal } = {}) {
+    async activateSearch(match, { query, matchCase = searchMatchCase, signal: requestSignal } = {}) {
       ensure(); requestSignal?.throwIfAborted()
       const owned = searchMatches.get(match?.searchMatchId)
-      if (!owned || query !== searchQuery) throw Error('PDF search occurrence is stale or belongs to another search')
+      if (!owned || query !== searchQuery || matchCase !== searchMatchCase) throw Error('PDF search occurrence is stale or belongs to another search')
       clearCurrentSearch()
       activationPage = owned.page
       const controller = new AbortController()
@@ -745,14 +770,14 @@ export function mountPdfReader(root, options) {
       } finally { requestSignal?.removeEventListener('abort', cancelled); if (ticket === activationTicket) { activationPage = null; activationController = null } }
     },
     async search(query, options = {}) {
-      const { signal: requestSignal } = options
+      const { signal: requestSignal, matchCase = false } = options
       if ('offset' in options || 'limit' in options) throw Error('PDF renderer search paging is owned by the search controller')
       clearSearch()
       const ticket = searchTicket
       await ready
       if (typeof query !== 'string' || !query || new TextEncoder().encode(query).length > 256)
         throw Error('Search requires 1–256 UTF-8 bytes')
-      const matches = [], owned = new Map(), pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu')
+      const matches = [], owned = new Map(), pattern = literalSearchPattern(query, matchCase)
       let complete = true
       const check = () => { ensure(); requestSignal?.throwIfAborted(); if (ticket !== searchTicket) throw aborted() }
       for (let number = 1; number <= pdf.numPages; number++) {
@@ -777,8 +802,8 @@ export function mountPdfReader(root, options) {
         await pause()
       }
       check()
-      searchQuery = query; searchMatches = owned
-      return { revision, matches, complete, limit: 500 }
+      searchQuery = query; searchMatchCase = matchCase; searchMatches = owned
+      return { revision, matches, complete, matchCase, limit: 500 }
     },
     async navigateOutline(id, { signal } = {}) {
       await ready

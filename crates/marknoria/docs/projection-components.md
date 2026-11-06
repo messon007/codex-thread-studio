@@ -74,3 +74,8 @@ node tests/browser/projection-view-check.mjs
 node tests/browser/projection-view-check.mjs --webkit
 node tests/browser/embedded-check.mjs target/release/examples/embedded-host
 ```
+
+For durable Comments, await `view.captureSelection({signal})` and retain its
+optional `textRange` alongside the typed location. The legacy `selection()` stays
+synchronous. The [shared comment marker](comment-marks.md) paints exact selectors
+without changing the projection tree.

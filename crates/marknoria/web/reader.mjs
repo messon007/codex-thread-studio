@@ -1,3 +1,7 @@
+import { mountCommentMarks } from './comment-marks.mjs'
+import { sourceCommentContext } from './source-comment-marks.mjs'
+import { commentScopes } from './comment-ranges.mjs'
+import { captureProjectionComment } from './comment-ranges.mjs'
 import { createTranslator, uiLabels } from './translation.mjs'
 import { readerPresentation } from './presentation.mjs'
 import { readerUiLabels } from './reader-ui.mjs'
@@ -113,10 +117,27 @@ let diagrams = null
 let assets = null
 let documentReferences = null
 let notes = null
+let commentMarks = null
+let commentMarksOwner = null
+function commentContext() {
+  if (editor?.visible) return !editor.dirty && !editor.needsRefresh ? sourceCommentContext(editor.code, editor.data?.window) : { scopes: [] }
+  if (source?.visible) return sourceCommentContext(source.code, source.page)
+  if (formatRenderer) return { scopes: formatRenderer.commentScopes?.() || [], resolve: records => formatRenderer?.resolveCommentMarks?.(records) || [] }
+  return { scopes: commentScopes(shell, { viewport }), viewport }
+}
 function syncNotesOwner() {
   const owned = serviceCapabilities.notes && presentation.state().notes === 'reader'
   if (!owned) { notes?.dispose(); notes = null }
-  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,signal => publicSelection(signal, { textOnly: true }),{documentId,translate,selectionMenu:presentation.state().selectionMenu})
+  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,signal => publicSelection(signal, { textOnly: true }),{documentId,translate,selectionMenu:presentation.state().selectionMenu,onMutation:()=>commentMarks?.refresh(true)})
+  const identity = index && `${documentId}:${index.revision}:${owned}`
+  if (identity !== commentMarksOwner) {
+    commentMarks?.dispose(); commentMarks = null; commentMarksOwner = identity
+    if (index) commentMarks = mountCommentMarks({ owner:{documentId,revision:index.revision}, root:shell, viewport, context:commentContext, translate,
+      load: owned ? (request,{signal}) => api('/api/notes',signal,{method:'POST',body:JSON.stringify(request)}) : null,
+      open: id => owned ? (id ? notes?.openComment(id) : notes?.open(0,'comment')) : bridge?.publish('commentRequested',{documentId,revision:index.revision,id}),
+      onStatus: message => { if (message) shell.dataset.commentMarksError=message; else delete shell.dataset.commentMarksError }
+    })
+  }
 }
 let jq = null
 let cacheBytes = 0
@@ -135,11 +156,12 @@ let navigation = 0
 let documentError = null
 let loadError = null
 let searchJump = null
+let searchPreferenceDocument = null
 const search = searchController({
-  owner: () => ({ documentId, revision: index?.revision, renderer: Boolean(formatRenderer), source: Boolean(index && ['markdown','csv','tsv','text','html'].includes(index.format)), editing: Boolean(editor?.visible) }),
-  load: (query, offset, owner, signal) => formatRenderer
-    ? formatRenderer.search(query, { signal })
-    : api(`/api/search?query=${encodeURIComponent(query)}&offset=${offset}&revision=${encodeURIComponent(owner.revision)}`, signal),
+  owner: () => ({ documentId, revision: index?.revision, defaultMatchCase: index?.renderer !== 'pdfjs', renderer: Boolean(formatRenderer), source: Boolean(index && ['markdown','csv','tsv','text','html'].includes(index.format)), editing: Boolean(editor?.visible) }),
+  load: (query, offset, owner, signal, { matchCase }) => formatRenderer
+    ? formatRenderer.search(query, { signal, matchCase })
+    : api(`/api/search?query=${encodeURIComponent(query)}&offset=${offset}&revision=${encodeURIComponent(owner.revision)}&matchCase=${matchCase}`, signal),
   describe(match) {
     if (formatRenderer) return { ...match, locationPrecision: match.locationPrecision || 'exact' }
     const table = index?.pages[match.page]?.table
@@ -147,14 +169,14 @@ const search = searchController({
       ? { kind: 'cell', table, row: match.tableRow, column: 0 } : { kind: 'line', line: match.line },
       locationPrecision: table != null ? 'row' : 'line', ...(['markdown','csv','tsv','text','html'].includes(index?.format) ? { sourceLocation: { kind: 'source', startByte: match.start, endByte: match.end } } : {}) }
   },
-  async activate(match, { query, signal }) {
+  async activate(match, { query, matchCase, signal }) {
     signal.throwIfAborted()
-    if (formatRenderer) { await formatRenderer.activateSearch(match, { query, signal }); return }
+    if (formatRenderer) { await formatRenderer.activateSearch(match, { query, matchCase, signal }); return }
     if (source?.visible) { highlights.clear(); await source.goRange(match.start, match.end, { signal, search: true }); return }
     source?.clearSearch()
-    highlights.set(query, match)
+    highlights.set(query, match, { matchCase })
     const before = navigation
-    const pending = jump(match.page, null, match.tableRow, null, match, query)
+    const pending = jump(match.page, null, match.tableRow, null, match, query, { matchCase })
     const owned = navigation !== before ? navigation : null
     searchJump = owned
     const abort = () => { if (searchJump === owned) cancelSearchNavigation() }
@@ -162,18 +184,26 @@ const search = searchController({
     try { await pending; signal.throwIfAborted() }
     finally { signal.removeEventListener('abort', abort); if (searchJump === owned) searchJump = null }
   },
-  paint(query, active) {
+  paint(query, active, { matchCase }) {
     if (formatRenderer) {
       if (!query || !active) formatRenderer.clearSearch?.({ keepResults: true })
-      else formatRenderer.repaintSearch?.(active, { query })
+      else formatRenderer.repaintSearch?.(active, { query, matchCase })
       return
     }
     if (source?.visible) { highlights.clear(); if (active) source.highlightRange(active.start, active.end); else source.clearSearch() }
-    else { source?.clearSearch(); highlights.set(query, active) }
+    else { source?.clearSearch(); highlights.set(query, active, { matchCase }) }
   },
   cancel: cancelSearchNavigation,
   clear() { highlights.clear(); source?.clearSearch(); formatRenderer?.clearSearch?.() },
-  changed() { if (mainLifetime.signal.aborted) return; updateSearchCounter(); renderSearchResults(); bridge?.publish('state', publicState()) },
+  changed() {
+    if (mainLifetime.signal.aborted) return
+    const state = search.state()
+    if (state.searchId) {
+      document.getElementById('query').value = state.query
+      document.getElementById('search-match-case').checked = state.matchCase
+    }
+    updateSearchCounter(); renderSearchResults(); bridge?.publish('state', publicState())
+  },
 })
 const CACHE_LIMIT = 8 * 1024 * 1024
 const metrics = { firstContentMs: null, mountedPages: 0, mountedElements: 0, cacheBytes: 0, maxHeartbeatGapMs: 0 }
@@ -356,7 +386,7 @@ async function previewLine(location) {
   return jump(page, null, row, null, location)
 }
 
-async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '') {
+async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}) {
   if (stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
   if (editor?.visible) {
     const target = heading == null ? index.pages[sourcePage]?.line : index.toc.find(item => item.id === heading)?.line
@@ -394,7 +424,7 @@ async function jump(sourcePage, heading = null, row = null, anchor = null, locat
     if (stopped || ticket !== navigation || !index || !tables || !virtualizer) return
     const article = nodes.get(page)
     const tableRow = row ?? index.pages[sourcePage]?.rowStart
-    const target = location ? sourceTarget(article, location, query) : anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
+    const target = location ? sourceTarget(article, location, query, searchOptions) : anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
       ? (tableRow > Number(article?.dataset.rowStart || 0) ? article?.querySelectorAll('tbody tr')[tableRow - Number(article.dataset.rowStart)] : article)
       : document.getElementById(`heading-${heading}`)
     const targetNode = target instanceof Range ? target.startContainer.parentElement : target
@@ -434,6 +464,10 @@ async function navigateFragment(fragment) {
 }
 
 function setup() {
+  if (searchPreferenceDocument !== documentId) {
+    document.getElementById('search-match-case').checked = search.capabilities().defaultMatchCase
+    searchPreferenceDocument = documentId
+  }
   if(window.readerExperiment){started=performance.now();Object.assign(metrics,{firstContentMs:null,firstAssetMs:null,maxHeartbeatGapMs:0});heartbeatAt=started}
   readerAbort = new AbortController()
   if (['pdfjs','epubjs'].includes(index.renderer)) { setupFormat(); return }
@@ -488,7 +522,7 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh() }, onReady: () => { search.repaint(); bridge?.publish('state', publicState()) } })
+  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh() }, onReady: () => { commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
       virtualizer?.measureElement(article)
@@ -573,6 +607,7 @@ function setupFormat() {
         else notes?.clearSelection()
       },
       onState: value => {
+        commentMarks?.refresh()
         if (owner.signal.aborted) return
         if (metrics.firstContentMs == null && value.firstUsefulContentMs != null) metrics.firstContentMs = performance.now() - started
         metrics.mountedPages = value.mountedPages ?? space.querySelectorAll('iframe').length
@@ -643,6 +678,7 @@ function teardown() {
   diagrams?.dispose(); diagrams = null
   assets?.dispose(); assets = null
   documentReferences?.dispose(); documentReferences = null
+  commentMarks?.dispose(); commentMarks = null; commentMarksOwner = null
   notes?.dispose(); notes = null
   jq?.dispose(); jq = null
   stopReader?.(); outlineView?.dispose()
@@ -891,17 +927,16 @@ on(document.getElementById('query'), 'input', clearSearchResults)
 on(document.getElementById('query'), 'keydown', event => {
   if (event.isComposing || event.keyCode === 229) return
   const state = search.state()
-  if (event.key === 'Enter' && state.query === event.target.value && state.available) {
+  if (event.key === 'Enter' && state.query === event.target.value && state.matchCase === document.getElementById('search-match-case').checked && state.available) {
     event.preventDefault(); if (!state.loading) activateSearchMatch((state.current ?? -1) + (event.shiftKey ? -1 : 1))
   }
 })
-on(document.querySelector('#search'), 'submit', async event => {
-  event.preventDefault()
+async function runSearch() {
   const query = document.querySelector('#query').value
   try {
-    const response = await search.search({ query, offset: 0 })
+    const response = await search.search({ query, offset: 0, matchCase: document.getElementById('search-match-case').checked })
     if (!response.searchId) return
-    setStatus(response.totalExact ? (formatRenderer ? '{count} matches' : '{count} matches; case-sensitive') : '{count} matches · Result limit reached', { count: response.total })
+    setStatus(response.totalExact ? (response.matchCase ? '{count} matches; case-sensitive' : '{count} matches; case-insensitive') : '{count} matches · Result limit reached', { count: response.total })
     if (response.available) await search.activate({ searchId: response.searchId, index: 0 })
     if (search.state().searchId === response.searchId) document.getElementById('matches').hidden = false
   } catch (error) {
@@ -916,6 +951,11 @@ on(document.querySelector('#search'), 'submit', async event => {
       }
     }
   }
+}
+on(document.querySelector('#search'), 'submit', event => { event.preventDefault(); void runSearch() })
+on(document.getElementById('search-match-case'), 'change', () => {
+  if (document.getElementById('query').value) void runSearch()
+  else clearSearchResults()
 })
 
 function publicState() {
@@ -931,7 +971,7 @@ function publicState() {
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
     search: search.state(),
-    capabilities: { ...serviceCapabilities, search: search.capabilities(), projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    capabilities: { ...serviceCapabilities, commentMarks: { version:1, hostReplacement:true, records:512 }, search: search.capabilities(), projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
@@ -944,7 +984,7 @@ async function publicSelection(signal, { textOnly = false } = {}) {
     const quote = boundedQuote(value.quote)
     return { ...value, documentId, revision: index.revision, quote, quoteTruncated: Boolean(value.quoteTruncated || quote.length < value.quote.length) }
   }
-  if (tables?.hasOverlay()) { const value = tables.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
+  if (tables?.hasOverlay()) { const value = await tables.captureSelection({ textOnly }, signal); return value ? { documentId, revision: index.revision, ...value } : null }
   const code = editor?.visible ? editor.code : source?.visible ? source.code : null
   const range = getSelection()?.rangeCount ? getSelection().getRangeAt(0) : null
   const bounds = range?.getBoundingClientRect()
@@ -971,11 +1011,11 @@ async function publicSelection(signal, { textOnly = false } = {}) {
     if (stopped || !index || selection.documentId !== documentId || selection.revision !== index.revision) throw Object.assign(Error('Selection belongs to a previous reader revision'), { code: 'REVISION' })
     return { ...selection, viewportRect: codeRect }
   }
-  if (!range || range.collapsed) { const value = tables?.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
+  if (!range || range.collapsed) { const value = await tables?.captureSelection({ textOnly }, signal); return value ? { documentId, revision: index.revision, ...value } : null }
   const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement
   const start = element(range.startContainer), end = element(range.endContainer)
   const page = start?.closest('.page')
-  if (!page || !space.contains(page) || !space.contains(end)) { const value = tables?.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
+  if (!page || !space.contains(page) || !space.contains(end)) { const value = await tables?.captureSelection({ textOnly }, signal); return value ? { documentId, revision: index.revision, ...value } : null }
   const text = range.toString()
   if (textOnly && !text.trim()) return null
   const quote = boundedQuote(text), cell = start.closest('td,th')
@@ -985,7 +1025,7 @@ async function publicSelection(signal, { textOnly = false } = {}) {
     location = { kind: 'cell', table: Number(page.dataset.table), row: Number(page.dataset.rowStart) + cell.parentElement.sectionRowIndex, column: columns[cell.cellIndex] }
     precision = 'exact'
   }
-  return { documentId, revision: index.revision, quote, quoteTruncated: quote.length < text.length, precision, location, viewportRect }
+  return { documentId, revision: index.revision, quote, quoteTruncated: quote.length < text.length, precision, location, viewportRect, textRange: await captureProjectionComment(space, range, location, signal) }
 }
 function boundedQuote(text) {
   let end = 0, bytes = 0
@@ -1043,6 +1083,8 @@ function connectBridge() {
       result.publish('state', publicState())
     },
     selection: publicSelection,
+    notesChanged: () => commentMarks?.refresh(true),
+    setCommentMarks: marks => { if (presentation.state().notes !== 'host') throw Error('Host comment marks require host-owned Notes'); commentMarks?.replace(marks); return publicState() },
     async save() { if (!editable || !editor) throw Object.assign(Error('Editing was not granted'), { code: 'CAPABILITY' }); if (!await editor.save()) throw editor.error || Error('The editing page was not saved') },
     async settings(params) {
       const before = presentation.state()

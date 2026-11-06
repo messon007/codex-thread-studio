@@ -343,6 +343,7 @@ export function mountTableView(article, options) {
       totalRows: current?.totalRows ?? null
     }),
     selection: cells.selection,
+    captureSelection: cells.captureSelection,
     position: layout.position,
     anchor: anchorRow,
     capture: () => {
@@ -391,6 +392,9 @@ export function mountTableView(article, options) {
     const operation = ticket + 1
     await load()
     if (stopped || operation !== ticket || failure || !current || column == null) return
+    // Let virtualizer/column resize observers settle before measuring the cell.
+    await new Promise(requestAnimationFrame)
+    if (stopped || operation !== ticket) return
     const target =
       content.querySelector('tbody')?.rows[row - current.rowStart]?.cells[
         state.columns.indexOf(column)

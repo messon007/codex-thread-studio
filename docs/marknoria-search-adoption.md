@@ -1,5 +1,8 @@
 # Public reader search adoption — 2026-11-06
 
+Historical search-contract adoption. The current delivery and follow-up are in
+[marknoria-comments-adoption.md](marknoria-comments-adoption.md).
+
 This update follows [MarkNoria #24](https://github.com/messon007/marknoria/issues/24)
 and supersedes the public-search limitation recorded in
 [the earlier synchronization](marknoria-sync-20261106.md). It starts from Studio

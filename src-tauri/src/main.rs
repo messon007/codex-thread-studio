@@ -1198,6 +1198,10 @@ fn gateway_router(state: GatewayState) -> Router {
         .route("/vendor/github-markdown.css", get(github_markdown_css))
         .route("/styles.css", get(styles_css))
         .route(
+            "/reader-comment-host.mjs",
+            get(|| async { javascript(include_str!("../../ui/reader-comment-host.mjs")) }),
+        )
+        .route(
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
         )
@@ -5198,6 +5202,7 @@ mod tests {
                 "/session-map-controller.mjs",
                 "/review-notes-controller.mjs",
                 "/document-workspace-controller.mjs",
+                "/reader-comment-host.mjs",
                 "/reader-assets/table-layout.mjs",
                 "/reader-assets/host-client.mjs",
                 "/mermaid-config.mjs",
@@ -5797,6 +5802,34 @@ mod tests {
             invalid_target.end_line = Some(2);
         }
         assert!(validate_preferences(&invalid).is_err());
+    }
+
+    #[test]
+    fn reader_comment_anchor_budget_covers_nested_rendered_ranges() {
+        let mut preferences = StudioPreferences::default();
+        let mut draft = AnnotationDraft {
+            id: "bounded".into(),
+            excerpt: "\u{4e2d}\u{6587}\u{1f600}".into(),
+            source: Some(AnnotationSourceReference {
+                provider: "document".into(),
+                version: 1,
+                anchor: serde_json::json!({"readerReference": {"textRange": {
+                    "version": 1, "segments": [{"scope": {"kind": "cell", "table": 0, "row": 1, "column": 2},
+                        "startUtf16": 0, "endUtf16": 4, "textHash": "a".repeat(64)}]
+                }}}),
+            }),
+            ..AnnotationDraft::default()
+        };
+        preferences
+            .annotation_drafts
+            .insert("codex:reader".into(), vec![draft.clone()]);
+        assert!(validate_preferences(&preferences).is_ok());
+        draft.source.as_mut().unwrap().anchor["readerReference"]["textRange"]["untrusted"] =
+            serde_json::json!("x".repeat(32 * 1024));
+        preferences
+            .annotation_drafts
+            .insert("codex:reader".into(), vec![draft]);
+        assert!(validate_preferences(&preferences).is_err());
     }
 
     #[test]

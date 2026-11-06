@@ -1,8 +1,8 @@
 # Fixed public reader adoption
 
 The current pin and November 6 verification are in
-[marknoria-search-adoption.md](marknoria-search-adoption.md). The PR #55 baseline
-record below is historical; the current source revision is `8552f5c`.
+[marknoria-comments-adoption.md](marknoria-comments-adoption.md). The PR #55 baseline
+record below is historical; the current source revision is `fbb5ff8`.
 Earlier functional followup evidence remains in
 [studio-issue-followups.md](studio-issue-followups.md).
 

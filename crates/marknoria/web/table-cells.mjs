@@ -1,5 +1,6 @@
 // Cell interaction adapted from Codex Thread Studio a2f87a37 (MIT).
 // See third-party/README.md. The host/provider owns data and source coordinates.
+import { captureCommentRange, registerCommentScope } from './comment-ranges.mjs'
 import { dialogClose } from './icons.mjs'
 import { copyText } from './clipboard.mjs'
 import { componentStyles } from './component-styles.mjs'
@@ -7,7 +8,7 @@ import { uiLabels } from './translation.mjs'
 
 export function mountTableCells(
   content,
-  { controls, locate, onSelection = () => {}, translate = (value) => value, copy = copyText } = {}
+  { controls, locate, onSelection = () => {}, translate = (value) => value, copy = copyText, commentOwner = content } = {}
 ) {
   if (!(content instanceof HTMLElement) || typeof locate !== 'function')
     throw Error('Table cells require a content root and coordinate provider')
@@ -31,7 +32,13 @@ export function mountTableCells(
   button.className = 'table-cell-copy'
   labels.set(button, 'Copy cell')
   button.disabled = true
-  controls?.append(button)
+  const viewButton = document.createElement('button')
+  viewButton.type = 'button'
+  viewButton.className = 'table-cell-view'
+  labels.set(viewButton, 'View full cell')
+  labels.set(viewButton, 'View full cell (Enter on a focused cell)', {}, 'title')
+  viewButton.disabled = true
+  controls?.append(button, viewButton)
   const close = (restoreFocus = false) => {
     dialogLabels?.dispose()
     dialogLabels = null
@@ -95,6 +102,7 @@ export function mountTableCells(
     selected = cell
     selected.classList.add('table-cell-selected')
     button.disabled = false
+    viewButton.disabled = false
     onSelection(selection())
   }
   async function copySelected() {
@@ -156,6 +164,7 @@ export function mountTableCells(
     full.className = 'table-cell-full'
     full.tabIndex = 0
     full.textContent = values.get(cell) || ''
+    registerCommentScope(full, location, commentOwner)
     dialog.append(header, address, full)
     document.body.append(dialog)
     dialog.addEventListener('cancel', () => close(true), dialogOptions)
@@ -181,6 +190,7 @@ export function mountTableCells(
       selected.classList.remove('table-cell-selected')
       selected = null
       button.disabled = true
+      viewButton.disabled = true
       onSelection(null)
     },
     options
@@ -201,22 +211,16 @@ export function mountTableCells(
     },
     options
   )
-  content.addEventListener(
-    'dblclick',
-    (event) => {
-      const cell = cellFor(event.target)
-      if (cell) {
-        event.preventDefault()
-        viewCell(cell)
-      }
-    },
-    options
-  )
+  // Text gestures and native context menus belong to the browser/host. Full
+  // content has an explicit per-table action, shared by all cell providers.
   content.addEventListener(
     'keydown',
     (event) => {
       const cell = cellFor(event.target)
-      if (!cell || event.isComposing) return
+      if (!cell || event.target !== cell || event.isComposing) return
+      const current = content.ownerDocument.getSelection()
+      if (current && !current.isCollapsed &&
+          (content.contains(current.anchorNode) || content.contains(current.focusNode))) return
       if (event.key === 'Enter') {
         event.preventDefault()
         viewCell(cell)
@@ -250,8 +254,21 @@ export function mountTableCells(
     options
   )
   button.addEventListener('click', copySelected, options)
+  viewButton.addEventListener('click', () => {
+    if (selected?.isConnected && content.contains(selected)) viewCell(selected)
+  }, options)
   return {
     selection,
+    async captureSelection(options = {}, signal) {
+      const value = selection(options)
+      if (!value) return null
+      const current = content.ownerDocument.getSelection()
+      const range = current?.rangeCount ? current.getRangeAt(0) : null
+      const node = dialog?.querySelector('.table-cell-full') || selected
+      if (range && !range.collapsed && node?.contains(range.startContainer) && node.contains(range.endContainer))
+        value.textRange = await captureCommentRange(range, [{ node, scope: value.location }], signal)
+      return value
+    },
     select(target) {
       const cell=cellFor(target)
       if (!cell) return null
@@ -292,6 +309,7 @@ export function mountTableCells(
       selected?.classList.remove('table-cell-selected')
       selected = null
       button.disabled = true
+      viewButton.disabled = true
       values = new WeakMap(next)
       for (const [cell, original] of tabIndices)
         if (!next.has(cell)) {
@@ -303,6 +321,7 @@ export function mountTableCells(
       for (const cell of next.keys()) {
         if (!tabIndices.has(cell)) tabIndices.set(cell, cell.getAttribute('tabindex'))
         cell.tabIndex = 0
+        registerCommentScope(cell, locate(cell), commentOwner)
       }
       onSelection(null)
     },
@@ -315,6 +334,7 @@ export function mountTableCells(
       close()
       selected?.classList.remove('table-cell-selected')
       button.remove()
+      viewButton.remove()
       selected = null
       for (const [cell, original] of tabIndices)
         original == null

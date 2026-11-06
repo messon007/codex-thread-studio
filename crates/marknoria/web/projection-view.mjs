@@ -1,3 +1,4 @@
+import { captureProjectionComment } from './comment-ranges.mjs'
 import { projectionHtml } from './projection-html.mjs'
 import { mountTableView, readerTableProvider } from './table-view.mjs'
 import { componentStyles } from './component-styles.mjs'
@@ -262,6 +263,13 @@ export function mountProjectionView(container, options) {
     root,
     show,
     selection,
+    async captureSelection({ signal } = {}) {
+      const value = selection()
+      if (!value) return null
+      const selection = container.ownerDocument.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      return { ...value, textRange: await captureProjectionComment(root, range, value.location, signal) }
+    },
     state: () => current && { ...current },
     dispose() {
       if (disposed) return

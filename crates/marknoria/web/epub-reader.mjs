@@ -1,6 +1,7 @@
 // Adapted from Codex Thread Studio a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a (MIT).
 // License: third-party/codex-thread-studio-MIT.txt. Local source only.
-import { createSearchMarker } from './search-marker.mjs'
+import { commentTextMap } from './comment-ranges.mjs'
+import { createSearchMarker, literalSearchPattern } from './search-marker.mjs'
 import { uiLabels } from './translation.mjs'
 import { ePub, replaceBase } from './vendor/epub.mjs'
 
@@ -98,6 +99,7 @@ export function mountEpubReader(root, options) {
       typography: options.typography || options.initialState?.typography,
       translate: options.translate,
       onSelection: currentSelection,
+      onLayout: emit,
       onShortcut: options.onShortcut,
       onRelocate: (value) => {
         reading = value
@@ -150,6 +152,8 @@ export function mountEpubReader(root, options) {
   return {
     ready,
     state,
+    commentScopes: () => (instance?.commentScopes() || []).map(href => ({ key:`epub:${archiveHref(href)}` })),
+    resolveCommentMarks: notes => instance?.resolveCommentMarks(notes) || [],
     selection: () => {
       if (!instance?.selection()) captured = null
       return captured
@@ -205,8 +209,8 @@ export function mountEpubReader(root, options) {
     },
     clearSearch: (options) => instance?.clearSearch(options),
     repaintSearch: (match, options) => instance?.repaintSearch(match, options) ?? false,
-    async activateSearch(match, { query, signal } = {}) {
-      return work(() => instance.activateSearch(match, { query, signal }))
+    async activateSearch(match, { query, matchCase, signal } = {}) {
+      return work(() => instance.activateSearch(match, { query, matchCase, signal }))
     },
     async search(query, options = {}) {
       return work(async () => {
@@ -344,6 +348,7 @@ export function normalizeEpubTypography(value = {}) {
 }
 
 export async function createEpubReader({
+  onLayout = () => {},
   container,
   source,
   resourceRoot,
@@ -373,7 +378,7 @@ export async function createEpubReader({
   const shell = buildShell(container, translate)
   const requests = new AbortController()
   const searchMarker = createSearchMarker(shell.root)
-  let searchGeneration = 0, searchQuery = '', searchMatches = new Map(), activeSearch = null
+  let searchGeneration = 0, searchQuery = '', searchMatchCase = true, searchMatches = new Map(), activeSearch = null
   let searchActivation = null, navigationGeneration = 0, activationRecovery = Promise.resolve()
   function cancelActivation(restore = true) {
     const operation = searchActivation
@@ -872,7 +877,7 @@ export async function createEpubReader({
     for (const type of ['pointerup', 'keyup']) contents.document.addEventListener(type, () => selected(null, contents), {
       signal: viewLifetime.signal
     })
-    contents.window?.addEventListener('scroll', () => clearEpubSelection(), {
+    contents.window?.addEventListener('scroll', () => { clearEpubSelection(); onLayout() }, {
       capture: true, passive: true, signal: viewLifetime.signal
     })
   }
@@ -1054,7 +1059,7 @@ export async function createEpubReader({
     })
     const mounted = rendition
     mounted.hooks.content.register(sanitizeContents)
-    mounted.on('rendered', () => { if (!destroyed && rendition === mounted) showCurrentSearch() })
+    mounted.on('rendered', () => { if (!destroyed && rendition === mounted) { showCurrentSearch(); onLayout() } })
     const locationChanged = (location) => {
       if (!destroyed && rendition === mounted) relocated(location)
     }
@@ -1227,6 +1232,35 @@ export async function createEpubReader({
 
   return {
     title: shell.bookTitle.textContent,
+    commentScopes: () => (rendition?.getContents() || []).slice(0, 16).map(contents => book.spine.get(contents.sectionIndex)?.href).filter(Boolean),
+    resolveCommentMarks(notes) {
+      if (destroyed) return []
+      const shapes = [], active = (rendition?.getContents() || []).slice(0, 16), validated = new Map()
+      for (const note of notes) {
+        const location = note.anchor?.location
+        if (location?.kind !== 'epub') continue
+        try {
+          const section = book.spine.get(location.cfi)
+          const contents = active.find(value => value.sectionIndex === section?.index)
+          if (!contents?.document.body.isConnected) continue
+          // Traverse a bounded mounted chapter before materializing a quote.
+          if (!validated.has(contents)) {
+            try { commentTextMap(contents.document.body); validated.set(contents,true) } catch { validated.set(contents,false) }
+          }
+          if (!validated.get(contents)) continue
+          const range = contents.range(location.cfi)
+          if (!range || range.collapsed || !contents.document.body.contains(range.startContainer) || !contents.document.body.contains(range.endContainer)) continue
+          const text = range.toString()
+          // Selection.toString includes rendered block breaks; Range.toString
+          // exposes DOM text. The exact CFI chooses the occurrence; normalize
+          // only whitespace for this quote consistency check, never to locate it.
+          const canonical=value=>value.replace(/\s+/gu,' ').trim()
+          if (text.length > 262144 || (note.anchor.quoteTruncated ? !canonical(text).startsWith(canonical(note.quote)) : canonical(text) !== canonical(note.quote))) continue
+          shapes.push({ id:note.id, range, frame:contents.window.frameElement, clip:shell.viewer })
+        } catch {} // Unmounted, stale or invalid CFIs have no guessed fallback.
+      }
+      return shapes
+    },
     state: () => ({
       ...readerState,
       href: currentHref,
@@ -1265,17 +1299,17 @@ export async function createEpubReader({
       return quote
     },
     clearSearch,
-    repaintSearch(match, { query } = {}) {
+    repaintSearch(match, { query, matchCase = searchMatchCase } = {}) {
       const owned = searchMatches.get(match?.searchMatchId)
-      if (destroyed || !owned || query !== searchQuery) return false
+      if (destroyed || !owned || query !== searchQuery || matchCase !== searchMatchCase) return false
       activeSearch = owned
       showCurrentSearch()
       return true
     },
-    async activateSearch(match, { query, signal: operationSignal } = {}) {
+    async activateSearch(match, { query, matchCase = searchMatchCase, signal: operationSignal } = {}) {
       lifetime.signal.throwIfAborted(); operationSignal?.throwIfAborted()
       const owned = searchMatches.get(match?.searchMatchId)
-      if (!owned || query !== searchQuery) throw Error('EPUB search occurrence is stale or belongs to another search')
+      if (!owned || query !== searchQuery || matchCase !== searchMatchCase) throw Error('EPUB search occurrence is stale or belongs to another search')
       cancelActivation(true)
       await activationRecovery
       lifetime.signal.throwIfAborted(); operationSignal?.throwIfAborted()
@@ -1317,7 +1351,7 @@ export async function createEpubReader({
       }
     },
     async search(query, options = {}) {
-      const { signal: operationSignal } = options
+      const { signal: operationSignal, matchCase = true } = options
       if ('offset' in options || 'limit' in options) throw Error('EPUB renderer search paging is owned by the search controller')
       clearSearch()
       const generation = searchGeneration
@@ -1325,7 +1359,7 @@ export async function createEpubReader({
       if (typeof query !== 'string' || !query || new TextEncoder().encode(query).length > 256)
         throw Error('EPUB search requires 1–256 UTF-8 bytes')
       const matches = [], owned = new Map(),
-        pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gu')
+        pattern = literalSearchPattern(query, matchCase)
       const started = performance.now()
       for (const section of book.spine.spineItems) {
         check()
@@ -1390,8 +1424,9 @@ export async function createEpubReader({
             if (matches.length >= 500) {
               check()
               searchQuery = query
+              searchMatchCase = matchCase
               searchMatches = owned
-              return { matches, complete: false, limit: 500 }
+              return { matches, complete: false, matchCase, limit: 500 }
             }
           }
         } finally {
@@ -1406,8 +1441,9 @@ export async function createEpubReader({
       }
       check()
       searchQuery = query
+      searchMatchCase = matchCase
       searchMatches = owned
-      return { matches, complete: true, limit: 500 }
+      return { matches, complete: true, matchCase, limit: 500 }
     },
     settings: async (patch) => {
       if (patch.typography) {

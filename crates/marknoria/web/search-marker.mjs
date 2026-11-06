@@ -1,4 +1,10 @@
 // One owned search range. Never wraps source text or changes an EPUB CFI tree.
+// Unicode simple case folding, on original text; never lowercase offset maps.
+export function literalSearchPattern(query, matchCase = true) {
+  if (typeof matchCase !== 'boolean') throw TypeError('matchCase must be boolean')
+  return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'gu' : 'giu')
+}
+
 export function createSearchMarker(owner) {
   const name = 'marknoria-search-' + crypto.randomUUID().replaceAll('-', '')
   let active = null, style = null, overlay = null, frameRequest = null, registry = null

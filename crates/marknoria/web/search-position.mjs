@@ -1,5 +1,6 @@
 // DOM-only mapping of bounded Rust projections. All coordinates in data-source-*
 // refer to the original snapshot, never to formatted JSON or syntax HTML.
+import { literalSearchPattern } from './search-marker.mjs'
 const selector = '[data-source-line]'
 const MAX_TEXT = 262144, MAX_NODES = 32768, MAX_MATCHES = 500
 function textMap(root) {
@@ -27,7 +28,7 @@ function codeLines(target) {
   const range = line => rangeAt(map, starts[line], Math.min(map.text.length, Math.max(starts[line] + 1, (starts[line + 1] ?? map.text.length) - 1)))
   return { map, starts, range, first: Number(target.dataset.sourceCodeLine) }
 }
-export function sourceTarget(article, location, query = '') {
+export function sourceTarget(article, location, query = '', { matchCase = true } = {}) {
   if (!article) return null
   const anchors = [...article.querySelectorAll(selector)]
   const byte = Number.isSafeInteger(location.start)
@@ -41,27 +42,32 @@ export function sourceTarget(article, location, query = '') {
     if (lines) return lines.range(Math.min(lines.starts.length - 1, Math.max(0, location.line - lines.first))) || target
   }
   if (query) {
+    const pattern = literalSearchPattern(query, matchCase)
     const lines = codeLines(target)
     if (lines) {
       const line = Math.min(lines.starts.length - 1, Math.max(0, location.line - lines.first))
       const end = lines.starts[line + 1] ?? lines.map.text.length
-      let offset = lines.starts[line]
+      pattern.lastIndex = lines.starts[line]
       for (let occurrence = 0; occurrence <= (location.occurrence || 0); occurrence++) {
-        offset = lines.map.text.indexOf(query, offset)
-        if (offset < 0 || offset + query.length > end) break
-        if (occurrence === (location.occurrence || 0)) return rangeAt(lines.map, offset, offset + query.length) || target
-        offset += query.length
+        const found = pattern.exec(lines.map.text)
+        if (!found || found.index + found[0].length > end) break
+        if (occurrence === (location.occurrence || 0)) return rangeAt(lines.map, found.index, found.index + found[0].length) || target
       }
     }
     const map = textMap(target)
-    let offset = map.text.indexOf(query)
     // A verbatim token can contain repeated occurrences on one original line.
     if (byte && target.dataset.sourceStart != null && new TextEncoder().encode(map.text).length === Number(target.dataset.sourceEnd) - Number(target.dataset.sourceStart)) {
       const prefix = new TextEncoder().encode(map.text).subarray(0, location.start - Number(target.dataset.sourceStart))
       const exact = new TextDecoder().decode(prefix).length
-      if (map.text.startsWith(query, exact)) offset = exact
+      const suffix = new TextEncoder().encode(map.text).subarray(0, location.end - Number(target.dataset.sourceStart))
+      const exactEnd = new TextDecoder().decode(suffix).length
+      pattern.lastIndex = 0
+      const found = pattern.exec(map.text.slice(exact, exactEnd))
+      if (found?.index === 0 && found[0].length === exactEnd - exact) return rangeAt(map, exact, exactEnd) || target
     }
-    if (offset >= 0) return rangeAt(map, offset, offset + query.length) || target
+    pattern.lastIndex = 0
+    const found = pattern.exec(map.text)
+    if (found) return rangeAt(map, found.index, found.index + found[0].length) || target
   }
   return target
 }
@@ -89,7 +95,7 @@ export function visibleSourceLocation(article, viewport, fallback = { line: 1 })
   return previous ? { line: Number(previous.dataset.sourceLine) || fallback.line, ...(previous.dataset.sourceStart != null ? { start: Number(previous.dataset.sourceStart) } : {}) } : fallback
 }
 export function searchHighlights(root) {
-  let query = '', current = null, frame = null
+  let query = '', current = null, frame = null, matchCase = true, pattern = null
   const supported = Boolean(globalThis.CSS?.highlights && globalThis.Highlight)
   // Older WebKit uses a bounded, pointer-transparent paint layer. It never
   // rewrites projected text, source anchors, native selection or table cells.
@@ -100,15 +106,13 @@ export function searchHighlights(root) {
     const all = [], selected = []
     if (query && getComputedStyle(root).visibility !== 'hidden') for (const article of root.querySelectorAll('article[data-ready]')) {
       const map = textMap(article)
-      for (let offset = 0; all.length < MAX_MATCHES;) {
-        offset = map.text.indexOf(query, offset)
-        if (offset < 0) break
-        const range = rangeAt(map, offset, offset + query.length)
+      pattern.lastIndex = 0
+      for (let found; all.length < MAX_MATCHES && (found = pattern.exec(map.text));) {
+        const range = rangeAt(map, found.index, found.index + found[0].length)
         if (range) all.push(range)
-        offset += query.length
       }
       if (current && (Number(article.dataset.page) === current.page || current.table != null && Number(article.dataset.table) === current.table)) {
-        const target = sourceTarget(article, current, query)
+        const target = sourceTarget(article, current, query, { matchCase })
         if (target instanceof Range) selected.push(target)
       }
     }
@@ -135,9 +139,9 @@ export function searchHighlights(root) {
   observer.observe(root, { childList: true, subtree: true })
   if (overlay) { root.parentElement.addEventListener('scroll', schedule, { passive: true, capture: true }); window.addEventListener('resize', schedule) }
   return {
-    set(value, match = null) { query = value; current = match; refresh() },
+    set(value, match = null, options = {}) { query = value; current = match; matchCase = options.matchCase ?? true; pattern = value ? literalSearchPattern(value, matchCase) : null; refresh() },
     refresh: schedule,
-    clear() { query = ''; current = null; refresh() },
+    clear() { query = ''; current = null; pattern = null; refresh() },
     dispose() { observer.disconnect(); overlay?.remove(); root.parentElement.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); if (frame != null) cancelAnimationFrame(frame); if (supported) { CSS.highlights.delete('reader-search'); CSS.highlights.delete('reader-search-current') } },
   }
 }

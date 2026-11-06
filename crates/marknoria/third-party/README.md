@@ -109,3 +109,8 @@ The shared Source/Edit find panel reuses MIT-licensed `@codemirror/search`
 **6.7.2**, matching the fixed Studio dependency. The lockfile records its exact
 package/integrity; public exports retain its installed npm license and notice.
 No Studio editor wrapper or second search implementation is required.
+
+`web/comment-marks.mjs` follows Studio’s MIT dashed comment-anchor visual
+treatment from the same pinned source above. Its scoped selectors, non-mutating
+CSS Highlight/geometry painter and bounded persistence integration are local
+MarkNoria implementations; there is no Studio runtime or build dependency.

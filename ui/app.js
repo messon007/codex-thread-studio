@@ -661,6 +661,7 @@ const reviewNotes = createReviewNotesController({
     translateSelection: translateSelectionWithCurrentBackend,
     translationProfile: currentSelectionTranslationProfile,
     sourceContext: (node) => threadRouter.sourceContext(node),
+    syncReaderCommentMarks: () => documentWorkspace.syncCommentMarks(),
   },
 })
 
@@ -680,6 +681,8 @@ const documentWorkspace = createDocumentWorkspaceController({
     hideSelection: () => reviewNotes.hideSelection(),
     setSelection: (...args) => reviewNotes.setSelection(...args),
     openCommentForSelection: selection => reviewNotes.openCommentForSelection(selection),
+    currentAnnotations: () => reviewNotes.currentAnnotations(),
+    openReaderComment: id => reviewNotes.openReaderComment(id),
     openWorkspaceTool: (tool, sourceSessionKey) => {
       const ref = parseSessionRefKey(sourceSessionKey)
       if (!ref) return workspaceTools.open(tool)

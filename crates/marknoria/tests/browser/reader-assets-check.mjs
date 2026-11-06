@@ -8,6 +8,7 @@ import { projectionViewContract } from './contracts/projection-view.mjs'
 import { presentationContract } from './contracts/presentation.mjs'
 import { tableViewContract } from './contracts/table-view.mjs'
 import { jqQueryContract } from './contracts/jq-query.mjs'
+import { commentMarksContract } from './contracts/comment-marks.mjs'
 import { notesContract } from './contracts/notes.mjs'
 const child = spawn(resolve(process.argv[2] || 'target/debug/examples/reader-assets-host'), [], {
   stdio: ['pipe', 'pipe', 'pipe']
@@ -49,7 +50,7 @@ try {
     'host-client.mjs',
     'pdf-reader.mjs',
     'epub-reader.mjs',
-    'notes.mjs',
+    'notes.mjs','comment-ranges.mjs','comment-marks.mjs','source-comment-marks.mjs',
     'table-query.mjs',
     'query-help.mjs',
     'jq-query.mjs'
@@ -98,6 +99,8 @@ try {
   })
   assert.ok(diagram.svg.includes('<svg') && diagram.elements > 0)
   assertions++
+  const commentMarks = await page.evaluate(commentMarksContract, new URL('comment-marks.mjs', base).href)
+  assertions += commentMarks.assertions
   assert.deepEqual(failures, [])
   console.log(
     JSON.stringify({

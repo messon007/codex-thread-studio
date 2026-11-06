@@ -479,6 +479,46 @@ mod tests {
     }
 
     #[test]
+    fn reader_comment_ranges_survive_sqlite_reopen_without_unit_conversion() {
+        let path = database_path("reader-ranges");
+        initialize(&path).unwrap();
+        let anchor = serde_json::json!({
+            "filePath": "/work/book.md", "root": "/work",
+            "readerReference": {
+                "documentId": "original-pane", "revision": "a".repeat(64),
+                "precision": "approximate", "quote": " \u{4e2d}\u{6587}\u{1f600} ",
+                "location": {"kind": "line", "line": 2},
+                "textRange": {"version": 1, "segments": [{
+                    "scope": {"kind": "projection", "page": 0},
+                    "startUtf16": 3, "endUtf16": 9, "textHash": "b".repeat(64)
+                }]}
+            }
+        });
+        let mut comment = draft("exact-comment");
+        comment.source = Some(crate::AnnotationSourceReference {
+            provider: "document".into(),
+            version: 1,
+            anchor: anchor.clone(),
+        });
+        replace_annotations(&path, "codex:reader", &[comment], "").unwrap();
+        let reopened = load(&path).unwrap();
+        assert_eq!(
+            reopened.annotation_drafts["codex:reader"][0]
+                .source
+                .as_ref()
+                .unwrap()
+                .anchor,
+            anchor
+        );
+        replace_annotations(&path, "codex:reader", &[], "").unwrap();
+        assert!(!load(&path)
+            .unwrap()
+            .annotation_drafts
+            .contains_key("codex:reader"));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn stores_updates_and_deletes_session_state() {
         let path = database_path("crud");
         initialize(&path).unwrap();

@@ -1,7 +1,7 @@
 import { installReaderBridge } from './reader-bridge.mjs'
 import { queryOperation } from './query-operation.mjs'
 
-export function publicReader({ origins, state, index, api, renderer = () => null, search, setView, navigate, navigateFragment, contents, selection, save, settings, dispose }) {
+export function publicReader({ origins, state, index, api, renderer = () => null, search, setView, navigate, navigateFragment, contents, selection, setCommentMarks, notesChanged, save, settings, dispose }) {
   let imageRequests = 0
   const queryId = id => {
     if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
@@ -33,6 +33,7 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       if (params.textOnly !== undefined && typeof params.textOnly !== 'boolean') throw TypeError('Invalid text selection filter')
       return selection(signal, { textOnly: params.textOnly === true })
     }),
+    setCommentMarks: checked(params => { if (typeof setCommentMarks !== 'function') throw Error('Host comment marks are unavailable'); return setCommentMarks(params.marks) }),
     referenceInfo: checked((params,signal) => {
       if (!Number.isSafeInteger(params.id) || params.id < 0 || params.id >= (index().references?.length ?? 0)) throw Error('Invalid reference identity')
       return api(`/api/reference?id=${params.id}&revision=${encodeURIComponent(params.revision)}`,signal)
@@ -100,7 +101,7 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       return state()
     }),
     search: checked((params, signal) => {
-      searchParams(params, ['query', 'offset'])
+      searchParams(params, ['query', 'offset', 'matchCase'])
       if (!search) throw Object.assign(Error('Search is unavailable'), { code: 'CAPABILITY' })
       return search.search(params, signal)
     }),
@@ -145,8 +146,8 @@ export function publicReader({ origins, state, index, api, renderer = () => null
     }),
     notes: checked((params, signal) => {
       if (!state().capabilities.notes) throw Error('Note storage was not granted by the host')
-      if (!params.request || !['list','add','update','delete','clear','copy'].includes(params.request.operation) || new TextEncoder().encode(JSON.stringify(params.request)).length>131072) throw Error('Invalid bounded note request')
-      return api('/api/notes',signal,{method:'POST',body:JSON.stringify(params.request)})
+      if (!params.request || !['list','get','marks','add','update','delete','clear','copy'].includes(params.request.operation) || new TextEncoder().encode(JSON.stringify(params.request)).length>131072) throw Error('Invalid bounded note request')
+      return api('/api/notes',signal,{method:'POST',body:JSON.stringify(params.request)}).then(value => { if (['add','update','delete','clear'].includes(params.request.operation)) notesChanged?.(); return value })
     }),
     tableInfo: checked(params => {
       if (!Number.isSafeInteger(params.table) || params.table < 0 || !index().tables[params.table]) throw Error('Invalid table identity')

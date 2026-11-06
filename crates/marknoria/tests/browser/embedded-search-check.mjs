@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 
 const dir = await mkdtemp(join(await realpath('target'), 'embedded-search-'))
 const binary = resolve(process.argv.slice(2).find(value => !value.startsWith('--')) || 'target/debug/examples/embedded-host')
-const source = '\ufeff# Public search\r\n\r\n' + '中文😀 needle '.repeat(130) + '\r\n\r\n' + Array.from({ length: 120 }, (_, n) => `Paragraph ${n}: needle\r\n\r\n`).join('')
+const source = '\ufeff# Public search\r\n\r\n' + '中文😀 needle '.repeat(130) + '\r\n\r\n' + Array.from({ length: 120 }, (_, n) => `Paragraph ${n}: needle\r\n\r\n`).join('') + '\r\n```text\r\n😀 K k K\r\n```\r\n'
 const csv = 'ID,Text\r\n' + Array.from({ length: 250 }, (_, n) => `${n},table-needle-${n}\r\n`).join('')
 const files = [join(dir, 'search.md'), join(dir, 'table.csv'), join(dir, 'search.pdf')]
 function searchPdf() {
@@ -86,12 +86,28 @@ try {
     })
     let evidence = await sourceEvidence()
     equal(evidence.text, 'needle'); equal(evidence.byte, state.search.active.sourceLocation.startByte); equal(evidence.visible, true)
+    const unicodeCase = await command('search', { query: 'k', matchCase: false })
+    equal(unicodeCase.total, 3)
+    for (const [index, text] of ['K', 'k', 'K'].entries()) {
+      state = await command('searchActivate', { searchId: unicodeCase.searchId, index })
+      evidence = await sourceEvidence()
+      equal(evidence.text, text); equal(evidence.visible, true)
+      equal(Buffer.from(source).subarray(state.search.active.start, state.search.active.end).toString(), text)
+    }
     await command('setView', { view: 'source' })
-    await command('searchActivate', { searchId: id, index: 102 })
+    state = await command('searchActivate', { searchId: unicodeCase.searchId, index: 0 })
+    equal((await command('selection')).quote, 'K')
+    equal((await command('selection')).location.endByte - state.search.active.start, 3)
+    await command('setView', { view: 'preview' })
+    result = await command('search', { query: 'needle', offset: 100 })
+    // A different option/query creates a new revision-owned identity.
+    const restoredId = result.searchId
+    await command('setView', { view: 'source' })
+    await command('searchActivate', { searchId: restoredId, index: 102 })
     const selected = await command('selection')
     equal(selected.quote, 'needle'); equal(selected.location.kind, 'source')
     await command('setView', { view: 'preview' })
-    state = await command('searchActivate', { searchId: id, index: 129 })
+    state = await command('searchActivate', { searchId: restoredId, index: 129 })
     evidence = await sourceEvidence(); equal(evidence.byte, state.search.active.sourceLocation.startByte)
     await command('searchClear')
     equal(await textFrame.evaluate(() => (CSS.highlights?.get('reader-search-current')?.size || 0) + (CSS.highlights?.get('reader-search')?.size || 0)), 0)

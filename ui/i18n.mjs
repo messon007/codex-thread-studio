@@ -64,8 +64,6 @@ const chinese = {
   'Message with attachments': '含附件的消息',
   '{count} attachments will be kept.': '将保留 {count} 个附件。',
   'Query table with SQL': '使用 SQL 查询表格',
-  'Release session write access': '释放会话写权限',
-  'Session released. Resume it in another client; reload here to write again.': '已释放会话。可在另一客户端恢复；在此重新加载可再次写入。',
   'Queued messages must be 65,536 characters or fewer.': '排队消息不能超过 65,536 个字符。',
   '{count} file or skill references will be kept.': '将保留 {count} 个文件或 Skill 引用。',
   'Previous turn did not complete normally': '上一 Turn 未正常完成',

@@ -158,19 +158,18 @@ its `backends.json` entry. Studio preserves the command/prefix arguments when
 probing capabilities, starting the daemon and attaching the proxy. Share the
 same provider, OS user and `CODEX_HOME` with its CLI clients.
 
-### Legacy single-writer handoff
+### Legacy single-writer compatibility
 
-For embedded mode, when the session is idle choose **More session actions →
-Release session write access**. Studio pauses its local queue and unsubscribes.
-The embedded app server uses `thread_unload_delay_secs=0`, so an idle thread
-without subscribers unloads and releases its writer lock. Another independent
-CLI can then resume it. This compatibility action requires the Studio UI;
-shared mode above supports the remote, unattended scenario.
+Shared daemon/proxy connections coordinate session access without a manual
+release action. This applies to `shared` and to `auto` when daemon/proxy support
+is available.
 
-The saved conversation, draft and queued messages remain intact. Use **Reload
-session** to resume in Studio after the independent writer releases it. Running
-turns, queue submissions and supervised sessions cannot be released by this
-compatibility action.
+An older CLI selected by `auto`, or an explicitly configured `embedded` backend,
+still runs an independent writer and retains its exclusive session lock while
+the thread is loaded. Before resuming that session in another independent
+client, stop the Studio backend process that owns it. Prefer `shared` with a
+compatible CLI when multiple clients need the same session; embedded mode does
+not provide automatic handoff between independent writers.
 
 ### Verification
 

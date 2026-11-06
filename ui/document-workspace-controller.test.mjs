@@ -204,10 +204,10 @@ test('Document Workspace state factories isolate search and outline state', () =
   const first = createDocumentWorkspaceState()
   const second = createDocumentWorkspaceState()
 
-  first.artifactSearchMatches.push({ id: 'match-1' })
+  first.artifactSearchResult = {searchId:'match-1'}
   first.artifactOutlineCollapsed.add('section-1')
 
-  assert.deepEqual(second.artifactSearchMatches, [])
+  assert.equal(second.artifactSearchResult, null)
   assert.deepEqual([...second.artifactOutlineCollapsed], [])
   assert.equal(second.artifactView, 'preview')
   assert.equal(second.artifact, null)

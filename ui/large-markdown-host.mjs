@@ -5,7 +5,10 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
   let heartbeat = null, signature = '', initialized = false
   const publish = state => {
     if (disposed || !state) return
-    if (snapshot.documentId && (snapshot.documentId !== state.documentId || snapshot.revision !== state.revision || snapshot.view !== state.view)) onSelection(null)
+    if (snapshot.documentId && (snapshot.documentId !== state.documentId || snapshot.revision !== state.revision || snapshot.view !== state.view)) {
+      onSelection(null)
+      request?.abort(); ++generation
+    }
     snapshot = state
     const visible = {
       initialized, ready: initialized && state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
@@ -14,7 +17,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       lineCount: state.document?.sourceLines, size: state.document?.fileBytes, name: state.name,
       documentId: state.documentId, revision: state.revision, format: state.format,
       status: state.editorError?.message || state.error || '', error: state.error,
-      position: state.position, capabilities: state.capabilities, formatState: state.formatState,
+      position: state.position, search: state.search, capabilities: state.capabilities, formatState: state.formatState,
     }
     const next = JSON.stringify(visible)
     if (next !== signature) { signature = next; onState(visible) }
@@ -72,6 +75,25 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (disposed || !client) throw new DOMException('Reader host disposed','AbortError')
     return client.request(method,params,{signal})
   }
+  async function searchCommand(method, params, owner) {
+    request?.abort()
+    const operation = request = new AbortController(), own = ++generation
+    const check = () => {
+      operation.signal.throwIfAborted()
+      if (disposed || own !== generation) throw new DOMException('Search superseded', 'AbortError')
+    }
+    await ready
+    check()
+    if (snapshot.capabilities?.search?.version !== 1) throw Error('This reader does not support public search activation')
+    const expected = owner || { documentId: snapshot.documentId, revision: snapshot.revision }
+    const value = await command(method, { ...params, ...expected }, operation.signal)
+    check()
+    if (method === 'search') {
+      const { matches, ...search } = value
+      publish({ ...snapshot, search })
+    } else publish(value)
+    return value
+  }
   function validateReference(reference) {
       if(reference.revision!==snapshot.revision)throw Error('The document has changed since this reference was captured')
       if(reference.location?.kind==='source'&&!snapshot.capabilities?.sourceRangeNavigation)throw Error('This reader package does not support exact source-range navigation')
@@ -98,22 +120,12 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       validateReference(reference)
       return command('navigate',{location:reference.location})
     },
-    async search(query){
-      request?.abort();const own=++generation
-      if(!query.trim()||disposed)return {matches:[],total:0,complete:true}
-      const operation=request=new AbortController()
-      await ready
-      const owner={documentId:snapshot.documentId,revision:snapshot.revision}
-      const value=await command('search',{query,...owner},operation.signal)
-      if (own !== generation || disposed) throw new DOMException('Search superseded','AbortError')
-      const exact = Number.isSafeInteger(value.total)
-      return {matches:value.matches.map(match=>({...match,...owner})),total:exact?value.total:value.matches.length,complete:exact||value.complete===true||value.complete!==false&&value.matches.length<(value.limit||100)}
+    search(query, offset = 0) { return searchCommand('search', { query, offset }) },
+    activateSearch(search, index) {
+      return searchCommand('searchActivate', { searchId: search.searchId, index },
+        { documentId: search.documentId, revision: search.revision })
     },
-    navigateMatch(match){
-      const range=snapshot.view==='source'&&snapshot.capabilities?.sourceRangeNavigation&&Number.isSafeInteger(match.start)&&Number.isSafeInteger(match.end)
-      const location=range?{kind:'source',startByte:match.start,endByte:match.end}:snapshot.view==='preview'&&match.location?match.location:{kind:'line',line:match.line}
-      return command('navigate',{location,...(match.documentId?{documentId:match.documentId,revision:match.revision}:{})})
-    },
+    clearSearch() { return searchCommand('searchClear', {}) },
     leave(){return this.dispose()},
     dispose(){
       if(disposed)return

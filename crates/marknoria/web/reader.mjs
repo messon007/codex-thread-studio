@@ -16,6 +16,7 @@ import { sourceController } from './source.mjs'
 import { editorController } from './editor.mjs'
 import { readPosition, writePosition } from './position.mjs'
 import { mountOutline } from './outline.mjs'
+import { searchController } from './search-controller.mjs'
 import { sourceTarget, visibleSourceLocation, searchHighlights } from './search-position.mjs'
 
 const mainLifetime = new AbortController()
@@ -133,11 +134,47 @@ let forcedPage = null
 let navigation = 0
 let documentError = null
 let loadError = null
-let searchGeneration = 0
-let searchMatches = [], searchQuery = '', searchCurrent = -1
-let searchOffset = 0, searchTotal = 0, searchExact = true, searchLoading = false, searchFailed = false
-let searchRequest = null, searchActivation = 0
 let searchJump = null
+const search = searchController({
+  owner: () => ({ documentId, revision: index?.revision, renderer: Boolean(formatRenderer), source: Boolean(index && ['markdown','csv','tsv','text','html'].includes(index.format)), editing: Boolean(editor?.visible) }),
+  load: (query, offset, owner, signal) => formatRenderer
+    ? formatRenderer.search(query, { signal })
+    : api(`/api/search?query=${encodeURIComponent(query)}&offset=${offset}&revision=${encodeURIComponent(owner.revision)}`, signal),
+  describe(match) {
+    if (formatRenderer) return { ...match, locationPrecision: match.locationPrecision || 'exact' }
+    const table = index?.pages[match.page]?.table
+    return { ...match, table, location: table != null && match.tableRow != null
+      ? { kind: 'cell', table, row: match.tableRow, column: 0 } : { kind: 'line', line: match.line },
+      locationPrecision: table != null ? 'row' : 'line', ...(['markdown','csv','tsv','text','html'].includes(index?.format) ? { sourceLocation: { kind: 'source', startByte: match.start, endByte: match.end } } : {}) }
+  },
+  async activate(match, { query, signal }) {
+    signal.throwIfAborted()
+    if (formatRenderer) { await formatRenderer.activateSearch(match, { query, signal }); return }
+    if (source?.visible) { highlights.clear(); await source.goRange(match.start, match.end, { signal, search: true }); return }
+    source?.clearSearch()
+    highlights.set(query, match)
+    const before = navigation
+    const pending = jump(match.page, null, match.tableRow, null, match, query)
+    const owned = navigation !== before ? navigation : null
+    searchJump = owned
+    const abort = () => { if (searchJump === owned) cancelSearchNavigation() }
+    signal.addEventListener('abort', abort, { once: true })
+    try { await pending; signal.throwIfAborted() }
+    finally { signal.removeEventListener('abort', abort); if (searchJump === owned) searchJump = null }
+  },
+  paint(query, active) {
+    if (formatRenderer) {
+      if (!query || !active) formatRenderer.clearSearch?.({ keepResults: true })
+      else formatRenderer.repaintSearch?.(active, { query })
+      return
+    }
+    if (source?.visible) { highlights.clear(); if (active) source.highlightRange(active.start, active.end); else source.clearSearch() }
+    else { source?.clearSearch(); highlights.set(query, active) }
+  },
+  cancel: cancelSearchNavigation,
+  clear() { highlights.clear(); source?.clearSearch(); formatRenderer?.clearSearch?.() },
+  changed() { if (mainLifetime.signal.aborted) return; updateSearchCounter(); renderSearchResults(); bridge?.publish('state', publicState()) },
+})
 const CACHE_LIMIT = 8 * 1024 * 1024
 const metrics = { firstContentMs: null, mountedPages: 0, mountedElements: 0, cacheBytes: 0, maxHeartbeatGapMs: 0 }
 let started = performance.now()
@@ -451,7 +488,7 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate, onVisibilityChange: () => { clearTextSelection(); highlights.refresh() } })
+  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh() }, onReady: () => { search.repaint(); bridge?.publish('state', publicState()) } })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
       virtualizer?.measureElement(article)
@@ -689,6 +726,7 @@ async function switchView(view) {
   const current = editor.visible ? 'edit' : source?.visible ? 'source' : 'preview'
   if (view === current && index && !editor.needsRefresh) return
   switching = true
+  search.suspend()
   clearTextSelection()
   const location = position()
   const line = location.line
@@ -704,7 +742,7 @@ async function switchView(view) {
       if (view === 'source') await source.show(location)
       else {
         const fromSource = source.visible
-        source.hide()
+        await source.hide()
         schedule()
         if (!fromSource && index.pages.length) {
           await previewLine(location)
@@ -714,10 +752,11 @@ async function switchView(view) {
     for (const mode of ['preview', 'source', 'edit']) document.getElementById(mode + '-mode').setAttribute('aria-pressed', String(mode === view))
     const format = (index.format||'markdown').toUpperCase()
     labels.set(document.querySelector('.reader-identity p'),view === 'edit' ? '{format} · Paged editing' : view === 'source' ? '{format} · Read-only source' : '{format} · Read-only preview',{format})
+    if (view === 'edit') search.clear(); else search.repaint()
   } catch (error) {
     setStatus(error.message, null)
     document.querySelector('.reader-diagnostics').open = true
-  } finally { switching = false }
+  } finally { switching = false; bridge?.publish('state', publicState()) }
 }
 for (const view of ['preview', 'source', 'edit']) on(document.getElementById(view + '-mode'), 'click', () => switchView(view))
 
@@ -743,14 +782,11 @@ function setContents(open) {
 
 function setSearch(open) {
   if (!open) {
-    if (searchLoading && searchCurrent < 0) clearSearchResults()
-    cancelSearchNavigation()
-    searchGeneration += 1; searchActivation += 1; searchRequest?.abort()
-    searchLoading = false; highlights.clear(); updateSearchCounter()
-  } else if (!formatRenderer && searchQuery) {
-    const match = searchMatches[searchCurrent - searchOffset]
-    highlights.set(searchQuery, match ? { ...match, table: index?.pages[match.page]?.table } : null)
+    const state = search.state()
+    if (state.loading && state.current == null && !state.available) search.clear()
+    else search.suspend()
   }
+  else search.repaint()
   document.querySelector('#search').hidden = !open
   document.querySelector('#search-toggle').setAttribute('aria-expanded', String(open))
   document.querySelector('#matches').hidden = !open
@@ -807,19 +843,15 @@ on(document, 'pointerdown', event => {
 
 function updateSearchCounter() {
   if (mainLifetime.signal.aborted) return
-  const counter = document.getElementById('search-count')
-  counter.hidden = !searchQuery
-  const current = searchCurrent < 0 ? 0 : searchCurrent + 1
-  const values = { current, total: searchTotal }
-  labels.set(counter, searchLoading && searchCurrent < 0 ? '…' : searchFailed ? '—' : searchExact ? '{current}/{total}' : '{current}/{total}+', values)
-  const incomplete = formatRenderer && index?.format === 'pdf' ? '{current} of at least {total} matching pages; result limit reached'
-    : formatRenderer ? '{current} of at least {total} matching passages; result limit reached' : '{current} of at least {total} matches; result limit reached'
-  const description = searchLoading && searchCurrent < 0 ? 'Searching…' : searchFailed ? 'Search failed' : !searchExact ? incomplete
-    : formatRenderer && index?.format === 'pdf' ? '{current} of {total} matching pages'
-    : formatRenderer ? '{current} of {total} matching passages' : '{current} of {total} matches'
+  const state = search.state(), counter = document.getElementById('search-count')
+  counter.hidden = !state.query
+  const values = { current: state.current == null ? 0 : state.current + 1, total: state.total }
+  labels.set(counter, state.loading && state.current == null ? '…' : state.error ? '—' : state.totalExact ? '{current}/{total}' : '{current}/{total}+', values)
+  const description = state.loading && state.current == null ? 'Searching…' : state.error ? 'Search failed'
+    : state.totalExact ? '{current} of {total} matches' : '{current} of at least {total} matches; result limit reached'
   for (const attribute of ['aria-label', 'title']) labels.set(counter, description, values, attribute)
-  document.getElementById('search').setAttribute('aria-busy', String(searchLoading))
-  for (const id of ['search-previous', 'search-next']) document.getElementById(id).disabled = searchLoading || !searchTotal
+  document.getElementById('search').setAttribute('aria-busy', String(state.loading))
+  for (const id of ['search-previous', 'search-next']) document.getElementById(id).disabled = state.loading || !state.available
 }
 function cancelSearchNavigation() {
   if (searchJump != null && searchJump === navigation) {
@@ -828,108 +860,62 @@ function cancelSearchNavigation() {
   }
   searchJump = null
 }
-function clearSearchResults() {
-  cancelSearchNavigation()
-  searchGeneration += 1; searchActivation += 1; searchRequest?.abort()
-  searchMatches = []; searchQuery = ''; searchCurrent = -1
-  searchOffset = searchTotal = 0; searchExact = true; searchLoading = searchFailed = false
-  highlights.clear()
-  document.getElementById('matches').replaceChildren()
-  updateSearchCounter()
-}
-function showSearchResults(response, offset = 0) {
-  const occurrences = new Map()
-  searchOffset = offset
-  searchMatches = response.matches.map(match => {
-    const occurrence = match.occurrence ?? occurrences.get(match.line) ?? 0
-    occurrences.set(match.line, occurrence + 1)
-    return { ...match, occurrence }
-  })
-  searchTotal = Number.isSafeInteger(response.total) ? response.total : searchMatches.length
-  searchExact = Number.isSafeInteger(response.total) || response.complete === true || response.complete !== false && searchMatches.length < (response.limit || 100)
-  const list = document.querySelector('#matches')
-  list.replaceChildren()
-  for (const [offset, match] of searchMatches.entries()) {
-    const item = document.createElement('li'), button = document.createElement('button')
-    button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
-    button.addEventListener('click', () => activateSearchMatch(searchOffset + offset))
-    item.append(button); list.append(item)
-  }
-  if (!searchTotal) {
-    const empty = document.createElement('li'); labels.set(empty, 'No matches'); list.append(empty)
-  }
-}
-async function activateSearchMatch(matchIndex) {
-  if (!searchTotal || searchLoading) return
-  const current = (matchIndex + searchTotal) % searchTotal
-  const generation = searchGeneration, activation = ++searchActivation
-  try {
-    if (current < searchOffset || current >= searchOffset + searchMatches.length) {
-      const offset = Math.floor(current / 100) * 100
-      searchRequest?.abort(); searchRequest = new AbortController()
-      searchLoading = true; updateSearchCounter()
-      const response = await api(`/api/search?query=${encodeURIComponent(searchQuery)}&offset=${offset}&revision=${encodeURIComponent(index.revision)}`, searchRequest.signal)
-      if (generation !== searchGeneration || activation !== searchActivation) return
-      showSearchResults(response, offset)
-      searchLoading = false
+function clearSearchResults() { search.clear() }
+let renderedSearchWindow = null
+function renderSearchResults() {
+  if (mainLifetime.signal.aborted) return
+  const response = search.response(), list = document.getElementById('matches')
+  if (renderedSearchWindow !== response.matches) {
+    renderedSearchWindow = response.matches; list.replaceChildren()
+    for (const match of response.matches) {
+      const item = document.createElement('li'), button = document.createElement('button')
+      button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
+      button.dataset.matchIndex = match.index
+      button.addEventListener('click', () => activateSearchMatch(match.index))
+      item.append(button); list.append(item)
     }
-    if (generation !== searchGeneration || activation !== searchActivation) return
-    searchCurrent = current
-    const match = searchMatches[current - searchOffset]
-    if (!match) throw Error('Search result is no longer available')
-    updateSearchCounter()
-    const list = document.getElementById('matches'); list.hidden = true
-    for (const [offset, button] of [...list.querySelectorAll('button')].entries()) button.setAttribute('aria-current', String(searchOffset + offset === searchCurrent))
-    if (formatRenderer) await formatRenderer.navigate(match.location)
-    else if (source?.visible) await source.goRange(match.start, match.end)
-    else {
-      highlights.set(searchQuery, { ...match, table: index.pages[match.page]?.table })
-      const before = navigation
-      const pending = jump(match.page, null, match.tableRow, null, match, searchQuery)
-      const owned = navigation !== before ? navigation : null
-      searchJump = owned
-      try { await pending } finally { if (searchJump === owned) searchJump = null }
-    }
-  } catch (error) {
-    if (generation === searchGeneration && activation === searchActivation && error.name !== 'AbortError') setStatus(error.message, null)
-  } finally {
-    if (generation === searchGeneration && activation === searchActivation) { searchLoading = false; updateSearchCounter() }
+    if (response.query && !response.loading && !response.total) { const empty = document.createElement('li'); labels.set(empty, 'No matches'); list.append(empty) }
   }
+  for (const button of list.querySelectorAll('button')) button.setAttribute('aria-current', String(Number(button.dataset.matchIndex) === response.current))
 }
-on(document.getElementById('search-previous'), 'click', () => activateSearchMatch(searchCurrent < 0 ? searchTotal - 1 : searchCurrent - 1))
-on(document.getElementById('search-next'), 'click', () => activateSearchMatch(searchCurrent + 1))
+async function activateSearchMatch(index) {
+  const state = search.state()
+  if (!state.available || state.loading) return
+  document.getElementById('matches').hidden = true
+  try { await search.activate({ searchId: state.searchId, index: (index + state.available) % state.available }) }
+  catch (error) { if (error.name !== 'AbortError') setStatus(error.message, null) }
+}
+on(document.getElementById('search-previous'), 'click', () => { const state = search.state(); activateSearchMatch(state.current == null ? state.available - 1 : state.current - 1) })
+on(document.getElementById('search-next'), 'click', () => activateSearchMatch((search.state().current ?? -1) + 1))
 on(document.getElementById('query'), 'input', clearSearchResults)
 on(document.getElementById('query'), 'keydown', event => {
   if (event.isComposing || event.keyCode === 229) return
-  if (event.key === 'Enter' && searchQuery === event.target.value && searchTotal && !searchLoading) {
-    event.preventDefault()
-    activateSearchMatch(searchCurrent + (event.shiftKey ? -1 : 1))
+  const state = search.state()
+  if (event.key === 'Enter' && state.query === event.target.value && state.available) {
+    event.preventDefault(); if (!state.loading) activateSearchMatch((state.current ?? -1) + (event.shiftKey ? -1 : 1))
   }
 })
-
 on(document.querySelector('#search'), 'submit', async event => {
   event.preventDefault()
   const query = document.querySelector('#query').value
-  clearSearchResults()
-  if (!query) return
-  const ticket = searchGeneration
-  searchQuery = query; searchLoading = true; updateSearchCounter()
-  searchRequest = new AbortController()
   try {
-    const response = formatRenderer ? await formatRenderer.search(query, { signal: searchRequest.signal }) : await api(`/api/search?query=${encodeURIComponent(query)}&offset=0&revision=${encodeURIComponent(index.revision)}`, searchRequest.signal)
-    if (ticket !== searchGeneration) return
-    const list = document.querySelector('#matches')
-    showSearchResults(response)
-    searchLoading = false; updateSearchCounter()
-    highlights.set(formatRenderer ? '' : query)
-    if (formatRenderer) setStatus(index.format === 'pdf' ? (response.complete ? '{count} matching pages' : '{count} matching pages · Result limit reached') : (response.complete ? '{count} matching passages' : '{count} matching passages · Result limit reached'),{count:response.matches.length})
-    else setStatus('{count} matches; case-sensitive', { count: searchTotal })
-    list.hidden = false
-    if (searchTotal) { await activateSearchMatch(0); if (ticket === searchGeneration) list.hidden = false }
+    const response = await search.search({ query, offset: 0 })
+    if (!response.searchId) return
+    setStatus(response.totalExact ? (formatRenderer ? '{count} matches' : '{count} matches; case-sensitive') : '{count} matches · Result limit reached', { count: response.total })
+    if (response.available) await search.activate({ searchId: response.searchId, index: 0 })
+    if (search.state().searchId === response.searchId) document.getElementById('matches').hidden = false
   } catch (error) {
-    if (ticket === searchGeneration && error.name !== 'AbortError') { searchFailed = true; setStatus(error.message, null) }
+    if (!mainLifetime.signal.aborted && error.name !== 'AbortError') {
+      setStatus(error.message, null)
+      // Invalid input never enters the bounded shared session. Present its
+      // local form error without retaining that query in controller state.
+      if (!search.state().query && query) {
+        const counter = document.getElementById('search-count')
+        counter.hidden = false; labels.set(counter, '—')
+        for (const attribute of ['aria-label', 'title']) labels.set(counter, 'Search failed', {}, attribute)
+      }
+    }
   }
-  finally { if (ticket === searchGeneration) { searchLoading = false; updateSearchCounter() } }
 })
 
 function publicState() {
@@ -944,7 +930,8 @@ function publicState() {
     document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length,references:index.references?.length??0} : null,
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
-    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    search: search.state(),
+    capabilities: { ...serviceCapabilities, search: search.capabilities(), projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
@@ -1012,16 +999,18 @@ function boundedQuote(text) {
 function connectBridge() {
   const lifetime = new AbortController()
   let selectionTimer = null, selectionRequest = null, selectionGeneration = 0
-  const result = publicReader({ origins: serviceCapabilities.parentOrigins || [], state: publicState, index: () => index, renderer: () => formatRenderer, api, navigateFragment,
+  const result = publicReader({ origins: serviceCapabilities.parentOrigins || [], state: publicState, index: () => index, renderer: () => formatRenderer, api, navigateFragment, search,
     contents: showContents,
     async setView(view) {
       if (!index || editor?.busy || switching) throw Error('Reader is busy')
       if (view === 'edit' && !editable) throw Error('Editing was not granted')
       if (view !== 'preview' && !publicState().capabilities.source) throw Error('Source is unavailable for this format')
+      search.suspend()
       clearTextSelection()
       if (editable) await switchView(view)
       else if (view === 'source') await source.show(position())
-      else source?.hide()
+      else await source?.hide()
+      search.repaint()
       if (publicState().view !== view) throw Error('Could not switch the reader view')
       result.publish('state', publicState())
     },
@@ -1076,7 +1065,7 @@ function connectBridge() {
       if (formatRenderer?.state().format === 'epub' && (params.epub || params.theme)) await formatRenderer.settings({ ...(params.theme ? { theme: params.theme } : {}), ...params.epub })
       schedule()
     },
-    async dispose() { mainLifetime.abort(); presentation.dispose(); lifetime.abort(); shell.inert = true; window.readerExperiment = null; clearTimeout(selectionTimer); selectionRequest?.abort(); stopped = true; const closing = formatRenderer?.dispose(); teardown(); editor?.dispose(); files.dispose(); clearInterval(heartbeat); clearInterval(rendererHeartbeat); await closing },
+    async dispose() { search.dispose(); mainLifetime.abort(); presentation.dispose(); lifetime.abort(); shell.inert = true; window.readerExperiment = null; clearTimeout(selectionTimer); selectionRequest?.abort(); stopped = true; const closing = formatRenderer?.dispose(); teardown(); editor?.dispose(); files.dispose(); clearInterval(heartbeat); clearInterval(rendererHeartbeat); await closing },
   })
   document.addEventListener('selectionchange', () => {
     if (!result.connected) return

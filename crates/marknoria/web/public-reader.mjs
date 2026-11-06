@@ -1,7 +1,7 @@
 import { installReaderBridge } from './reader-bridge.mjs'
 import { queryOperation } from './query-operation.mjs'
 
-export function publicReader({ origins, state, index, api, renderer = () => null, setView, navigate, navigateFragment, contents, selection, save, settings, dispose }) {
+export function publicReader({ origins, state, index, api, renderer = () => null, search, setView, navigate, navigateFragment, contents, selection, save, settings, dispose }) {
   let imageRequests = 0
   const queryId = id => {
     if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
@@ -16,6 +16,10 @@ export function publicReader({ origins, state, index, api, renderer = () => null
     return value
   }
   const checked = execute => (params, signal) => { current(params); return execute(params, signal) }
+  function searchParams(params, fields) {
+    const allowed = new Set(['documentId', 'revision', ...fields])
+    if (Object.keys(params).some(key => !allowed.has(key))) throw Object.assign(Error('Unsupported search parameter'), { code: 'PARAMS' })
+  }
   return installReaderBridge({ origins, state, onDispose: dispose, commands: {
     setView: checked(async params => { if (!['preview', 'source', 'edit'].includes(params.view)) throw Error('Invalid reader view'); await setView(params.view); return state() }),
     navigate: checked(async params => { await navigate(params.location); return state() }),
@@ -96,12 +100,21 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       return state()
     }),
     search: checked((params, signal) => {
-      if (typeof params.query !== 'string' || new TextEncoder().encode(params.query).length > 256) throw Error('Invalid source search')
-      if (renderer()) return renderer().search(params.query, { signal })
-      return api(`/api/search?query=${encodeURIComponent(params.query)}`, signal).then(value=>({...value,matches:value.matches.map(match=>{
-        const table=index().pages[match.page]?.table
-        return {...match,location:table!=null&&match.tableRow!=null ? {kind:'cell',table,row:match.tableRow,column:0} : {kind:'line',line:match.line},locationPrecision:table!=null?'row':'line'}
-      })}))
+      searchParams(params, ['query', 'offset'])
+      if (!search) throw Object.assign(Error('Search is unavailable'), { code: 'CAPABILITY' })
+      return search.search(params, signal)
+    }),
+    searchActivate: checked(async (params, signal) => {
+      searchParams(params, ['searchId', 'index'])
+      if (!search) throw Object.assign(Error('Search activation is unavailable'), { code: 'CAPABILITY' })
+      await search.activate(params, signal)
+      current(params); return state()
+    }),
+    searchClear: checked((params, signal) => {
+      searchParams(params, [])
+      signal.throwIfAborted()
+      if (!search) throw Object.assign(Error('Search is unavailable'), { code: 'CAPABILITY' })
+      search.clear(); return state()
     }),
     sql: checked((params, signal) => {
       if (!state().capabilities.queries) throw Error('Queries were disabled by the host')

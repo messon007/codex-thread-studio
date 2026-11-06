@@ -1,4 +1,8 @@
-# MarkNoria Web reader synchronization — 2026-11-06
+# MarkNoria Web reader synchronization — historical November 6 baseline
+
+The following records PR #59 at `89a3210`. Its public-search limitation is
+superseded by [the search adoption](marknoria-search-adoption.md) at `8552f5c`.
+Earlier validation and hashes below remain historical evidence.
 
 Studio adopts the unmodified, fixed public Web reader delivery at
 `89a3210ae0a37dded80401babd4253bd59af692c`, from the actual remote Studio main

@@ -24,10 +24,9 @@ export function createDocumentWorkspaceState() {
     artifact: null,
     artifactView: 'preview',
     artifactSearch: '',
-    artifactSearchMatches: [],
-    artifactSearchTotal: 0,
-    artifactSearchComplete: true,
-    artifactSearchIndex: -1,
+    artifactSearchResult: null,
+    artifactSearchError: '',
+    artifactSearchPending: false,
     artifactSearchOpen: false,
     artifactOutlineOpen: false,
     artifactOutlineFilter: '',
@@ -76,7 +75,7 @@ export function createDocumentWorkspaceController({
     return remove
   }
   let messageCatalog = null, localeMessages = null, messagesLocale = null, bound = false
-  let artifactSearchTimer = null
+  let artifactSearchTimer = null, artifactSearchGeneration = 0, artifactSearchTarget = null, artifactSearchActivation = 0
   let epubReadingStateTimer = null
   let largeMarkdownFrame = null
   let largeMarkdownFile = null
@@ -531,6 +530,11 @@ function renderArtifact() {
           file.page = snapshot.formatState.page
           file.pdfPresentation = { zoom: snapshot.formatState.zoom, continuous: snapshot.formatState.continuous }
         }
+        if (file.readerRevision && file.readerRevision !== snapshot.revision || snapshot.view === 'edit' && state.artifactView !== 'edit') resetArtifactSearch()
+        if (snapshot.view !== state.artifactView) artifactSearchTarget = null
+        file.readerRevision = snapshot.revision
+        state.artifactSearchResult = snapshot.search?.query === state.artifactSearch ? snapshot.search : null
+        file.readerSearchQueryBytes = snapshot.capabilities?.search?.queryBytes || 256
         file.readerSourceAvailable = snapshot.capabilities?.source
         file.readerReady = snapshot.ready
         file.readerReadingReady = snapshot.readingReady
@@ -624,11 +628,12 @@ async function reopenEpubComment(anchor) {
 }
 
 function resetArtifactSearch() {
+  ++artifactSearchGeneration; ++artifactSearchActivation
+  artifactSearchTarget = null
   state.artifactSearch = ''
-  state.artifactSearchIndex = -1
-  state.artifactSearchMatches = []
-  state.artifactSearchTotal = 0
-  state.artifactSearchComplete = true
+  state.artifactSearchResult = null
+  state.artifactSearchError = ''
+  state.artifactSearchPending = false
   state.artifactSearchOpen = false
   const searchInput = $('#artifact-search-input')
   if (searchInput) searchInput.value = ''
@@ -640,73 +645,102 @@ function resetArtifactSearch() {
   clearTimeout(artifactSearchTimer)
 }
 
+const searchCancelled = error => error?.name === 'AbortError' || error?.code === 'CANCELLED'
+
 function handleArtifactSearchInput(event) {
-  state.artifactSearch = event.target.value
+  const own = ++artifactSearchGeneration
+  ++artifactSearchActivation; artifactSearchTarget = null
+  const query = state.artifactSearch = event.target.value
   clearTimeout(artifactSearchTimer)
-  if (state.artifact?.kind === 'large-markdown') {
-    const file = state.artifact
-    const query = state.artifactSearch
-    state.artifactSearchMatches = []
-    state.artifactSearchTotal = 0
-    state.artifactSearchComplete = true
-    state.artifactSearchIndex = -1
+  state.artifactSearchResult = null
+  state.artifactSearchError = ''
+  state.artifactSearchPending = Boolean(query)
+  const file = state.artifact, host = largeMarkdownHost
+  renderArtifactSearchStatus()
+  if (file?.kind !== 'large-markdown' || !host) return
+  // Invalidate old highlights immediately, including during debounce and invalid
+  // new input. The empty string clears; whitespace remains a literal query.
+  const clearing = host.clearSearch().catch(error => {
+    if (!searchCancelled(error) && own === artifactSearchGeneration && state.artifact === file) {
+      state.artifactSearchError = String(error.message || error)
+      renderArtifactSearchStatus()
+    }
+  })
+  if (!query) return
+  if (new TextEncoder().encode(query).length > (file.readerSearchQueryBytes || 256)) {
+    state.artifactSearchPending = false
+    state.artifactSearchError = t('Search query must be at most {count} UTF-8 bytes', { count: file.readerSearchQueryBytes || 256 })
     renderArtifactSearchStatus()
-    artifactSearchTimer = setTimeout(async () => {
-      try {
-        const result = await largeMarkdownHost?.search(query) || { matches: [], total: 0, complete: true }
-        const matches = result.matches
-        if (state.artifact !== file || state.artifactSearch !== query) return
-        state.artifactSearchMatches = matches
-        state.artifactSearchTotal = result.total
-        state.artifactSearchComplete = result.complete
-        state.artifactSearchIndex = matches.length ? 0 : -1
-        if (matches.length) scrollArtifactSearchToMatch(0)
-        else renderArtifactSearchStatus()
-      } catch (error) { if (error?.name !== 'AbortError' && state.artifact === file) showError(error) }
-    }, 140)
     return
   }
+  artifactSearchTimer = setTimeout(async () => {
+    try {
+      await clearing
+      if (own !== artifactSearchGeneration || state.artifact !== file) return
+      const result = await host.search(query)
+      if (own !== artifactSearchGeneration || state.artifact !== file) return
+      state.artifactSearchPending = false
+      if (result.available && artifactSearchTarget === null) scrollArtifactSearchToMatch(0)
+    } catch (error) {
+      if (!searchCancelled(error) && own === artifactSearchGeneration && state.artifact === file) state.artifactSearchError = String(error.message || error)
+    } finally {
+      if (own === artifactSearchGeneration && state.artifact === file) {
+        state.artifactSearchPending = false
+        renderArtifactSearchStatus()
+      }
+    }
+  }, 140)
 }
 
 function handleArtifactSearchKeydown(event) {
-  if (event.key !== 'Enter') return
+  if (event.key !== 'Enter' || event.isComposing) return
   event.preventDefault()
-  if (!state.artifactSearch.trim() || state.artifactSearchMatches.length === 0) return
   navigateArtifactSearch(event.shiftKey ? -1 : 1)
 }
 
 function renderArtifactSearchStatus() {
-  const summary = $('#artifact-search-summary')
-  const loaded = state.artifactSearchMatches.length
-  const total = state.artifactSearchTotal ?? loaded
-  const query = state.artifactSearch.trim()
+  const summary = $('#artifact-search-summary'), result = state.artifactSearchResult
   if (!summary) return
-  if (!query || state.artifact?.kind !== 'large-markdown') {
-    summary.textContent = ''
-    $('#artifact-search-prev').disabled = true
-    $('#artifact-search-next').disabled = true
-    return
-  }
-  summary.textContent = total
-    ? t('{current} / {total}', { current: state.artifactSearchIndex + 1, total: `${total}${state.artifactSearchComplete ? '' : '+'}` })
-    : t('No matches found')
-  if (total > loaded || !state.artifactSearchComplete) summary.textContent += ` · ${t('Navigation limited to first {count} results', { count: loaded })}`
-  $('#artifact-search-prev').disabled = loaded === 0
-  $('#artifact-search-next').disabled = loaded === 0
+  const available = result?.available || 0
+  const active = Boolean(state.artifactSearch && state.artifact?.kind === 'large-markdown' && state.artifactView !== 'edit')
+  const loading = state.artifactSearchPending || result?.loading
+  const error = state.artifactSearchError || result?.error?.message
+  summary.textContent = !active ? '' : error || (loading && !available ? t('Searching…') : available
+    ? t('{current} / {total}', { current: result.current == null ? 0 : result.current + 1, total: `${result.total}${result.totalExact ? '' : '+'}` })
+    : t('No matches found'))
+  if (active && available && !result.totalExact) summary.textContent += ` · ${t('Search result limit reached')}`
+  const unit = state.artifact?.format === 'pdf' ? 'matching pages' : state.artifact?.format === 'epub' ? 'matching passages' : 'matches'
+  summary.title = active && available ? t(`{current} of {total} ${unit}`, { current: result.current == null ? 0 : result.current + 1, total: `${result.total}${result.totalExact ? '' : '+'}` }) : summary.textContent
+  summary.setAttribute('aria-busy', String(Boolean(active && loading)))
+  // Keep navigation available during activation: repeated input updates the
+  // desired ordinal while the SDK cancels older work. Displayed current remains
+  // the authoritative SDK value, never an optimistic navigation claim.
+  $('#artifact-search-prev').disabled = !active || !available
+  $('#artifact-search-next').disabled = !active || !available
 }
 
 function scrollArtifactSearchToMatch(index) {
-  if (!state.artifactSearchMatches.length) return
-  const current = ((index % state.artifactSearchMatches.length) + state.artifactSearchMatches.length) % state.artifactSearchMatches.length
-  state.artifactSearchIndex = current
-  Promise.resolve(largeMarkdownHost?.navigateMatch(state.artifactSearchMatches[current])).catch(showError)
-  renderArtifactSearchStatus()
+  const result = state.artifactSearchResult, host = largeMarkdownHost, file = state.artifact
+  if (!result?.available || !host || state.artifactView === 'edit') return
+  const target = ((index % result.available) + result.available) % result.available
+  artifactSearchTarget = target
+  state.artifactSearchError = ''
+  const own = ++artifactSearchActivation
+  void host.activateSearch(result, target).catch(error => {
+    if (!searchCancelled(error) && own === artifactSearchActivation && state.artifact === file) state.artifactSearchError = String(error.message || error)
+  }).finally(() => {
+    if (own === artifactSearchActivation && state.artifact === file) {
+      artifactSearchTarget = null
+      renderArtifactSearchStatus()
+    }
+  })
 }
 
 function navigateArtifactSearch(step) {
-  if (!state.artifactSearchMatches.length) return
-  const next = state.artifactSearchIndex < 0 ? 0 : state.artifactSearchIndex + step
-  scrollArtifactSearchToMatch(next)
+  const result = state.artifactSearchResult
+  if (!result?.available) return
+  const current = artifactSearchTarget ?? result.current
+  scrollArtifactSearchToMatch(current == null ? (step < 0 ? result.available - 1 : 0) : current + step)
 }
 
 function formatFileSize(value) {

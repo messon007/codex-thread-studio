@@ -1,3 +1,4 @@
+import { createSearchMarker } from './search-marker.mjs'
 import { createPdfOutline } from './pdf-outline.mjs'
 // DOM/layout adapter around pinned PDF.js. See third-party/README.md.
 import { uiLabels } from './translation.mjs'
@@ -64,6 +65,38 @@ export function mountPdfReader(root, options) {
     lastError = null,
     disposal
   const pages = []
+  const searchMarker = createSearchMarker(sheet)
+  let searchQuery = '', searchMatches = new Map(), activeSearch = null, activationTicket = 0, activationPage = null, activationController = null
+  const clearCurrentSearch = () => { activationController?.abort(); activationController = null; activationTicket++; activationPage = null; activeSearch = null; searchMarker.clear() }
+  const clearSearch = ({ keepResults = false } = {}) => { if (!keepResults) { searchTicket++; searchQuery = ''; searchMatches.clear() } clearCurrentSearch() }
+  function searchRange(entry, match) {
+    const divs = entry.layer?.textDivs, strings = entry.layer?.textContentItemsStr
+    if (!divs || !strings) return null
+    let at = 0, from, to
+    for (let i = 0; i < strings.length; i++) {
+      const end = at + strings[i].length
+      if (!from && match.from < end && match.from >= at) from = { div: divs[i], offset: match.from - at }
+      if (match.to > at && match.to <= end) { to = { div: divs[i], offset: match.to - at }; break }
+      at = end + 1
+    }
+    if (!from || !to) throw Error('PDF search occurrence no longer matches its text layer')
+    const endpoint = value => {
+      const walker = document.createTreeWalker(value.div, NodeFilter.SHOW_TEXT)
+      let node, remaining = value.offset
+      while ((node = walker.nextNode())) { if (remaining <= node.length) return { node, offset: remaining }; remaining -= node.length }
+      throw Error('PDF text-layer occurrence has no text node')
+    }
+    const start = endpoint(from), end = endpoint(to), range = document.createRange()
+    range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset)
+    return range
+  }
+  function showCurrentSearch() {
+    if (!activeSearch) return
+    const entry = mounted.get(activeSearch.page)
+    if (!entry || entry.node.dataset.state !== 'ready') return
+    const range = searchRange(entry, activeSearch)
+    if (range) searchMarker.show(range, { id: activeSearch.searchMatchId, clip: viewport })
+  }
   const outlines = createPdfOutline({ document: () => pdf, ensure: () => ensure(), bounded: (...args) => bounded(...args), pause: () => pause() })
   const started = performance.now()
   const state = () => ({
@@ -158,8 +191,9 @@ export function mountPdfReader(root, options) {
   function ensure() {
     if (disposed) throw aborted()
   }
-  async function bounded(promise, label, milliseconds = 20000) {
+  async function bounded(promise, label, milliseconds = 20000, operationSignal) {
     ensure()
+    operationSignal?.throwIfAborted()
     let timer, stop
     try {
       return await Promise.race([
@@ -167,6 +201,7 @@ export function mountPdfReader(root, options) {
         new Promise((_, reject) => {
           stop = () => reject(aborted())
           signal.addEventListener('abort', stop, { once: true })
+          operationSignal?.addEventListener('abort', stop, { once: true })
           timer = setTimeout(() => {
             const error = Error(`${label} exceeded ${milliseconds / 1000} seconds`)
             fail(error)
@@ -178,6 +213,7 @@ export function mountPdfReader(root, options) {
     } finally {
       clearTimeout(timer)
       signal.removeEventListener('abort', stop)
+      operationSignal?.removeEventListener('abort', stop)
     }
   }
   function effectiveScale(width = pageWidth) {
@@ -219,7 +255,7 @@ export function mountPdfReader(root, options) {
   }
   function prune() {
     const ordered = [...mounted.keys()].sort(
-      (a, b) => Math.abs(a - current) - Math.abs(b - current)
+      (a, b) => (a === activationPage ? -1 : Math.abs(a - current)) - (b === activationPage ? -1 : Math.abs(b - current))
     )
     for (const number of ordered.slice(3)) release(number)
   }
@@ -280,6 +316,7 @@ export function mountPdfReader(root, options) {
       await bounded(entry.layer.render(), 'PDF text-layer layout')
       if (!live()) return
       node.dataset.state = 'ready'
+      showCurrentSearch()
       firstContentMs ??= performance.now() - started
       status.textContent = ''
       emit()
@@ -317,9 +354,11 @@ export function mountPdfReader(root, options) {
     },
     { root: viewport, rootMargin: '400px 0px' }
   )
-  async function go(number, fraction = 0) {
+  async function go(number, fraction = 0, searchGuard = null) {
     ensure()
     await ready
+    if (searchGuard && !searchGuard()) throw aborted()
+    if (!searchGuard) clearCurrentSearch()
     if (!Number.isSafeInteger(number) || number < 1 || number > pdf.numPages)
       throw Error('PDF page out of range')
     current = number
@@ -365,7 +404,7 @@ export function mountPdfReader(root, options) {
         Number(node.dataset.pdfHeight) || pageHeight
       )
     }
-    if (pdf) await go(current, fraction)
+    if (pdf) await go(current, fraction, () => !disposed)
     emit()
   }
   let scrollFrame = null
@@ -567,6 +606,8 @@ export function mountPdfReader(root, options) {
     if (disposed) return disposal
     disposed = true
     lifetime.abort()
+    clearSearch()
+    searchMarker.dispose()
     searchTicket++
     generation++
     pending.clear()
@@ -658,41 +699,85 @@ export function mountPdfReader(root, options) {
         throw Error('Invalid PDF page coordinate')
       await go(target.page, fraction)
     },
-    async search(query, { signal: requestSignal } = {}) {
+    clearSearch,
+    repaintSearch(match, { query } = {}) {
+      const owned = searchMatches.get(match?.searchMatchId)
+      if (disposed || !owned || query !== searchQuery) return false
+      activeSearch = owned
+      showCurrentSearch()
+      return true
+    },
+    async activateSearch(match, { query, signal: requestSignal } = {}) {
+      ensure(); requestSignal?.throwIfAborted()
+      const owned = searchMatches.get(match?.searchMatchId)
+      if (!owned || query !== searchQuery) throw Error('PDF search occurrence is stale or belongs to another search')
+      clearCurrentSearch()
+      activationPage = owned.page
+      const controller = new AbortController()
+      activationController = controller
+      const cancelled = () => controller.abort()
+      requestSignal?.addEventListener('abort', cancelled, { once: true })
+      const ticket = activationTicket, search = searchTicket, paintGeneration = generation
+      const live = () => !disposed && ticket === activationTicket && search === searchTicket && !requestSignal?.aborted && paintGeneration === generation
+      // Resolve the bounded target text layer before committing the navigation.
+      // User cancellation or a changed layout cannot publish a late marker.
+      try {
+        if (!mounted.has(owned.page)) await bounded(paint(owned.page), 'PDF search activation', 30000, controller.signal)
+        const deadline = performance.now() + 30000
+        while (mounted.get(owned.page)?.node.dataset.state !== 'ready') {
+          if (!live()) throw aborted()
+          if (performance.now() >= deadline || mounted.get(owned.page)?.node.dataset.state === 'error') throw Error('PDF search text layer is unavailable')
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+        if (!live()) throw aborted()
+        // Paged mode hides every other page. Reveal the verified target before
+        // reading its DOM geometry; hidden ranges otherwise report 0/0 bounds.
+        if (pages[owned.page - 1].hidden) {
+          await go(owned.page, 0, live)
+          if (!live()) throw aborted()
+        }
+        const range = searchRange(mounted.get(owned.page), owned)
+        const rect = range.getBoundingClientRect(), pageBounds = pages[owned.page - 1].getBoundingClientRect()
+        await go(owned.page, clamp((rect.top - pageBounds.top) / pageBounds.height), live)
+        if (!live()) throw aborted()
+        activeSearch = owned
+        showCurrentSearch()
+      } finally { requestSignal?.removeEventListener('abort', cancelled); if (ticket === activationTicket) { activationPage = null; activationController = null } }
+    },
+    async search(query, options = {}) {
+      const { signal: requestSignal } = options
+      if ('offset' in options || 'limit' in options) throw Error('PDF renderer search paging is owned by the search controller')
+      clearSearch()
+      const ticket = searchTicket
       await ready
-      const ticket = ++searchTicket
       if (typeof query !== 'string' || !query || new TextEncoder().encode(query).length > 256)
         throw Error('Search requires 1–256 UTF-8 bytes')
-      const matches = [],
-        needle = query.toLocaleLowerCase()
+      const matches = [], owned = new Map(), pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu')
       let complete = true
+      const check = () => { ensure(); requestSignal?.throwIfAborted(); if (ticket !== searchTicket) throw aborted() }
       for (let number = 1; number <= pdf.numPages; number++) {
-        ensure()
-        requestSignal?.throwIfAborted()
-        if (ticket !== searchTicket) throw aborted()
-        const page = await bounded(pdf.getPage(number), 'PDF search page'),
-          content = await text(page),
-          value = content.items.map((item) => item.str || '').join(' ')
-        const offset = value.toLocaleLowerCase().indexOf(needle)
-        if (offset >= 0)
-          matches.push({
-            page: number,
-            excerpt: value.slice(
-              Math.max(0, offset - 100),
-              offset + Math.min(query.length, 256) + 100
-            ),
-            location: {
-              kind: 'pdf',
-              pages: [{ page: number, rects: [{ x: 0, y: 0, width: 1, height: 1 }] }]
-            }
-          })
-        if (!mounted.has(number)) page.cleanup()
-        if (matches.length >= 500) {
-          complete = number === pdf.numPages
-          break
-        }
+        check()
+        const page = await bounded(pdf.getPage(number), 'PDF search page')
+        try {
+          const content = await text(page), value = content.items.filter(item => typeof item.str === 'string').map(item => item.str).join(' ')
+          check()
+          pattern.lastIndex = 0
+          let found
+          while ((found = pattern.exec(value))) {
+            if (matches.length === 500) { complete = false; break }
+            const searchMatchId = `${searchMarker.name}:${ticket}:${matches.length}`
+            const match = { searchMatchId, page: number, locationPrecision: 'page',
+              excerpt: value.slice(Math.max(0, found.index - 100), found.index + found[0].length + 100),
+              location: { kind: 'pdf', pages: [{ page: number, rects: [{ x: 0, y: 0, width: 1, height: 1 }] }] } }
+            matches.push(match)
+            owned.set(searchMatchId, { ...match, from: found.index, to: found.index + found[0].length })
+          }
+        } finally { if (!mounted.has(number)) page.cleanup() }
+        if (!complete) break
         await pause()
       }
+      check()
+      searchQuery = query; searchMatches = owned
       return { revision, matches, complete, limit: 500 }
     },
     async navigateOutline(id, { signal } = {}) {

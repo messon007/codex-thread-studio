@@ -1,5 +1,6 @@
 // Adapted from Codex Thread Studio a2f87a37d5a3d0de7c0dbe0f0f9666e0b13c3a4a (MIT).
 // License: third-party/codex-thread-studio-MIT.txt. Local source only.
+import { createSearchMarker } from './search-marker.mjs'
 import { uiLabels } from './translation.mjs'
 import { ePub, replaceBase } from './vendor/epub.mjs'
 
@@ -202,13 +203,19 @@ export function mountEpubReader(root, options) {
         }))
       }
     },
-    async search(query, { signal } = {}) {
+    clearSearch: (options) => instance?.clearSearch(options),
+    repaintSearch: (match, options) => instance?.repaintSearch(match, options) ?? false,
+    async activateSearch(match, { query, signal } = {}) {
+      return work(() => instance.activateSearch(match, { query, signal }))
+    },
+    async search(query, options = {}) {
       return work(async () => {
-        const result = await instance.search(query, { signal })
+        const result = await instance.search(query, options)
         return {
           revision,
           ...result,
           matches: result.matches.map((match) => ({
+            searchMatchId: match.searchMatchId,
             excerpt: match.excerpt,
             label: 'EPUB',
             location: { kind: 'epub', cfi: match.cfi, href: archiveHref(match.href) }
@@ -365,6 +372,31 @@ export async function createEpubReader({
   const readingTypography = normalizeEpubTypography(typography)
   const shell = buildShell(container, translate)
   const requests = new AbortController()
+  const searchMarker = createSearchMarker(shell.root)
+  let searchGeneration = 0, searchQuery = '', searchMatches = new Map(), activeSearch = null
+  let searchActivation = null, navigationGeneration = 0, activationRecovery = Promise.resolve()
+  function cancelActivation(restore = true) {
+    const operation = searchActivation
+    if (!operation) return
+    searchActivation = null
+    operation.restore = restore
+    operation.controller.abort()
+  }
+  function clearSearch({ keepResults = false } = {}) {
+    if (!keepResults) { searchGeneration++; searchQuery = ''; searchMatches.clear() }
+    activeSearch = null
+    searchMarker.clear()
+    cancelActivation(true)
+  }
+  function showCurrentSearch() {
+    if (!activeSearch || destroyed) return
+    const section = book.spine.get(activeSearch.cfi)
+    const contents = (rendition?.getContents() || []).find(value => value.sectionIndex === section?.index)
+    if (!contents) { searchMarker.clear(); return }
+    const range = contents.range(activeSearch.cfi)
+    if (!range || range.toString() !== activeSearch.quote) { searchMarker.clear(); return }
+    searchMarker.show(range, { id: activeSearch.searchMatchId, frame: contents.window.frameElement, clip: shell.viewer })
+  }
   const request = async (input, type, overrideSignal) => {
     signal?.throwIfAborted()
     requests.signal.throwIfAborted()
@@ -460,6 +492,9 @@ export async function createEpubReader({
   const destroy = () => {
     if (destroyed) return
     destroyed = true
+    cancelActivation(false)
+    clearSearch()
+    searchMarker.dispose()
     locationGeneration++
     progressController?.abort()
     requests.abort()
@@ -483,8 +518,9 @@ export async function createEpubReader({
     if (!section) throw Error('EPUB chapter is not in the spine')
     return section.href + target.hash
   }
-  async function awaitBounded(promise, label, milliseconds = 20000) {
+  async function awaitBounded(promise, label, milliseconds = 20000, operationSignal) {
     lifetime.signal.throwIfAborted()
+    operationSignal?.throwIfAborted()
     let timer, cancelled
     try {
       return await Promise.race([
@@ -492,6 +528,7 @@ export async function createEpubReader({
         new Promise((_, reject) => {
           cancelled = () => reject(new DOMException('EPUB reader disposed', 'AbortError'))
           lifetime.signal.addEventListener('abort', cancelled, { once: true })
+          operationSignal?.addEventListener('abort', cancelled, { once: true })
           timer = setTimeout(() => {
             reject(Error(`${label} exceeded ${milliseconds / 1000} seconds`))
             destroy()
@@ -501,6 +538,7 @@ export async function createEpubReader({
     } finally {
       clearTimeout(timer)
       lifetime.signal.removeEventListener('abort', cancelled)
+      operationSignal?.removeEventListener('abort', cancelled)
     }
   }
 
@@ -756,6 +794,7 @@ export async function createEpubReader({
     rendition.themes.register('studio-reader', rules)
     rendition.themes.select('studio-reader')
     shell.root.dataset.paper = readerState.theme
+    showCurrentSearch()
   }
 
   function sanitizeDocument(document, url) {
@@ -971,6 +1010,7 @@ export async function createEpubReader({
       )
     }
     renderPosition(shell, readerState, translate)
+    showCurrentSearch()
     updateProgressControls()
     notifyRelocate()
   }
@@ -981,12 +1021,21 @@ export async function createEpubReader({
     await awaitBounded(updated, 'EPUB position update')
   }
   async function displayTarget(target) {
+    cancelActivation(true)
+    const navigation = ++navigationGeneration
+    await activationRecovery
+    if (destroyed || navigation !== navigationGeneration) throw new DOMException('EPUB navigation cancelled', 'AbortError')
+    activeSearch = null
+    searchMarker.clear()
     clearEpubSelection(true)
     await awaitBounded(rendition.display(target), 'EPUB navigation')
     await reportPosition()
   }
 
   const mountRendition = async (target = '') => {
+    cancelActivation(false)
+    navigationGeneration++
+    searchMarker.clear()
     if (lastSelection) onSelection(null)
     lastSelection = lastSelectionContents = null
     selectionBoundaries = new WeakMap()
@@ -1005,6 +1054,7 @@ export async function createEpubReader({
     })
     const mounted = rendition
     mounted.hooks.content.register(sanitizeContents)
+    mounted.on('rendered', () => { if (!destroyed && rendition === mounted) showCurrentSearch() })
     const locationChanged = (location) => {
       if (!destroyed && rendition === mounted) relocated(location)
     }
@@ -1019,17 +1069,20 @@ export async function createEpubReader({
       'EPUB chapter display'
     )
     await reportPosition()
+    showCurrentSearch()
   }
 
   let changingFlow = false
   const changeFlow = async (flow) => {
     if (!FLOWS.has(flow) || readerState.flow === flow) return
     if (changingFlow) throw Error('EPUB reading flow is changing')
-    const target = readerState.cfi
     changingFlow = true
+    cancelActivation(false)
     const controls = [shell.continuous, ...shell.settings.querySelectorAll('[data-epub-flow]')]
     controls.forEach(control => { control.disabled = true })
     try {
+      await activationRecovery
+      const target = readerState.cfi
       readerState.flow = flow
       updateSettings(shell, readerState)
       await mountRendition(target)
@@ -1055,6 +1108,17 @@ export async function createEpubReader({
     notifyRelocate()
   }
 
+  async function turnPage(direction) {
+    // A pending epub.js display can still scroll after a newer display resolves.
+    // Finish detaching/recovering that owned operation before a manual page turn.
+    cancelActivation(true)
+    const navigation = ++navigationGeneration
+    await activationRecovery
+    if (destroyed || navigation !== navigationGeneration) return
+    clearEpubSelection(true)
+    await rendition?.[direction]()
+  }
+
   function handleKeydown(event) {
     if (event.defaultPrevented || event.altKey || event.isComposing) return
     // Shift+Arrow belongs to native text-selection extension in the book.
@@ -1071,20 +1135,18 @@ export async function createEpubReader({
       return
     if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
       event.preventDefault()
-      clearEpubSelection(true)
-      rendition?.prev()
+      void turnPage('prev').catch(onError)
     } else if (event.key === 'ArrowRight' || event.key === 'PageDown') {
       event.preventDefault()
-      clearEpubSelection(true)
-      rendition?.next()
+      void turnPage('next').catch(onError)
     } else if (event.key === 'Escape') {
       shell.settings.classList.add('hidden')
     }
   }
 
   shell.root.addEventListener('keydown', handleKeydown, { signal: lifetime.signal })
-  shell.previous.addEventListener('click', () => { clearEpubSelection(true); rendition?.prev() }, { signal: lifetime.signal })
-  shell.next.addEventListener('click', () => { clearEpubSelection(true); rendition?.next() }, { signal: lifetime.signal })
+  shell.previous.addEventListener('click', () => { void turnPage('prev').catch(onError) }, { signal: lifetime.signal })
+  shell.next.addEventListener('click', () => { void turnPage('next').catch(onError) }, { signal: lifetime.signal })
   shell.progressBuild.addEventListener(
     'click',
     () => {
@@ -1202,21 +1264,78 @@ export async function createEpubReader({
       if (quote.length > MAX_SELECTION) throw Error('EPUB CFI quote exceeds its text budget')
       return quote
     },
-    async search(query, { signal: operationSignal } = {}) {
+    clearSearch,
+    repaintSearch(match, { query } = {}) {
+      const owned = searchMatches.get(match?.searchMatchId)
+      if (destroyed || !owned || query !== searchQuery) return false
+      activeSearch = owned
+      showCurrentSearch()
+      return true
+    },
+    async activateSearch(match, { query, signal: operationSignal } = {}) {
+      lifetime.signal.throwIfAborted(); operationSignal?.throwIfAborted()
+      const owned = searchMatches.get(match?.searchMatchId)
+      if (!owned || query !== searchQuery) throw Error('EPUB search occurrence is stale or belongs to another search')
+      cancelActivation(true)
+      await activationRecovery
+      lifetime.signal.throwIfAborted(); operationSignal?.throwIfAborted()
+      if (searchMatches.get(match.searchMatchId) !== owned) throw new DOMException('EPUB search cancelled', 'AbortError')
+      activeSearch = null; searchMarker.clear(); clearEpubSelection(true)
+      const controller = new AbortController(), navigation = ++navigationGeneration
+      const operation = { controller, restore: true, engine: false, rendition, cfi: readerState.cfi, navigation }
+      searchActivation = operation
+      const operationAborted = () => controller.abort()
+      operationSignal?.addEventListener('abort', operationAborted, { once: true })
+      controller.signal.addEventListener('abort', () => {
+        if (operation.engine && operation.restore && !destroyed && rendition === operation.rendition && navigationGeneration === navigation) {
+          // epub.js display itself is not cancellable. Detach that rendition so
+          // its delayed iframe/scroll cannot commit over a cleared search.
+          searchActivation = null
+          activationRecovery = mountRendition(operation.cfi).catch(error => { if (!destroyed && error.name !== 'AbortError') onError(error) })
+        }
+      }, { once: true })
+      const check = () => {
+        lifetime.signal.throwIfAborted(); controller.signal.throwIfAborted(); operationSignal?.throwIfAborted()
+        if (searchActivation !== operation || navigationGeneration !== navigation || searchMatches.get(owned.searchMatchId) !== owned) throw new DOMException('EPUB search cancelled', 'AbortError')
+      }
+      try {
+        const section = book.spine.get(owned.cfi)
+        // This cancellable preload normally resolves every source dependency
+        // before the final, guarded epub.js display begins.
+        await awaitBounded(section.load((url, type) => request(url, type, controller.signal)), 'EPUB search target', 20000, controller.signal)
+        check()
+        operation.engine = true
+        await awaitBounded(rendition.display(owned.cfi), 'EPUB search navigation', 20000, controller.signal)
+        check()
+        await reportPosition()
+        check()
+        activeSearch = owned
+        showCurrentSearch()
+      } finally {
+        operationSignal?.removeEventListener('abort', operationAborted)
+        if (searchActivation === operation) searchActivation = null
+      }
+    },
+    async search(query, options = {}) {
+      const { signal: operationSignal } = options
+      if ('offset' in options || 'limit' in options) throw Error('EPUB renderer search paging is owned by the search controller')
+      clearSearch()
+      const generation = searchGeneration
+      const check = () => { lifetime.signal.throwIfAborted(); operationSignal?.throwIfAborted(); if (generation !== searchGeneration) throw new DOMException('EPUB search cancelled', 'AbortError') }
       if (typeof query !== 'string' || !query || new TextEncoder().encode(query).length > 256)
         throw Error('EPUB search requires 1–256 UTF-8 bytes')
-      const matches = [],
+      const matches = [], owned = new Map(),
         pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gu')
       const started = performance.now()
       for (const section of book.spine.spineItems) {
-        lifetime.signal.throwIfAborted()
-        operationSignal?.throwIfAborted()
+        check()
         if (performance.now() - started > 30000) throw Error('EPUB search exceeded 30 seconds')
         await awaitBounded(
           section.load((url, type) => request(url, type, operationSignal)),
           'EPUB search chapter'
         )
         try {
+          check()
           const nodes = [],
             parts = [],
             walker = section.document.createTreeWalker(section.document.body, NodeFilter.SHOW_TEXT)
@@ -1260,12 +1379,20 @@ export async function createEpubReader({
               range = section.document.createRange()
             range.setStart(from.node, from.offset)
             range.setEnd(to.node, to.offset)
-            matches.push({
+            const value = {
+              searchMatchId: `${searchMarker.name}:${generation}:${matches.length}`,
               cfi: checkedCfi(section.cfiFromRange(range)),
               href: section.href,
               excerpt: text.slice(Math.max(0, match.index - 80), match.index + match[0].length + 80)
-            })
-            if (matches.length >= 500) return { matches, complete: false, limit: 500 }
+            }
+            matches.push(value)
+            owned.set(value.searchMatchId, { ...value, quote: range.toString() })
+            if (matches.length >= 500) {
+              check()
+              searchQuery = query
+              searchMatches = owned
+              return { matches, complete: false, limit: 500 }
+            }
           }
         } finally {
           if (
@@ -1277,6 +1404,9 @@ export async function createEpubReader({
         }
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
+      check()
+      searchQuery = query
+      searchMatches = owned
       return { matches, complete: true, limit: 500 }
     },
     settings: async (patch) => {

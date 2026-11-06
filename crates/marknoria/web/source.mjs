@@ -38,6 +38,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   let loading = false
   let external = null
   let code = null
+  let searchSelection = null
   const mount = document.createElement('div')
   mount.id = 'source-code-view'
   viewport.append(mount)
@@ -64,9 +65,12 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     next.setAttribute('aria-disabled', String(loading || !page || page.end >= index.sourceBytes))
     input.readOnly = loading
   }
-  async function load(query, target = null) {
+  async function load(query, target = null, signal = null) {
+    signal?.throwIfAborted()
     request?.abort()
     request = new AbortController()
+    const controller = request, abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
     const ticket = ++generation
     loading = true
     panel.dataset.ready = ''
@@ -76,10 +80,13 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     try {
       const response = await api(`/api/source?${query}`, request.signal)
       if (ticket !== generation || !visible || response.revision !== index.revision) return
+      signal?.throwIfAborted()
       page = response.result
       const module = await import('./vendor/editor.mjs')
       if (ticket !== generation || !visible) return
+      signal?.throwIfAborted()
       if (!code) code = module.codeView(mount, { readOnly: true, translate: options.translate })
+      searchSelection = null
       code.load(page.text.replaceAll('\r\n', '\n'), page.line, response.language)
       document.querySelector('.source-content').hidden = true
       text.textContent = page.text
@@ -91,11 +98,14 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       viewport.scrollLeft = 0
       await code.reveal(target ?? page.line)
       if (ticket !== generation || !visible) return false
+      signal?.throwIfAborted()
       panel.dataset.ready = 'true'
+      options.onReady?.()
       return true
     } catch (error) {
       if (ticket === generation && error.name !== 'AbortError') { labels.clear(range); range.replaceChildren(document.createTextNode(String(error.message).slice(0,800)+' · '),retry) }
     } finally {
+      signal?.removeEventListener('abort', abort)
       if (ticket === generation) { loading = false; text.removeAttribute('aria-busy'); update() }
     }
   }
@@ -104,14 +114,19 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     if (external) return external.go(line)
     await load(`line=${line}`, line)
   }
-  async function goRange(start, end) {
+  async function goRange(start, end, options = {}) {
+    const signal = options.signal
+    signal?.throwIfAborted()
     if (external) throw Error('This source renderer cannot restore byte ranges')
     if (![start,end].every(Number.isSafeInteger) || start < 0 || end < start || end > index.sourceBytes || end-start > 128*1024) throw Error('Source range out of bounds')
     setVisible(true)
-    if (!await load(`offset=${start}`)) throw Error('Source navigation was cancelled or failed')
-    if (page.end < end && !await load(`offset=${start}&end=${end}`)) throw Error('Source range navigation was cancelled or failed')
+    if (!await load(`offset=${start}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source navigation was cancelled or failed') }
+    if (page.end < end && !await load(`offset=${start}&end=${end}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source range navigation was cancelled or failed') }
+    signal?.throwIfAborted()
     const { from, to } = sourceRangeOffsets(page,start,end)
+    if (options.search) searchSelection = { from, to }
     await code.select(from,to)
+    signal?.throwIfAborted()
   }
   function setVisible(open) {
     // Read while CodeMirror still has layout; hidden panels report line one.
@@ -135,7 +150,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       request?.abort()
       loading = false
       text.removeAttribute('aria-busy')
-      preview(line)
+      return Promise.resolve(preview(line)).then(() => options.onReady?.())
     }
   }
   async function show(line = anchor()) {
@@ -146,6 +161,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
         await code.select(from, from)
       }
     } else await go(typeof line === 'object' ? line.line : line)
+    options.onReady?.()
   }
   if (options.buttons !== false) {
     on(document.querySelector('#source-mode'), 'click', () => { if (!visible) show() })
@@ -161,7 +177,20 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     get external() { return Boolean(external) },
     selection() { return visible && external ? external.selection?.() ?? null : null },
     get visible() { return visible }, get page() { return page }, currentLine, currentLocation, show, go, goRange,
-    hide() { if (visible) setVisible(false) },
+    hide() { if (visible) return setVisible(false) },
+    highlightRange(start, end) {
+      if (!visible || !code || !page || start < page.start || end > page.end) { this.clearSearch(); return }
+      const { from, to } = sourceRangeOffsets(page, start, end)
+      code.view.dispatch({ selection: { anchor: from, head: to } })
+      searchSelection = { from, to }
+    },
+    clearSearch() {
+      if (searchSelection && code) {
+        const selected = code.view.state.selection.main
+        if (selected.from === searchSelection.from && selected.to === searchSelection.to) code.view.dispatch({ selection: { anchor: selected.head } })
+      }
+      searchSelection = null
+    },
     attach(externalView) {
       generation += 1
       request?.abort()

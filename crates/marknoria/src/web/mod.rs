@@ -23,7 +23,7 @@ mod references;
 pub use service::{Service, ServiceOptions, DiagramMode};
 pub use references::HostImage;
 use crate::core::{
-    Index, audit_tables, build_index, read_diagram, read_page, read_table, search,
+    Index, audit_tables, build_index, read_diagram, read_page, read_table, search, search_window,
 };
 use crate::core::source::read_source;
 use serde::Deserialize;
@@ -55,6 +55,7 @@ struct App {
     token: String,
     host: String,
     work: Arc<Semaphore>,
+    original_waiters: Arc<Semaphore>,
     open_work: Arc<Semaphore>,
     diagram_work: Arc<Semaphore>,
     diagram_waiters: Arc<Semaphore>,
@@ -326,6 +327,9 @@ async fn projection_window(
 #[derive(Deserialize)]
 struct SearchQuery {
     query: String,
+    /// Presence opts the browser UI into counted, bounded result windows.
+    offset: Option<usize>,
+    revision: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -412,6 +416,16 @@ async fn find(
         let _permit = permit;
         let index = index(&document)?;
         if index.renderer.is_some() { return Err((StatusCode::CONFLICT, "Search requires the active container renderer; use the public reader search command".into())); }
+        if query.revision.as_ref().is_some_and(|revision| revision != &index.revision) {
+            return Err((StatusCode::CONFLICT, "Search revision changed; run the search again".into()));
+        }
+        if let Some(offset) = query.offset {
+            let window = search_window(&document.directory, &index, &query.query, offset).map_err(failure)?;
+            // `total` is exact because the count scan completed. `complete`
+            // describes whether this result window reaches the final match.
+            let complete = window.offset.saturating_add(window.matches.len()) >= window.total;
+            return Ok(Json(json!({"revision":index.revision,"matches":window.matches,"offset":window.offset,"total":window.total,"limit":window.limit,"complete":complete,"mode":"case-sensitive-source-lines"})));
+        }
         let matches = search(&document.directory, &index, &query.query).map_err(failure)?;
         Ok(Json(
             json!({"matches":matches,"limit":100,"mode":"case-sensitive-source-lines"}),
@@ -469,6 +483,7 @@ fn assets() -> Router {
         .route("/reader-bridge.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-bridge.mjs")) }))
         .route("/host-client.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/host-client.mjs")) }))
         .route("/query-operation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/query-operation.mjs")) }))
+        .route("/query-help.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/query-help.mjs")) }))
         .route("/table-query.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/table-query.mjs")) }))
         .route("/assets.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/assets.mjs")) }))
         .route("/image-view.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/image-view.mjs")) }))
@@ -491,6 +506,7 @@ fn assets() -> Router {
         .route("/compare.css", get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../../web/compare.css")) }))
         .route("/icons.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/icons.mjs")) }))
         .route("/source.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/source.mjs")) }))
+        .route("/search-position.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/search-position.mjs")) }))
         .route(
             "/files.mjs",
             get(|| async {
@@ -680,6 +696,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         token: uuid::Uuid::new_v4().to_string(),
         host: listener.local_addr()?.to_string(),
         work: Arc::new(Semaphore::new(2)),
+        original_waiters: Arc::new(Semaphore::new(16)),
         open_work: Arc::new(Semaphore::new(1)),
         diagram_work: Arc::new(Semaphore::new(1)),
         diagram_waiters: Arc::new(Semaphore::new(4)),

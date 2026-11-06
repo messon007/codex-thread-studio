@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createLargeMarkdownHost } from './large-markdown-host.mjs'
+import { createLargeMarkdownHost, createReaderSelectionHost, readerCommentReference } from './large-markdown-host.mjs'
 function fixture(initialView, capabilities = {}, callbacks = {}) {
   const requests=[],states=[],selections=[]
   let listener,closed=0
@@ -9,7 +9,7 @@ function fixture(initialView, capabilities = {}, callbacks = {}) {
     requests.push({method,params,signal})
     if(method==='setView')state={...state,view:params.view}
     if(method==='contents')state={...state,outline:{...state.outline,open:params.open}}
-    if(method==='search')return {matches:[{line:8,location:{kind:'cell',table:0,row:4,column:0}}]}
+    if(method==='search')return callbacks.searchResponse || {matches:[{line:8,location:{kind:'cell',table:0,row:4,column:0}}]}
     if(method==='save'){if(state.error)throw Error(state.error);state={...state,dirty:false}}
     return state
   },async dispose({force}){assert.equal(force,true);closed++}}
@@ -28,7 +28,7 @@ test('host controls use only the public protocol and preserve dirty/save errors'
  setState({dirty:true,error:'Changed outside Studio'})
  await assert.rejects(host.save(),/Changed outside/);assert.equal(host.dirty,true)
  setState({error:null});assert.equal(await host.save(),true);assert.equal(host.dirty,false)
- const matches=await host.search('needle');await host.navigateMatch(matches[0])
+ const {matches}=await host.search('needle');await host.navigateMatch(matches[0])
  assert.deepEqual(requests.at(-1).params.location,{kind:'line',line:8})
  await host.setView('preview');await host.navigateMatch(matches[0])
  assert.deepEqual(requests.at(-1).params.location,{kind:'cell',table:0,row:4,column:0})
@@ -43,7 +43,7 @@ test('typed selections preserve scope and precision while converting frame coord
  assert.deepEqual(selection.location,{kind:'source',startByte:3,endByte:13})
  assert.equal(selection.rect.left,105);assert.equal(selection.rect.top,210)
  assert.equal(selection.startLine,null)
- await host.dispose();emit('selection',{quote:'late'});assert.equal(selections.length,1)
+ await host.dispose();assert.equal(selections.at(-1),null);const count=selections.length;emit('selection',{quote:'late'});assert.equal(selections.length,count)
 })
 test('typed reference navigation retains coordinates and refuses stale, draft, and transient targets',async()=>{
  const {host,requests}=fixture();await host.ready
@@ -159,52 +159,20 @@ test('Notes ownership is delegated only when the fixed package declares the capa
  try{
   await host.ready
   assert.equal(requests[0].params.notes,'host')
+  assert.equal(requests[0].params.selectionMenu,'host')
   await host.notes({operation:'list',offset:0},{documentId:'old-doc',revision:'c'.repeat(64)})
   assert.equal(requests.at(-1).params.documentId,'old-doc')
   assert.equal(requests.at(-1).params.revision,'c'.repeat(64))
  }finally{await host.dispose()}
 })
 
-test('ordinary Notes bindings preserve original owner/transport and map frame bounds',async()=>{
- const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
- const mounts=[],calls=[]
- const root={ownerDocument:{body:{}}}
- const controller=createReaderNotesHost(root,{}, {load:async()=>({mountNotes:options=>{
-  const record={options,disposed:false,selections:0};mounts.push(record)
-  return {dispose(){record.disposed=true},async selectionChanged(){record.selections++}}
- }})})
- const host=name=>({dirty:false,notes:async(request,owner)=>{calls.push({name,request,owner});return {items:[],total:0}}})
- const first={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),name:'one.csv',capabilities:{notes:true,queryNotes:true,presentation:{notesOwner:true}}}
- try{
-  await controller.update(first,host('one'))
-  assert.equal(mounts[0].options.queryNotes,true)
-  controller.capture({documentId:'one',revision:first.revision,quote:'001',location:{kind:'cell',table:0,row:2,column:1},precision:'exact',rect:{left:100,top:200,width:30,height:15}})
-  assert.deepEqual((await mounts[0].options.selection()).viewportRect,{x:100,y:200,width:30,height:15})
-  await controller.update({...first,documentId:'two',revision:'b'.repeat(64)},host('two'))
-  assert.equal(mounts[0].disposed,true)
-  assert.equal(await mounts[1].options.selection(),null)
-  const signal=new AbortController().signal
-  await mounts[0].options.storage({operation:'list',offset:0},{signal})
-  assert.equal(calls[0].name,'one')
-  assert.equal(calls[0].owner.documentId,'one')
-  assert.equal(calls[0].owner.revision,first.revision)
-  assert.equal(calls[0].owner.signal,signal)
- }finally{controller.dispose()}
- assert.equal(mounts[1].disposed,true)
-})
-
-test('late Notes imports cannot mount after owner replacement or disposal',async()=>{
- const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
- const pending=[],mounts=[]
- const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{load:()=>new Promise(resolve=>pending.push(resolve))})
- const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),capabilities:{notes:true,presentation:{notesOwner:true}}}
- const first=controller.update(owner,{})
- const second=controller.update({...owner,documentId:'two'},{})
- controller.dispose()
- for(const resolve of pending)resolve({mountNotes:options=>{mounts.push(options);return {dispose(){}}}})
- await Promise.all([first,second])
- assert.deepEqual(mounts,[])
- assert.equal(controller.capture({quote:'late'}),false)
+test('text menus clear on collapsed selection, view/revision changes, and disposal',async()=>{
+ const {host,emit,selections,setState}=fixture();await host.ready
+ const selection={documentId:'doc',revision:'a'.repeat(64),quote:'text',location:{kind:'line',line:1},precision:'approximate'}
+ emit('selection',selection);emit('selection',null);assert.equal(selections.at(-1),null)
+ emit('selection',selection);setState({view:'source'});assert.equal(selections.at(-1),null)
+ emit('selection',selection);setState({revision:'b'.repeat(64)});assert.equal(selections.at(-1),null)
+ await host.dispose();assert.equal(selections.at(-1),null)
 })
 
 test('host controls stay unready while a saved reading location is being restored',async()=>{
@@ -266,46 +234,40 @@ test('removing a reader disconnects local transport without reporting expected l
  assert.deepEqual(errors,[])
 })
 
-for(const mode of ['saved','failed','replaced','aborted'])test(`SQL Ask AI ${mode} waits for trusted snapshot and never creates a partial draft`,async()=>{
- const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
- const mounts=[],actions=[]
+for(const mode of ['saved','failed','replaced','cleared','disposed'])test(`SQL Comment ${mode} waits for trusted provenance and never exposes a stale menu`,async()=>{
+ const selections=[],errors=[]
  let resolveSnapshot,rejectSnapshot
  const deferred=new Promise((resolve,reject)=>{resolveSnapshot=resolve;rejectSnapshot=reject})
- const host={dirty:false,querySnapshot:()=>deferred}
- const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{
-  load:async()=>({mountNotes:options=>{mounts.push(options);return {dispose(){},async selectionChanged(){}}}}),
-  onAction:selection=>actions.push(selection),
- })
- const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),name:'one.csv',capabilities:{notes:true,queryNotes:true,presentation:{notesOwner:true}}}
- await controller.update(owner,host)
+ const host={querySnapshot:()=>deferred}
+ const controller=createReaderSelectionHost({onSelection:selection=>selections.push(selection),onError:error=>errors.push(error.message)})
+ const owner={ready:true,documentId:'one',revision:'a'.repeat(64),view:'preview'}
+ controller.update(owner,host)
  const selection={documentId:'one',revision:owner.revision,quote:'2',precision:'exact',location:{kind:'queryCell',queryId:'query',row:0,column:0}}
- const abort=new AbortController()
- const pending=mounts[0].actions[0].run(selection,{signal:abort.signal})
- assert.equal(actions.length,0)
- if(mode==='replaced')await controller.update({...owner,documentId:'two'},host)
- if(mode==='aborted')abort.abort()
+ const pending=controller.capture(selection)
+ assert.equal(selections.filter(Boolean).length,0)
+ if(mode==='replaced')controller.update({...owner,documentId:'two'},host)
+ if(mode==='cleared')await controller.capture(null)
+ if(mode==='disposed')controller.dispose()
  if(mode==='failed')rejectSnapshot(Error('Result expired'))
  else resolveSnapshot({revision:owner.revision,quote:'2',anchor:{query:{sql:'SELECT COUNT(*) FROM t'}}})
+ await pending
  if(mode==='saved') {
-  await pending
-  assert.equal(actions.length,1)
-  assert.equal(actions[0].querySnapshot.anchor.query.sql,'SELECT COUNT(*) FROM t')
- } else {await assert.rejects(pending);assert.equal(actions.length,0)}
+  assert.equal(selections.filter(Boolean).length,1)
+  assert.equal(selections.at(-1).querySnapshot.anchor.query.sql,'SELECT COUNT(*) FROM t')
+ } else assert.equal(selections.filter(Boolean).length,0)
+ assert.deepEqual(errors,mode==='failed'?['Result expired']:[])
  controller.dispose()
 })
 
-test('AI excerpt prefixes honor the persisted UTF-8 budget before SQL verification',async()=>{
- const {createReaderNotesHost}=await import('./large-markdown-host.mjs')
- let mounted,captured,verified
- const controller=createReaderNotesHost({ownerDocument:{body:{}}},{},{load:async()=>({mountNotes:options=>{mounted=options;return {dispose(){},async selectionChanged(){}}}}),onAction:value=>{captured=value}})
- const owner={initialized:true,ready:true,documentId:'one',revision:'a'.repeat(64),capabilities:{notes:true,presentation:{notesOwner:true}}}
- await controller.update(owner,{querySnapshot:async value=>{verified=value;return {revision:value.revision,quote:value.quote,anchor:{quoteTruncated:value.quoteTruncated}}}})
+test('comment excerpts honor UTF-8 limits before SQL verification while Copy preserves the selected text',async()=>{
+ let verified
+ const host={querySnapshot:async value=>{verified=value;return {revision:value.revision,quote:value.quote,anchor:{quoteTruncated:value.quoteTruncated}}}}
  const original='中文😀'.repeat(5000)
- await mounted.actions[0].run({documentId:'one',revision:owner.revision,quote:original,location:{kind:'queryCell',queryId:'query',row:0,column:0}},{signal:new AbortController().signal})
+ const captured=await readerCommentReference(host,{documentId:'one',revision:'a'.repeat(64),quote:original,location:{kind:'queryCell',queryId:'query',row:0,column:0}},new AbortController().signal)
  assert.ok(Buffer.byteLength(verified.quote)<=16384)
  assert.ok(original.startsWith(verified.quote));assert.equal(verified.quote.includes('\ufffd'),false)
  assert.equal(verified.quoteTruncated,true);assert.equal(captured.querySnapshot.quote,verified.quote)
- controller.dispose()
+ assert.equal(captured.copyText,original)
 })
 
 test('jq host uses the shared component and captured owner, and removes late/obsolete controls',async()=>{
@@ -336,4 +298,33 @@ test('jq host uses the shared component and captured owner, and removes late/obs
   assert.equal(mounts[1].options.autoRun,true)
  }finally{adapter.dispose()}
  assert.equal(mounts.at(-1).disposed,true)
+})
+
+
+test('host search distinguishes exact totals from capped legacy windows and retains exact Source ranges',async()=>{
+ for(const [response,total,complete] of [
+  [{matches:Array.from({length:100},()=>({line:8,start:13,end:19})),limit:100},100,false],
+  [{matches:[{line:8,start:13,end:19}],total:150,complete:false},150,true],
+  [{matches:[{line:8,start:13,end:19}],complete:true},1,true],
+ ]) {
+  const {host,requests}=fixture('source',{}, {searchResponse:response})
+  try {
+   const result=await host.search('needle')
+   assert.equal(result.total,total);assert.equal(result.complete,complete)
+   await host.navigateMatch(result.matches[0])
+   assert.deepEqual(requests.at(-1).params.location,{kind:'source',startByte:13,endByte:19})
+  } finally {await host.dispose()}
+ }
+})
+
+
+test('search navigation retains the result revision after the document changes',async()=>{
+ const {host,requests,setState}=fixture('source',{}, {searchResponse:{matches:[{line:8,start:13,end:19}],complete:true}})
+ try {
+  const {matches}=await host.search('needle')
+  setState({revision:'b'.repeat(64)})
+  await host.navigateMatch(matches[0])
+  assert.equal(requests.at(-1).params.documentId,'doc')
+  assert.equal(requests.at(-1).params.revision,'a'.repeat(64))
+ } finally {await host.dispose()}
 })

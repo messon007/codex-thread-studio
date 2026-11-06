@@ -120,6 +120,7 @@ export function createReviewNotesController({
     $('#open-thread-comments')?.addEventListener('click', openAnnotationRail)
     $('#open-thread-favorites')?.addEventListener('click', () => openFavoritesRail('session'))
     $('#selection-popover')?.addEventListener('mousedown', (event) => event.preventDefault())
+    $('#selection-copy')?.addEventListener('click', () => copySelection().catch(showError))
     $('#selection-comment')?.addEventListener('click', openAnnotationFromSelection)
     $('#selection-translate')?.addEventListener('click', () => openTranslationFromSelection().catch(showError))
     $('#selection-favorite')?.addEventListener('click', openFavoriteFromSelection)
@@ -159,6 +160,7 @@ export function createReviewNotesController({
 
   function setSelection(selection, rect = null, { allowFavorite = false } = {}) {
     state.pendingSelection = selection
+    if (!selection) return hideSelectionPopover()
     if (rect) positionSelectionPopover(rect, { allowFavorite })
   }
 
@@ -306,6 +308,13 @@ function positionSelectionPopover(range, { allowFavorite }) {
   const height = popover.offsetHeight || 34
   popover.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2))}px`
   popover.style.top = `${Math.max(8, rect.top - height - 7)}px`
+}
+
+async function copySelection() {
+  const selection = state.pendingSelection
+  if (!selection?.quote) return
+  await navigator.clipboard.writeText(selection.copyText ?? selection.quote)
+  if (state.pendingSelection === selection) hideSelectionPopover()
 }
 
 async function openTranslationFromSelection() {

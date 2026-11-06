@@ -25,7 +25,10 @@ export function publicReader({ origins, state, index, api, renderer = () => null
     }),
     contents: checked(async params => { if (typeof params.open !== 'boolean' || typeof contents !== 'function') throw Error('Invalid Contents command'); await contents(params.open); return state() }),
     save: checked(async () => { await save(); return state() }),
-    selection: checked((_, signal) => selection(signal)),
+    selection: checked((params, signal) => {
+      if (params.textOnly !== undefined && typeof params.textOnly !== 'boolean') throw TypeError('Invalid text selection filter')
+      return selection(signal, { textOnly: params.textOnly === true })
+    }),
     referenceInfo: checked((params,signal) => {
       if (!Number.isSafeInteger(params.id) || params.id < 0 || params.id >= (index().references?.length ?? 0)) throw Error('Invalid reference identity')
       return api(`/api/reference?id=${params.id}&revision=${encodeURIComponent(params.revision)}`,signal)

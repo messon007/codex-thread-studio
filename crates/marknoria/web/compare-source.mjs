@@ -69,7 +69,11 @@ export function sourcePane(viewport, side, metadata, api, openLine) {
       }
       if (cell) {
         button.setAttribute('aria-label', `${side} line ${cell.line}. Open complete source line`)
-        button.addEventListener('click', () => openLine(item.index, side))
+        button.addEventListener('click', () => {
+          const selection = document.getSelection()
+          if (selection && !selection.isCollapsed && selection.toString().trim()) return
+          openLine(item.index, side)
+        })
       }
       row.append(button)
       fragment.append(row)
@@ -84,6 +88,39 @@ export function sourcePane(viewport, side, metadata, api, openLine) {
   viewport.addEventListener('keydown', retry)
   return {
     cache, virtualizer, viewport,
+    selection() {
+      if (stopped || viewport.hidden) return null
+      const selected = document.getSelection(), range = selected?.rangeCount ? selected.getRangeAt(0) : null
+      if (!range || range.collapsed) return null
+      const spanFor = node => (node.nodeType === 1 ? node : node.parentElement)?.closest('.compare-text')
+      const start = spanFor(range.startContainer), end = spanFor(range.endContainer)
+      if (!start || !end || !viewport.contains(start) || !viewport.contains(end)) return null
+      const offset = (node, value, span) => node === span.firstChild ? value : node === span ? (value ? span.textContent.length : 0) : null
+      const from = offset(range.startContainer, range.startOffset, start), to = offset(range.endContainer, range.endOffset, end)
+      if (from == null || to == null) return null
+      const spans = [...space.querySelectorAll('.compare-text')]
+      if (spans.length > 512) return null
+      const parts = []
+      let line = null
+      for (const span of spans) {
+        if (!range.intersectsNode(span)) continue
+        const cell = cache.get(Number(span.closest('.compare-row').dataset.row))?.[side]
+        if (!cell || !span.firstChild) continue
+        const length = cell.text.replace(/\r?\n$/u, '').length
+        // Diff truncation labels, gutters and +/- decorations are not source.
+        if (span === start && from > length || span === end && to > length || cell.truncated && span !== end) return null
+        const local = document.createRange()
+        local.setStart(span.firstChild, span === start ? from : 0)
+        local.setEnd(span.firstChild, span === end ? to : length)
+        parts.push(local.toString())
+        line ??= cell.line
+      }
+      const quote = parts.join('\n')
+      if (!quote.trim() || line == null) return null
+      const bounds = range.getBoundingClientRect()
+      return { quote, quoteTruncated: false, precision: 'approximate', location: { kind: 'line', line },
+        viewportRect: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } }
+    },
     get visible() { return !viewport.hidden },
     get bytes() { return bytes },
     line() {

@@ -144,11 +144,7 @@
           <div id="native-error" class="native-error hidden"><strong id="native-error-title">Codex App Server unavailable</strong><p id="native-error-message"></p><button id="retry-native" class="primary-button compact">Retry</button></div>
           <div id="transcript" class="transcript" aria-live="polite"></div>
           <nav id="turn-navigator" class="turn-navigator hidden" aria-label="Turn navigation for the current session"><div class="turn-nav-panel"><div id="turn-navigator-list" class="turn-nav-list"></div></div></nav>
-          <div id="selection-popover" class="selection-popover hidden">
-            <button id="selection-comment" type="button">Comments</button>
-            <button id="selection-translate" type="button">Translate</button>
-            <button id="selection-favorite" type="button">Favorites</button>
-          </div>
+
 
           <div id="router-attention" class="router-attention hidden" aria-label="Unread Router responses"></div>
           <form id="composer-form" class="composer">
@@ -776,6 +772,12 @@
       <div id="activity-log-content" class="activity-log-content"></div>
       <footer class="dialog-footer"><button id="done-activity-log" class="primary-button" type="button">Done</button></footer>
     </dialog>
+    <div id="selection-popover" class="selection-popover hidden">
+      <button id="selection-copy" type="button">Copy</button>
+      <button id="selection-comment" type="button">Comments</button>
+      <button id="selection-translate" type="button">Translate</button>
+      <button id="selection-favorite" type="button">Favorites</button>
+    </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
   </body>
 </html>

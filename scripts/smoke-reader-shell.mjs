@@ -15,7 +15,7 @@ const file=join(project,'document.md');await writeFile(file,'# Full shell sentin
 const csv=join(project,'wide.csv');await writeFile(csv,['ID,Count,Description,'+Array.from({length:20},(_,i)=>'Field'+i).join(','),...Array.from({length:123},(_,i)=>[i,i+1,'Long cell '+('safe content '.repeat(8)),...Array.from({length:20},(_,n)=>n+i)].join(','))].join('\n'))
 const pdf=join(project,'document.pdf');await writeFile(pdf,pdfFixture())
 const epub=JSON.parse(execFileSync('/usr/bin/python3',[join(root,'crates/marknoria/tests/browser/epub_fixtures.py'),project],{encoding:'utf8'})).book
-const env={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:join(dir,'reader-cache')}
+const env={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),CODEX_THREAD_STUDIO_CODEX_BIN:'/intentionally-unavailable-codex',CODEX_THREAD_STUDIO_OPENCODE_BIN:'/intentionally-unavailable-opencode',XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:join(dir,'reader-cache')}
 const server=spawn(process.env.STUDIO_REMOTE_BINARY||join(root,'target/debug/codex-thread-studio'),['--serve','--listen','127.0.0.1:0'],{env,stdio:['ignore','pipe','pipe']})
 let logs='',browser
 server.stdout.on('data',x=>logs+=x);server.stderr.on('data',()=>{})
@@ -71,19 +71,11 @@ try{
    await page.screenshot({path:join(dir,format+'-'+theme+'.png')})
   }
   if(format==='markdown'){
-   const owner=await command('state'), window=(await command('sourceWindow',{line:1})).result
-   const source=await command('sourceSelection',{start:window.start,end:window.end,fromUtf16:2,toUtf16:6})
-   await command('notes',{request:{operation:'add',kind:'comment',revision:owner.revision,quote:source.quote,comment:'Close',anchor:{location:source.location}}})
-   await page.locator('#artifact-notes-tools').getByRole('button',{name:'Notes',exact:true}).click()
-   await page.locator('.notes-dialog').waitFor()
-   await page.locator('.note-comment').filter({hasText:'Close'}).waitFor()
+   if((await command('state')).presentation.notes!=='host')throw Error('Reader Notes ownership was not delegated')
+   if((await command('state')).presentation.selectionMenu!=='host')throw Error('Reader selection ownership was not delegated')
+   if(await page.locator('#artifact-notes-tools button').count())throw Error('Unexpected document Favorites/Notes entry')
+   if(await frame.locator('.notes-open,.notes-selection').count())throw Error('Unexpected child Notes controls')
    await page.evaluate(async()=>{const {setLanguage}=await import('/i18n.mjs');setLanguage('zh-CN')})
-   const commentsLabel=await page.evaluate(async()=>(await import('/i18n.mjs')).t('Comments'))
-   await page.locator('.notes-filters').getByRole('button',{name:commentsLabel,exact:true}).waitFor()
-   if(await page.locator('.note-comment').textContent()!=='Close')throw Error('Locale translated literal note data')
-   await page.screenshot({path:join(dir,'notes-chinese.png')})
-   await page.keyboard.press('Escape')
-   if(!await page.locator('#artifact-rail').isVisible())throw Error('Modal Escape closed the document')
    await page.locator('#artifact-outline-toggle').click()
    await frame.getByRole('searchbox',{name:'筛选目录',exact:true}).waitFor()
    await page.evaluate(async()=>{const {setLanguage}=await import('/i18n.mjs');setLanguage('en-US')})
@@ -120,6 +112,6 @@ try{
  let webkit
  if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
  if(process.argv.includes('--webkit')&&!webkit?.ok)throw Error('Native WebKit shell did not pass')
- console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,liveLocale:true,modalEscape:true,railSearch:true,results,webkit,artifacts:dir}))
+ console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,results,webkit,artifacts:dir}))
 
 }catch(error){console.error('Artifacts: '+dir);throw error}finally{await browser?.close();if(server.exitCode==null){server.kill('SIGTERM');await Promise.race([once(server,'exit'),pause(3000)]);if(server.exitCode==null)server.kill('SIGKILL')}}

@@ -329,6 +329,8 @@ fn query_cells_expire_with_owned_results_and_note_excerpts_stay_explicit() {
     let result = reader.sql(&descriptor.revision, 0, "SELECT c1 FROM t", &operation).unwrap();
     let mut selection = Selection { document_id: descriptor.id.clone(), revision: descriptor.revision.clone(), quote: "中文😀".into(), quote_truncated: false, precision: Precision::Exact, viewport_rect: None, location: Location::QueryCell { query_id: result.id.clone(), row: 0, column: 0 } };
     reader.validate_selection(&selection).unwrap();
+    selection.quote = "文😀".into(); reader.validate_selection(&selection).unwrap();
+    selection.quote = String::new(); assert!(reader.validate_selection(&selection).is_err());
     selection.quote = "forged quote".into(); assert!(reader.validate_selection(&selection).is_err()); selection.quote = "中文😀".into();
     selection.location = Location::QueryCell { query_id: result.id.clone(), row: 0, column: result.columns.len() };
     assert!(reader.validate_selection(&selection).is_err());
@@ -479,8 +481,14 @@ fn sql_snapshots_need_no_note_store_and_keep_verified_history_after_close() {
     assert!(null.anchor.query.unwrap().value_is_null);
     assert!(reader.query_snapshot(request(0, "3", false)).is_err());
     assert!(reader.query_snapshot(request(3, "2", false)).is_err());
-    assert!(reader.query_snapshot(request(2, "中文", false)).is_err());
+    let selected = reader.query_snapshot(request(2, "文😀", false)).unwrap();
+    assert_eq!(selected.quote, "文😀");
+    assert!(!selected.anchor.quote_truncated);
+    assert_eq!(selected.anchor.query.unwrap().column_name, "label");
+    assert!(reader.query_snapshot(request(2, "伪造😀", false)).is_err());
+    assert!(reader.query_snapshot(request(2, "", false)).is_err());
     assert!(reader.query_snapshot(request(2, "中文", true)).unwrap().anchor.quote_truncated);
+    assert!(reader.query_snapshot(request(2, "文😀", true)).unwrap().anchor.quote_truncated);
     let mut changed = request(0, "2", false); changed.revision = "a".repeat(64);
     assert!(reader.query_snapshot(changed).is_err());
     let foreign = Reader::from_bytes("foreign.csv", b"ID,Value\n001,7\n002,8\n", options(&root)).unwrap();

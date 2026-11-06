@@ -51,6 +51,7 @@ try {
     'epub-reader.mjs',
     'notes.mjs',
     'table-query.mjs',
+    'query-help.mjs',
     'jq-query.mjs'
   ]) {
     const response = await fetch(new URL(name, base))

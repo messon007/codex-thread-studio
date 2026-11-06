@@ -44,6 +44,21 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   input.max = index.sourceLines
   const lineHeight = () => parseFloat(getComputedStyle(text).lineHeight)
   const currentLine = () => external ? external.line() : code ? code.topLine() : page ? Math.min(index.sourceLines, page.line + Math.floor(viewport.scrollTop / lineHeight())) : 1
+  const currentLocation = () => {
+    const line = currentLine()
+    if (!code || !page || external) return { line }
+    const view = code.view, bounds = view.scrollDOM.getBoundingClientRect()
+    const gutter = view.dom.querySelector('.cm-gutters')?.getBoundingClientRect()
+    const offset = view.posAtCoords({ x: Math.max(bounds.left, gutter?.right || bounds.left) + 2, y: bounds.top + 2 })
+      ?? view.lineBlockAtHeight(view.scrollDOM.scrollTop).from
+    // CodeMirror normalizes CRLF; invert only this bounded window's prefix.
+    let original = 0, normalized = 0
+    while (original < page.text.length && normalized < offset) {
+      if (page.text[original] === '\r' && page.text[original + 1] === '\n') original++
+      original++; normalized++
+    }
+    return { line, start: page.start + new TextEncoder().encode(page.text.slice(0, original)).length }
+  }
   const update = () => {
     previous.setAttribute('aria-disabled', String(loading || !page || page.start === 0))
     next.setAttribute('aria-disabled', String(loading || !page || page.end >= index.sourceBytes))
@@ -99,6 +114,9 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     await code.select(from,to)
   }
   function setVisible(open) {
+    // Read while CodeMirror still has layout; hidden panels report line one.
+    const resumeLine = !open && visible ? currentLocation() : null
+    if (visible !== open) options.onVisibilityChange?.()
     if (open) pausePreview()
     visible = open
     panel.hidden = !open || Boolean(external)
@@ -112,7 +130,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     document.querySelector('.reader-settings').hidden = open
     labels.set(document.querySelector('.reader-identity p'), open ? '{format} · Read-only source' : '{format} · Read-only preview', {format:index.format==='markdown'?'Markdown':String(index.format||'text').toUpperCase()})
     if (!open) {
-      const line = currentLine()
+      const line = resumeLine ?? currentLocation()
       generation += 1
       request?.abort()
       loading = false
@@ -122,7 +140,12 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   }
   async function show(line = anchor()) {
     setVisible(true)
-    await go(line)
+    if (typeof line === 'object' && Number.isSafeInteger(line.start)) {
+      if (await load(`offset=${line.start}`, line.line)) {
+        const { from } = sourceRangeOffsets(page, line.start, line.start)
+        await code.select(from, from)
+      }
+    } else await go(typeof line === 'object' ? line.line : line)
   }
   if (options.buttons !== false) {
     on(document.querySelector('#source-mode'), 'click', () => { if (!visible) show() })
@@ -134,8 +157,10 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   return {
     search: () => code?.search(),
     selectionLine() { return code&&page ? page.line+code.view.state.doc.lineAt(code.view.state.selection.main.from).number-1 : null },
-    get code() { return code },
-    get visible() { return visible }, get page() { return page }, currentLine, show, go, goRange,
+    get code() { return external ? null : code },
+    get external() { return Boolean(external) },
+    selection() { return visible && external ? external.selection?.() ?? null : null },
+    get visible() { return visible }, get page() { return page }, currentLine, currentLocation, show, go, goRange,
     hide() { if (visible) setVisible(false) },
     attach(externalView) {
       generation += 1

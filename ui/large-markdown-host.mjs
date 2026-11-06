@@ -5,6 +5,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
   let heartbeat = null, signature = '', initialized = false
   const publish = state => {
     if (disposed || !state) return
+    if (snapshot.documentId && (snapshot.documentId !== state.documentId || snapshot.revision !== state.revision || snapshot.view !== state.view)) onSelection(null)
     snapshot = state
     const visible = {
       initialized, ready: initialized && state.state === 'ready', readingReady: state.timings?.firstUsefulContentMs != null,
@@ -19,7 +20,9 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (next !== signature) { signature = next; onState(visible) }
   }
   const capture = selection => {
-    if (disposed || !selection?.quote || selection.documentId !== snapshot.documentId || selection.revision !== snapshot.revision) return
+    if (disposed) return
+    if (!selection) { onSelection(null); return }
+    if (!selection.quote || selection.documentId !== snapshot.documentId || selection.revision !== snapshot.revision) return
     const local = selection.viewportRect, outer = frame.getBoundingClientRect()
     const line = selection.location?.kind === 'line' ? selection.location.line : null
     onSelection({ ...selection, startLine: line, endLine: line,
@@ -42,7 +45,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     }})
     publish(await client.ready())
     if (disposed) { await client.dispose({force:true}); return }
-    publish(await client.request('settings',{toolbar:'host',...(snapshot.capabilities?.presentation?.notesOwner ? {notes:'host'} : {}),...options.presentation}))
+    publish(await client.request('settings',{...options.presentation,toolbar:'host',notes:'host',selectionMenu:'host'}))
     if (disposed) return
     const initialView = options.initialView
     if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
@@ -97,18 +100,24 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     },
     async search(query){
       request?.abort();const own=++generation
-      if(!query.trim()||disposed)return []
+      if(!query.trim()||disposed)return {matches:[],total:0,complete:true}
       const operation=request=new AbortController()
-      const value=await command('search',{query},operation.signal)
-      return own===generation&&!disposed?value.matches:[]
+      await ready
+      const owner={documentId:snapshot.documentId,revision:snapshot.revision}
+      const value=await command('search',{query,...owner},operation.signal)
+      if (own !== generation || disposed) throw new DOMException('Search superseded','AbortError')
+      const exact = Number.isSafeInteger(value.total)
+      return {matches:value.matches.map(match=>({...match,...owner})),total:exact?value.total:value.matches.length,complete:exact||value.complete===true||value.complete!==false&&value.matches.length<(value.limit||100)}
     },
     navigateMatch(match){
-      const location=snapshot.view==='preview'&&match.location?match.location:{kind:'line',line:match.line}
-      return command('navigate',{location})
+      const range=snapshot.view==='source'&&snapshot.capabilities?.sourceRangeNavigation&&Number.isSafeInteger(match.start)&&Number.isSafeInteger(match.end)
+      const location=range?{kind:'source',startByte:match.start,endByte:match.end}:snapshot.view==='preview'&&match.location?match.location:{kind:'line',line:match.line}
+      return command('navigate',{location,...(match.documentId?{documentId:match.documentId,revision:match.revision}:{})})
     },
     leave(){return this.dispose()},
     dispose(){
       if(disposed)return
+      onSelection(null)
       disposed=true;++generation;request?.abort();clearInterval(heartbeat)
       // The surrounding Studio discard prompt is authoritative. Backend close
       // separately awaits service cleanup; no credentials enter the child.
@@ -120,74 +129,56 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
   }
 }
 
-// Ordinary host Notes UI over the same explicit Rust store as the child reader.
-// Each binding captures its document/revision and transport; no active-pane lookup.
-export function createReaderNotesHost(root, toolbar, options = {}) {
-  let disposed = false, generation = 0, key = '', binding = null, selected = null, enabled = false
-  const load = options.load || (() => import(new URL('./reader-assets/notes.mjs', import.meta.url).href))
+// Studio owns selection actions; the SDK only supplies typed, revision-bound
+// references. Cancelling a selection also cancels its pending SQL provenance.
+export function createReaderSelectionHost(options = {}) {
+  let disposed = false, owner = null, host = null, pending = null
+  const clear = () => { pending?.abort(); pending = null; options.onSelection?.(null) }
   return {
-    async update(owner, host) {
+    update(next, transport) {
       if (disposed) return
-      enabled = Boolean(owner.capabilities?.notes && owner.capabilities?.presentation?.notesOwner)
-      const next = enabled && owner.initialized && owner.ready ? owner.documentId + ':' + owner.revision : ''
-      if (key === next) return
-      key = next
-      const own = ++generation
-      binding?.dispose(); binding = null; selected = null
-      if (!next) return
-      const { mountNotes } = await load()
-      if (disposed || own !== generation) return
-      const identity = { documentId: owner.documentId, revision: owner.revision, name: owner.name || 'Document' }
-      binding = mountNotes({
-        owner: identity, root, toolbar, overlayRoot: root.ownerDocument.body,
-        selection: async () => selected,
-        storage: (request, { signal }) => host.notes(request, { ...identity, signal }),
-        canSave: () => !host.dirty,
-        queryNotes: Boolean(owner.capabilities.queryNotes),
-        translate: options.translate,
-        actions: options.onAction ? [{ id: 'ask-ai', label: 'Ask AI', run: async (selection, { signal }) => {
-          signal.throwIfAborted()
-          if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
-          if (selection.documentId !== identity.documentId || selection.revision !== identity.revision) throw Error('Notes owner changed')
-          // Studio drafts have a 16 KiB UTF-8 excerpt budget. Capture a verified
-          // prefix before asking for provenance; never split a Unicode scalar.
-          let quote = selection.quote
-          if (quote.length > 16000) {
-            quote = quote.slice(0,16000)
-            const last = quote.charCodeAt(quote.length-1)
-            if (last >= 0xd800 && last <= 0xdbff) quote = quote.slice(0,-1)
-          }
-          const encoded = new TextEncoder().encode(quote)
-          if (encoded.length > 16384) {
-            let end = 16384
-            while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--
-            quote = new TextDecoder().decode(encoded.subarray(0,end))
-          }
-          const excerpt = quote === selection.quote ? selection : {...selection,quote,quoteTruncated:true}
-          const reference = excerpt.location?.kind === 'queryCell'
-            ? {...excerpt, querySnapshot: await host.querySnapshot(excerpt, {signal})} : excerpt
-          signal.throwIfAborted()
-          if (disposed || own !== generation) throw new DOMException('Notes owner changed','AbortError')
-          selected = null
-          await binding?.selectionChanged()
-          signal.throwIfAborted()
-          return options.onAction(reference, { signal })
-        } }] : [],
-      })
-      if (selected) await binding.selectionChanged()
+      if (owner && (next.documentId !== owner.documentId || next.revision !== owner.revision || next.view !== owner.view)) clear()
+      owner = next; host = transport
     },
-    capture(value) {
-      if (!enabled || disposed) return false
-      const bounds = value.rect
-      selected = { ...value, viewportRect: bounds ? { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height } : value.viewportRect }
-      void binding?.selectionChanged().catch(error => options.onError?.(error))
-      return true
-    },
-    dispose() {
+    async capture(selection) {
       if (disposed) return
-      disposed = true; ++generation; binding?.dispose(); binding = null; selected = null
+      clear()
+      if (!selection?.quote || !owner?.ready || selection.documentId !== owner.documentId || selection.revision !== owner.revision) return
+      const operation = pending = new AbortController()
+      try {
+        const reference = await readerCommentReference(host, selection, operation.signal)
+        operation.signal.throwIfAborted()
+        if (disposed || pending !== operation) return
+        options.onSelection?.(reference)
+      } catch (error) {
+        if (!operation.signal.aborted && !disposed) options.onError?.(error)
+      }
     },
+    dispose() { if (disposed) return; disposed = true; clear(); owner = host = null },
   }
+}
+
+export async function readerCommentReference(host, selection, signal) {
+  signal.throwIfAborted()
+  // Persisted Studio excerpts have both UTF-16 and UTF-8 budgets. Copy keeps
+  // the original bounded selection; comments and translations use the excerpt.
+  let quote = selection.quote
+  if (quote.length > 16000) {
+    quote = quote.slice(0,16000)
+    const last = quote.charCodeAt(quote.length-1)
+    if (last >= 0xd800 && last <= 0xdbff) quote = quote.slice(0,-1)
+  }
+  const encoded = new TextEncoder().encode(quote)
+  if (encoded.length > 16384) {
+    let end = 16384
+    while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--
+    quote = new TextDecoder().decode(encoded.subarray(0,end))
+  }
+  const excerpt = { ...selection, quote, copyText: selection.quote, ...(quote === selection.quote ? {} : {quoteTruncated:true}) }
+  const reference = excerpt.location?.kind === 'queryCell'
+    ? {...excerpt, querySnapshot: await host.querySnapshot(excerpt, {signal})} : excerpt
+  signal.throwIfAborted()
+  return reference
 }
 
 // Host toolbar entry; all query UI, budgets and cancellation stay in the SDK.

@@ -47,6 +47,7 @@ export async function jqQueryContract(moduleUrl) {
   const provider = {
     run: async (request) => {
       requests.push(request)
+      if (request.filter === 'missing_filter') throw Error('Reader request failed (400): Invalid jq filter at line 1, column 1: undefined filter missing_filter/0 <script>inert</script>')
       currentId = crypto.randomUUID()
       if (mode === 'late') {
         lateSignal = request.signal
@@ -107,6 +108,23 @@ export async function jqQueryContract(moduleUrl) {
         bounds.bottom <= innerHeight,
       'jq dialog escaped its viewport'
     )
+    const help = root.querySelector('.jq-help')
+    help.open = true
+    check(getComputedStyle(help).display !== 'none' && help.textContent.includes('nested array') && help.textContent.includes('jaq'), 'jq help is hidden or omits actual input/dialect semantics')
+    const beforeExample = requests.length
+    help.querySelector('.query-help-example button').click()
+    check(requests.length === beforeExample && root.querySelector('textarea').value === '.', 'jq help example executed without Run')
+    const lastExample = help.querySelector('.query-help-example:last-child')
+    lastExample.scrollIntoView({ block: 'nearest' })
+    const helpBounds = help.getBoundingClientRect(), exampleBounds = lastExample.getBoundingClientRect()
+    check(exampleBounds.bottom <= helpBounds.bottom + 1 && exampleBounds.top >= helpBounds.top - 1, 'jq help examples are clipped or unreachable')
+    check(help.scrollWidth <= help.clientWidth + 1, 'jq help overflowed horizontally')
+    help.open = false
+    root.querySelector('.table-query-shell').scrollTop = 0
+    const beforeError = query.state().id
+    await query.execute('missing_filter').catch(() => {})
+    check(query.state().id === beforeError && root.querySelector('textarea').value === 'missing_filter' && !root.querySelector('.jq-run').disabled, 'jq error lost input/results or retry')
+    check(!query.state().message.includes('Reader request failed') && query.state().message.includes('line 1, column 1') && !root.querySelector('[role="status"] script'), 'jq diagnostic lost position or interpreted markup')
     await query.go(1)
     check(
       query.state().page === 1 &&

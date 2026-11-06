@@ -1,4 +1,4 @@
-import { dialogClose } from './icons.mjs'
+import { dialogClose, favoriteIcon } from './icons.mjs'
 import { componentStyles } from './component-styles.mjs'
 import { uiLabels } from './translation.mjs'
 import { copyText as copyToClipboard } from './clipboard.mjs'
@@ -13,6 +13,9 @@ export function mountNotes({
   selection: selectionProvider,
   canSave = () => true,
   queryNotes = false,
+  selectionMenu = true,
+  selectionAllowed,
+  headerIconOnly = false,
   translate,
   copy = copyToClipboard,
   actions = [],
@@ -48,6 +51,10 @@ export function mountNotes({
     new Set(actions.map((action) => action.id)).size !== actions.length
   )
     throw new TypeError('Invalid bounded note actions')
+  if (selectionAllowed !== undefined && typeof selectionAllowed !== 'function')
+    throw TypeError('Invalid Notes text selection policy')
+  if (typeof selectionMenu !== 'boolean' || typeof headerIconOnly !== 'boolean')
+    throw TypeError('Invalid Notes display policy')
   if (typeof selectionProvider !== 'function')
     throw Error('Notes require the public selection provider')
   owner = Object.freeze({
@@ -209,7 +216,7 @@ export function mountNotes({
       feedback('Saved favorite')
     })
   )
-  overlayRoot.append(controls)
+  if (selectionMenu) overlayRoot.append(controls)
   for (const action of actions) {
     const item = button(action.label, () =>
       action.run(structuredClone(captured.reference), { signal: lifetime.signal })
@@ -219,7 +226,8 @@ export function mountNotes({
   }
   controls.addEventListener('pointerdown', (e) => e.preventDefault())
   const header = button('Notes', () => list())
-  header.className = 'reader-action notes-open'
+  header.className = headerIconOnly ? 'reader-icon-button notes-open' : 'reader-action notes-open'
+  labels.clear(header)
   header.setAttribute('data-marknoria-notes', '')
   header.title = 'Comments and favorites'
   labels.set(header, 'Notes', {}, 'aria-label')
@@ -231,7 +239,10 @@ export function mountNotes({
   icon.append(path)
   const label = document.createElement('span')
   labels.set(label, 'Notes')
-  header.replaceChildren(icon, label)
+  if (headerIconOnly) {
+    header.replaceChildren(favoriteIcon())
+    labels.set(header, 'Notes', {}, 'title')
+  } else header.replaceChildren(icon, label)
   toolbar.append(header)
   let selectedId = null,
     filterKind = null,
@@ -606,24 +617,32 @@ export function mountNotes({
     }
   }
   let selectionTicket = 0,
+    selectionTimer = null,
     selectionRequest = null
-  async function selected() {
+  async function selected(event) {
+    // Keep the captured reference through the popup's pointerup -> click (or
+    // keyboard activation). An asynchronous recapture here would clear it
+    // before Copy/Comment/Favorite executes.
+    if (event?.target && [controls, header, dialog, confirmation, status].some(node => node?.contains(event.target))) return
+    clearTimeout(selectionTimer)
     const ticket = ++selectionTicket
-    if (stopped || dialog) return
     controls.hidden = true
+    captured = null
     selectionRequest?.abort()
+    if (stopped || dialog || !selectionMenu) return
     selectionRequest = new AbortController()
     try {
       const value = await selectionProvider(selectionRequest.signal)
       if (ticket !== selectionTicket || stopped || dialog) return
       if (
         !value ||
+        !(selectionAllowed ? selectionAllowed(value) : hasTextSelection()) ||
         value.documentId !== owner.documentId ||
         value.revision !== owner.revision ||
         typeof value.quote !== 'string' ||
         value.quote.length > 32768 ||
         !value.location ||
-        (!value.quote.trim() && value.location?.kind !== 'pdf') ||
+        (!value.quote.trim() && !(selectionAllowed && value.location.kind === 'pdf')) ||
         new TextEncoder().encode(value.quote).length > 32768
       ) {
         controls.hidden = true
@@ -706,15 +725,30 @@ export function mountNotes({
       }
     }
   }
-  eventRoot.addEventListener('pointerup', selected, { signal: lifetime.signal })
-  eventRoot.addEventListener('keyup', selected, { signal: lifetime.signal })
+  function hasTextSelection() {
+    const selection = root.ownerDocument.getSelection()
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) return false
+    const range = selection.rangeCount ? selection.getRangeAt(0) : null
+    return Boolean(range && root.contains(range.startContainer) && root.contains(range.endContainer))
+  }
+  function clearSelection() {
+    clearTimeout(selectionTimer)
+    selectionTicket++
+    selectionRequest?.abort()
+    captured = null
+    controls.hidden = true
+  }
+  if (selectionMenu) {
+    eventRoot.addEventListener('pointerup', selected, { signal: lifetime.signal })
+    eventRoot.addEventListener('keyup', selected, { signal: lifetime.signal })
+    root.ownerDocument.addEventListener('selectionchange', () => {
+      clearSelection()
+      selectionTimer = setTimeout(selected, 80)
+    }, { signal: lifetime.signal })
+  }
   root.ownerDocument.defaultView.addEventListener(
     'scroll',
-    () => {
-      selectionTicket++
-      selectionRequest?.abort()
-      controls.hidden = true
-    },
+    clearSelection,
     { capture: true, signal: lifetime.signal }
   )
   const themeObserver = new MutationObserver(() => {
@@ -738,13 +772,14 @@ export function mountNotes({
     }),
     open: list,
     selectionChanged: selected,
+    clearSelection,
     dispose() {
       if (stopped) return
       stopped = true
       releaseStyles()
       themeObserver.disconnect()
       lifetime.abort()
-      selectionRequest?.abort()
+      clearSelection()
       clearTimeout(status.timer)
       close()
       header.remove()
@@ -759,13 +794,18 @@ export function notesController(index, api, canSave = () => true, selectionProvi
   return mountNotes({
     owner: { documentId: options.documentId, revision: index.revision, name: index.name },
     root,
-    toolbar: root.querySelector('.reader-document-tools'),
+    toolbar: root.querySelector('#reader-notes-tools'),
     eventRoot: document,
     storage: (request, { signal }) =>
       api('/api/notes', signal, { method: 'POST', body: JSON.stringify(request) }),
     selection: selectionProvider,
     canSave,
     queryNotes: true,
+    // This provider requests only validated live text selections, including
+    // renderer-owned EPUB frames that cannot be inspected from this DOM.
+    selectionAllowed: () => true,
+    headerIconOnly: true,
+    selectionMenu: options.selectionMenu !== 'host',
     translate: options.translate
   })
 }

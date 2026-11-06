@@ -63,9 +63,9 @@ impl Format {
     }
 }
 #[derive(Clone, Debug)]
-struct Segment {
-    display: Range<usize>,
-    original: usize,
+pub(super) struct Segment {
+    pub(super) display: Range<usize>,
+    pub(super) original: usize,
 }
 #[derive(Clone, Debug)]
 pub struct Preview {
@@ -75,7 +75,7 @@ pub struct Preview {
     /// Original input exceeds the initial formatting byte budget.
     pub limited: bool,
     original: TextDocument,
-    map: Arc<[Segment]>,
+    pub(super) map: Arc<[Segment]>,
 }
 impl Preview {
     pub fn prepare(path: &str, original: &TextDocument) -> Option<Self> {

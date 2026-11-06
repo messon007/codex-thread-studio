@@ -22,7 +22,7 @@ for(const [name,text]of cases)await writeFile(join(project,name),text)
 assert.ok(Buffer.byteLength(cases[0][1])>5*1024*1024)
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex')
 const originals=new Map(cases.map(([name,text])=>[name,hash(Buffer.from(text))]))
-const environment={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:cache}
+const environment={PATH:'/usr/bin:/bin',LANG:'C.UTF-8',CODEX_HOME:join(dir,'codex'),CODEX_THREAD_STUDIO_CODEX_BIN:'/intentionally-unavailable-codex',CODEX_THREAD_STUDIO_OPENCODE_BIN:'/intentionally-unavailable-opencode',XDG_CONFIG_HOME:join(dir,'config'),XDG_DATA_HOME:join(dir,'data'),XDG_CACHE_HOME:join(dir,'cache'),READER_CACHE_DIR:cache}
 const server=spawn(process.env.STUDIO_REMOTE_BINARY||join(root,'target/release/codex-thread-studio'),['--serve','--listen','127.0.0.1:0'],{env:environment,stdio:['ignore','pipe','pipe']})
 let log='',browser;for(const stream of [server.stdout,server.stderr])stream.on('data',bytes=>{log=(log+bytes).slice(-100000)})
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),results=[]
@@ -74,6 +74,9 @@ try{
    await dialog.getByRole('button',{name:'Run query',exact:true}).click()
    await frame.waitForFunction(()=>document.querySelector('.table-query-actions [role="status"]')?.textContent.includes('no such table: c3'))
    assert.equal(await dialog.locator('.table-content').getAttribute('data-query-id'),oldId)
+   await dialog.getByRole('button',{name:'Use text contains query',exact:true}).click()
+   assert.equal(await dialog.getByRole('textbox',{name:'SQL query',exact:true}).inputValue(),`SELECT * FROM t WHERE instr(c3, '${needle}') > 0`)
+   assert.equal(await dialog.locator('.table-content').getAttribute('data-query-id'),oldId)
    for(const [sql,expected]of [[`SELECT c1 FROM t WHERE c3 LIKE '%${needle}%'`,['equal','contains']],[`SELECT c1 FROM t WHERE instr(c3, '${needle}') > 0`,['equal','contains']],[`SELECT c1 FROM t WHERE c3 IN ('${needle}', 'other')`,['equal','other']]]){
     const before=await dialog.locator('.table-content').getAttribute('data-query-id')
     await dialog.getByRole('textbox',{name:'SQL query',exact:true}).fill(sql);await dialog.getByRole('button',{name:'Run query',exact:true}).click()
@@ -81,6 +84,22 @@ try{
     assert.deepEqual(await dialog.locator('tbody tr td').allTextContents(),expected)
    }
    await dialog.getByRole('button',{name:'Close',exact:true}).click()
+   await dialog.waitFor({state:'detached'})
+   await frame.locator('.table-chart-open').click()
+   const plot=frame.locator('.table-plot-dialog')
+   assert.equal(await plot.locator('rect').count(),0)
+   await plot.getByRole('combobox',{name:'Numeric column',exact:true}).selectOption('1')
+   await plot.getByRole('button',{name:'Draw chart',exact:true}).click()
+   await plot.locator('[data-chart-row="2"]').waitFor()
+   assert.equal(await plot.locator('rect').count(),3)
+   await plot.getByRole('button',{name:'Close',exact:true}).click()
+   await frame.locator('tbody tr').first().locator('td').nth(2).dblclick()
+   assert.equal(await command('selection'),null)
+   assert.equal(await frame.locator('.table-cell-dialog footer').count(),0)
+   await frame.locator('.table-cell-full').evaluate(full=>{const range=document.createRange();range.setStart(full.firstChild,5);range.setEnd(full.firstChild,12);getSelection().removeAllRanges();getSelection().addRange(range);full.dispatchEvent(new MouseEvent('pointerup',{bubbles:true}))})
+   const selection=await command('selection')
+   assert.equal(selection.quote,needle.slice(5,12));assert.deepEqual(selection.location,{kind:'cell',table:0,row:0,column:2})
+   await frame.locator('.table-cell-dialog').getByRole('button',{name:'Close',exact:true}).click()
   }
   results.push({name,bytes:Buffer.byteLength(text),preview:true,source:true,jq:/\.jsonl?$/.test(name)})
  }
@@ -110,7 +129,7 @@ try{
  const deadline=Date.now()+10000;while((await readdir(cache)).length&&Date.now()<deadline)await pause(30)
  assert.deepEqual(await readdir(cache),[]);assert.deepEqual(errors,[])
  for(const [name]of cases)assert.equal(hash(await readFile(join(project,name))),originals.get(name))
- console.log(JSON.stringify({ok:true,actualStudioApp:true,publicReaderProtocol:true,results,sqlErrorAndFilters:true,attachmentGeometry:geometry,webkit,cleanup:true,artifacts:dir}))
+ console.log(JSON.stringify({ok:true,actualStudioApp:true,publicReaderProtocol:true,results,sqlErrorAndFilters:true,explicitSqlCorrection:true,explicitChartAxis:true,cellSubstringIdentity:true,attachmentGeometry:geometry,webkit,cleanup:true,artifacts:dir}))
 }finally{
  await browser?.close()
  if(server.exitCode===null&&server.signalCode===null){const exited=once(server,'exit');server.kill('SIGTERM');await Promise.race([exited,pause(5000)]);if(server.exitCode===null)server.kill('SIGKILL')}

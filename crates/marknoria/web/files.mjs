@@ -143,6 +143,7 @@ export function fileController(token, options = {}) {
     compare() {
       const target = new URL('./compare.html', import.meta.url)
       target.hash = token
+      for (const key of ['notes', 'selectionMenu']) if (new URLSearchParams(location.search).get(key) === 'host') target.searchParams.set(key, 'host')
       location.assign(target.href)
     },
     choose: chooseServer,

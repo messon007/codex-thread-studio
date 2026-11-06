@@ -226,6 +226,46 @@ pub fn code_bounded(language: &str, source: &str, budget: usize) -> Option<Strin
     None
 }
 
+/// Keep original-byte anchors separate from syntax styles. Both inputs are a
+/// bounded cached page; rendering never reparses the full structured document.
+pub(crate) fn code_mapped(language: &str, source: &str, anchors: &[crate::core::documents::projection::Anchor]) -> String {
+    let ranges = engine::ranges(language, source).unwrap_or_default();
+    let render = |styled: bool| {
+        let mut html = format!("<pre data-document-code=\"true\"><code class=\"mn-code\" data-language=\"{}\">", crate::core::documents::escaped(language));
+        let mut cursor = 0;
+        let mut style_index = 0;
+        for anchor in anchors {
+            html.push_str(&crate::core::documents::escaped(&source[cursor..anchor.display.start]).replace('\r', "&#13;"));
+            let text = &source[anchor.display.clone()];
+            let end_line = anchor.line + text.bytes().filter(|b| *b == b'\n').count() - usize::from(text.ends_with('\n'));
+            html.push_str(&format!("<span data-source-start=\"{}\" data-source-end=\"{}\" data-source-line=\"{}\" data-source-end-line=\"{}\">", anchor.original, anchor.original + anchor.display.len(), anchor.line, end_line));
+            let mut at = anchor.display.start;
+            while styled && at < anchor.display.end {
+                while style_index < ranges.len() && ranges[style_index].range.end <= at { style_index += 1; }
+                let Some(range) = ranges.get(style_index).filter(|r| r.range.start < anchor.display.end) else { break; };
+                let unstyled_end = range.range.start.min(anchor.display.end).max(at);
+                html.push_str(&crate::core::documents::escaped(&source[at..unstyled_end]).replace('\r', "&#13;"));
+                at = unstyled_end;
+                let end = range.range.end.min(anchor.display.end);
+                if end <= at { break; }
+                let style = range.style;
+                if style != Style::default() { html.push_str(&format!("<span class=\"mn-h{}{}{}\">", style.kind, if style.bold { " mn-bold" } else { "" }, if style.italic { " mn-italic" } else { "" })); }
+                html.push_str(&crate::core::documents::escaped(&source[at..end]).replace('\r', "&#13;"));
+                if style != Style::default() { html.push_str("</span>"); }
+                at = end;
+            }
+            html.push_str(&crate::core::documents::escaped(&source[at..anchor.display.end]).replace('\r', "&#13;"));
+            html.push_str("</span>");
+            cursor = anchor.display.end;
+        }
+        html.push_str(&crate::core::documents::escaped(&source[cursor..]).replace('\r', "&#13;"));
+        html.push_str("</code></pre>\n");
+        html
+    };
+    let rich = render(true);
+    if rich.len() + 1024 <= crate::core::MAX_HTML { rich } else { render(false) }
+}
+
 pub fn css(dark: bool) -> String {
     let mut css = format!(".mn-code{{color:{}}}\n", Style::default().color(dark));
     for kind in 0..=8 {

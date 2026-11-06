@@ -80,12 +80,34 @@ editor page navigation and undo/redo remain inside the reader. The host must
 guard reloading/replacing a dirty document before disposing it. This setting
 does not hide document overlays or their controls.
 
-`notes: 'host'` independently delegates the Notes UI to an ordinary host mounting
-the shared `mountNotes` component. It disposes the child Notes controls/dialogs
-without revoking the explicitly granted Notes storage API. The default `reader`
-owner mounts the child UI; switching back recreates it over the same records.
-`capabilities.presentation.notesOwner` declares support. This is presentation
-ownership only: it never grants storage, queries or file access.
+`notes: 'host'` fully unmounts the child Notes component, including its header,
+selection menu, dialogs and listeners, without revoking granted Notes storage.
+The host may implement its own UI/styles/actions, mount the optional shared
+`mountNotes`, or show no Notes UI. There is no default Ask AI action.
+`selectionMenu: 'host'` independently removes only the default text popup and its
+selection listeners while preserving the reader Notes list. Both default to
+`'reader'`; `notes: 'host'` takes precedence. Switching back recreates the UI over
+the same records. `capabilities.presentation.notesOwner`, `selectionMenuOwner`
+and `textSelection` declare these supported policies.
+
+For no transient default UI, set `notes=host&selectionMenu=host` on the embedded
+iframe URL **before navigation** (retain its existing parameters and token).
+Explicit `settings` ownership changes also update only those flags in that
+iframe's current URL, so a same-frame file reload retains policy. Mode changes
+and saved-index refreshes retain policy; a newly-created frame needs its own
+startup flags. Policy is never shared through global storage or between panes.
+This presentation configuration never grants storage, queries or file access.
+
+The default `selection` command still returns typed programmatic cell/chart/PDF
+references. Check `capabilities.presentation.textSelection` before opting into
+the filter; an older v1 reader may ignore unknown optional parameters. For text menus use `request('selection', { textOnly: true })`; it
+returns `null` for focus/click-only cells, chart bars, unselected full-cell
+viewers, collapsed ranges and PDF region-only selections. Nonempty partial
+ranges retain their actual typed location, quote and precision. The `selection`
+event likewise carries only text or `null`; clear a host menu on `null`, document/
+revision changes, view changes and disposal. Host events/commands require no
+inspection of iframe DOM. There are no new fields in the Selection wire value.
+
 
 Envelopes use `protocol: "marknoria.reader"`, `version: 1`, a UUID `requestId`, and
 `kind: request/response/event/cancel`. Requests name a method and parameters;
@@ -111,7 +133,7 @@ mounting its first view.
 | `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
 | `outline` | `offset` (default 0), at most 256 items, total and revision; `resolve:false` returns renderer labels/IDs without PDF destination lookups |
 | `navigateOutline` | `id`: revision-scoped outline identity; resolves only the selected PDF destination or navigates the indexed heading/EPUB chapter |
-| `search` | `query`, 1–256 UTF-8 bytes; bounded source lines or complete-document PDF/EPUB search |
+| `search` | `query`, 1–256 UTF-8 bytes; bounded source occurrences or complete-document PDF/EPUB search |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
 | `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |
 | `sourceWindow`, `sourceSelection` | Bounded original source by `line`, `offset,previous`, or explicit `offset,end` (at most 128 KiB); exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
@@ -137,6 +159,11 @@ until its renderer resolves it. Source search results include a navigation
 `location` and `locationPrecision` (`line` or `row`); a row target uses the first
 original column as its navigation anchor, without claiming that the match was
 in that column.
+Source matches also expose original UTF-8 byte `start`/`end` offsets and include
+repeated occurrences on one line, up to the existing 100-result cap. These are
+independent of Preview's formatted line breaks. The built-in reader uses them for
+current-match highlights and position restoration; hosts retain revision checks
+when navigating a byte range.
 The client supplies its latest state by default; explicitly supplied expectations
 are retained, so stale commands fail. Events are `ready`, `state`, `saved`,
 `selection`, `error`, `openRequested`, `linkRequested`, and `disposed`. Repeated identical state is suppressed.
@@ -194,6 +221,13 @@ OPF, spine, navigation and chapter DOM, preserving full CFIs across font, paper,
 flow, search and selection. Settings accept `theme:light/sepia/dark`,
 `flow:paginated/scrolled`, `fontScale:.75–2`, and typography. Default progress is
 explicitly chapter based; opening a book does not first format/index every chapter.
+The visible **Continuous** toolbar button switches the same `flow` setting,
+preserving the current CFI; the reading-settings menu remains synchronized.
+Paginated chapter views retain epub.js's full column width, so long code listings
+continue onto following pages instead of being clipped. Clearing a book-frame
+text selection dismisses its Notes controls, including when the sandbox does not
+deliver a selection-change event. Scroll and navigation dismiss stale controls
+without changing stored CFIs or replacing the book's body tree.
 Exact whole-book progress is opt-in: `epubProgress` accepts `operation:build`,
 `operation:cancel`, and `operation:seek, percentage:0..1`. Ordinary components expose
 `buildProgressIndex({signal})`, `cancelProgressIndex()` and `seekProgress(percentage)`.
@@ -286,7 +320,9 @@ The component caches that displayed snapshot, preserves existing tabindex values
 and restores owned focus/style/listener/dialog resources on `dispose()`.
 
 Click/focus selects a cell; arrows move within the displayed grid. Enter or a
-double-click opens the complete bounded cell as inert text. Copy cell and
+double-click opens the complete bounded cell as inert text, with no selection
+actions until text is selected there. A middle substring retains the original
+cell/query-cell coordinates and is checked against the owned value. Copy cell and
 Ctrl/Command+C (without an active text selection) copy the complete cell; a separate selection excerpt is bounded at
 32 KiB UTF-8 without splitting Unicode and declares `quoteTruncated`. Saved notes
 retain that flag and copied references identify excerpts. Column resizing remains

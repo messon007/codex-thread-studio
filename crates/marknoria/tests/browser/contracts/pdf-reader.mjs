@@ -213,6 +213,15 @@ export async function pdfReaderContract(moduleUrl) {
     viewport.dispatchEvent(new Event('scroll'))
     await new Promise((resolve) => setTimeout(resolve, 50))
     check(events.length === before, 'Disposed PDF still emitted state')
+    const realTimeout = globalThis.setTimeout
+    let stalled
+    try {
+      globalThis.setTimeout = (callback, milliseconds, ...args) => realTimeout(callback, milliseconds === 60000 ? 25 : milliseconds, ...args)
+      stalled = mountPdfReader(root, { viewport, translate, url: new URL('/stall.pdf', location.href).href, documentId:'stalled', resourceId:'stalled', revision:'b'.repeat(64) })
+      let cause
+      try { await stalled.ready } catch (error) { cause = error }
+      check(cause?.name !== 'AbortError' && cause?.message === 'PDF loading exceeded 60 seconds', 'Disposal hid the original PDF timeout cause')
+    } finally { globalThis.setTimeout = realTimeout; await stalled?.dispose() }
     return {
       assertions,
       pages: 12,

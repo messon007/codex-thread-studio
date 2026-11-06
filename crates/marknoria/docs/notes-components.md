@@ -9,7 +9,9 @@ path capability in the component.
 ```js
 import { mountNotes, readerNoteStorage } from './marknoria/notes.mjs'
 const owner = await client.ready()
-// Hide the child's own Notes UI while retaining its explicitly granted store.
+if (!owner.capabilities?.presentation?.textSelection)
+  throw new Error('This reader does not support text-only selection')
+// Fully unmount the child's Notes UI while retaining its granted store.
 await client.request('settings', { notes: 'host' })
 const notes = mountNotes({
   owner, // documentId, immutable revision, display name
@@ -17,8 +19,9 @@ const notes = mountNotes({
   toolbar: documentTools,
   overlayRoot: overlayLayer,
   presentationRoot: readingSurface,
+  selectionAllowed: () => true, // provider below already filters live text
   selection: async signal => {
-    const value = await client.request('selection', {}, { signal })
+    const value = await client.request('selection', { textOnly: true }, { signal })
     // For an iframe, map its viewportRect into this host's viewport first.
     return mapSelectionRectToHost(value)
   },
@@ -97,11 +100,15 @@ storage authority. `readerNoteStorage` can be used with this capability in an
 ordinary host; the document reader enables the same profile.
 
 On save, the Rust adapter resolves the live document/revision-owned result ID,
-verifies its cell coordinates and exact quote (or declared prefix), and replaces
+verifies its cell coordinates and that the nonempty quote is an exact substring
+of the owned cell, and replaces
 the transient location with `anchor.query`: SQL text, input table and row count,
 result row/column/name, result row count and a null-value flag. It never infers a
 source row for aggregates, joins or reordered results. Client-supplied provenance,
 expired/foreign results, changed revisions and mismatched quotes are rejected.
+An expanded cell viewer can capture a middle substring. If that selection exceeds
+32 KiB UTF-8, its bounded prefix still belongs to the cell and is explicitly
+marked `quoteTruncated`; this flag does not mean the whole cell was selected.
 The immutable query definition comes from the stored result, not the editor's
 current text. These records survive result closure and document reopening; a
 changed document revision is marked stale. Copy labels the data as an SQL result
@@ -131,13 +138,50 @@ browser table regression runs the same public contract. The embedded PDF test
 also mounts host Notes using the actual granted Rust store/public protocol with
 PDF region anchors; disabled-service storage is tested separately.
 
-The ordinary-host contract passes 20 assertions in each engine and 21 in the
-compact viewport. Compact list summaries keep one complete text line plus
-metadata; full text remains in the independently scrolling detail pane. The
-production regression also verifies embedded asset bytes match the checkout.
+The ordinary-host contract covers storage/actions, typed references, cancellation
+and cleanup in Chromium and native Wayland WebKit. Compact list summaries keep
+one complete text line plus metadata; full text remains in the independently
+scrolling detail pane. The production regression also verifies embedded asset
+bytes match the checkout.
 
 `translate` is an optional `translate(key, variables)` host callback. Passing the
 shared `createTranslator` also updates existing dialog/toolbar/accessibility and
 date labels through bounded subscriptions. Locale changes do not fetch records
 or translate quotes/comments/names. Dispose releases the subscription. See
 [translation.md](translation.md) for dictionary/work bounds and fallback behavior.
+
+## Text popup ownership
+
+`mountNotes` is optional. A host can use its own styles, display rules and action
+handlers with the public text-only selection command/events instead. Set the
+embedded URL's `notes=host&selectionMenu=host` before navigation to prevent any
+default Notes mount. These flags are presentation policy, not storage authority.
+
+An ordinary DOM `mountNotes` can retain its list while disabling popup DOM and
+selection listeners with `selectionMenu: false`. Its default display predicate
+requires a nonempty, noncollapsed range inside its root. A trusted host can
+provide `selectionAllowed(reference)` to override that predicate, for example
+`selectionAllowed: () => true` **only when** its provider already requests
+`client.request('selection', { textOnly: true }, { signal })`. A host may explicitly approve a PDF region reference (empty quote with a typed
+PDF region) for its annotation policy. The default text policy and textOnly
+command exclude these regions. Never approve an unfiltered focused-cell or
+chart-object reference as text. Existing bounded
+`actions` provide host handlers; none are added by default, including Ask AI.
+`clearSelection()` cancels pending capture and hides the popup when the host
+switches a view/pane; `dispose()` releases the component and all listeners.
+
+Table cell and query components support `selection({ textOnly: true })` with
+the same distinction; `selection()` preserves its existing reference shape.
+Expanded cells use the selected substring and retain their owning coordinates.
+
+Run `node tests/browser/selection-policy-check.mjs` (and `--webkit`) for focused
+DOM policy/lifecycle checks; the embedded reader check covers public settings
+and typed source references. These are MarkNoria-only tests.
+
+Built-in Compare preserves the current pane's explicit ownership flags when it
+replaces that pane, and preserves the comparison's startup policy on return to
+the main reader. Compare Source selections contain only selected source text
+(no gutters/signs/truncation labels), use an approximate line location, and do
+not claim exact source byte offsets. Mode changes clear the previous selection.
+`node tests/browser/compare-selection-check.mjs target/release/marknoria-server`
+checks real pointer selection and policy carry through these transitions.

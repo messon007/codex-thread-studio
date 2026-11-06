@@ -197,6 +197,7 @@ impl Service {
             token: token.clone(),
             host: address.to_string(),
             work: Arc::new(Semaphore::new(2)),
+            original_waiters: Arc::new(Semaphore::new(16)),
             open_work: Arc::new(Semaphore::new(1)),
             diagram_work: Arc::new(Semaphore::new(1)),
             diagram_waiters: Arc::new(Semaphore::new(4)),

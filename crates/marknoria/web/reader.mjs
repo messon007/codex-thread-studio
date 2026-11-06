@@ -16,6 +16,7 @@ import { sourceController } from './source.mjs'
 import { editorController } from './editor.mjs'
 import { readPosition, writePosition } from './position.mjs'
 import { mountOutline } from './outline.mjs'
+import { sourceTarget, visibleSourceLocation, searchHighlights } from './search-position.mjs'
 
 const mainLifetime = new AbortController()
 const translate = createTranslator()
@@ -37,6 +38,7 @@ on(document.querySelector('#compare-files'), 'click', () => {
   if (window.readerExperiment) writePosition(token, documentId, position())
   if (editor && !editor.confirmLeave()) return
   editor?.leaving()
+  clearTextSelection()
   files.compare()
 })
 const comparisonPreview = embedded && new URLSearchParams(location.search).has('comparison')
@@ -76,14 +78,14 @@ function position() {
   if (formatRenderer) { const value = formatRenderer.state(); return { line: 1, view: 'preview', ...(value.format === 'epub' ? { epub: value } : { pdf: { location: value.position?.location, zoom: value.zoom, continuous: value.continuous } }) } }
   if (editor?.visible) return { line: editor.line(), view: 'edit' }
   if (!index || !tables) return { line: 1, view: 'preview' }
-  if (source?.visible) return { line: source.currentLine(), view: 'source' }
+  if (source?.visible) return { ...source.currentLocation(), view: 'source' }
   const page = readingAnchor()
   const node = nodes.get(tables.itemForPage[page])
-  const row = tables.anchor(node) - Number(node?.dataset.rowStart || 0)
-  return { line: Number(node?.querySelectorAll('tbody tr')[row]?.dataset.sourceLine) || index.pages[page]?.line || 1, view: 'preview' }
+  return { ...visibleSourceLocation(node, viewport, { line: index.pages[page]?.line || 1, start: index.pages[page]?.start || 0 }), view: 'preview' }
 }
 const viewport = document.querySelector('#viewport')
 const space = document.querySelector('#space')
+const highlights = searchHighlights(space)
 const toc = document.querySelector('#toc')
 const tocSpace = document.querySelector('#toc-space')
 const status = document.querySelector('#status')
@@ -93,6 +95,14 @@ function setStatus(message, values) {
 }
 const shell = document.querySelector('.reader-shell')
 const presentation = readerPresentation(shell, { translate, themeRoot: document.documentElement })
+// Presentation-only startup policy: no authority or storage grants.
+{
+  const startup = new URLSearchParams(location.search)
+  presentation.update({
+    ...(startup.get('notes') === 'host' ? { notes: 'host' } : {}),
+    ...(startup.get('selectionMenu') === 'host' ? { selectionMenu: 'host' } : {})
+  })
+}
 readerUiLabels(shell, translate, { signal: mainLifetime.signal })
 on(window, 'marknoria:theme', event => { if (['light','dark'].includes(event.detail?.theme)) { presentation.update({ theme: event.detail.theme }); bridge?.publish('state', publicState()) } })
 let activeHeading = null
@@ -105,7 +115,7 @@ let notes = null
 function syncNotesOwner() {
   const owned = serviceCapabilities.notes && presentation.state().notes === 'reader'
   if (!owned) { notes?.dispose(); notes = null }
-  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,publicSelection,{documentId,translate})
+  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,signal => publicSelection(signal, { textOnly: true }),{documentId,translate,selectionMenu:presentation.state().selectionMenu})
 }
 let jq = null
 let cacheBytes = 0
@@ -124,6 +134,10 @@ let navigation = 0
 let documentError = null
 let loadError = null
 let searchGeneration = 0
+let searchMatches = [], searchQuery = '', searchCurrent = -1
+let searchOffset = 0, searchTotal = 0, searchExact = true, searchLoading = false, searchFailed = false
+let searchRequest = null, searchActivation = 0
+let searchJump = null
 const CACHE_LIMIT = 8 * 1024 * 1024
 const metrics = { firstContentMs: null, mountedPages: 0, mountedElements: 0, cacheBytes: 0, maxHeartbeatGapMs: 0 }
 let started = performance.now()
@@ -285,7 +299,27 @@ function readingAnchor() {
   return tables.items[item]?.page ?? 0
 }
 
-async function jump(sourcePage, heading = null, row = null, anchor = null) {
+async function previewLine(location) {
+  if (typeof location === 'number') location = { line: location }
+  const { line } = location
+  if (!index?.pages.length) return
+  const page = Number.isSafeInteger(location.start) ? Math.min(index.pages.length - 1, Math.max(0, index.pages.findIndex(page => page.end > location.start))) : Math.max(0, index.pages.findLastIndex(page => page.line <= line))
+  const descriptor = index.pages[page]
+  let row = null
+  if (descriptor.table != null) {
+    const response = await api(`/api/window?target=${page}`, mainLifetime.signal)
+    const content = response.pages.find(item => item.page === page || item.id === page)
+    if (content) {
+      const fragment = projectionHtml(content.html)
+      const rows = [...fragment.querySelectorAll('tbody tr[data-source-line]')]
+      const offset = rows.findLastIndex(node => Number(node.dataset.sourceLine) <= line)
+      if (offset >= 0) row = descriptor.rowStart + offset
+    }
+  }
+  return jump(page, null, row, null, location)
+}
+
+async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '') {
   if (stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
   if (editor?.visible) {
     const target = heading == null ? index.pages[sourcePage]?.line : index.toc.find(item => item.id === heading)?.line
@@ -323,10 +357,11 @@ async function jump(sourcePage, heading = null, row = null, anchor = null) {
     if (stopped || ticket !== navigation || !index || !tables || !virtualizer) return
     const article = nodes.get(page)
     const tableRow = row ?? index.pages[sourcePage]?.rowStart
-    const target = anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
+    const target = location ? sourceTarget(article, location, query) : anchor != null ? article?.querySelector(`[data-document-anchor="${CSS.escape(anchor)}"]`) : heading == null
       ? (tableRow > Number(article?.dataset.rowStart || 0) ? article?.querySelectorAll('tbody tr')[tableRow - Number(article.dataset.rowStart)] : article)
       : document.getElementById(`heading-${heading}`)
-    const diagramsReady = article && target && [...article.querySelectorAll('figure[data-diagram-state]')].every(figure => !(figure.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) || ['rendered', 'error'].includes(figure.dataset.diagramState))
+    const targetNode = target instanceof Range ? target.startContainer.parentElement : target
+    const diagramsReady = article && targetNode && [...article.querySelectorAll('figure[data-diagram-state]')].every(figure => !(figure.compareDocumentPosition(targetNode) & Node.DOCUMENT_POSITION_FOLLOWING) || ['rendered', 'error'].includes(figure.dataset.diagramState))
     if (article?.dataset.ready && target && diagramsReady) {
       virtualizer.cancelScroll()
       const top = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top
@@ -404,16 +439,10 @@ function setup() {
   activeHeading = index.toc[0]?.id ?? null
   document.querySelector('#view-modes').hidden = false
   source = sourceController(index, api, line => {
-    const heading = index.toc.findLast(heading => heading.line <= line)
-    const page = Math.max(0, index.pages.findLastIndex(page => page.line <= line))
     schedule()
-    if (index.pages.length) jump(heading?.page ?? page, heading?.id ?? null)
-  }, () => {
-    const page = readingAnchor()
-    const node = nodes.get(tables.itemForPage[page])
-    const row = tables.anchor(node) - Number(node?.dataset.rowStart || 0)
-    return Number(node?.querySelectorAll('tbody tr')[row]?.dataset.sourceLine) || index.pages[page]?.line || 1
-  }, () => {
+    return previewLine(line)
+  }, () => position(), () => {
+    clearTextSelection()
     tables?.closeOverlays()
     navigation += 1
     generation += 1
@@ -422,7 +451,7 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate })
+  }, { buttons: !editable, translate, onVisibilityChange: () => { clearTextSelection(); highlights.refresh() } })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
       virtualizer?.measureElement(article)
@@ -500,7 +529,12 @@ function setupFormat() {
       initialState: saved.epub || { theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light' },
       url: new URL(`./api/original?revision=${owner.revision}`, import.meta.url).href,
       headers: { 'x-reader-token': token, 'x-reader-document': owner.documentId },
-      onSelection: value => { bridge?.publish('selection', value); notes?.selectionChanged() },
+      onSelection: value => {
+        if (owner.signal.aborted) return
+        bridge?.publish('selection', value?.quote?.trim() ? value : null)
+        if (value?.quote?.trim()) notes?.selectionChanged()
+        else notes?.clearSelection()
+      },
       onState: value => {
         if (owner.signal.aborted) return
         if (metrics.firstContentMs == null && value.firstUsefulContentMs != null) metrics.firstContentMs = performance.now() - started
@@ -544,8 +578,18 @@ async function renderPdfOutline() {
   document.querySelector('#section-count').textContent = total
 }
 
+function clearTextSelection() {
+  const code = editor?.visible ? editor.code : source?.visible ? source.code : null
+  if (code && !code.view.state.selection.main.empty) code.view.dispatch({ selection: { anchor: code.view.state.selection.main.head } })
+  notes?.clearSelection()
+  getSelection()?.removeAllRanges()
+  bridge?.publish('selection', null)
+  document.dispatchEvent(new Event('selectionchange'))
+}
+
 function teardown() {
-  searchGeneration += 1
+  clearTextSelection()
+  clearSearchResults()
   navigation += 1
   generation += 1
   activeRequest?.abort()
@@ -645,7 +689,9 @@ async function switchView(view) {
   const current = editor.visible ? 'edit' : source?.visible ? 'source' : 'preview'
   if (view === current && index && !editor.needsRefresh) return
   switching = true
-  const line = position().line
+  clearTextSelection()
+  const location = position()
+  const line = location.line
   setContents(false)
   try {
     if (view === 'edit') {
@@ -655,15 +701,13 @@ async function switchView(view) {
       if (!index || editor.needsRefresh) await refreshReading()
       editor.hide()
       document.getElementById('workspace').hidden = false
-      if (view === 'source') await source.show(line)
+      if (view === 'source') await source.show(location)
       else {
         const fromSource = source.visible
         source.hide()
         schedule()
         if (!fromSource && index.pages.length) {
-          const heading = index.toc.findLast(heading => heading.line <= line)
-          const page = Math.max(0, index.pages.findLastIndex(page => page.line <= line))
-          jump(heading?.page ?? page, heading?.id ?? null)
+          await previewLine(location)
         }
       }
     }
@@ -698,7 +742,15 @@ function setContents(open) {
 }
 
 function setSearch(open) {
-  if (!open) searchGeneration += 1
+  if (!open) {
+    if (searchLoading && searchCurrent < 0) clearSearchResults()
+    cancelSearchNavigation()
+    searchGeneration += 1; searchActivation += 1; searchRequest?.abort()
+    searchLoading = false; highlights.clear(); updateSearchCounter()
+  } else if (!formatRenderer && searchQuery) {
+    const match = searchMatches[searchCurrent - searchOffset]
+    highlights.set(searchQuery, match ? { ...match, table: index?.pages[match.page]?.table } : null)
+  }
   document.querySelector('#search').hidden = !open
   document.querySelector('#search-toggle').setAttribute('aria-expanded', String(open))
   document.querySelector('#matches').hidden = !open
@@ -753,31 +805,131 @@ on(document, 'pointerdown', event => {
   if (settings.open && !settings.contains(event.target)) settings.open = false
 })
 
+function updateSearchCounter() {
+  if (mainLifetime.signal.aborted) return
+  const counter = document.getElementById('search-count')
+  counter.hidden = !searchQuery
+  const current = searchCurrent < 0 ? 0 : searchCurrent + 1
+  const values = { current, total: searchTotal }
+  labels.set(counter, searchLoading && searchCurrent < 0 ? '…' : searchFailed ? '—' : searchExact ? '{current}/{total}' : '{current}/{total}+', values)
+  const incomplete = formatRenderer && index?.format === 'pdf' ? '{current} of at least {total} matching pages; result limit reached'
+    : formatRenderer ? '{current} of at least {total} matching passages; result limit reached' : '{current} of at least {total} matches; result limit reached'
+  const description = searchLoading && searchCurrent < 0 ? 'Searching…' : searchFailed ? 'Search failed' : !searchExact ? incomplete
+    : formatRenderer && index?.format === 'pdf' ? '{current} of {total} matching pages'
+    : formatRenderer ? '{current} of {total} matching passages' : '{current} of {total} matches'
+  for (const attribute of ['aria-label', 'title']) labels.set(counter, description, values, attribute)
+  document.getElementById('search').setAttribute('aria-busy', String(searchLoading))
+  for (const id of ['search-previous', 'search-next']) document.getElementById(id).disabled = searchLoading || !searchTotal
+}
+function cancelSearchNavigation() {
+  if (searchJump != null && searchJump === navigation) {
+    navigation += 1
+    forcePage(null); virtualizer?.cancelScroll(); schedule()
+  }
+  searchJump = null
+}
+function clearSearchResults() {
+  cancelSearchNavigation()
+  searchGeneration += 1; searchActivation += 1; searchRequest?.abort()
+  searchMatches = []; searchQuery = ''; searchCurrent = -1
+  searchOffset = searchTotal = 0; searchExact = true; searchLoading = searchFailed = false
+  highlights.clear()
+  document.getElementById('matches').replaceChildren()
+  updateSearchCounter()
+}
+function showSearchResults(response, offset = 0) {
+  const occurrences = new Map()
+  searchOffset = offset
+  searchMatches = response.matches.map(match => {
+    const occurrence = match.occurrence ?? occurrences.get(match.line) ?? 0
+    occurrences.set(match.line, occurrence + 1)
+    return { ...match, occurrence }
+  })
+  searchTotal = Number.isSafeInteger(response.total) ? response.total : searchMatches.length
+  searchExact = Number.isSafeInteger(response.total) || response.complete === true || response.complete !== false && searchMatches.length < (response.limit || 100)
+  const list = document.querySelector('#matches')
+  list.replaceChildren()
+  for (const [offset, match] of searchMatches.entries()) {
+    const item = document.createElement('li'), button = document.createElement('button')
+    button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
+    button.addEventListener('click', () => activateSearchMatch(searchOffset + offset))
+    item.append(button); list.append(item)
+  }
+  if (!searchTotal) {
+    const empty = document.createElement('li'); labels.set(empty, 'No matches'); list.append(empty)
+  }
+}
+async function activateSearchMatch(matchIndex) {
+  if (!searchTotal || searchLoading) return
+  const current = (matchIndex + searchTotal) % searchTotal
+  const generation = searchGeneration, activation = ++searchActivation
+  try {
+    if (current < searchOffset || current >= searchOffset + searchMatches.length) {
+      const offset = Math.floor(current / 100) * 100
+      searchRequest?.abort(); searchRequest = new AbortController()
+      searchLoading = true; updateSearchCounter()
+      const response = await api(`/api/search?query=${encodeURIComponent(searchQuery)}&offset=${offset}&revision=${encodeURIComponent(index.revision)}`, searchRequest.signal)
+      if (generation !== searchGeneration || activation !== searchActivation) return
+      showSearchResults(response, offset)
+      searchLoading = false
+    }
+    if (generation !== searchGeneration || activation !== searchActivation) return
+    searchCurrent = current
+    const match = searchMatches[current - searchOffset]
+    if (!match) throw Error('Search result is no longer available')
+    updateSearchCounter()
+    const list = document.getElementById('matches'); list.hidden = true
+    for (const [offset, button] of [...list.querySelectorAll('button')].entries()) button.setAttribute('aria-current', String(searchOffset + offset === searchCurrent))
+    if (formatRenderer) await formatRenderer.navigate(match.location)
+    else if (source?.visible) await source.goRange(match.start, match.end)
+    else {
+      highlights.set(searchQuery, { ...match, table: index.pages[match.page]?.table })
+      const before = navigation
+      const pending = jump(match.page, null, match.tableRow, null, match, searchQuery)
+      const owned = navigation !== before ? navigation : null
+      searchJump = owned
+      try { await pending } finally { if (searchJump === owned) searchJump = null }
+    }
+  } catch (error) {
+    if (generation === searchGeneration && activation === searchActivation && error.name !== 'AbortError') setStatus(error.message, null)
+  } finally {
+    if (generation === searchGeneration && activation === searchActivation) { searchLoading = false; updateSearchCounter() }
+  }
+}
+on(document.getElementById('search-previous'), 'click', () => activateSearchMatch(searchCurrent < 0 ? searchTotal - 1 : searchCurrent - 1))
+on(document.getElementById('search-next'), 'click', () => activateSearchMatch(searchCurrent + 1))
+on(document.getElementById('query'), 'input', clearSearchResults)
+on(document.getElementById('query'), 'keydown', event => {
+  if (event.isComposing || event.keyCode === 229) return
+  if (event.key === 'Enter' && searchQuery === event.target.value && searchTotal && !searchLoading) {
+    event.preventDefault()
+    activateSearchMatch(searchCurrent + (event.shiftKey ? -1 : 1))
+  }
+})
+
 on(document.querySelector('#search'), 'submit', async event => {
   event.preventDefault()
-  const ticket = ++searchGeneration
+  const query = document.querySelector('#query').value
+  clearSearchResults()
+  if (!query) return
+  const ticket = searchGeneration
+  searchQuery = query; searchLoading = true; updateSearchCounter()
+  searchRequest = new AbortController()
   try {
-    const query = document.querySelector('#query').value
-    const response = formatRenderer ? await formatRenderer.search(query, { signal: mainLifetime.signal }) : await api(`/api/search?query=${encodeURIComponent(query)}`, mainLifetime.signal)
+    const response = formatRenderer ? await formatRenderer.search(query, { signal: searchRequest.signal }) : await api(`/api/search?query=${encodeURIComponent(query)}&offset=0&revision=${encodeURIComponent(index.revision)}`, searchRequest.signal)
     if (ticket !== searchGeneration) return
     const list = document.querySelector('#matches')
-    list.replaceChildren()
-    for (const match of response.matches) {
-      const item = document.createElement('li')
-      const button = document.createElement('button')
-      button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
-      button.addEventListener('click', () => { list.hidden = true; if (formatRenderer) formatRenderer.navigate(match.location).catch(error => { setStatus(error.message, null) }); else if (source?.visible) source.go(match.line); else jump(match.page, null, match.tableRow) })
-      item.append(button); list.append(item)
-    }
+    showSearchResults(response)
+    searchLoading = false; updateSearchCounter()
+    highlights.set(formatRenderer ? '' : query)
     if (formatRenderer) setStatus(index.format === 'pdf' ? (response.complete ? '{count} matching pages' : '{count} matching pages · Result limit reached') : (response.complete ? '{count} matching passages' : '{count} matching passages · Result limit reached'),{count:response.matches.length})
-    else setStatus('{count} matching source lines (maximum {limit}); case-sensitive',{count:response.matches.length,limit:response.limit})
+    else setStatus('{count} matches; case-sensitive', { count: searchTotal })
     list.hidden = false
-    if (!response.matches.length) {
-      const empty = document.createElement('li')
-      labels.set(empty,'No matching source lines')
-      list.append(empty)
-    }
-  } catch (error) { if (ticket === searchGeneration) setStatus(error.message, null) }
+    if (searchTotal) { await activateSearchMatch(0); if (ticket === searchGeneration) list.hidden = false }
+  } catch (error) {
+    if (ticket === searchGeneration && error.name !== 'AbortError') { searchFailed = true; setStatus(error.message, null) }
+  }
+  finally { if (ticket === searchGeneration) { searchLoading = false; updateSearchCounter() } }
 })
 
 function publicState() {
@@ -792,43 +944,54 @@ function publicState() {
     document: index ? {fileBytes:index.originalBytes??index.sourceBytes,sourceBytes:sourceAvailable?index.sourceBytes:null,sourceLines:sourceAvailable?index.sourceLines:null,projectionPages:index.pages.length,tables:index.tables.length,assets:index.assets.length,references:index.references?.length??0} : null,
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
-    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    capabilities: { ...serviceCapabilities, projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
-async function publicSelection(signal) {
+async function publicSelection(signal, { textOnly = false } = {}) {
   if (!index) return null
-  if (formatRenderer) return formatRenderer.selection()
-  if (tables?.hasOverlay()) { const value = tables.selection(); return value ? { documentId, revision: index.revision, ...value } : null }
+  if (formatRenderer) { const value = formatRenderer.selection(); return textOnly && !value?.quote?.trim() ? null : value }
+  if (source?.visible && source.external) {
+    const value = source.selection()
+    if (!value?.quote?.trim()) return null
+    const quote = boundedQuote(value.quote)
+    return { ...value, documentId, revision: index.revision, quote, quoteTruncated: Boolean(value.quoteTruncated || quote.length < value.quote.length) }
+  }
+  if (tables?.hasOverlay()) { const value = tables.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
   const code = editor?.visible ? editor.code : source?.visible ? source.code : null
   const range = getSelection()?.rangeCount ? getSelection().getRangeAt(0) : null
   const bounds = range?.getBoundingClientRect()
   const viewportRect = bounds ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } : null
   if (code) {
+    // CodeMirror owns real text ranges even in a background WebKit frame,
+    // where the window DOM Selection/focus may be absent.
     let selected = code.view.state.selection.main
     if (range && !range.collapsed && code.view.contentDOM.contains(range.startContainer) && code.view.contentDOM.contains(range.endContainer)) {
       const from = code.view.posAtDOM(range.startContainer, range.startOffset), to = code.view.posAtDOM(range.endContainer, range.endOffset)
       selected = { from: Math.min(from, to), to: Math.max(from, to), empty: from === to }
     }
     if (selected.empty) return null
+    const codeRect = range && !range.collapsed && code.view.contentDOM.contains(range.startContainer) && code.view.contentDOM.contains(range.endContainer) ? viewportRect : null
     if (editor?.visible && editor.dirty) {
       const text = code.view.state.sliceDoc(selected.from, selected.to), quote = boundedQuote(text)
       return { documentId, revision: editor.revision, quote, quoteTruncated: quote.length < text.length,
-        precision: 'draft', location: { kind: 'line', line: editor.line() }, viewportRect }
+        precision: 'draft', location: { kind: 'line', line: editor.line() }, viewportRect: codeRect }
     }
     if (editor?.visible && editor.needsRefresh) throw Error('Refresh the saved reading view before capturing an exact source selection')
     const page = editor?.visible ? editor.data.window : source.page
     const selection = await api('/api/selection/source', signal, { method: 'POST', body: JSON.stringify({ revision: index.revision,
       start: page.start, end: page.end, fromUtf16: selected.from, toUtf16: selected.to }) })
     if (stopped || !index || selection.documentId !== documentId || selection.revision !== index.revision) throw Object.assign(Error('Selection belongs to a previous reader revision'), { code: 'REVISION' })
-    return { ...selection, viewportRect }
+    return { ...selection, viewportRect: codeRect }
   }
-  if (!range || range.collapsed) { const value = tables?.selection(); return value ? { documentId, revision: index.revision, ...value } : null }
+  if (!range || range.collapsed) { const value = tables?.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
   const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement
   const start = element(range.startContainer), end = element(range.endContainer)
   const page = start?.closest('.page')
-  if (!page || !space.contains(page) || !space.contains(end)) { const value = tables?.selection(); return value ? { documentId, revision: index.revision, ...value } : null }
-  const text = range.toString(), quote = boundedQuote(text), cell = start.closest('td,th')
+  if (!page || !space.contains(page) || !space.contains(end)) { const value = tables?.selection({ textOnly }); return value ? { documentId, revision: index.revision, ...value } : null }
+  const text = range.toString()
+  if (textOnly && !text.trim()) return null
+  const quote = boundedQuote(text), cell = start.closest('td,th')
   let location = { kind: 'line', line: Number(start.closest('[data-source-line]')?.dataset.sourceLine) || index.pages[Number(page.dataset.page)]?.line || 1 }, precision = 'approximate'
   if (cell?.tagName === 'TD' && cell === end.closest('td,th') && page.dataset.table != null) {
     const columns = JSON.parse(page.dataset.selectedColumns || '[]')
@@ -838,8 +1001,12 @@ async function publicSelection(signal) {
   return { documentId, revision: index.revision, quote, quoteTruncated: quote.length < text.length, precision, location, viewportRect }
 }
 function boundedQuote(text) {
-  let end = Math.min(text.length, 16384)
-  if (end && /[\uD800-\uDBFF]/.test(text[end - 1])) end--
+  let end = 0, bytes = 0
+  for (const scalar of text) {
+    const point = scalar.codePointAt(0), size = point < 128 ? 1 : point < 2048 ? 2 : point < 65536 ? 3 : 4
+    if (end + scalar.length > 16384 || bytes + size > 32768) break
+    end += scalar.length; bytes += size
+  }
   return text.slice(0, end)
 }
 function connectBridge() {
@@ -851,8 +1018,9 @@ function connectBridge() {
       if (!index || editor?.busy || switching) throw Error('Reader is busy')
       if (view === 'edit' && !editable) throw Error('Editing was not granted')
       if (view !== 'preview' && !publicState().capabilities.source) throw Error('Source is unavailable for this format')
+      clearTextSelection()
       if (editable) await switchView(view)
-      else if (view === 'source') await source.show(position().line)
+      else if (view === 'source') await source.show(position())
       else source?.hide()
       if (publicState().view !== view) throw Error('Could not switch the reader view')
       result.publish('state', publicState())
@@ -890,7 +1058,18 @@ function connectBridge() {
     async settings(params) {
       const before = presentation.state()
       presentation.update(params)
-      if (before.notes !== presentation.state().notes) syncNotesOwner()
+      if (embedded && (params.notes !== undefined || params.selectionMenu !== undefined)) {
+        const url = new URL(location.href)
+        for (const key of ['notes', 'selectionMenu']) {
+          if (params[key] === 'host') url.searchParams.set(key, 'host')
+          else if (params[key] === 'reader') url.searchParams.delete(key)
+        }
+        history.replaceState(history.state, '', url)
+      }
+      if (before.notes !== presentation.state().notes || before.selectionMenu !== presentation.state().selectionMenu) {
+        notes?.dispose(); notes = null
+        syncNotesOwner()
+      }
       if (params.theme != null) window.dispatchEvent(new CustomEvent('marknoria:theme-request', { detail: { theme: params.theme } }))
       if (params.wrap != null && params.wrap !== before.wrap) { const input = document.getElementById('wrap'); input.checked = params.wrap; input.dispatchEvent(new Event('change')) }
       if (formatRenderer && params.pdf) await formatRenderer.settings(params.pdf)
@@ -905,7 +1084,7 @@ function connectBridge() {
     selectionRequest?.abort()
     selectionTimer = setTimeout(async () => {
       selectionRequest = new AbortController()
-      try { const value = await publicSelection(selectionRequest.signal); if (generation === selectionGeneration) result.publish('selection', value) } catch {}
+      try { const value = await publicSelection(selectionRequest.signal, { textOnly: true }); if (generation === selectionGeneration) result.publish('selection', value) } catch {}
     }, 150)
   }, { signal: lifetime.signal })
   return result

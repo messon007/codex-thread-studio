@@ -70,6 +70,7 @@ function ensureDiff(side) {
   if (owner !== document) reader(side).source.attach({
     viewport,
     line: () => pane.diff.line(),
+    selection: () => pane.diff.selection(),
     async go(line) {
       navigation += 1
       const ticket = ++pane.generation
@@ -167,6 +168,8 @@ async function refresh() {
       const pane = panes[side]
       const next = state[side]
       const newFile = next?.id !== pane.file?.id
+      const preview = document.getElementById(`${side}-preview`)
+      const previousPolicy = new URL(pane.file ? (preview.contentWindow.location.protocol.startsWith('http') ? preview.contentWindow.location.href : preview.src) : location.href).searchParams
       pane.file = next
       document.getElementById(`${side}-file`).textContent = next?.displayPath || next?.path || 'Choose a document'
       document.getElementById(`${side}-file`).title = next?.displayPath || next?.path || ''
@@ -175,7 +178,11 @@ async function refresh() {
         pane.tools.clear()
         pane.position = next ? readPosition(token, next.id) : { line: 1, view: 'preview' }
         pane.mode = pane.position.view
-        if (next) document.getElementById(`${side}-preview`).src = new URL(`./pane/${next.id}/${side}/?embedded=1&comparison=1&line=${pane.position.line}#${token}`, import.meta.url).href
+        if (next) {
+          const target = new URL(`./pane/${next.id}/${side}/?embedded=1&comparison=1&line=${pane.position.line}#${token}`, import.meta.url)
+          for (const key of ['notes', 'selectionMenu']) if (previousPolicy.get(key) === 'host') target.searchParams.set(key, 'host')
+          document.getElementById(`${side}-preview`).src = target.href
+        }
       }
       void applyMode(side).catch(error => { status.textContent = error.message })
     }
@@ -203,7 +210,7 @@ async function refresh() {
   if (result.state !== 'ready') { status.textContent = 'Computing exact source differences… Both documents remain readable.'; return }
   metadata = result
   const url = new URL(location.href)
-  url.search = `?comparison=${comparisonId}`
+  url.searchParams.set('comparison', comparisonId)
   history.replaceState(null, '', url)
   for (const side of sides) {
     capture(side)
@@ -294,6 +301,7 @@ document.querySelector('#compare-close').addEventListener('click', async () => {
     await api('/api/panes', { method: 'DELETE' })
     const target = new URL('./', import.meta.url)
     target.hash = token
+    for (const key of ['notes', 'selectionMenu']) if (new URLSearchParams(location.search).get(key) === 'host') target.searchParams.set(key, 'host')
     location.assign(target.href)
   } catch (error) { status.textContent = error.message }
 })

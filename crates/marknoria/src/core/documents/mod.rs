@@ -14,6 +14,8 @@ mod html;
 mod image_decode;
 mod pdf;
 pub mod structured;
+mod json_stream;
+pub(crate) mod projection;
 pub(crate) const TEXT_PAGE_BYTES: usize = 16 * 1024;
 mod svg_resources;
 #[cfg(test)]
@@ -117,93 +119,78 @@ pub fn text(
         source_lines: starts.len(),
         ..Default::default()
     };
-    let mut output = BufWriter::new(File::create(directory.join("pages.txt"))?);
     File::create(directory.join("diagrams.src"))?;
-    let mut offset = 0;
-    let jsonl = structured::Format::for_path(&path.to_string_lossy())
-        .is_some_and(|f| f.label == "JSONL");
-    let records: Box<dyn Iterator<Item = &str>> = if jsonl && !source.is_empty() {
-        Box::new(source.split_inclusive('\n'))
-    } else {
-        Box::new(std::iter::once(source))
-    };
-    let mut pending = String::with_capacity(TEXT_PAGE_BYTES);
-    let mut pending_range: Option<std::ops::Range<usize>> = None;
-    let mut source_at = 0;
-    for record in records {
-        // Bound formatting by record, not by total JSONL file size. Pack short
-        // records into a bounded page rather than allocating a page per row.
-        let preview = if record.len() <= structured::FORMAT_BYTES {
-            structured::Preview::prepare_bounded(
-                &path.to_string_lossy(),
-                &TextDocument::new(record.into()).map_err(error)?,
-                if jsonl { record.len().saturating_mul(4) } else { structured::OUTPUT_BYTES },
-            )
-        } else { None };
-        let displayed = preview.as_ref().map_or(record, |p| p.document.as_str());
-        let mut at = 0;
-        while at < displayed.len() {
-            let mut end = (at + TEXT_PAGE_BYTES).min(displayed.len());
-            while !displayed.is_char_boundary(end) { end -= 1; }
-            if end < displayed.len() {
-                if let Some(n) = displayed[at..end].rfind('\n') { end = at + n + 1; }
-            }
-            let chunk = &displayed[at..end];
-            let range = preview.as_ref().and_then(|p| p.original_range(at..end))
-                .unwrap_or_else(|| {
-                    preview.as_ref().map_or(at..end,|p|p.original_at(at)..p.original_at(end))
-                });
-            let range = source_at + range.start..source_at + range.end;
-            if !pending.is_empty() && pending.len() + chunk.len() > TEXT_PAGE_BYTES {
-                write_text_page(&mut output, &mut index, &pending,
-                    pending_range.take().unwrap(), starts, &mut offset)?;
-                pending.clear();
-            }
-            if let Some(envelope) = pending_range.as_mut() { envelope.end = range.end; }
-            else { pending_range = Some(range); }
-            pending.push_str(chunk);
-            at = end;
+    let path_name = path.to_string_lossy();
+    let structured_format = structured::Format::for_path(&path_name);
+    let jsonl = structured_format.is_some_and(|f| f.label == "JSONL");
+    let json = structured_format.filter(|f| f.language == structured::Language::Json && !jsonl);
+    let mut writer = projection::Writer::new(directory, source, starts, source.len().saturating_mul(4).max(1024))?;
+    if let Some(json) = json {
+        if let Err(reason) = json_stream::format(source, json.label, &mut writer)? {
+            // Throw away a failed projection once; serve the immutable source.
+            // Readers never rescan the original document to retry formatting.
+            drop(writer);
+            writer = projection::Writer::new(directory, source, starts, source.len())?;
+            if !writer.copy(0..source.len())? { return Err(error("Document exceeds the bounded cache budget")); }
+            fs::write(directory.join("preview-note.txt"), format!("{} preview shows original source: {}. Source and Edit retain the original bytes.", json.label, reason))?;
         }
-        source_at += record.len();
+    } else {
+        let records: Box<dyn Iterator<Item = &str>> = if jsonl && !source.is_empty() {
+            Box::new(source.split_inclusive('\n'))
+        } else { Box::new(std::iter::once(source)) };
+        // JSONL retains its per-record expansion limit. The page writer also
+        // bounds aggregate cache bytes and DOM/source anchors per page.
+        writer = projection::Writer::new(directory, source, starts, if jsonl { source.len().saturating_mul(4) } else { source.len().max(structured::OUTPUT_BYTES) })?;
+        let mut source_at = 0;
+        for record in records {
+            let preview = if record.len() <= structured::FORMAT_BYTES {
+                structured::Preview::prepare_bounded(&path_name,
+                    &TextDocument::new(record.into()).map_err(error)?,
+                    if jsonl { record.len().saturating_mul(4) } else { structured::OUTPUT_BYTES })
+            } else { None };
+            if let Some(p) = preview.as_ref().filter(|p| p.formatted) {
+                let mut display_at = 0;
+                for segment in p.map.iter() {
+                    if !writer.generated(&p.document.as_str()[display_at..segment.display.start])?
+                        || !writer.copy(source_at + segment.original..source_at + segment.original + segment.display.len())? {
+                        return Err(error("Document exceeds the bounded projection cache budget"));
+                    }
+                    display_at = segment.display.end;
+                }
+                if !writer.generated(&p.document.as_str()[display_at..])? { return Err(error("Document exceeds the bounded projection cache budget")); }
+            } else if !writer.copy(source_at..source_at + record.len())? { return Err(error("Document exceeds the bounded projection cache budget")); }
+            source_at += record.len();
+        }
     }
-    if !pending.is_empty() || index.pages.is_empty() {
-        write_text_page(&mut output, &mut index, &pending,
-            pending_range.unwrap_or(0..0), starts, &mut offset)?;
-    }
-    output.flush()?;
+    index.pages = writer.finish()?;
     index.index_ms = started.elapsed().as_secs_f64() * 1000.0;
     index.peak_rss_kib = crate::core::peak_rss_kib();
     publish(directory, &index)?;
     Ok(index)
 }
 
-fn write_text_page(
-    output: &mut impl Write, index: &mut Index, chunk: &str,
-    range: std::ops::Range<usize>, starts: &[usize], offset: &mut u64,
-) -> io::Result<()> {
-    // Store display text once. Styling/HTML escaping expands dense JSON by
-    // tens of times and belongs to bounded visible-page reads, not indexing.
-    if index.pages.len() >= crate::core::MAX_PAGES || *offset + chunk.len() as u64 > crate::core::MAX_CACHE {
-        return Err(error("Document exceeds the bounded page/cache budget"));
+pub(crate) fn text_page_html(directory: &Path, index: &Index, page: usize, chunk: &str) -> io::Result<String> {
+    let language = crate::core::highlight::language_for_name(&index.name);
+    let anchors = projection::read(directory, index, page, chunk)?;
+    let mut html = crate::core::highlight::code_mapped(&language, chunk, &anchors);
+    if page == 0 {
+        if let Some(note) = preview_note(directory)? {
+            html.insert_str(0, &format!("<p class=\"document-preview-note\" role=\"status\">{}</p>", escaped(&note)));
+        }
     }
-    index.pages.push(Page {
-        start: range.start, end: range.end,
-        line: starts.partition_point(|n| *n <= range.start).max(1),
-        offset: *offset, bytes: chunk.len(), rows: 0, row_start: 0, columns: 0, table: None,
-    });
-    output.write_all(chunk.as_bytes())?;
-    *offset += chunk.len() as u64;
-    Ok(())
+    Ok(html)
 }
 
-pub(crate) fn text_page_html(language: &str, chunk: &str) -> String {
-    let code = if chunk.chars().any(|c| c < ' ' && !matches!(c, '\r' | '\n' | '\t')) {
-        None
-    } else { crate::core::highlight::code_bounded(language, chunk, crate::core::MAX_HTML - 256) }
-    .filter(|s| s.len() + 256 < crate::core::MAX_HTML)
-    .unwrap_or_else(|| format!("<pre><code data-language=\"{}\">{}</code></pre>", escaped(language), escaped(chunk)))
-    .replacen("<pre", "<pre data-document-code=\"true\"", 1);
-    code
+pub(crate) fn preview_note(directory: &Path) -> io::Result<Option<String>> {
+    match File::open(directory.join("preview-note.txt")) {
+        Ok(file) => {
+            let mut note = String::new();
+            file.take(1024).read_to_string(&mut note)?;
+            Ok(Some(note))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 pub(super) struct Builder<'a> {

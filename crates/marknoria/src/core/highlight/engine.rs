@@ -123,6 +123,21 @@ mod tests {
         }
     }
     #[test]
+    fn unavailable_injections_keep_complete_text_and_retained_injections_stay_colored() {
+        for (language,source) in [
+            ("markdown","```ruby\r\nputs \"中文😀 <script>\"\r\n```\r\n"),
+            ("markdown","```rb\nputs 42\n```\n"),
+            ("javascript","const code = ruby`puts \"中文😀\"`; const other = rb`puts 42`;"),
+            ("html","<style>body { color: red; }</style><script>const n = /[a-z]+/g; /** @type {number} */ let answer = 42;</script>"),
+        ] {
+            let out=ranges(language,source).unwrap();
+            assert_eq!(out.iter().map(|s|&source[s.range.clone()]).collect::<String>(),source);
+            if language=="html" { assert!(out.iter().any(|span|span.style!=Style::default())); }
+        }
+        #[cfg(feature="syntax-reduced")]
+        for name in ["ruby","rb","php","c-sharp","cs"] {assert!(grammars::configuration(name).is_none());}
+    }
+    #[test]
     fn deep_and_dense_input_preserves_complete_bounded_text() {
         for (language, text) in [
             (

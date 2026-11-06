@@ -1,5 +1,6 @@
 // Dashed comment anchors use an independent, owned layer. Never wrap text:
 // EPUB CFIs, native selections, search ranges and host DOM stay unchanged.
+import { uiLabels } from './translation.mjs'
 import { commentScopes, commentScopeKey, commentTextMap, commentTextHash, commentRangeAt } from './comment-ranges.mjs'
 
 export const COMMENT_MARK_PROFILE = Object.freeze({ version: 1, scopes: 512, records: 512, bytes: 2 * 1024 * 1024, rectangles: 2048 })
@@ -7,12 +8,12 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
   if (typeof owner?.revision !== 'string' || !owner.revision.length || owner.revision.length>256 || typeof owner.documentId !== 'string' || !owner.documentId.length || owner.documentId.length>256 || !root || (load !== null && typeof load !== 'function')) throw TypeError('Comment marks require an owner and scoped provider')
   const document = root.ownerDocument, window = document.defaultView
   const name = 'marknoria-comments-' + crypto.randomUUID().replaceAll('-', '')
-  const lifetime = new AbortController(), options = { signal: lifetime.signal }
+  const lifetime = new AbortController(), options = { signal: lifetime.signal }, labels = uiLabels(translate, options)
   let disposed = false, running = false, pending = false, frame = null, timer = null, request = null, generation = 0, fetched = null, records = [], explicit = [], hitboxes = [], hover = null, hideTimer = null
   const hoverRealms = new Map(), modalLayers = new Map(), realms = new Map(), overlay = document.createElement('div'), popup = document.createElement('div')
   overlay.dataset.commentOverlay = ''; overlay.ariaHidden = 'true'
   overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:20;overflow:hidden'
-  popup.className = 'comment-mark-popup'; popup.setAttribute('role','group'); popup.setAttribute('aria-label',translate('Comments')); popup.hidden = true
+  popup.className = 'comment-mark-popup'; popup.setAttribute('role','group'); labels.set(popup,'Comments',{},'aria-label'); popup.hidden = true
   popup.style.cssText = 'position:fixed;z-index:1500;padding:6px 10px;border:1px solid var(--reader-border,#ccd5d9);border-radius:6px;background:var(--reader-panel,#fff);color:var(--reader-text,#243234);box-shadow:0 3px 12px #0002;cursor:pointer'
   document.body.append(overlay, popup)
   function clearPaint() {
@@ -193,14 +194,15 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
       const ids = [...new Set(found.map(box=>box.id))], box=found[0]
       const parent=box.modal||document.body
       if(popup.parentElement!==parent)parent.append(popup)
+      for (const button of popup.querySelectorAll('button')) labels.clear(button)
       popup.replaceChildren()
       for (const [index,id] of ids.slice(0,16).entries()) {
         const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer'
-        button.textContent=ids.length===1?translate('View comment'):`${translate('Comment')} ${index+1} / ${ids.length}`
+        labels.set(button,ids.length===1?'View comment':'Comment {current} / {total}',{current:index+1,total:ids.length})
         button.addEventListener('click',()=>{clearHover();open(id)}, {once:true})
         popup.append(button)
       }
-      if(ids.length>16){const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';button.textContent=translate('View all comments');button.addEventListener('click',()=>{clearHover();open(null)});popup.append(button)}
+      if(ids.length>16){const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';labels.set(button,'View all comments');button.addEventListener('click',()=>{clearHover();open(null)});popup.append(button)}
       popup.style.left = `${Math.max(8, Math.min(innerWidth - 200, box.left))}px`
       popup.style.top = `${Math.max(8, Math.min(innerHeight - Math.min(400,popup.scrollHeight||40), box.bottom + 4))}px`
       popup.style.maxHeight='min(400px,80vh)';popup.style.overflow='auto';popup.style.display='';popup.hidden=false

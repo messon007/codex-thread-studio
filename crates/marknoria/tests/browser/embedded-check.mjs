@@ -31,7 +31,7 @@ const parent = createServer(async (request, response) => {
     return
   }
 
-  if (['/query-help.mjs','/comment-ranges.mjs','/comment-marks.mjs','/source-comment-marks.mjs','/source.mjs','/image-view.mjs','/image-view.css','/image-frames.mjs','/assets.mjs','/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
+  if (['/ui-messages.mjs','/query-help.mjs','/comment-ranges.mjs','/comment-marks.mjs','/source-comment-marks.mjs','/source.mjs','/image-view.mjs','/image-view.css','/image-frames.mjs','/assets.mjs','/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
     response.setHeader('Content-Type', request.url.endsWith('.css')?'text/css':'text/javascript'); response.end(await readFile('web' + request.url)); return
   }
   response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><html><body><h1>Public embedding host</h1><div id="readers"></div></body></html>')
@@ -315,6 +315,36 @@ try {
   page.on('request',countReads)
   await page.evaluate(note=>clients[1].request('setCommentMarks',{marks:[note]}),commentNote)
   await noteFrame.locator('.reader-shell[data-comment-marks]:not([data-comment-marks="0"])').waitFor()
+  const hostCatalog=await page.evaluate(async()=>{
+    const {readerMessages}=await import('/ui-messages.mjs')
+    const dictionary={'Match case':'区分大小写','View full cell':'查看完整单元格','View full cell (Enter on a focused cell)':'查看完整单元格（聚焦后按 Enter）','Cell content':'单元格内容','View comment':'查看批注','View all comments':'查看全部批注','Comment {current} / {total}':'批注 {current}/{total}','Comments':'批注列表'}
+    return readerMessages(key=>dictionary[key]||key)
+  })
+  await command('settings',{locale:'zh-CN',messages:hostCatalog,toolbar:'host',notes:'host',selectionMenu:'host'},1)
+  assert.equal(await noteFrame.locator('.search-match-case > span').textContent(),'区分大小写')
+  assert.equal(await noteFrame.locator('.table-cell-view').first().textContent(),'查看完整单元格')
+  assert.equal(await noteFrame.locator('.table-cell-view').first().getAttribute('title'),'查看完整单元格（聚焦后按 Enter）')
+  await noteFrame.locator('.table-cell-view').first().click()
+  assert.equal(await noteFrame.locator('.table-cell-dialog h2').textContent(),'单元格内容')
+  await noteFrame.locator('.table-cell-dialog .dialog-close').click()
+  const hoverComment=()=>noteFrame.evaluate(()=>{
+    const range=[...CSS.highlights].find(([name])=>name.startsWith('marknoria-comments-'))?.[1]?.values().next().value
+    const box=range?.getClientRects()[0];if(!box)throw Error('Missing translated marker fixture')
+    document.dispatchEvent(new PointerEvent('pointermove',{clientX:box.left+1,clientY:box.top+box.height/2}))
+  })
+  await hoverComment()
+  await noteFrame.getByRole('button',{name:'查看批注',exact:true}).waitFor()
+  await command('settings',{locale:'fr',messages:await page.evaluate(async()=>{
+    const {readerMessages}=await import('/ui-messages.mjs');return readerMessages(key=>({'View comment':'Voir la note','Comments':'Commentaires'})[key]||key)
+  })},1)
+  assert.equal(await noteFrame.locator('.comment-mark-popup button').textContent(),'Voir la note')
+  await command('settings',{locale:'zh-CN',messages:hostCatalog},1)
+  await page.evaluate(note=>clients[1].request('setCommentMarks',{marks:Array.from({length:17},()=>({...note,id:crypto.randomUUID()}))}),commentNote)
+  await noteFrame.waitForFunction(()=>Number(document.querySelector('.reader-shell').dataset.commentMarks)>=17)
+  await hoverComment()
+  await noteFrame.getByRole('button',{name:'查看全部批注',exact:true}).waitFor()
+  assert.equal(await noteFrame.locator('.comment-mark-popup button').first().textContent(),'批注 1/17')
+  await command('settings',{locale:'en',messages:{},toolbar:'reader'},1)
   await page.evaluate(()=>clients[1].request('setCommentMarks',{marks:[]}))
   await noteFrame.locator('.reader-shell[data-comment-marks="0"]').waitFor()
   await pause(100);assert.equal(automaticReads,0,'Host marks implicitly read local Notes')

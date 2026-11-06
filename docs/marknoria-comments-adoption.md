@@ -1,5 +1,7 @@
 # Case-aware search and persistent comment marks — 2026-11-06
 
+Historical acceptance for the `fbb5ff8` delivery. The [current syntax-profile adoption](marknoria-syntax-adoption.md) supersedes this pin and removes the temporary message-catalog supplement described below.
+
 This adoption starts at Studio main `049a0888052cf907ef752a6ab5463bd39a904edc`.
 It follows the [public search adoption](marknoria-search-adoption.md), whose
 `8552f5c` delivery and acceptance results remain historical.

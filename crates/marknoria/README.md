@@ -8,7 +8,10 @@ licensed/distributed here. First-party allowlisted code uses MIT. Third-party
 licenses and provenance remain in `third-party/`, `licenses/` and bundled notices.
 
 Supported package features: `--no-default-features` for the public Rust reader;
-default `web` for the scoped HTTP service. Linux/macOS/Windows consume these same
+default `web,syntax-full` for the scoped HTTP service with all 110 grammars.
+Use `--no-default-features --features web,syntax-reduced` to retain 97 grammars
+and omit the specified 13 at build time. See `docs/syntax-profiles.md` for the
+exact list, workspace feature conflicts, plaintext fallback and validation. Linux/macOS/Windows consume these same
 sources. Platform-native GTK/AppKit/WinUI, FFI and the standalone Tao/Wry shell are
 maintained in the original project and intentionally absent from this Web-reader
 delivery. This package does not declare those unsupported Cargo features.

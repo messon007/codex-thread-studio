@@ -11,7 +11,9 @@ const root=fileURLToPath(new URL('../',import.meta.url)), output=join(root,'targ
 await mkdir(output,{recursive:true})
 const dir=await mkdtemp(join(output,'run-')),project=join(dir,'project')
 await mkdir(project)
-const file=join(project,'document.md');await writeFile(file,'# Full shell sentinel\n\nA selectable paragraph.\n\n## Table\n\n| Name | Value |\n|---|---|\n| alpha | 42 |\n')
+const excludedSyntax=['cobol','d','hlsl','fsharp','ocaml','idris','odin','c-sharp','perl','ruby','elixir','vb','php']
+const syntaxText=language=>`profile_${language} 中文 😀 <script>globalThis.syntaxExecuted=true</script> &`
+const file=join(project,'document.md');await writeFile(file,'# Full shell sentinel\n\nA selectable paragraph.\n\n## Table\n\n| Name | Value |\n|---|---|\n| alpha | 42 |\n\n'+excludedSyntax.map(language=>'```'+language+'\n'+syntaxText(language)+'\n```\n').join('\n')+'\n```rust\nfn retained_rust() -> bool { true }\n```\n')
 const csv=join(project,'wide.csv');await writeFile(csv,['ID,Count,Description,'+Array.from({length:20},(_,i)=>'Field'+i).join(','),...Array.from({length:123},(_,i)=>[i,i+1,'Long cell '+('safe content '.repeat(8)),...Array.from({length:20},(_,n)=>n+i)].join(','))].join('\n'))
 const pdf=join(project,'document.pdf');await writeFile(pdf,pdfFixture())
 const epub=JSON.parse(execFileSync('/usr/bin/python3',[join(root,'crates/marknoria/tests/browser/epub_fixtures.py'),project],{encoding:'utf8'})).book
@@ -72,6 +74,15 @@ try{
    await page.screenshot({path:join(dir,format+'-'+theme+'.png')})
   }
   if(format==='markdown'){
+   for(const language of excludedSyntax){
+    const code=frame.locator('pre code').filter({hasText:`profile_${language} 中文`})
+    await code.waitFor({state:'attached'})
+    if((await code.textContent()).trim()!==syntaxText(language))throw Error('Excluded syntax altered text: '+language)
+    if(await code.locator('[class*=mn-h],script').count())throw Error('Excluded syntax used another grammar or unsafe HTML: '+language)
+   }
+   if(await frame.locator('pre code').filter({hasText:'fn retained_rust()'}).locator('[class*=mn-h]').count()===0)throw Error('Retained Rust grammar lost highlighting')
+   if(await frame.locator('body').evaluate(()=>Boolean(globalThis.syntaxExecuted)))throw Error('Code fixture executed markup')
+
    if((await command('state')).presentation.notes!=='host')throw Error('Reader Notes ownership was not delegated')
    if((await command('state')).presentation.selectionMenu!=='host')throw Error('Reader selection ownership was not delegated')
    if(await page.locator('#artifact-notes-tools button').count())throw Error('Unexpected document Favorites/Notes entry')
@@ -113,6 +124,6 @@ try{
  let webkit
  if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
  if(process.argv.includes('--webkit')&&!webkit?.ok)throw Error('Native WebKit shell did not pass')
- console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,results,webkit,artifacts:dir}))
+ console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,excludedSyntaxPlaintext:excludedSyntax,retainedRustHighlight:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,results,webkit,artifacts:dir}))
 
 }catch(error){console.error('Artifacts: '+dir);throw error}finally{await browser?.close();if(server.exitCode==null){server.kill('SIGTERM');await Promise.race([once(server,'exit'),pause(3000)]);if(server.exitCode==null)server.kill('SIGKILL')}}

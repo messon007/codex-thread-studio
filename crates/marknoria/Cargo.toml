@@ -23,7 +23,9 @@ path = "src/web/main.rs"
 required-features = ["web"]
 
 [features]
-default = ["web"]
+default = ["web", "syntax-full"]
+syntax-full = ["marknoria-syntax/full"]
+syntax-reduced = ["marknoria-syntax/reduced"]
 web = ["dep:axum", "dep:tokio", "dep:tower", "dep:futures-util", "dep:url", "dep:data-url"]
 diagram-png = []
 
@@ -70,7 +72,7 @@ jaq-core = "=3.1.0"
 jaq-std = "=3.0.1"
 jaq-json = "=2.0.1"
 
-marknoria-syntax = { path = "crates/syntax" }
+marknoria-syntax = { path = "crates/syntax", default-features = false }
 tree-sitter-highlight = "=0.27.1"
 
 

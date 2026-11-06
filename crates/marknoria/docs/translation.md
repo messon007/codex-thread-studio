@@ -71,3 +71,11 @@ parameter, text-injection, scope, date, pruning/remount and disposal contracts.
 `notes-component-check.mjs` exercises the actual translated Notes UI, including
 updating an already open library without another storage request. Both support
 `--webkit`; the Notes test also supports `--compact`.
+
+The public catalog also includes search case/count/status messages, full-cell
+action labels/tooltips, comment-marker actions and parameterized overlap counts.
+Generate translations with `readerMessages(hostTranslate)` rather than copying a
+private list. Preserve placeholders such as `{current}` and `{total}` in the
+translated template. Open marker popups update on locale changes without another
+Notes read or reopening the popup. `notes:'host'` remains supported: public labels
+do not enable reader-owned Notes storage/UI or replace host selection policy.

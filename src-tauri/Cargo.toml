@@ -21,7 +21,7 @@ tauri-build = { version = "2.0.0", features = [] }
 [dependencies]
 sha2 = "=0.11.1"
 tower = { version = "0.5.2", features = ["util"] }
-marknoria = { path = "../crates/marknoria" }
+marknoria = { path = "../crates/marknoria", default-features = false, features = ["web", "syntax-reduced"] }
 notify = "8.2.0"
 axum = { version = "0.8.4", features = ["ws"] }
 dirs = "7.0.0"

@@ -25,6 +25,9 @@ export async function translationContract(moduleUrl) {
     const dictionary = readerMessages(key => key)
     check(readerMessageKeys.length < TRANSLATION_PROFILE.maxMessages && createTranslator({messages:dictionary}).state().messageCount === readerMessageKeys.length, 'Host vocabulary exceeds translation profile')
     check(dictionary['Clear comments'] === 'Clear comments' && dictionary['Filter contents'] === 'Filter contents', 'Shared vocabulary lost Notes or outline keys')
+    const required=['Match case','View full cell','View full cell (Enter on a focused cell)','View comment','View all comments','Comment {current} / {total}','{current}/{total}','{current} of {total} matches','Search failed','jq syntax and query help']
+    check(new Set(readerMessageKeys).size===readerMessageKeys.length,'Duplicate public message keys')
+    for(const key of required)check(readerMessages(key=>'中文 '+key)[key]==='中文 '+key,'Missing exported control key: '+key)
     left.set(button, 'Copy')
     right.set(second, 'Copy')
     check(

@@ -485,6 +485,12 @@ mod compatibility_tests {
         ] {
             for dark in [false, true] {
                 let runs = native(language, text, dark);
+                if marknoria_syntax::configuration(language).is_none() {
+                    assert!(matches!(language, "fsharp" | "perl"), "Unexpected missing grammar {language}");
+                    assert!(runs.is_empty());
+                    assert!(code(language, text).is_none());
+                    continue;
+                }
                 assert_eq!(
                     runs.iter().map(|r| r.text.as_str()).collect::<String>(),
                     text,

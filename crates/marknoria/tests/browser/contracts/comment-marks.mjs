@@ -1,6 +1,11 @@
 export async function commentMarksContract(moduleUrl) {
   if(moduleUrl.endsWith('#fallback'))Object.defineProperty(CSS,'highlights',{configurable:true,value:undefined})
   const base=new URL('.',new URL(moduleUrl,location.href))
+  const { readerMessages } = await import(new URL('ui-messages.mjs',base).href)
+  const { createTranslator } = await import(new URL('translation.mjs',base).href)
+  const translate=createTranslator({locale:'zh-CN',messages:readerMessages(key=>({
+    'View comment':'查看批注','View all comments':'查看全部批注','Comment {current} / {total}':'批注 {current}/{total}','Comments':'批注列表'
+  })[key]||key)})
   const { mountCommentMarks } = await import(moduleUrl)
   const { captureProjectionComment, commentTextMap, commentRangeAt, commentTextHash, commentScopes } = await import(new URL('comment-ranges.mjs',base).href)
   const { sourceCommentContext } = await import(new URL('source-comment-marks.mjs',base).href)
@@ -35,7 +40,7 @@ export async function commentMarksContract(moduleUrl) {
   const hasNative=Boolean(CSS.highlights&&window.Highlight)
   const registrySize=()=>hasNative?snapshots().length:document.querySelectorAll('[data-comment-rect]').length
   try {
-    marks=mountCommentMarks({owner,root,load:storage,open:id=>opened=id,onStatus:value=>error=value})
+    marks=mountCommentMarks({owner,root,translate,load:storage,open:id=>opened=id,onStatus:value=>error=value})
     await wait(()=>marks.state().rectangles>0)
     check(article.textContent===text && !article.querySelector('[data-comment-ids]'),'Marker rewrote the document/EPUB CFI tree')
     check(selection.toString()===note.quote,'Painting changed the live text selection')
@@ -60,8 +65,22 @@ export async function commentMarksContract(moduleUrl) {
     document.dispatchEvent(new PointerEvent('pointermove',{clientX:box.left+2,clientY:box.bottom+2}))
     await new Promise(resolve=>setTimeout(resolve,30))
     check(!document.querySelector('.comment-mark-popup').hidden,'Crossing the popup gap hid its action')
+    check(document.querySelector('.comment-mark-popup button').textContent==='查看批注','Public catalog did not translate comment action')
+    check(document.querySelector('.comment-mark-popup').getAttribute('aria-label')==='批注列表','Comment popup accessibility label untranslated')
+    translate.update({locale:'fr',messages:readerMessages(key=>({'View comment':'Voir la note','Comments':'Commentaires'})[key]||key)})
+    check(document.querySelector('.comment-mark-popup button').textContent==='Voir la note','Open comment action did not update locale')
     document.querySelector('.comment-mark-popup button').click()
     check(opened===result[0].id,'Explicit comment action did not open associated note')
+    result=Array.from({length:17},()=>({...note,id:crypto.randomUUID()}));marks.refresh(true)
+    await wait(()=>marks.state().records===17)
+    document.dispatchEvent(new PointerEvent('pointermove',{clientX:box.left+2,clientY:box.top+4}))
+    await wait(()=>!document.querySelector('.comment-mark-popup').hidden)
+    const actions=document.querySelector('.comment-mark-popup').querySelectorAll('button')
+    check(actions.length===17,'Overlapping action window missing')
+    translate.update({locale:'zh-CN',messages:readerMessages(key=>({'View all comments':'查看全部批注','Comment {current} / {total}':'批注 {current}/{total}'})[key]||key)})
+    check(actions[0].textContent==='批注 1/17'&&actions[16].textContent==='查看全部批注','Public catalog did not translate overlapping actions')
+    actions[16].click();check(opened===null,'Translated all-comments action changed its semantics')
+    result=[note];marks.refresh(true);await wait(()=>marks.state().records===1)
     marks.dispose();check(registrySize()===0 && !document.querySelector('[data-comment-overlay]'),'Dispose leaked owned marks')
     const beforeHost=calls
     marks=mountCommentMarks({owner,root,onStatus:value=>error=value})

@@ -207,3 +207,18 @@ test('shared control aliases preserve their English labels', () => {
   setLanguage('en-US')
   assert.equal(t('Apply'), 'Apply')
 })
+
+
+test('public reader catalog carries Studio translations and overlap placeholders', async () => {
+  const { readerMessages } = await import('../crates/marknoria/web/ui-messages.mjs')
+  const { createTranslator } = await import('../crates/marknoria/web/translation.mjs')
+  setLanguage('zh-CN')
+  try {
+    const messages = readerMessages(t)
+    const translate = createTranslator({ locale: 'zh-CN', messages })
+    assert.equal(translate('Comment {current} / {total}', { current: 2, total: 17 }), '批注 2 / 17')
+    for (const key of ['Match case', 'View full cell', 'View full cell (Enter on a focused cell)', 'View comment', 'View all comments', '{count} matches; case-sensitive', '{count} matches; case-insensitive']) {
+      assert.notEqual(messages[key], key)
+    }
+  } finally { setLanguage('en-US') }
+})

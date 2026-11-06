@@ -437,7 +437,25 @@ try {
   const navigatedCell=await command('selection',{},1)
   assert.equal(navigatedCell.quote,'119');assert.deepEqual(navigatedCell.location,{kind:'cell',table:0,row:119,column:1})
   assert.equal((await command('state',{},1)).view,'preview')
-  assert.ok(navigatedCell.viewportRect.y>=0&&navigatedCell.viewportRect.y+navigatedCell.viewportRect.height<=850&&navigatedCell.viewportRect.x>=0&&navigatedCell.viewportRect.x+navigatedCell.viewportRect.width<=740,'Requested cell is outside the reader viewport: '+JSON.stringify(navigatedCell.viewportRect))
+  const cellGeometry = []
+  for (const checkpoint of ['return', 'frame1', 'frame2', 'frame3', '200ms']) {
+    if (checkpoint.startsWith('frame')) await noteFrame.evaluate(() => new Promise(requestAnimationFrame))
+    if (checkpoint === '200ms') await pause(200)
+    const selected = await command('selection', {}, 1)
+    const bounds = await noteFrame.locator('#viewport').evaluate(node => {
+      const box = node.getBoundingClientRect()
+      return { top: box.top + node.clientTop, left: box.left + node.clientLeft,
+        width: node.clientWidth, height: node.clientHeight, scrollTop: node.scrollTop, scrollHeight: node.scrollHeight }
+    })
+    cellGeometry.push({checkpoint, selected, bounds})
+    await writeFile(join(directory, 'cell-navigation.json'), JSON.stringify(cellGeometry, null, 2))
+    assert.equal(selected.quote, '119')
+    assert.deepEqual(selected.location, {kind:'cell',table:0,row:119,column:1})
+    const cell = selected.viewportRect
+    assert.ok(cell.y >= bounds.top - 1 && cell.y + cell.height <= bounds.top + bounds.height + 1 &&
+      cell.x >= bounds.left - 1 && cell.x + cell.width <= bounds.left + bounds.width + 1,
+      'Requested cell left the actual reading viewport: ' + JSON.stringify(cellGeometry))
+  }
   assert.equal(await sourceTable.locator('thead th').count(),2)
   await command('setView', { view: 'source' })
   const sourceCode = first.locator('#source-code-view .cm-content'); await sourceCode.click(); await sourceCode.press('Control+Home'); await sourceCode.press('Shift+End')

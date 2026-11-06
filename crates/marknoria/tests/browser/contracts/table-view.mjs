@@ -46,7 +46,9 @@ export async function tableViewContract(moduleUrl) {
     queries = 0,
     charts = 0,
     reader,
-    other
+    other,
+    shifted = false,
+    layoutFrame = null
   const provider = async ({ row, columns, signal }) => {
     calls.push({ row, columns: [...columns] })
     const deferred = mode === 'defer-first'
@@ -69,7 +71,7 @@ export async function tableViewContract(moduleUrl) {
           columns
             .map(
               (c) =>
-                `<td>${c === 2 ? 'Long text 中文😀 ' + 'more '.repeat(40) : `${rowStart + i}:${c}`}<script>window.compromised=true</script></td>`
+                `<td${mode === 'tall' && c === 2 && rowStart + i === 122 ? ' style="height:700px"' : ''}>${c === 2 ? 'Long text 中文😀 ' + 'more '.repeat(40) : `${rowStart + i}:${c}`}<script>window.compromised=true</script></td>`
             )
             .join('') +
           '</tr>'
@@ -100,6 +102,20 @@ export async function tableViewContract(moduleUrl) {
       saveWidths: (value) => {
         widths.clear()
         for (const [k, v] of value) widths.set(k, v)
+      },
+      onChange: () => {
+        if (mode === 'unstable' && layoutFrame == null) {
+          let frame = 0
+          const shift = () => { area.article.style.marginTop = `${frame % 2}px`; if (frame++ < 20) layoutFrame = requestAnimationFrame(shift) }
+          layoutFrame = requestAnimationFrame(shift)
+        }
+        if (mode === 'late-layout' && !shifted) {
+          shifted = true
+          requestAnimationFrame(() => {
+            const spacer = document.createElement('div');spacer.style.height = '59px'
+            area.viewport.prepend(spacer)
+          })
+        }
       },
       onQuery: () => queries++,
       onChart: () => charts++
@@ -182,6 +198,27 @@ export async function tableViewContract(moduleUrl) {
         right.viewport.scrollTop === 0,
       'Ordinary cell navigation did not scroll its own viewport'
     )
+    mode = 'late-layout'
+    await reader.go(122, 1)
+    for (let frame = 0; frame < 4; frame++) {
+      await new Promise(requestAnimationFrame)
+      const cell = reader.selection().viewportRect, viewport = left.viewport.getBoundingClientRect()
+      check(cell.y >= viewport.top - 1 && cell.y + cell.height <= viewport.top + left.viewport.clientHeight + 1,
+        'Host layout frame clipped the selected cell')
+    }
+    mode = 'tall'
+    await reader.go(122, 2)
+    check(reader.selection().viewportRect.height > left.viewport.clientHeight &&
+      Math.abs(reader.selection().viewportRect.y - left.viewport.getBoundingClientRect().top) < 1,
+      'An oversized cell was not aligned to the reading viewport top')
+    mode = 'unstable'
+    const started = performance.now()
+    await reader.go(122, 1).then(() => { throw Error('Unstable layout falsely reported success') }, error =>
+      check(error.code === 'BUSY', 'Unstable layout did not produce a bounded retryable error'))
+    check(performance.now() - started < 1000, 'Layout stabilization exceeded its bounded deadline')
+    cancelAnimationFrame(layoutFrame);layoutFrame = null;left.article.style.marginTop = ''
+    mode = 'normal'
+    await reader.go(122, 1)
     mode = 'defer-first'
     const earlier = reader.go(120, 0)
     await tick()
@@ -193,6 +230,31 @@ export async function tableViewContract(moduleUrl) {
       reader.selection()?.location.row === 122 && reader.selection().location.column === 1,
       'A late navigation stole the latest focused cell'
     )
+    mode = 'defer-first'
+    const signal = new AbortController(), beforeCancelled = left.article.querySelector('tbody').textContent
+    const aborted = reader.go(0, 0, {signal:signal.signal}).then(()=>false,error=>error.name === 'AbortError')
+    await tick(); const cancelledResponse = pending; signal.abort()
+    cancelledResponse(await provider({row:0,columns:[0,1,2],signal:new AbortController().signal}))
+    check(await aborted, 'Aborted table navigation did not reject')
+    check(left.article.querySelector('tbody').textContent === beforeCancelled && !reader.state().loading,
+      'Provider ignoring abort published a cancelled row window')
+    const scrollProperty = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop'), scrollWrites = []
+    Object.defineProperty(left.viewport, 'scrollTop', {
+      configurable:true, get() {return scrollProperty.get.call(this)},
+      set(value) {scrollWrites.push(value);scrollProperty.set.call(this,value)}
+    })
+    const moving = reader.go(120, 0)
+    await new Promise(requestAnimationFrame)
+    left.viewport.scrollTop = Math.max(0,left.viewport.scrollTop - left.viewport.clientHeight * 2)
+    left.viewport.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-left.viewport.clientHeight * 2}))
+    const writesAtInput = scrollWrites.length
+    check(await moving === false, 'User input did not interrupt table navigation')
+    await tick()
+    // A generic host may let WebKit anchor detached focused rows natively.
+    // The component must issue no later scroll write; the real reader contract
+    // separately verifies the actual viewport stays at the user's position.
+    check(scrollWrites.length === writesAtInput, 'An interrupted reveal issued another scroll write: '+JSON.stringify(scrollWrites))
+    delete left.viewport.scrollTop
     cancelled = 0
     for (const invalid of ['wrong-range', 'changed-total']) {
       mode = invalid
@@ -221,7 +283,7 @@ export async function tableViewContract(moduleUrl) {
       'Oversized provider window displaced valid content'
     )
     mode = 'pending'
-    const moving = reader.go(50)
+    const disposing = reader.go(50)
     await tick()
     reader.dispose()
     reader.dispose()
@@ -230,7 +292,7 @@ export async function tableViewContract(moduleUrl) {
       revision,
       result: { html: '<table></table>', rowStart: 0, rowEnd: 0, totalRows: 0, pageSize: 50 }
     })
-    await moving
+    await disposing
     await tick()
     check(
       !left.article.querySelector('table') && !left.workspace.querySelector('.table-scrollbar'),
@@ -336,6 +398,7 @@ export async function tableViewContract(moduleUrl) {
       lifecycle: true
     }
   } finally {
+    cancelAnimationFrame(layoutFrame)
     reader?.dispose()
     other?.dispose()
     host.remove()

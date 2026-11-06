@@ -82,3 +82,11 @@ npm run check:embedded-search -- --webkit
 This is a reproducible delivery mechanism, not a claim that downstream Studio has
 adopted the package or that every feature-parity/remote-CI acceptance has passed.
 Use the final release's compatibility evidence before upgrading a consumer.
+
+Public cell-navigation regression (both readonly and editable, real viewport
+bounds across settled frames; use `--webkit` for native Wayland WebKit):
+
+```sh
+npm run check:table-navigation -- target/debug/examples/embedded-host
+npm run check:table-navigation -- target/debug/examples/embedded-host --webkit
+```

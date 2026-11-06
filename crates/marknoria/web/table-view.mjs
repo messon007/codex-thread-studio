@@ -132,6 +132,7 @@ export function mountTableView(article, options) {
     layout.reset()
   })
   let request
+  let navigationLifetime
   let ticket = 0
   let current
   let loading = false
@@ -187,11 +188,12 @@ export function mountTableView(article, options) {
     return row < 0 ? current.rowStart : current.rowStart + row
   }
 
-  async function load() {
+  async function load({ isCurrent = () => true } = {}) {
     if (stopped) return
     const generation = ++ticket
     request?.abort()
     request = new AbortController()
+    const controller = request
     requestedRow = requestKey()
     retainHeight()
     loading = true
@@ -210,6 +212,8 @@ export function mountTableView(article, options) {
         requested = state.row
       const response = await options.load({ row: requested, columns, signal: request.signal })
       if (generation !== ticket || !article.isConnected || stopped) return
+      controller.signal.throwIfAborted()
+      if (!isCurrent()) throw new DOMException('Table navigation superseded', 'AbortError')
       if (response.revision !== options.revision)
         throw Error('Table revision changed; remount the owning document')
       const result = response.result
@@ -298,14 +302,19 @@ export function mountTableView(article, options) {
       article.dataset.rowStart = current.rowStart
       article.dataset.rowEnd = current.rowEnd
       article.dataset.ready = 'true'
-      changed(article)
       retainHeight()
+      changed(article)
     } catch (error) {
-      if (generation !== ticket || error.name === 'AbortError' || !article.isConnected) return
+      if (generation !== ticket || !article.isConnected || stopped) return
       loading = false
       updatePager()
       content.removeAttribute('aria-busy')
       article.dataset.loading = 'false'
+      if (error.name === 'AbortError') {
+        if (current) { state.row = current.rowStart; state.columns = JSON.parse(article.dataset.selectedColumns); article.dataset.ready = 'true' }
+        requestedRow = null
+        return
+      }
       if (current) article.dataset.ready = 'true'
       else tools.labels.set(content, 'Table unavailable.')
       failure = String(error.message || error).slice(0, 800)
@@ -359,6 +368,7 @@ export function mountTableView(article, options) {
       stopped = true
       ticket += 1
       request?.abort()
+      navigationLifetime?.abort()
       cells.dispose()
       layout.dispose()
       tools.dispose()
@@ -376,7 +386,8 @@ export function mountTableView(article, options) {
     }
   }
   controller.ready = load()
-  controller.go = async (row, column) => {
+  controller.go = async (row, column, { signal, isCurrent = () => true } = {}) => {
+    signal?.throwIfAborted()
     if (stopped) throw new DOMException('Table view disposed', 'AbortError')
     if (
       column != null &&
@@ -389,38 +400,87 @@ export function mountTableView(article, options) {
     state.row = row
     if (column != null && !state.columns.includes(column))
       state.columns = [...state.columns, column].sort((a, b) => a - b)
+    navigationLifetime?.abort()
+    const lifetime = new AbortController()
+    navigationLifetime = lifetime
     const operation = ticket + 1
-    await load()
-    if (stopped || operation !== ticket || failure || !current || column == null) return
-    // Let virtualizer/column resize observers settle before measuring the cell.
-    await new Promise(requestAnimationFrame)
-    if (stopped || operation !== ticket) return
-    const target =
-      content.querySelector('tbody')?.rows[row - current.rowStart]?.cells[
-        state.columns.indexOf(column)
-      ]
-    if (target) {
-      // Navigation must select independently of browser focus events. WebKit
-      // may decline to focus a cell in a background embedded document.
+    const alive = () => {
+      signal?.throwIfAborted()
+      return !stopped && !lifetime.signal.aborted && operation === ticket && article.isConnected && isCurrent()
+    }
+    const abort = () => { if (operation === ticket) request?.abort() }
+    signal?.addEventListener('abort', abort, { once: true })
+    const interrupt = () => { lifetime.abort(); abort() }
+    for (const event of ['wheel', 'touchstart', 'pointerdown']) viewport.addEventListener(event, interrupt, { passive: true, signal: lifetime.signal })
+    viewport.addEventListener('keydown', event => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) interrupt()
+    }, { signal: lifetime.signal })
+    try {
+      await load({ isCurrent: alive })
+      if (!alive() || failure || !current) return false
+      if (column == null) return true
+      const target = content.querySelector('tbody')?.rows[row - current.rowStart]?.cells[state.columns.indexOf(column)]
+      if (!target) return false
+      const window = article.ownerDocument.defaultView
+      const frame = () => new Promise(resolve => {
+        const done = () => {
+          window.cancelAnimationFrame(animation); clearTimeout(timer)
+          signal?.removeEventListener('abort', done); lifetime.signal.removeEventListener('abort', done)
+          resolve()
+        }
+        const animation = window.requestAnimationFrame(done), timer = setTimeout(done, 50)
+        signal?.addEventListener('abort', done, { once: true }); lifetime.signal.addEventListener('abort', done, { once: true })
+      })
+      // Bounded layout work: wait for the provider, column sizing and host's
+      // virtualizer commits, never retain an ongoing scroll/reveal observer.
+      let previous = '', stable = 0
+      const deadline = performance.now() + 250
+      for (let attempt = 0; attempt < 8 && performance.now() < deadline; attempt++) {
+        await frame()
+        if (!alive() || !target.isConnected) return false
+        const cell = target.getBoundingClientRect()
+        const geometry = [cell.left + content.scrollLeft, cell.top + viewport.scrollTop,
+          cell.width, cell.height, content.clientWidth, content.scrollWidth,
+          viewport.clientWidth, viewport.clientHeight, viewport.scrollHeight].join(':')
+        stable = geometry === previous ? stable + 1 : 0
+        previous = geometry
+        if (stable >= 2) break
+      }
+      if (!alive()) return false
+      if (stable < 2) throw Object.assign(Error('Table layout did not settle; retry navigation'), { code: 'BUSY' })
+      // Select independently of focus: WebKit may decline background focus.
       cells.select(target)
       target.focus({ preventScroll: true })
-      const bounds = target.getBoundingClientRect(),
-        area = content.getBoundingClientRect()
-      content.scrollLeft +=
-        bounds.left < area.left
-          ? bounds.left - area.left
-          : bounds.right > area.right
-            ? bounds.right - area.right
-            : 0
-      const reading = viewport.getBoundingClientRect(),
-        top = reading.top + viewport.clientTop,
-        bottom = top + viewport.clientHeight
-      const vertical = target.getBoundingClientRect()
-      if (vertical.height > viewport.clientHeight || vertical.top < top)
-        viewport.scrollTop += vertical.top - top
-      else if (vertical.bottom > bottom) viewport.scrollTop += vertical.bottom - bottom
-    }
+      const reveal = () => {
+        const bounds = target.getBoundingClientRect(), area = content.getBoundingClientRect()
+        const left = area.left + content.clientLeft, right = left + content.clientWidth
+        content.scrollLeft += bounds.width > content.clientWidth || bounds.left < left
+          ? bounds.left - left : bounds.right > right ? bounds.right - right : 0
+        const reading = viewport.getBoundingClientRect(), top = reading.top + viewport.clientTop,
+          bottom = top + viewport.clientHeight, vertical = target.getBoundingClientRect()
+        if (vertical.height > viewport.clientHeight || vertical.top < top) viewport.scrollTop += vertical.top - top
+        else if (vertical.bottom > bottom) viewport.scrollTop += vertical.bottom - bottom
+      }
+      reveal()
+      // Publish the scroll to host observers before finishing; at most one
+      // correction is allowed if that commit changed the measured geometry.
+      for (let commit = 0; commit < 2; commit++) {
+        await frame()
+        if (!alive() || !target.isConnected) return false
+        if (commit === 0) reveal()
+      }
+      const cell = target.getBoundingClientRect(), reading = viewport.getBoundingClientRect(), area = content.getBoundingClientRect()
+      const left = Math.max(reading.left + viewport.clientLeft, area.left + content.clientLeft)
+      const right = Math.min(reading.left + viewport.clientLeft + viewport.clientWidth, area.left + content.clientLeft + content.clientWidth)
+      const top = reading.top + viewport.clientTop
+      const visible = (start, size, boundary, available) => size > available
+        ? Math.abs(start - boundary) <= 1 : start >= boundary - 1 && start + size <= boundary + available + 1
+      if (!visible(cell.y, cell.height, top, viewport.clientHeight) || !visible(cell.x, cell.width, left, right-left))
+        throw Object.assign(Error('Table layout changed before navigation completed; retry navigation'), { code: 'BUSY' })
+      return true
+    } finally { signal?.removeEventListener('abort', abort); lifetime.abort(); if (navigationLifetime === lifetime) navigationLifetime = null }
   }
+
   return controller
 }
 

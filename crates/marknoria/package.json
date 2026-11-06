@@ -37,7 +37,8 @@
     "check:host-client": "node tests/browser/host-client-check.mjs",
     "check:comment-marks": "node tests/browser/comment-marks-check.mjs",
     "check:comment-notes": "node tests/browser/comment-notes-check.mjs",
-    "check:syntax-features": "python3 tests/server/syntax-feature-check.py"
+    "check:syntax-features": "python3 tests/server/syntax-feature-check.py",
+    "check:table-navigation": "node tests/browser/embedded-table-navigation-check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

@@ -130,11 +130,13 @@ html[data-theme="dark"] .compare-row.added .compare-cell.right,html[data-theme="
 #column-width,.reader-shell .reader-column-width { width: 66px; padding: 4px 6px; font-size: 12px; }
 #search { min-width: 0; display: flex; gap: 6px; padding: 9px 18px; border-bottom: 1px solid var(--reader-border); background: var(--reader-soft); }
 #query { flex: 1; min-width: 0; font-size: 12px; }
+.search-match-case { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap; font-size: 12px; cursor: pointer; }
+.search-match-case input { margin: 0; width: 14px; height: 14px; padding: 0; }
 #search-count { align-self: center; flex: 0 0 auto; font-size: 12px; color: var(--reader-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 #search button { flex-shrink: 0; font-size: 12px; }
 #search-close { border: 0; font-size: 20px !important; }
 @container markdown-reader (max-width: 480px) {
-  #search { display: grid; grid-template-columns: minmax(0,1fr) repeat(4,auto); padding: 8px; gap: 4px; }
+  #search { display: grid; grid-template-columns: minmax(0,1fr) repeat(5,auto); padding: 8px; gap: 4px; }
   #query { grid-column: 1 / -1; width: 100%; }
 }
 #workspace { min-width: 0; min-height: 0; position: relative; display: flex; overflow: hidden; }

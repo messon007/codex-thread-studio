@@ -31,7 +31,7 @@ const parent = createServer(async (request, response) => {
     return
   }
 
-  if (['/image-view.mjs','/image-view.css','/image-frames.mjs','/assets.mjs','/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
+  if (['/query-help.mjs','/comment-ranges.mjs','/comment-marks.mjs','/source-comment-marks.mjs','/source.mjs','/image-view.mjs','/image-view.css','/image-frames.mjs','/assets.mjs','/document-prose.css','/projection-view.mjs','/projection-view.css','/projection-html.mjs','/host-client.mjs','/reader-bridge.mjs','/table-view.mjs','/table-view.css','/table-query.mjs','/table-query.css','/query-operation.mjs','/table-plot.mjs','/table-plot.css','/table-controls.mjs','/table-layout.mjs','/table-cells.mjs','/table-cells.css','/clipboard.mjs','/icons.mjs','/component-styles.mjs','/vendor/purify.mjs','/notes.mjs','/translation.mjs','/notes.css'].includes(request.url)) {
     response.setHeader('Content-Type', request.url.endsWith('.css')?'text/css':'text/javascript'); response.end(await readFile('web' + request.url)); return
   }
   response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><html><body><h1>Public embedding host</h1><div id="readers"></div></body></html>')
@@ -303,6 +303,23 @@ try {
   assert.equal(Object.hasOwn(textCell, 'selectionType'), false)
   await noteFrame.evaluate(() => getSelection().removeAllRanges())
   assert.equal(await page.evaluate(() => clients[1].request('selection', { textOnly: true })), null)
+  const commentNote=await page.evaluate(async selected=>{
+    const result=await clients[1].request('notes',{request:{operation:'add',kind:'comment',quote:selected.quote,comment:'Host marker fixture',revision:selected.revision,anchor:{location:selected.location,textRange:selected.textRange}}})
+    return clients[1].request('notes',{request:{operation:'get',id:result.id}})
+  },textCell)
+  await noteFrame.locator('.reader-shell[data-comment-marks]:not([data-comment-marks="0"])').waitFor()
+  await page.evaluate(()=>clients[1].request('settings',{notes:'host'}))
+  await noteFrame.locator('.reader-shell[data-comment-marks="0"]').waitFor()
+  let automaticReads=0
+  const countReads=request=>{if(request.url().includes('/api/notes')&&request.postData()?.includes('"operation":"marks"'))automaticReads++}
+  page.on('request',countReads)
+  await page.evaluate(note=>clients[1].request('setCommentMarks',{marks:[note]}),commentNote)
+  await noteFrame.locator('.reader-shell[data-comment-marks]:not([data-comment-marks="0"])').waitFor()
+  await page.evaluate(()=>clients[1].request('setCommentMarks',{marks:[]}))
+  await noteFrame.locator('.reader-shell[data-comment-marks="0"]').waitFor()
+  await pause(100);assert.equal(automaticReads,0,'Host marks implicitly read local Notes')
+  page.off('request',countReads)
+  await page.evaluate(id=>clients[1].request('notes',{request:{operation:'delete',id}}),commentNote.id)
   const noteOwner = await page.evaluate(async () => {
     const before = await clients[1].request('state')
     const host = await clients[1].request('settings', { notes: 'host' })
@@ -390,7 +407,7 @@ try {
   const navigatedCell=await command('selection',{},1)
   assert.equal(navigatedCell.quote,'119');assert.deepEqual(navigatedCell.location,{kind:'cell',table:0,row:119,column:1})
   assert.equal((await command('state',{},1)).view,'preview')
-  assert.ok(navigatedCell.viewportRect.y>=0&&navigatedCell.viewportRect.y+navigatedCell.viewportRect.height<=850&&navigatedCell.viewportRect.x>=0&&navigatedCell.viewportRect.x+navigatedCell.viewportRect.width<=740,'Requested cell is outside the reader viewport')
+  assert.ok(navigatedCell.viewportRect.y>=0&&navigatedCell.viewportRect.y+navigatedCell.viewportRect.height<=850&&navigatedCell.viewportRect.x>=0&&navigatedCell.viewportRect.x+navigatedCell.viewportRect.width<=740,'Requested cell is outside the reader viewport: '+JSON.stringify(navigatedCell.viewportRect))
   assert.equal(await sourceTable.locator('thead th').count(),2)
   await command('setView', { view: 'source' })
   const sourceCode = first.locator('#source-code-view .cm-content'); await sourceCode.click(); await sourceCode.press('Control+Home'); await sourceCode.press('Shift+End')

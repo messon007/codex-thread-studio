@@ -204,6 +204,7 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
   try {
     cells = mountTableCells(content, {
       controls: actions,
+      commentOwner: parentShell,
       locate: (cell) =>
         current
           ? {
@@ -515,6 +516,7 @@ export function mountTableQuery(container, { provider, revision, ...options }) {
     },
     dispose,
     isOpen: () => !stopped,
+    captureSelection: (options = {}, signal) => chartDialog?.isOpen() ? Promise.resolve(options.textOnly ? null : chartDialog.selection()) : cells.captureSelection(options, signal),
     selection: (options = {}) => (chartDialog?.isOpen() ? (options.textOnly ? null : chartDialog.selection()) : cells.selection(options))
   }
 }

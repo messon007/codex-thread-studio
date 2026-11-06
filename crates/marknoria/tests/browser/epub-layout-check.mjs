@@ -23,7 +23,7 @@ const server = createServer(async (request, response) => {
   }
   if (path === '/favicon.ico') { response.writeHead(204); response.end(); return }
   if (content.has(path)) { requests.push(path); response.setHeader('Content-Type', path.endsWith('.css') ? 'text/css' : path.endsWith('.png') ? 'image/png' : 'application/xml'); response.end(content.get(path)); return }
-  const files = { '/search-marker.mjs': 'web/search-marker.mjs', '/epub-layout-contract.mjs': 'tests/browser/contracts/epub-layout.mjs', '/epub-reader.mjs': 'web/epub-reader.mjs', '/translation.mjs': 'web/translation.mjs', '/epub-reader.css': 'web/epub-reader.css', '/vendor/epub.mjs': 'web/vendor/epub.mjs' }
+  const files = { '/comment-ranges.mjs': 'web/comment-ranges.mjs', '/search-marker.mjs': 'web/search-marker.mjs', '/epub-layout-contract.mjs': 'tests/browser/contracts/epub-layout.mjs', '/epub-reader.mjs': 'web/epub-reader.mjs', '/translation.mjs': 'web/translation.mjs', '/epub-reader.css': 'web/epub-reader.css', '/vendor/epub.mjs': 'web/vendor/epub.mjs' }
   if (!files[path]) { response.writeHead(404); response.end(); return }
   response.setHeader('Content-Type', path.endsWith('.css') ? 'text/css' : 'text/javascript'); response.end(await readFile(files[path]))
 })

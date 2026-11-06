@@ -63,7 +63,8 @@ export async function selectionPolicyContract(moduleUrl) {
     check(menu.hidden, 'Pending selection timer reopened popup after scroll')
     getSelection().removeAllRanges()
 
-    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    cell.focus()
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await tick()
     check(cells.selection({ textOnly: true }) === null && menu.hidden, 'Unselected expanded cell opened popup')
     const full = document.querySelector('.table-cell-full')

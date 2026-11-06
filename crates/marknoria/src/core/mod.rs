@@ -1443,20 +1443,35 @@ pub struct SearchWindow {
 /// Legacy callers still receive only the first 100 results and stop scanning
 /// once that limit is reached. Native/public-reader contracts do not change.
 pub fn search(directory: &Path, index: &Index, query: &str) -> io::Result<Vec<Match>> {
-    Ok(scan_search(directory, index, query, 0, false)?.matches.into_iter().map(|item| item.found).collect())
+    search_with_options(directory, index, query, true)
+}
+
+pub fn search_with_options(directory: &Path, index: &Index, query: &str, match_case: bool) -> io::Result<Vec<Match>> {
+    Ok(scan_search(directory, index, query, 0, false, match_case)?.matches.into_iter().map(|item| item.found).collect())
 }
 
 /// Count every occurrence, but materialize at most one bounded result window.
 /// Counting is linear in the existing immutable 128 MiB source budget. Skipped
 /// matches never load projection HTML or allocate snippets/source metadata.
 pub fn search_window(directory: &Path, index: &Index, query: &str, offset: usize) -> io::Result<SearchWindow> {
-    scan_search(directory, index, query, offset, true)
+    search_window_with_options(directory, index, query, offset, true)
 }
 
-fn scan_search(directory: &Path, index: &Index, query: &str, requested: usize, count_all: bool) -> io::Result<SearchWindow> {
+pub fn search_window_with_options(directory: &Path, index: &Index, query: &str, offset: usize, match_case: bool) -> io::Result<SearchWindow> {
+    scan_search(directory, index, query, offset, true, match_case)
+}
+
+fn scan_search(directory: &Path, index: &Index, query: &str, requested: usize, count_all: bool, match_case: bool) -> io::Result<SearchWindow> {
     if query.is_empty() || query.len() > 256 {
         return Err(invalid("Search requires 1–256 UTF-8 bytes"));
     }
+    // Match original UTF-8 directly. Unicode simple folding can change the
+    // matched byte length (e.g. k / Kelvin sign), so retain both engine offsets.
+    let insensitive = if match_case { None } else {
+        Some(regex::RegexBuilder::new(&regex::escape(query))
+            .case_insensitive(true).size_limit(1024 * 1024).dfa_size_limit(2 * 1024 * 1024)
+            .build().map_err(|error| invalid(&format!("Invalid bounded search: {error}")))?)
+    };
     let file = File::open(directory.join("source.md"))?;
     let bytes = file.metadata()?.len();
     if bytes > MAX_SOURCE { return Err(invalid("Search source exceeds the 128 MiB budget")); }
@@ -1466,7 +1481,17 @@ fn scan_search(directory: &Path, index: &Index, query: &str, requested: usize, c
     let mut result = SearchWindow { offset: requested, total: 0, limit: SEARCH_WINDOW_LIMIT, matches: Vec::new() };
     let mut offset = 0;
     for (line_index, line) in source.split_inclusive('\n').enumerate() {
-        for (occurrence, (column, _)) in line.match_indices(query).enumerate() {
+        let mut cursor = 0;
+        let matches = std::iter::from_fn(|| {
+            let found = if let Some(pattern) = &insensitive {
+                pattern.find_at(line, cursor).map(|found| (found.start(), found.end()))
+            } else {
+                line[cursor..].find(query).map(|column| (cursor + column, cursor + column + query.len()))
+            }?;
+            cursor = found.1;
+            Some(found)
+        });
+        for (occurrence, (column, end)) in matches.enumerate() {
             let ordinal = result.total;
             result.total += 1;
             if ordinal < requested || result.matches.len() >= SEARCH_WINDOW_LIMIT { continue; }
@@ -1509,7 +1534,7 @@ fn scan_search(directory: &Path, index: &Index, query: &str, requested: usize, c
                 },
                 table_row,
                 start: offset + column,
-                end: offset + column + query.len(),
+                end: offset + end,
             };
             result.matches.push(SearchWindowMatch { found, occurrence });
             if !count_all && result.matches.len() == SEARCH_WINDOW_LIMIT { return Ok(result); }
@@ -1529,6 +1554,44 @@ mod tests {
         fs::write(&path, source).unwrap();
         let index = build_index(&path, directory.path()).unwrap();
         (directory, index)
+    }
+
+    #[test]
+    fn configurable_search_matches_original_unicode_ranges_and_literal_queries() {
+        let source = "😀 K k K ſ s S é É ß SS [K]+ [k]+\r\n";
+        let (directory, index) = fixture(source);
+        for (query, match_case, expected) in [
+            ("k", true, vec!["k", "k"]),
+            ("k", false, vec!["K", "k", "K", "K", "k"]),
+            ("s", false, vec!["ſ", "s", "S", "S", "S"]),
+            ("é", true, vec!["é"]), ("é", false, vec!["é", "É"]),
+            ("ss", true, vec![]), ("ss", false, vec!["SS"]),
+            ("[k]+", true, vec!["[k]+"]), ("[k]+", false, vec!["[K]+", "[k]+"]),
+        ] {
+            let window = search_window_with_options(directory.path(), &index, query, 0, match_case).unwrap();
+            assert_eq!(window.total, expected.len(), "{query} matchCase={match_case}");
+            let slices: Vec<_> = window.matches.iter().map(|item| &source[item.found.start..item.found.end]).collect();
+            assert_eq!(slices, expected);
+            for (ordinal, item) in window.matches.iter().enumerate() { assert_eq!(item.occurrence, ordinal); }
+        }
+        assert_eq!(search(directory.path(), &index, "k").unwrap().len(), 2);
+        assert_eq!(search_window(directory.path(), &index, "k", 0).unwrap().total, 2);
+    }
+
+    #[test]
+    fn configurable_search_counts_and_pages_without_transformed_offset_maps() {
+        let source = format!("\u{feff}{}\r\n", "😀 K k K ".repeat(110));
+        let (directory, index) = fixture(&source);
+        for offset in [0, 100, 200, 300, 330] {
+            let window = search_window_with_options(directory.path(), &index, "k", offset, false).unwrap();
+            assert_eq!(window.total, 330);
+            assert_eq!(window.matches.len(), 100.min(330 - offset));
+            for (ordinal, item) in window.matches.iter().enumerate() {
+                assert_eq!(item.occurrence, offset + ordinal);
+                assert!(matches!(&source[item.found.start..item.found.end], "K" | "k" | "K"));
+                assert_eq!(item.found.line, 1);
+            }
+        }
     }
 
     #[test]

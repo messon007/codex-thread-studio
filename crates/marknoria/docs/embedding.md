@@ -133,7 +133,7 @@ mounting its first view.
 | `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
 | `outline` | `offset` (default 0), at most 256 items, total and revision; `resolve:false` returns renderer labels/IDs without PDF destination lookups |
 | `navigateOutline` | `id`: revision-scoped outline identity; resolves only the selected PDF destination or navigates the indexed heading/EPUB chapter |
-| `search` | `query`, optional validated `offset`; at most 100 results, owned `searchId`, absolute indices, total/precision and paging metadata; empty query clears |
+| `search` | `query`, optional validated `offset` and boolean `matchCase`; at most 100 results, owned `searchId`, resolved case option, absolute indices, total/precision and paging metadata; empty query clears |
 | `searchActivate`, `searchClear` | `{searchId,index}` activates a verified occurrence in the current reading view; `{}` clears owned search state/highlights; see [reader-search.md](reader-search.md) |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
 | `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |
@@ -332,8 +332,10 @@ rejected explicitly, not silently shortened and presented as complete input.
 The component caches that displayed snapshot, preserves existing tabindex values,
 and restores owned focus/style/listener/dialog resources on `dispose()`.
 
-Click/focus selects a cell; arrows move within the displayed grid. Enter or a
-double-click opens the complete bounded cell as inert text, with no selection
+Click/focus selects a cell; arrows move within the displayed grid. Double-click,
+drag selection, long press and the native context menu retain normal text behavior.
+The per-table **View full cell** action beside **Copy cell**, or Enter on a focused
+cell without an active text selection, opens the complete bounded cell as inert text, with no selection
 actions until text is selected there. A middle substring retains the original
 cell/query-cell coordinates and is checked against the owned value. Copy cell and
 Ctrl/Command+C (without an active text selection) copy the complete cell; a separate selection excerpt is bounded at

@@ -4,7 +4,7 @@ const WINDOW = 100, RENDERER_LIMIT = 500
 const error = (code, message) => Object.assign(Error(message), { code })
 const cancelled = (message = 'Search was superseded or cancelled') => Object.assign(error('CANCELLED', message), { name: 'AbortError' })
 export function searchController(options) {
-  let identity = null, query = '', document = null, revision = null, mode = null
+  let identity = null, query = '', document = null, revision = null, mode = null, matchCase = null
   let matches = [], offset = 0, total = 0, available = 0, exact = true
   let current = null, active = null, loading = false, failure = null
   let rendererMatches = null, serial = 0, request = null, disposed = false
@@ -12,10 +12,10 @@ export function searchController(options) {
   const sameOwner = value => !disposed && value.documentId === owner().documentId && value.revision === owner().revision
   function capabilities() {
     const value = owner()
-    return { version: 1, queryBytes: 256, windowLimit: WINDOW, pagination: value.renderer ? 'capped' : 'source', resultLimit: value.renderer ? RENDERER_LIMIT : null, activation: !value.editing, views: value.source ? ['preview', 'source'] : ['preview'] }
+    return { version: 1, queryBytes: 256, windowLimit: WINDOW, matchCase: true, defaultMatchCase: value.defaultMatchCase !== false, pagination: value.renderer ? 'capped' : 'source', resultLimit: value.renderer ? RENDERER_LIMIT : null, activation: !value.editing, views: value.source ? ['preview', 'source'] : ['preview'] }
   }
   function state() {
-    return { version: 1, documentId: document, revision, searchId: identity, query, offset, current, total, totalExact: exact, available, loading, error: failure, active }
+    return { version: 1, documentId: document, revision, searchId: identity, query, matchCase, offset, current, total, totalExact: exact, available, loading, error: failure, active }
   }
   const changed = () => options.changed?.(state())
   function cancel() {
@@ -24,7 +24,7 @@ export function searchController(options) {
   }
   function clear() {
     cancel()
-    identity = null; query = ''; document = revision = mode = null
+    identity = null; query = ''; document = revision = mode = matchCase = null
     matches = []; rendererMatches = null; offset = total = available = 0
     current = active = null; exact = true; loading = false; failure = null
     options.clear?.(); changed()
@@ -56,7 +56,7 @@ export function searchController(options) {
     let response
     if (capped) {
       if (!rendererMatches) {
-        response = await options.load(query, 0, op.expected, op.signal)
+        response = await options.load(query, 0, op.expected, op.signal, { matchCase })
         op.check()
         if (!Array.isArray(response.matches) || response.matches.length > RENDERER_LIMIT) throw error('BUDGET', 'Renderer search exceeds its declared result budget')
         mode = response.mode ?? 'renderer'
@@ -67,11 +67,11 @@ export function searchController(options) {
       if (start > available) throw error('RANGE', 'Search offset exceeds the available renderer results')
       return rendererMatches.slice(start, start + WINDOW)
     }
-    response = await options.load(query, start, op.expected, op.signal)
+    response = await options.load(query, start, op.expected, op.signal, { matchCase })
     op.check()
     if (response.revision !== op.expected.revision) throw error('REVISION', 'Search revision changed')
     if (!Array.isArray(response.matches) || response.matches.length > WINDOW || !Number.isSafeInteger(response.total) || response.total < 0 || response.offset !== start) throw error('BUDGET', 'Invalid bounded search response')
-    mode = response.mode ?? 'case-sensitive-source-lines'
+    mode = response.mode ?? (matchCase ? 'case-sensitive-source-lines' : 'case-insensitive-source-lines')
     total = available = response.total; exact = true
     if (start > total) throw error('RANGE', 'Search offset exceeds the match count')
     return describe(response.matches, start)
@@ -80,18 +80,19 @@ export function searchController(options) {
     if (disposed) throw error('DISPOSED', 'Search controller disposed')
     signal?.throwIfAborted()
     const text = params.query, start = params.offset === undefined ? 0 : params.offset
-    if (typeof text !== 'string' || new TextEncoder().encode(text).length > 256 || !Number.isSafeInteger(start) || start < 0) throw error('PARAMS', 'Invalid bounded search query or offset')
+    const requestedCase = params.matchCase === undefined ? owner().defaultMatchCase !== false : params.matchCase
+    if (typeof text !== 'string' || new TextEncoder().encode(text).length > 256 || !Number.isSafeInteger(start) || start < 0 || typeof requestedCase !== 'boolean') throw error('PARAMS', 'Invalid bounded search query, offset or matchCase')
     if (!text) { if (start !== 0) throw error('PARAMS', 'An empty search cannot have an offset'); signal?.throwIfAborted(); return clear() }
     const expected = owner()
     if (!expected.documentId || !expected.revision) throw error('BUSY', 'No ready document to search')
-    if (query !== text || document !== expected.documentId || revision !== expected.revision) {
-      clear(); identity = crypto.randomUUID(); query = text; document = expected.documentId; revision = expected.revision
+    if (query !== text || matchCase !== requestedCase || document !== expected.documentId || revision !== expected.revision) {
+      clear(); identity = crypto.randomUUID(); query = text; matchCase = requestedCase; document = expected.documentId; revision = expected.revision
     }
     const op = operation(signal)
     loading = true; failure = null; changed()
     try {
       const items = await windowAt(start, op); op.check()
-      matches = items; offset = start; loading = false; options.paint?.(query, active)
+      matches = items; offset = start; loading = false; options.paint?.(query, active, { matchCase })
       return response()
     } catch (cause) {
       if (op.ticket === serial) failure = cause.name === 'AbortError' ? null : { code: cause.code || 'SEARCH', message: String(cause.message).slice(0, 800) }
@@ -107,7 +108,7 @@ export function searchController(options) {
     if (owner().editing) throw error('CAPABILITY', 'Search activation requires Preview or Source')
     if (document !== owner().documentId || revision !== owner().revision) throw error('REVISION', 'Search document or revision changed')
     const op = operation(signal), target = params.index
-    loading = true; failure = null; current = active = null; options.paint?.(query, null); changed()
+    loading = true; failure = null; current = active = null; options.paint?.(query, null, { matchCase }); changed()
     try {
       if (target < offset || target >= offset + matches.length) {
         const start = Math.floor(target / WINDOW) * WINDOW
@@ -116,12 +117,12 @@ export function searchController(options) {
       }
       const match = matches[target - offset]
       if (!match || match.index !== target) throw error('RANGE', 'Search occurrence is unavailable')
-      await options.activate(match, { query, signal: op.signal }); op.check()
-      active = match; current = target; loading = false; options.paint?.(query, active)
+      await options.activate(match, { query, matchCase, signal: op.signal }); op.check()
+      active = match; current = target; loading = false; options.paint?.(query, active, { matchCase })
       return state()
     } catch (cause) {
       if (op.ticket === serial) {
-        options.paint?.(query, null)
+        options.paint?.(query, null, { matchCase })
         failure = cause.name === 'AbortError' ? null : { code: cause.code || 'SEARCH', message: String(cause.message).slice(0, 800) }
       }
       throw op.signal.aborted || op.ticket !== serial || cause.name === 'AbortError' ? cancelled(cause.message) : cause
@@ -130,8 +131,8 @@ export function searchController(options) {
     }
   }
   return { search, activate, clear, state, response, capabilities,
-    repaint() { if (!loading && !disposed) options.paint?.(query, active) },
-    suspend() { cancel(); loading = false; options.paint?.('', null); changed() },
+    repaint() { if (!loading && !disposed) options.paint?.(query, active, { matchCase }) },
+    suspend() { cancel(); loading = false; options.paint?.('', null, { matchCase }); changed() },
     dispose() { clear(); disposed = true },
   }
 }

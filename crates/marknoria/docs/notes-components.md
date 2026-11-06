@@ -185,3 +185,10 @@ the main reader. Compare Source selections contain only selected source text
 not claim exact source byte offsets. Mode changes clear the previous selection.
 `node tests/browser/compare-selection-check.mjs target/release/marknoria-server`
 checks real pointer selection and policy carry through these transitions.
+
+Saved Comments now have [persistent dashed underlines](comment-marks.md). Use
+`projection.captureSelection()` / `table.captureSelection()` to retain exact
+rendered selectors, `onMutation` to invalidate a mounted marker, and
+`notes.openComment(id)` to show its detail. Embedded hosts can explicitly replace
+their own bounded mark set with `setCommentMarks`; host-owned Notes never cause
+implicit local storage reads.

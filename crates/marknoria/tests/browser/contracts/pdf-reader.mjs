@@ -125,6 +125,11 @@ export async function pdfReaderContract(moduleUrl) {
     const pdfOwner = root.querySelector('.marknoria-pdf')
     check(reader.state().page === 12 && pdfOwner.dataset.searchCurrent === results.matches[0].searchMatchId, 'PDF activation ignored its owned occurrence')
     const highlightedPdf = CSS.highlights?.get(pdfOwner.dataset.searchHighlight)
+    const paintedLayer = root.querySelector('[data-pdf-page="12"] .textLayer')
+    viewport.style.height = '680px'
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    check(root.querySelector('[data-pdf-page="12"] .textLayer') === paintedLayer && pdfOwner.dataset.searchCurrent === results.matches[0].searchMatchId, 'Height-only resize discarded the active PDF text layer/search')
+    viewport.style.height = '700px'
     check(highlightedPdf ? [...highlightedPdf][0].toString() === 'sentinel page 12' : pdfOwner.querySelector('[data-search-current-rect]'), 'PDF current occurrence has no exact visible marker')
     reader.clearSearch({ keepResults: true })
     check(!pdfOwner.hasAttribute('data-search-current'), 'PDF presentation clear retained a marker')
@@ -134,6 +139,14 @@ export async function pdfReaderContract(moduleUrl) {
     reader.clearSearch()
     check(!pdfOwner.hasAttribute('data-search-current') && await reader.activateSearch(results.matches[0], { query: 'sentinel page 12' }).then(() => false, () => true), 'PDF cleared occurrence remained active/activatable')
     check(await reader.search('sentinel', { offset: 100 }).then(() => false, () => true), 'PDF adapter silently ignored unsupported offset')
+    const strictCase = await reader.search('SENTINEL PAGE 12', { matchCase: true })
+    check(strictCase.matches.length === 0 && strictCase.matchCase === true, 'PDF strict-case search ignored its option')
+    const foldedCase = await reader.search('SENTINEL PAGE 12', { matchCase: false })
+    check(foldedCase.matches.length === 1 && foldedCase.matchCase === false, 'PDF insensitive search lost matches')
+    await reader.activateSearch(foldedCase.matches[0], { query: 'SENTINEL PAGE 12', matchCase: false })
+    const foldedRange = [...(CSS.highlights?.get(pdfOwner.dataset.searchHighlight) || [])][0]
+    check(foldedRange ? foldedRange.toString() === 'sentinel page 12' : pdfOwner.querySelector('[data-search-current-rect]'), 'PDF insensitive marker changed original text')
+    check(await reader.activateSearch(foldedCase.matches[0], { query: 'SENTINEL PAGE 12', matchCase: true }).then(() => false, () => true), 'PDF activation accepted a mismatched case identity')
     const repeated = await reader.search('needle')
     check(repeated.complete && repeated.matches.length === 2 && repeated.matches.every(match => match.page === 1 && match.locationPrecision === 'page'), 'PDF did not retain repeated occurrences or honest page precision')
     check(root.querySelector('.textLayer')?.textContent !== '', 'PDF text disappeared during search')

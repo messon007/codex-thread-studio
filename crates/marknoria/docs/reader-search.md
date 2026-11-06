@@ -11,8 +11,10 @@ or assuming exact totals.
 const reader = createReaderClient(frame)
 let state = await reader.ready()
 if (state.capabilities.search?.version !== 1) throw Error('Search activation unavailable')
-const first = await reader.request('search', { query: 'needle', offset: 0 })
-const next = await reader.request('search', { query: 'needle', offset: 100 })
+if (state.capabilities.search.matchCase !== true) throw Error('Configurable match case unavailable')
+const options = { query: 'needle', matchCase: false }
+const first = await reader.request('search', { ...options, offset: 0 })
+const next = await reader.request('search', { ...options, offset: 100 })
 state = await reader.request('searchActivate', {
   searchId: next.searchId,
   index: next.matches[0].index,
@@ -30,11 +32,13 @@ state/events and highlights without opening the reader's search form or dropdown
 
 ## Commands and limits
 
-- `search({query, offset?})` starts or pages a search. `query` is a string of at
+- `search({query, offset?, matchCase?})` starts or pages a search. `query` is a string of at
   most 256 UTF-8 bytes. `offset` defaults to zero and must be a nonnegative safe
   integer. A request returns at most 100 matches. A nonempty unchanged query in
   the same document/revision retains its opaque `searchId`; changing the query
-  creates a new identity. Searching does not activate or scroll to a result.
+  creates a new identity. Changing the resolved `matchCase` option also creates a
+  new identity, cancels pending work and clears old owned results/highlights.
+  Searching does not activate or scroll to a result.
 - `searchActivate({searchId, index})` activates a zero-based absolute occurrence
   ordinal. It resolves the occurrence from owned results or fetches its bounded
   window. Hosts never provide or override navigation coordinates. The response
@@ -50,11 +54,27 @@ and unknown options are rejected instead of being ignored. Unsupported options
 or malformed values produce `PARAMS`; unavailable offsets/indices produce
 `RANGE`; an old or foreign search identity produces `SEARCH_ID`. The offset equal
 to the available result count is a valid empty final window. A greater offset is
-rejected. Source queries retain the existing case-sensitive, nonoverlapping
-original-line matching semantics.
-PDF uses literal Unicode case-insensitive matching; EPUB uses literal
-case-sensitive matching against original chapter text. Queries are not regular
-expressions, and each renderer preserves its own text-boundary semantics.
+rejected. `matchCase` must be a boolean when supplied; null, strings and numbers
+are rejected. `true` uses strict case matching, `false` uses locale-independent
+Unicode simple case folding. Matching uses original text, never a lowercased
+offset map: `k` may match the three-byte `K`, retaining that complete original
+range. There is no accent removal, normalization or multi-character expansion
+(`ss` does not match `ß`). Queries are literal, not regular expressions.
+Source searches retain their nonoverlapping original-line matching; renderers
+retain their existing text-boundary semantics.
+
+Omission always resolves `capabilities.search.defaultMatchCase`, preserving
+existing behavior: source/EPUB default to `true`, PDF to `false`. It does not use
+the previous search's option. Repeat an explicit choice on every window request.
+`capabilities.search.matchCase:true` advertises configurable matching. Existing
+Rust `search()`/`search_window()` calls and native contracts remain case-sensitive;
+the HTTP adapter uses additive configurable helpers and accepts `matchCase`.
+
+The standalone Match case checkbox starts with that document's default, retains
+its choice through clear/reopen within the pane, and mirrors a host's active
+search option. Changing it reruns nonempty input at offset zero and activates
+the first result. Empty input only changes the local checkbox; there is no global
+preference or storage grant.
 
 `capabilities.search` declares `queryBytes: 256`, `windowLimit: 100`, `activation`,
 `views`, `pagination`, and `resultLimit`. Source-backed search uses
@@ -69,7 +89,7 @@ views are declared explicitly.
 ## Responses and state
 
 A search response contains `version`, `documentId`, `revision`, `searchId`, `query`,
-`offset`, `limit`, `total`, `totalExact`, `available`, `complete`, and `matches`.
+`matchCase`, `offset`, `limit`, `total`, `totalExact`, `available`, `complete`, and `matches`.
 It also contains the current search-state fields below.
 
 - `totalExact: true` means `total` is the complete document match count. Otherwise
@@ -102,6 +122,7 @@ Reader state and `state` events include:
 search: {
   version: 1,
   documentId, revision, searchId, query,
+  matchCase,                  // resolved boolean; null after clear
   offset,                     // window currently retained by the controller
   current,                    // absolute zero-based ordinal, or null
   total, totalExact, available,
@@ -111,7 +132,7 @@ search: {
 }
 ```
 
-A clear resets the owner/identity to null and counts to zero. The host's reading
+A clear resets the owner/identity and matchCase to null and counts to zero. The host's reading
 `position` remains distinct from the active search occurrence: manually scrolling
 away does not change which occurrence was last activated.
 

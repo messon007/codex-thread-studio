@@ -40,6 +40,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       if (disposed) return
       if (type==='ready'||type==='state') publish(payload)
       else if (type==='selection') capture(payload)
+      else if (type==='commentRequested' && payload?.documentId===snapshot.documentId && payload.revision===snapshot.revision && (payload.id===null || typeof payload.id==='string' && payload.id.length<=256)) options.onCommentRequested?.(payload)
       else if (type==='openRequested') options.onOpenRequested?.()
       else if (type==='linkRequested' && payload?.documentId && payload.documentId===snapshot.documentId && payload.revision===snapshot.revision && typeof payload.target==='string' && payload.target.length<=8192 && new TextEncoder().encode(payload.target).length<=8192) {
         void Promise.resolve().then(()=>{if(!disposed)return options.onLinkRequested?.(payload)}).catch(error=>{if(!disposed)options.onError?.(error)})
@@ -120,7 +121,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       validateReference(reference)
       return command('navigate',{location:reference.location})
     },
-    search(query, offset = 0) { return searchCommand('search', { query, offset }) },
+    search(query, offset = 0, matchCase = snapshot.capabilities?.search?.defaultMatchCase) { return searchCommand('search', { query, offset, matchCase }) },
     activateSearch(search, index) {
       return searchCommand('searchActivate', { searchId: search.searchId, index },
         { documentId: search.documentId, revision: search.revision })

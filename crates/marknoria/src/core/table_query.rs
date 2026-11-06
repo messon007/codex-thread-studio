@@ -786,10 +786,18 @@ impl Queries {
         let Request::Add { quote, anchor, revision, .. } = request else { return Ok(()) };
         if anchor.query.is_some() { return Err(error("Supply a live query cell, not client-supplied SQL provenance")); }
         if matches!(&anchor.location, Some(Location::QueryCell { .. })) {
+            let text_range = anchor.text_range.take();
+            if let Some(range) = &text_range {
+                let Some(Location::QueryCell { query_id, row, column }) = &anchor.location else { unreachable!() };
+                if range.segments.iter().any(|segment| !matches!(&segment.scope, crate::core::notes::TextScope::QueryCell { query_id: q, row: r, column: c } if (q,r,c)==(query_id,row,column))) {
+                    return Err(error("Comment result selector belongs to another query cell"));
+                }
+            }
             *anchor = self.snapshot(index, &crate::core::reader::QuerySnapshotRequest {
                 revision: revision.clone(), location: anchor.location.clone().unwrap(),
                 quote: quote.clone(), quote_truncated: anchor.quote_truncated,
             })?.anchor;
+            anchor.text_range = text_range;
         }
         Ok(())
     }

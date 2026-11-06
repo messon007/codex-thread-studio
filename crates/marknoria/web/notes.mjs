@@ -20,7 +20,8 @@ export function mountNotes({
   copy = copyToClipboard,
   actions = [],
   eventRoot = root,
-  presentationRoot = root
+  presentationRoot = root,
+  onMutation = () => {}
 }) {
   if (
     !owner ||
@@ -128,6 +129,7 @@ export function mountNotes({
           throw Error('Note request exceeds its transport budget')
         const result = await storage(request, { signal: lifetime.signal, owner })
         lifetime.signal.throwIfAborted()
+        if (mutation) { try { onMutation(request, result) } catch {} }
         return result
       } finally {
         activeRequests--
@@ -452,7 +454,7 @@ export function mountNotes({
     target.append(content, actions)
     input.focus()
   }
-  async function list(offset = 0, kind = null) {
+  async function list(offset = 0, kind = null, preferredId = null) {
     if (stopped) return
     listOffset = offset
     filterKind = kind
@@ -493,6 +495,7 @@ export function mountNotes({
     target.append(filters, workspace, footer)
     try {
       const result = await noteApi({ operation: 'list', offset, kind })
+      const preferred = preferredId ? await noteApi({ operation: 'get', id: preferredId }) : null
       if (stopped || dialog !== target) return
       if (
         !result ||
@@ -517,7 +520,8 @@ export function mountNotes({
             new TextEncoder().encode(note.comment).length > 16384 ||
             !Number.isSafeInteger(note.created) ||
             note.created < 0
-        )
+        ) ||
+        (preferred && (typeof preferred.id !== 'string' || preferred.id !== preferredId || !['comment','favorite'].includes(preferred.kind) || typeof preferred.quote !== 'string' || new TextEncoder().encode(preferred.quote).length > 32768 || typeof preferred.comment !== 'string' || new TextEncoder().encode(preferred.comment).length > 16384 || !Number.isSafeInteger(preferred.created) || preferred.created < 0))
       )
         throw Error('Invalid bounded note storage page')
       erase.disabled = result.total === 0
@@ -542,6 +546,12 @@ export function mountNotes({
         const origin = document.createElement('p')
         origin.className = 'note-location'
         renderLocation(origin, note, true)
+        if (note.kind === 'comment' && !note.stale && !note.anchor?.textRange && !['source','pdf','epub'].includes(note.anchor?.location?.kind)) {
+          const hint = document.createElement('span')
+          hint.className = 'note-location'
+          labels.set(hint, 'This older selection has no exact text range. The comment is saved; its underline cannot be restored safely.')
+          origin.append(document.createElement('br'),hint)
+        }
         const quoteLabel = document.createElement('h3')
         labels.set(
           quoteLabel,
@@ -591,7 +601,7 @@ export function mountNotes({
         sidebar.append(row)
       }
       if (result.items.length)
-        show(result.items.find((n) => n.id === selectedId) || result.items[0])
+        show(preferred || result.items.find((n) => n.id === selectedId) || result.items[0])
       else {
         const empty = document.createElement('div')
         empty.className = 'notes-empty'
@@ -674,6 +684,11 @@ export function mountNotes({
       const anchor = {
         location,
         ...(value.quoteTruncated ? { quoteTruncated: true } : {})
+      }
+      if (value.textRange != null) {
+        const encodedRange = JSON.stringify(value.textRange)
+        if (new TextEncoder().encode(encodedRange).length > 32768) throw Error('Comment range exceeds its transport budget')
+        anchor.textRange = reference.textRange = JSON.parse(encodedRange)
       }
       if (value.location.kind === 'line') anchor.line = value.location.line
       if (value.location.kind === 'cell')
@@ -771,6 +786,7 @@ export function mountNotes({
       filter: filterKind
     }),
     open: list,
+    openComment: id => list(0, 'comment', id),
     selectionChanged: selected,
     clearSelection,
     dispose() {
@@ -806,7 +822,8 @@ export function notesController(index, api, canSave = () => true, selectionProvi
     selectionAllowed: () => true,
     headerIconOnly: true,
     selectionMenu: options.selectionMenu !== 'host',
-    translate: options.translate
+    translate: options.translate,
+    onMutation: options.onMutation
   })
 }
 

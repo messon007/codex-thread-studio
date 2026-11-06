@@ -45,6 +45,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 similar = { version = "=3.2.0", default-features = false, features = ["std", "text"] }
+regex = "=1.13.1"
 same-file = "=1.0.6"
 tempfile = "=3.27.0"
 tokio = { version = "=1.54.1", optional = true, features = ["macros", "rt-multi-thread", "net", "signal", "time", "fs", "io-util"] }

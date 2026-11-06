@@ -66,6 +66,7 @@ export function tableController(index, api, changed, options = {}) {
     },
     hasOverlay() { return Boolean(chartDialog?.isOpen() || queryDialog?.isOpen()) },
     closeOverlays() { chartDialog?.dispose(); queryDialog?.dispose() },
+    async captureSelection(options = {}, signal) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.captureSelection(options, signal); return selectedTable?.captureSelection(options, signal) || null },
     selection(options = {}) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.selection(options); return selectedTable?.selection(options) || null },
     anchor(article) { return active.get(article)?.anchor() ?? 0 },
     capture(article) { active.get(article)?.capture() },

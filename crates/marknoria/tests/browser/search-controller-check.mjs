@@ -6,7 +6,7 @@ let calls = [], activated = [], notifications = [], painted = [], pending = null
 const values = Array.from({ length: 250 }, (_, index) => ({ start: index * 10, end: index * 10 + 6, line: 1, page: 0, snippet: 'needle', occurrence: index }))
 const controller = searchController({
   owner: () => owner, describe: match => ({ ...match }),
-  async load(query, offset, expected) { calls.push({ query, offset }); if (pending) await pending.promise; return { revision: expected.revision, offset, total: values.length, matches: values.slice(offset, offset + 100) } },
+  async load(query, offset, expected, signal, { matchCase }) { calls.push({ query, offset, matchCase }); if (pending) await pending.promise; return { revision: expected.revision, offset, total: values.length, matches: values.slice(offset, offset + 100) } },
   async activate(match, options) { activated.push({ match, options }); if (activation) await activation.promise },
   changed: state => notifications.push(state), cancel: () => cancelled++, clear() {}, paint: (query, active) => painted.push({ query, active }),
 })
@@ -22,9 +22,20 @@ assert.equal(activated.at(-1).match.occurrence, 249)
 assert.deepEqual(calls.map(call => call.offset), [100, 200])
 result = await controller.search({ query: 'needle', offset: 0 })
 assert.equal(result.searchId, id); assert.equal(result.active.index, 249)
+assert.equal(controller.capabilities().matchCase, true); assert.equal(controller.capabilities().defaultMatchCase, true)
+assert.equal(result.matchCase, true)
+const insensitive = await controller.search({ query: 'needle', matchCase: false, offset: 100 })
+assert.notEqual(insensitive.searchId, id); assert.equal(insensitive.matchCase, false)
+await assert.rejects(controller.activate({ searchId: id, index: 0 }), { code: 'SEARCH_ID' })
+await controller.activate({ searchId: insensitive.searchId, index: 101 })
+assert.equal(activated.at(-1).options.matchCase, false); assert.equal(calls.at(-1).matchCase, false)
+assert.equal((await controller.search({ query: 'needle', matchCase: false, offset: 200 })).searchId, insensitive.searchId)
+const defaultAgain = await controller.search({ query: 'needle' })
+assert.notEqual(defaultAgain.searchId, insensitive.searchId); assert.equal(defaultAgain.matchCase, true)
+for (const matchCase of [null, 'false', 0, {}, []]) await assert.rejects(controller.search({ query: 'needle', matchCase }), { code: 'PARAMS' })
 for (const offset of [-1, 1.5, null, '1', Infinity]) await assert.rejects(controller.search({ query: 'needle', offset }), { code: 'PARAMS' })
 await assert.rejects(controller.search({ query: 'needle', offset: 251 }), { code: 'RANGE' })
-await assert.rejects(controller.activate({ searchId: id, index: 250 }), { code: 'RANGE' })
+await assert.rejects(controller.activate({ searchId: defaultAgain.searchId, index: 250 }), { code: 'RANGE' })
 await controller.search({ query: 'different' })
 await assert.rejects(controller.activate({ searchId: id, index: 0 }), { code: 'SEARCH_ID' })
 // A provider that ignores AbortSignal must still be unable to publish late data.
@@ -63,6 +74,14 @@ activation.resolve(); activation = null; await racingActivation
 assert.equal(painted.at(-1).active.index, 5)
 
 pending = deferred()
+const oldCase = controller.search({ query: 'same-query', matchCase: false }).catch(error => error)
+const casePending = pending; pending = null
+const newCase = await controller.search({ query: 'same-query', matchCase: true })
+casePending.resolve()
+assert.equal((await oldCase).code, 'CANCELLED'); assert.equal(controller.state().searchId, newCase.searchId)
+assert.equal(controller.state().matchCase, true)
+
+pending = deferred()
 const oldRevision = controller.search({ query: 'revision' }).catch(error => error)
 owner = { ...owner, revision: 'revision-two' }; pending.resolve(); pending = null
 assert.equal((await oldRevision).code, 'REVISION')
@@ -70,16 +89,20 @@ controller.dispose(); await assert.rejects(controller.search({ query: 'needle' }
 assert.ok(cancelled > 0); assert.ok(notifications.length > 0)
 let rendererLoads = 0
 const renderer = searchController({
-  owner: () => ({ ...owner, renderer: true }), describe: match => match,
+  owner: () => ({ ...owner, renderer: true, defaultMatchCase: false }), describe: match => match,
   async load() { rendererLoads++; return { matches: Array.from({ length: 500 }, (_, index) => ({ searchMatchId: String(index), location: { kind: 'pdf', page: index + 1 } })), complete: false } },
   activate() {}, paint() {}, clear() {},
 })
 const capped = await renderer.search({ query: 'needle', offset: 400 })
 assert.equal(capped.total, 500); assert.equal(capped.totalExact, false); assert.equal(capped.complete, false)
 assert.equal(capped.matches.length, 100); assert.equal(capped.matches[0].index, 400)
+assert.equal(capped.matchCase, false); assert.equal(renderer.capabilities().defaultMatchCase, false)
 await renderer.activate({ searchId: capped.searchId, index: 1 })
 assert.equal(rendererLoads, 1)
 await assert.rejects(renderer.search({ query: 'needle', offset: 501 }), { code: 'RANGE' })
 assert.equal(rendererLoads, 1)
+const newRendererCase = await renderer.search({ query: 'needle', matchCase: true })
+assert.notEqual(newRendererCase.searchId, capped.searchId); assert.equal(rendererLoads, 2)
 assert.equal((await renderer.search({ query: '' })).searchId, null)
-console.log(JSON.stringify({ ok: true, checks: ['source-paging', 'identity', 'verified-activation', 'same-line-occurrence', 'parameter-rejection', 'abort-late-fetch', 'abort-late-error', 'supersession', 'activation-cancel-retry', 'revision', 'disposal', 'capped-renderer-paging'] }))
+assert.equal(renderer.state().matchCase, null)
+console.log(JSON.stringify({ ok: true, checks: ['source-paging', 'identity', 'verified-activation', 'same-line-occurrence', 'parameter-rejection', 'match-case-defaults-identity-and-validation', 'renderer-case-cache-invalidation', 'abort-late-fetch', 'abort-late-error', 'supersession', 'activation-cancel-retry', 'revision', 'disposal', 'capped-renderer-paging'] }))

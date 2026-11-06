@@ -7,8 +7,9 @@ window.runTableChecks = async () => {
   }, { capture: true })
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
   const wait = async predicate => {
+    const caller = new Error('Table wait').stack
     const deadline = performance.now() + 15000
-    while (!predicate()) { if (performance.now() > deadline) throw Error('Table interaction did not settle'); await pause(20) }
+    while (!predicate()) { if (performance.now() > deadline) throw Error(`Table interaction did not settle: ${caller}`); await pause(20) }
   }
   const frames = async () => { for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame) }
   let assertions = 0
@@ -85,15 +86,15 @@ window.runTableChecks = async () => {
     check(same(widths(), sized), 'Resizing the outgoing projection lost its original column width')
   } finally { window.fetch = originalFetch }
   document.querySelector('#source-mode').click()
-  await wait(() => reader.source.visible && document.querySelector('#source-view').dataset.ready)
+  await wait(() => reader.source.visible && document.querySelector('#source-view').dataset.ready); await frames()
   document.querySelector('#preview-mode').click()
-  await wait(() => !reader.source.visible && reader.pendingNavigation == null); await ready()
+  await wait(() => !reader.source.visible && reader.pendingNavigation == null); await ready(); await frames()
   check(same(widths(), sized), 'Source/Preview lost widths')
-  if (!document.querySelector('#edit-mode').hidden) {
+  if (!document.querySelector('#edit-mode').hidden && !document.querySelector('#edit-mode').disabled) {
     document.querySelector('#edit-mode').click()
     await wait(() => reader.editor?.visible && !reader.editor.busy && document.querySelector('#edit-mode').getAttribute('aria-pressed') === 'true')
     document.querySelector('#preview-mode').click()
-    await wait(() => !reader.editor.visible && reader.pendingNavigation == null); await ready()
+    await wait(() => !reader.editor.visible && reader.pendingNavigation == null); await ready(); await frames()
     check(same(widths(), sized), 'Edit/Preview lost widths')
   }
   for (let toggle = 0; toggle < 2; toggle++) {
@@ -174,6 +175,8 @@ window.runTableChecks = async () => {
   const cell=body().querySelector('tbody td');cell.scrollIntoView({block:'center',inline:'nearest'});await frames()
   const cellBounds=cell.getBoundingClientRect()
   await input({type:'double',x:cellBounds.left+20,y:cellBounds.top+cellBounds.height/2})
+  check(!document.querySelector('.table-cell-dialog') && getSelection()?.toString().trim() && cell.contains(getSelection().anchorNode),'Double-click did not preserve native word selection')
+  article().querySelector('.table-cell-view').click()
   await wait(()=>document.querySelector('.table-cell-dialog')?.open)
   check(document.querySelector('.table-cell-full').textContent===cell.textContent,'Full cell changed the source value')
   check(reader.tables.selection()===null,'Opening the full-cell viewer selected the whole cell');const range=document.createRange();range.selectNodeContents(document.querySelector('.table-cell-full'));getSelection().removeAllRanges();getSelection().addRange(range);document.querySelector('.table-cell-full').dispatchEvent(new MouseEvent('pointerup',{bubbles:true}))
@@ -183,5 +186,31 @@ window.runTableChecks = async () => {
   check(article().querySelector('.table-cell-copy').textContent==='Copied','Cell clipboard write failed')
   check(document.activeElement===cell,'Full cell close did not restore keyboard focus')
   check(same(widths(),sized),'Cell interaction changed column widths')
+  // Exercise the actual Notes UI and storage on the same native WebView.
+  const button=(root,label)=>[...root.querySelectorAll('button')].find(node=>node.textContent===label)
+  cell.click()
+  const annotated=document.createRange();annotated.selectNodeContents(cell)
+  getSelection().removeAllRanges();getSelection().addRange(annotated)
+  document.dispatchEvent(new Event('selectionchange'))
+  await wait(()=>!document.querySelector('.notes-toolbar').hidden)
+  button(document.querySelector('.notes-toolbar'),'Comment').click()
+  await wait(()=>document.querySelector('.notes-dialog textarea'))
+  document.querySelector('.notes-dialog textarea').value='Persistent Wayland comment'
+  button(document.querySelector('.notes-dialog'),'Save comment').click()
+  await wait(()=>document.querySelector('.note-card'))
+  document.querySelector('.notes-dialog .dialog-close').click()
+  getSelection().removeAllRanges()
+  const markerCount=()=>Number(document.querySelector('.reader-shell').dataset.commentMarks||0)
+  await wait(()=>markerCount()>0)
+  check(!cell.querySelector('[data-comment-ids]'),'Comment marker rewrote cell text')
+  check(cell.textContent==='K0','Comment marker changed cell value')
+  await reader.jump(first.firstPage,null,75);await ready();await wait(()=>markerCount()===0)
+  await reader.jump(first.firstPage,null,0);await ready();await wait(()=>markerCount()>0)
+  check(markerCount()>0,'Table pagination lost persistent comment marker')
+  document.querySelector('.notes-open').click();await wait(()=>document.querySelector('.note-card'))
+  button(document.querySelector('.notes-dialog'),'Delete').click()
+  await wait(()=>document.querySelector('.notes-empty'));await wait(()=>markerCount()===0)
+  document.querySelector('.notes-dialog .dialog-close').click()
+  check(markerCount()===0,'Deleted comment remained underlined')
   return { assertions, physicalInput: true, floatingScrollbar: true, columns: sized, sourceBytes: reader.index.sourceBytes }
 }

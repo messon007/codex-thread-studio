@@ -85,7 +85,7 @@ pub(super) async fn notes(
             crate::core::notes::execute(&directory, &document.source, &index, request)
         })
             .map(Json)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+            .map_err(|e| (if e.kind() == std::io::ErrorKind::WouldBlock { StatusCode::TOO_MANY_REQUESTS } else { StatusCode::BAD_REQUEST }, e.to_string()))
     })
     .await
     .map_err(failure)?

@@ -19,7 +19,7 @@ import { tableComponentContract } from './contracts/table-layout.mjs'
 const base = await realpath('target'); await mkdir(join(base, 'web-table-checks'), { recursive: true })
 const dir = await mkdtemp(join(base, 'web-table-checks/run-')), file = join(dir, 'tables.md'), cache = join(dir, 'cache')
 await mkdir(cache); await writeFile(file, tableFixture)
-const server = spawn(resolve(process.argv[2] || 'target/release/marknoria-server'), [file], { env: { ...process.env, READER_CACHE_DIR: cache }, stdio: ['ignore', 'pipe', 'pipe'] })
+const server = spawn(resolve(process.argv[2] || 'target/release/marknoria-server'), [file], { env: { ...process.env, READER_CACHE_DIR: cache, MARKNORIA_CONFIG_DIR:join(dir,'config') }, stdio: ['ignore', 'pipe', 'pipe'] })
 let output = '', errors = ''; server.stdout.on('data', b => { output += b }); server.stderr.on('data', b => { errors += b })
 let browser
 try {

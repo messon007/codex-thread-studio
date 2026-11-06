@@ -760,11 +760,13 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .artifact-image-stage { min-width: 100%; min-height: 100%; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); }
 .artifact-image-stage img { display: block; max-width: 100%; max-height: calc(100vh - 170px); object-fit: contain; }
 .artifact-search-panel { min-height: 45px; padding: 7px 12px; display: flex; align-items: center; border-bottom: 1px solid var(--border); background: var(--panel-soft); }
-.artifact-search-wrap { width: min(430px, 100%); height: 30px; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.artifact-search-wrap { width: min(540px, 100%); min-height: 30px; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .artifact-search-wrap.hidden { display: none; }
 .artifact-search { height: 28px; flex: 1; min-width: 90px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--faint); }
 .artifact-search:focus-within { border-color: var(--favorite); box-shadow: 0 0 0 3px var(--favorite-soft); }
 .artifact-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: var(--ui-font-label); }
+.artifact-search-case { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: var(--ui-font-label); }
+.artifact-search-case input { margin: 0; accent-color: var(--brand); }
 .artifact-search-summary { color: var(--faint); font-size: var(--ui-font-label); white-space: nowrap; }
 .artifact-search-actions { display: flex; align-items: center; gap: 3px; }
 .artifact-search-actions button { width: 23px; height: 23px; border: 1px solid var(--border); border-radius: 7px; color: var(--faint); background: var(--panel); cursor: pointer; font-size: var(--ui-font-compact); font-weight: var(--ui-font-emphasis); line-height: 1; }

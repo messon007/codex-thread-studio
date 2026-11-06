@@ -10,8 +10,8 @@ function fixture({ renderer = false } = {}) {
   const state = () => ({ ...owner(), state: 'ready', view, search: controller.state(), capabilities: { search: controller.capabilities() } })
   const controller = searchController({
     owner, describe: value => value,
-    async load(query, offset, expected) {
-      calls.push({ query, offset })
+    async load(query, offset, expected, signal, options) {
+      calls.push({ query, offset, matchCase: options.matchCase })
       const gate = loadGate; loadGate = null
       if (gate) await gate
       const matches = Array.from({ length: renderer ? 500 : 250 }, (_, index) => ({
@@ -102,5 +102,25 @@ test('superseded search and activation cannot republish stale state after clear 
     await assert.rejects(f.host.activateSearch(latest, 0), { code: 'SEARCH_ID' })
     f.replace()
     await assert.rejects(f.host.activateSearch(latest, 0), { code: 'REVISION' })
+  } finally { await f.host.dispose() }
+})
+
+
+test('explicit case mode survives bounded paging and cancels an old-mode identity', async () => {
+  const f = fixture()
+  try {
+    const insensitive = await f.host.search('K', 0, false)
+    await f.host.activateSearch(insensitive, 101)
+    assert.equal(f.calls.at(-1).matchCase, false)
+    const strict = await f.host.search('K', 0, true)
+    assert.notEqual(strict.searchId, insensitive.searchId)
+    assert.equal(strict.matchCase, true)
+    await assert.rejects(f.host.activateSearch(insensitive, 0), { code: 'SEARCH_ID' })
+    const gate = await f.deferLoad()
+    const old = f.host.search('other', 0, false).catch(error => error)
+    await new Promise(resolve => setImmediate(resolve))
+    const latest = await f.host.search('other', 0, true)
+    gate(); assert.equal((await old).name, 'AbortError')
+    assert.equal(latest.matchCase, true); assert.equal(f.states.at(-1).search.matchCase, true)
   } finally { await f.host.dispose() }
 })

@@ -3,6 +3,7 @@ import { fileDisplayName } from './document-review.mjs'
 import { epubCommentSource } from './epub-comment-provider.mjs'
 import { documentCommentSource } from './comment-source-providers.mjs'
 import { getLocale, onLanguageChange, t } from './i18n.mjs'
+import { createReaderCommentHost } from './reader-comment-host.mjs'
 import { createLargeMarkdownHost, createReaderSelectionHost, createReaderJqHost } from './large-markdown-host.mjs'
 
 // Candidate resolution only; the WSL transport rechecks canonical file grants.
@@ -82,6 +83,7 @@ export function createDocumentWorkspaceController({
   let largeMarkdownHost = null
   let readerSelectionHost = null
   let readerJqHost = null
+  let readerCommentHost = null
 
   function releaseLargeMarkdown(file) {
     const lease = file?.largeMarkdown || file?.reader
@@ -93,6 +95,7 @@ export function createDocumentWorkspaceController({
   }
 
   function disposeLargeMarkdown() {
+    readerCommentHost?.dispose(); readerCommentHost = null
     readerJqHost?.dispose(); readerJqHost = null
     readerSelectionHost?.dispose(); readerSelectionHost = null
     if (largeMarkdownFile?.format === 'epub' && largeMarkdownFile.readingState) {
@@ -112,7 +115,7 @@ export function createDocumentWorkspaceController({
   async function readerPresentationSettings(file) {
     const { readerMessages } = await (messageCatalog ||= loadReaderMessages())
     const locale = getLocale()
-    if (messagesLocale !== locale) { messagesLocale = locale; localeMessages = { ...readerMessages(t), 'Ask AI': t('Ask AI') } }
+    if (messagesLocale !== locale) { messagesLocale = locale; localeMessages = { ...readerMessages(t), 'Ask AI': t('Ask AI'), ...Object.fromEntries(['Match case', 'View full cell', 'View comment', 'View all comments'].map(key => [key, t(key)])) } }
     const style = getComputedStyle(document.documentElement)
     const palette = {}
     const canvas = document.createElement('canvas')
@@ -171,6 +174,11 @@ export function createDocumentWorkspaceController({
     $('#artifact-outline-toggle')?.addEventListener('click', toggleArtifactOutline)
     $('#artifact-search-toggle')?.addEventListener('click', toggleArtifactSearch)
     $('#artifact-search-input')?.addEventListener('input', handleArtifactSearchInput)
+    $('#artifact-search-match-case')?.addEventListener('change', event => {
+      if (!state.artifact) return
+      state.artifact.readerMatchCase = event.target.checked
+      handleArtifactSearchInput({target: $('#artifact-search-input')})
+    })
     $('#artifact-search-input')?.addEventListener('keydown', handleArtifactSearchKeydown)
     $('#artifact-search-prev')?.addEventListener('click', () => navigateArtifactSearch(-1))
     $('#artifact-search-next')?.addEventListener('click', () => navigateArtifactSearch(1))
@@ -508,10 +516,12 @@ function renderArtifact() {
       readerJqHost = createReaderJqHost($('#artifact-reader-shell'), $('#artifact-query-tools'), {
         translate: hostTranslate, onError: showError,
       })
+      readerCommentHost = createReaderCommentHost({ onError: showError, open: id => view.openReaderComment?.(id) })
       largeMarkdownHost = createLargeMarkdownHost(largeMarkdownFrame, snapshot => {
         if (state.artifact !== file) return
         readerSelectionHost?.update(snapshot, largeMarkdownHost)
         readerJqHost?.update(snapshot, largeMarkdownHost)
+        readerCommentHost?.update(snapshot, largeMarkdownHost, view.currentAnnotations?.() || [], file)
         if (snapshot.initialized && largeMarkdownFrame) {
           largeMarkdownFrame.inert = false
           largeMarkdownFrame.tabIndex = 0
@@ -533,7 +543,9 @@ function renderArtifact() {
         if (file.readerRevision && file.readerRevision !== snapshot.revision || snapshot.view === 'edit' && state.artifactView !== 'edit') resetArtifactSearch()
         if (snapshot.view !== state.artifactView) artifactSearchTarget = null
         file.readerRevision = snapshot.revision
-        state.artifactSearchResult = snapshot.search?.query === state.artifactSearch ? snapshot.search : null
+        if (file.readerMatchCase == null && snapshot.capabilities?.search) file.readerMatchCase = snapshot.capabilities.search.defaultMatchCase !== false
+        file.readerMatchCaseSupported = snapshot.capabilities?.search?.matchCase === true
+        state.artifactSearchResult = snapshot.search?.query === state.artifactSearch && snapshot.search.matchCase === file.readerMatchCase ? snapshot.search : null
         file.readerSearchQueryBytes = snapshot.capabilities?.search?.queryBytes || 256
         file.readerSourceAvailable = snapshot.capabilities?.source
         file.readerReady = snapshot.ready
@@ -552,6 +564,7 @@ function renderArtifact() {
         if (state.artifact !== file) return
         void readerSelectionHost?.capture(selection)
       }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
+        onCommentRequested: payload => readerCommentHost?.open(payload),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
         initialReference: file.readerReference, initialFragment: file.readerFragment,
         presentation: { ...file.initialPresentation, ...(file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
@@ -565,6 +578,7 @@ function renderArtifact() {
       delete file.readerFragment
     }
     syncLargeMarkdownTheme()
+    syncCommentMarks()
     renderArtifactSearchStatus()
     return
   }
@@ -655,7 +669,7 @@ function handleArtifactSearchInput(event) {
   state.artifactSearchResult = null
   state.artifactSearchError = ''
   state.artifactSearchPending = Boolean(query)
-  const file = state.artifact, host = largeMarkdownHost
+  const file = state.artifact, host = largeMarkdownHost, matchCase = file?.readerMatchCase
   renderArtifactSearchStatus()
   if (file?.kind !== 'large-markdown' || !host) return
   // Invalidate old highlights immediately, including during debounce and invalid
@@ -677,7 +691,7 @@ function handleArtifactSearchInput(event) {
     try {
       await clearing
       if (own !== artifactSearchGeneration || state.artifact !== file) return
-      const result = await host.search(query)
+      const result = await host.search(query, 0, matchCase)
       if (own !== artifactSearchGeneration || state.artifact !== file) return
       state.artifactSearchPending = false
       if (result.available && artifactSearchTarget === null) scrollArtifactSearchToMatch(0)
@@ -701,6 +715,8 @@ function handleArtifactSearchKeydown(event) {
 function renderArtifactSearchStatus() {
   const summary = $('#artifact-search-summary'), result = state.artifactSearchResult
   if (!summary) return
+  const checkbox = $('#artifact-search-match-case')
+  if (checkbox) { checkbox.checked = state.artifact?.readerMatchCase !== false; checkbox.disabled = !state.artifact?.readerMatchCaseSupported }
   const available = result?.available || 0
   const active = Boolean(state.artifactSearch && state.artifact?.kind === 'large-markdown' && state.artifactView !== 'edit')
   const loading = state.artifactSearchPending || result?.loading
@@ -743,6 +759,10 @@ function navigateArtifactSearch(step) {
   scrollArtifactSearchToMatch(current == null ? (step < 0 ? result.available - 1 : 0) : current + step)
 }
 
+function syncCommentMarks() {
+  readerCommentHost?.refresh(view.currentAnnotations?.() || [], state.artifact)
+}
+
 function formatFileSize(value) {
   const bytes = Number(value) || 0
   if (bytes < 1024) return `${bytes} B`
@@ -775,6 +795,7 @@ function formatFileSize(value) {
     jumpToLine: jumpArtifactToLine,
     open: openArtifact,
     refresh: refreshArtifact,
+    syncCommentMarks,
     render: renderArtifact,
     reopenEpubSource: reopenEpubComment,
     save: saveArtifact,

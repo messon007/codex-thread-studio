@@ -1,3 +1,4 @@
+import { readerCommentMark } from './reader-comment-host.mjs'
 import { backendDescriptor } from './backends.mjs'
 import {
   commentSelectionSnapshot,
@@ -696,6 +697,7 @@ function renderAnnotationRail() {
 }
 
 function renderDocumentCommentMarkers() {
+  view.syncReaderCommentMarks?.()
   const root = $('#artifact-content')
   const file = state.artifact
   if (!root) return
@@ -841,7 +843,13 @@ function openCommentsForMarker(marker) {
 }
 
 function annotationSourceLabel(draft, index) {
-  return commentSources.describe(draft, commentProviderContext(index))
+  const label = commentSources.describe(draft, commentProviderContext(index))
+  const file = state.artifact, anchor = draft.source?.anchor
+  if (file?.readerRevision && ['document', 'epub'].includes(draft.source?.provider) && anchor?.filePath === file.path
+    && !readerCommentMark(draft, file, { revision: file.readerRevision })) {
+    return `${label} · ${t('This saved comment has no exact mark for the current document revision.')}`
+  }
+  return label
 }
 
 async function reopenAnnotationSource(id) {
@@ -1396,6 +1404,7 @@ function formatFavoriteDate(value) {
     openAnnotationFromSelection,
     openAnnotations: openAnnotationRail,
     openCommentForSelection,
+    openReaderComment: id => id == null ? openAnnotationRail() : openAnnotationEditor(id),
     openFavoriteDetail,
     openFavoriteForMessage,
     openFavoriteForResource,

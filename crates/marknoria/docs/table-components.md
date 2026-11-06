@@ -7,6 +7,15 @@ Web components own displayed windows, geometry, selection and SVG layout. These
 are the same implementations for standalone, browser/WebView and embedded hosts.
 A displayed 50-row page is never a complete-query or chart input.
 
+Cell actions reuse `mountTableCells`: double-click selects a word using the
+browser's native behavior. **View full cell** beside **Copy cell** explicitly
+opens inert complete content; Enter on a focused cell is its keyboard equivalent.
+Neither steals an interactive descendant's keys or an existing text selection.
+There are two controls per table, no extra per-cell listeners or buttons; paging
+resets their ownership and disposal removes both. A custom right-click menu is
+deliberately avoided so native Copy/link menus and host/Notes selection policy
+retain ownership. The same actions serve Markdown/CSV and SQL result tables.
+
 ## Complete-input plot API
 
 ```rust,ignore

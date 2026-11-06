@@ -2552,6 +2552,7 @@ dependencies = [
  "process-wrap",
  "pulldown-cmark",
  "quick-xml",
+ "regex",
  "resvg",
  "roxmltree 0.20.0",
  "rusqlite",

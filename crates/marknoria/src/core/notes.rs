@@ -1,4 +1,6 @@
 //! Local comments/favorites. No agent, network, or source-file write capability.
+mod marks;
+pub use marks::{TextRange, TextScope, TextSegment};
 use crate::core::Index;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -11,6 +13,12 @@ use std::{
 };
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
+}
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(e.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+}
+fn sql_error(e: rusqlite::Error) -> io::Error {
+    io::Error::new(if is_busy(&e) { io::ErrorKind::WouldBlock } else { io::ErrorKind::InvalidInput }, e)
 }
 fn is_false(value: &bool) -> bool { !*value }
 /// Durable SQL output reference. Result coordinates are never source-cell
@@ -31,6 +39,8 @@ pub struct QueryProvenance {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Anchor {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_range: Option<TextRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<QueryProvenance>,
     #[serde(skip_serializing_if = "is_false")]
     pub quote_truncated: bool,
@@ -45,6 +55,8 @@ pub struct Anchor {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Request {
+    Marks { revision: String, scopes: Vec<String>, #[serde(default)] offset: usize },
+    Get { id: String },
     List {
         #[serde(default)]
         offset: usize,
@@ -94,11 +106,43 @@ fn db(directory: &Path) -> io::Result<Connection> {
         dir.mode(0o700);
     }
     dir.create(directory)?;
-    let db = Connection::open(directory.join("notes.sqlite")).map_err(error)?;
-    db.busy_timeout(std::time::Duration::from_secs(2))
-        .map_err(error)?;
-    db.execute_batch("PRAGMA max_page_count=16384; PRAGMA cache_size=-1024; CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY, document TEXT NOT NULL, revision TEXT NOT NULL, kind TEXT NOT NULL, quote TEXT NOT NULL, comment TEXT NOT NULL, anchor TEXT NOT NULL, created INTEGER NOT NULL, dedup TEXT UNIQUE NOT NULL); CREATE INDEX IF NOT EXISTS notes_document ON notes(document,created);").map_err(error)?;
-    Ok(db)
+    // Only idempotent connection/schema setup is retried. Simultaneous first
+    // opens can race while SQLite switches journals or creates the schema;
+    // BUSY during an upgrade is not always handled by SQLite's busy timeout.
+    // Drop the connection/snapshot before retrying; never replay user mutations.
+    let started = std::time::Instant::now();
+    let mut delay = 5;
+    loop {
+        let result = (|| -> rusqlite::Result<Connection> {
+            let db = Connection::open(directory.join("notes.sqlite"))?;
+            db.busy_timeout(std::time::Duration::from_millis(100))?;
+            let journal: String = db.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+            if !journal.eq_ignore_ascii_case("wal") {
+                db.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0))?;
+            }
+            db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_size_limit=8388608; PRAGMA max_page_count=16384; PRAGMA cache_size=-1024;")?;
+            let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+            if version < 1 {
+                let transaction = rusqlite::Transaction::new_unchecked(&db, rusqlite::TransactionBehavior::Immediate)?;
+                let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+                if version < 1 {
+                    transaction.execute_batch("CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY, document TEXT NOT NULL, revision TEXT NOT NULL, kind TEXT NOT NULL, quote TEXT NOT NULL, comment TEXT NOT NULL, anchor TEXT NOT NULL, created INTEGER NOT NULL, dedup TEXT UNIQUE NOT NULL); CREATE INDEX IF NOT EXISTS notes_document ON notes(document,created); CREATE TABLE IF NOT EXISTS comment_scopes(document TEXT NOT NULL,revision TEXT NOT NULL,scope TEXT NOT NULL,note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,PRIMARY KEY(note_id,scope)); CREATE INDEX IF NOT EXISTS comment_scope_lookup ON comment_scopes(document,revision,scope); CREATE TABLE IF NOT EXISTS comment_scope_documents(document TEXT PRIMARY KEY); PRAGMA user_version=1;")?;
+                }
+                transaction.commit()?;
+            }
+            db.busy_timeout(std::time::Duration::from_secs(2))?;
+            Ok(db)
+        })();
+        match result {
+            Ok(db) => return Ok(db),
+            Err(e) if started.elapsed() < std::time::Duration::from_secs(2)
+                && is_busy(&e) => {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                delay = (delay * 2).min(80);
+            }
+            Err(e) => return Err(sql_error(e)),
+        }
+    }
 }
 fn text(value: &str, max: usize) -> io::Result<()> {
     if value.len() > max || value.contains('\0') {
@@ -154,6 +198,12 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
     let document: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(document_key);
     let db = db(directory)?;
     match request {
+        Request::Marks { revision, scopes, offset } => marks::read(&db, document.as_ref(), index, &revision, scopes, offset),
+        Request::Get { id } => {
+            identity(&id)?;
+            db.query_row(&format!("{SELECT} WHERE id=? AND document=?"), params![id,document.as_ref()], |row| note(row,index))
+                .map_err(sql_error).and_then(|note| serde_json::to_value(note).map_err(error))
+        }
         Request::List { offset, kind } => {
             if offset > 10000
                 || kind
@@ -168,22 +218,22 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     params![document.as_ref(), kind, kind],
                     |r| r.get(0),
                 )
-                .map_err(error)?;
-            let mut statement=db.prepare(&format!("{SELECT} WHERE document=? AND (? IS NULL OR kind=?) ORDER BY created DESC,id LIMIT 64 OFFSET ?")).map_err(error)?;
+                .map_err(sql_error)?;
+            let mut statement=db.prepare(&format!("{SELECT} WHERE document=? AND (? IS NULL OR kind=?) ORDER BY created DESC,id LIMIT 64 OFFSET ?")).map_err(sql_error)?;
             let rows = statement
                 .query_map(params![document.as_ref(), kind, kind, offset], |r| {
                     note(r, index)
                 })
-                .map_err(error)?
+                .map_err(sql_error)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(error)?;
+                .map_err(sql_error)?;
             let document_total: usize = db
                 .query_row(
                     "SELECT COUNT(*) FROM notes WHERE document=?",
                     [document.as_ref()],
                     |r| r.get(0),
                 )
-                .map_err(error)?;
+                .map_err(sql_error)?;
             Ok(
                 json!({"kind":"notes","items":rows,"total":total,"documentTotal":document_total,"offset":offset,"limit":64}),
             )
@@ -230,6 +280,7 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                 };
                 if !valid { return Err(error("Typed note location is outside the document")); }
             }
+            if let Some(range) = &anchor.text_range { range.validate(index, &anchor)?; }
             if anchor
                 .line
                 .is_some_and(|n| n == 0 || n > index.source_lines)
@@ -274,14 +325,10 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     .and_then(|p| index.toc.iter().filter(|h| h.page <= p).last())
                     .map(|h| h.label.clone())
             };
-            let count: u64 = db
-                .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
-                .map_err(error)?;
-            if count >= 10000 {
-                return Err(error("Local notebook exceeds 10,000 items"));
-            }
             let id = uuid::Uuid::new_v4().to_string();
+            let scopes = if kind == "comment" { marks::keys(index, &anchor)? } else { Vec::new() };
             let anchor = serde_json::to_string(&anchor)?;
+            if anchor.len() > 32768 { return Err(error("Note anchor exceeds its transport budget")); }
             let key = if kind == "favorite" {
                 Sha256::digest(serde_json::to_vec(&(
                     document.as_ref(),
@@ -299,7 +346,17 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                 .duration_since(UNIX_EPOCH)
                 .map_err(error)?
                 .as_millis() as u64;
-            db.execute(
+            let transaction = rusqlite::Transaction::new_unchecked(&db, rusqlite::TransactionBehavior::Immediate).map_err(sql_error)?;
+            let count: u64 = transaction
+                .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+                .map_err(sql_error)?;
+            if count >= 10000 {
+                return Err(error("Local notebook exceeds 10,000 items"));
+            }
+            // A new notebook has no legacy comments to migrate. Publish that
+            // fact atomically with its first note so readers need no write lock.
+            transaction.execute("INSERT OR IGNORE INTO comment_scope_documents(document) SELECT ? WHERE NOT EXISTS(SELECT 1 FROM notes WHERE document=? AND kind='comment')", params![document.as_ref(),document.as_ref()]).map_err(sql_error)?;
+            transaction.execute(
                 "INSERT INTO notes VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(dedup) DO NOTHING",
                 params![
                     id,
@@ -313,10 +370,12 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     key
                 ],
             )
-            .map_err(error)?;
-            let id: String = db
+            .map_err(sql_error)?;
+            let id: String = transaction
                 .query_row("SELECT id FROM notes WHERE dedup=?", [key], |r| r.get(0))
-                .map_err(error)?;
+                .map_err(sql_error)?;
+            marks::register(&transaction, document.as_ref(), &revision, &id, &scopes)?;
+            transaction.commit().map_err(sql_error)?;
             Ok(json!({"kind":"noteSaved","id":id}))
         }
         Request::Update { id, comment } => {
@@ -327,7 +386,7 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     "UPDATE notes SET comment=? WHERE id=? AND document=?",
                     params![comment, id, document.as_ref()],
                 )
-                .map_err(error)?
+                .map_err(sql_error)?
                 == 0
             {
                 return Err(error("Note not found in this document"));
@@ -341,7 +400,7 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     "DELETE FROM notes WHERE id=? AND document=?",
                     params![id, document.as_ref()],
                 )
-                .map_err(error)?
+                .map_err(sql_error)?
                 == 0
             {
                 return Err(error("Note not found in this document"));
@@ -360,7 +419,7 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     "DELETE FROM notes WHERE document=? AND (? IS NULL OR kind=?)",
                     params![document.as_ref(), kind, kind],
                 )
-                .map_err(error)?;
+                .map_err(sql_error)?;
             Ok(json!({"kind":"notesCleared","deleted":deleted}))
         }
         Request::Copy { id } => {
@@ -371,7 +430,7 @@ fn execute_named(directory: &Path, document_key: &str, display_name: &str, index
                     params![id, document.as_ref()],
                     |r| note(r, index),
                 )
-                .map_err(error)?;
+                .map_err(sql_error)?;
             let location = record
                 .anchor
                 .line

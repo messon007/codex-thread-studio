@@ -36,7 +36,8 @@
     "check:code-search": "node tests/browser/code-search-check.mjs",
     "check:host-client": "node tests/browser/host-client-check.mjs",
     "check:comment-marks": "node tests/browser/comment-marks-check.mjs",
-    "check:comment-notes": "node tests/browser/comment-notes-check.mjs"
+    "check:comment-notes": "node tests/browser/comment-notes-check.mjs",
+    "check:syntax-features": "python3 tests/server/syntax-feature-check.py"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

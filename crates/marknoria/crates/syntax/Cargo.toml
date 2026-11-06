@@ -4,6 +4,24 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 publish = false
+[features]
+default = ["full"]
+full = ["cobol", "d", "hlsl", "fsharp", "ocaml", "idris", "odin", "c-sharp", "perl", "ruby", "elixir", "vb", "php"]
+reduced = []
+cobol = ["dep:arborium-cobol"]
+d = ["dep:arborium-d"]
+hlsl = ["dep:arborium-hlsl"]
+fsharp = ["dep:arborium-fsharp"]
+ocaml = ["dep:arborium-ocaml"]
+idris = ["dep:arborium-idris"]
+odin = ["dep:arborium-odin"]
+c-sharp = ["dep:arborium-c-sharp"]
+perl = ["dep:arborium-perl"]
+ruby = ["dep:arborium-ruby"]
+elixir = ["dep:arborium-elixir"]
+vb = ["dep:arborium-vb"]
+php = ["dep:arborium-php"]
+
 [dependencies]
 tree-sitter-highlight = "=0.27.1"
 arborium-ada = "=2.18.2"
@@ -14,29 +32,29 @@ arborium-awk = "=2.18.2"
 arborium-bash = "=2.18.2"
 arborium-batch = "=2.18.2"
 arborium-c = "=2.18.2"
-arborium-c-sharp = "=2.18.2"
+arborium-c-sharp = { version = "=2.18.2", optional = true }
 arborium-caddy = "=2.18.2"
 arborium-capnp = "=2.18.2"
 arborium-cedar = "=2.18.2"
 arborium-cedarschema = "=2.18.2"
 arborium-clojure = "=2.18.2"
 arborium-cmake = "=2.18.2"
-arborium-cobol = "=2.18.2"
+arborium-cobol = { version = "=2.18.2", optional = true }
 arborium-commonlisp = "=2.18.2"
 arborium-cpp = "=2.18.2"
 arborium-css = "=2.18.2"
-arborium-d = "=2.18.2"
+arborium-d = { version = "=2.18.2", optional = true }
 arborium-dart = "=2.18.2"
 arborium-devicetree = "=2.18.2"
 arborium-diff = "=2.18.2"
 arborium-dockerfile = "=2.18.2"
 arborium-dot = "=2.18.2"
 arborium-elisp = "=2.18.2"
-arborium-elixir = "=2.18.2"
+arborium-elixir = { version = "=2.18.2", optional = true }
 arborium-elm = "=2.18.2"
 arborium-erlang = "=2.18.2"
 arborium-fish = "=2.18.2"
-arborium-fsharp = "=2.18.2"
+arborium-fsharp = { version = "=2.18.2", optional = true }
 arborium-gitattributes = "=2.18.2"
 arborium-gleam = "=2.18.2"
 arborium-glsl = "=2.18.2"
@@ -45,9 +63,9 @@ arborium-graphql = "=2.18.2"
 arborium-groovy = "=2.18.2"
 arborium-haskell = "=2.18.2"
 arborium-hcl = "=2.18.2"
-arborium-hlsl = "=2.18.2"
+arborium-hlsl = { version = "=2.18.2", optional = true }
 arborium-html = "=2.18.2"
-arborium-idris = "=2.18.2"
+arborium-idris = { version = "=2.18.2", optional = true }
 arborium-ini = "=2.18.2"
 arborium-java = "=2.18.2"
 arborium-javascript = "=2.18.2"
@@ -69,10 +87,10 @@ arborium-meson = "=2.18.2"
 arborium-ninja = "=2.18.2"
 arborium-nix = "=2.18.2"
 arborium-objc = "=2.18.2"
-arborium-ocaml = "=2.18.2"
-arborium-odin = "=2.18.2"
-arborium-perl = "=2.18.2"
-arborium-php = "=2.18.2"
+arborium-ocaml = { version = "=2.18.2", optional = true }
+arborium-odin = { version = "=2.18.2", optional = true }
+arborium-perl = { version = "=2.18.2", optional = true }
+arborium-php = { version = "=2.18.2", optional = true }
 arborium-postscript = "=2.18.2"
 arborium-powershell = "=2.18.2"
 arborium-prolog = "=2.18.2"
@@ -84,7 +102,7 @@ arborium-regex = "=2.18.2"
 arborium-rego = "=2.18.2"
 arborium-rescript = "=2.18.2"
 arborium-ron = "=2.18.2"
-arborium-ruby = "=2.18.2"
+arborium-ruby = { version = "=2.18.2", optional = true }
 arborium-rust = "=2.18.2"
 arborium-scala = "=2.18.2"
 arborium-scheme = "=2.18.2"
@@ -104,7 +122,7 @@ arborium-toml = "=2.18.2"
 arborium-tsx = "=2.18.2"
 arborium-typescript = "=2.18.2"
 arborium-typst = "=2.18.2"
-arborium-vb = "=2.18.2"
+arborium-vb = { version = "=2.18.2", optional = true }
 arborium-verilog = "=2.18.2"
 arborium-vhdl = "=2.18.2"
 arborium-vim = "=2.18.2"

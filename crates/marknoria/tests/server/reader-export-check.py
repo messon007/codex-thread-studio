@@ -36,6 +36,16 @@ with tempfile.TemporaryDirectory(prefix='reader-export-contract-', dir=args.temp
     assert report['ok']
     checks += 1
     manifest = json.loads((root / 'reader-manifest.json').read_text())
+    profiles = manifest['support']['syntaxProfiles']
+    assert profiles['default'] == 'full' and profiles['full'] == 110 and profiles['reduced'] == 97
+    assert profiles['reducedRequiresNoDefaultFeatures'] is True
+    assert set(profiles['excludedInReduced']) == {'cobol','d','hlsl','fsharp','ocaml','idris','odin','c-sharp','perl','ruby','elixir','vb','php'}
+    public_cargo = tomllib.loads((root / 'Cargo.toml').read_text())
+    assert public_cargo['features']['default'] == ['web', 'syntax-full']
+    assert public_cargo['dependencies']['marknoria-syntax']['default-features'] is False
+    for file in ['docs/syntax-profiles.md', 'tests/syntax_profiles.rs', 'examples/syntax-profile-probe.rs']:
+        assert file in manifest['files']
+    checks += 1
     assert all(not name.startswith(('native/', 'ffi/', 'src/native/', 'node_modules/', 'target/'))
                for name in manifest['files'])
     assert tomllib.loads((root / '.cargo/config.toml').read_text()) == {

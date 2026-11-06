@@ -1,5 +1,6 @@
 import { runDomContract } from './dom-component-check.mjs'
 const files = new Map([
+  ['/ui-messages.mjs', 'web/ui-messages.mjs'],
   ['/comment-ranges.mjs', 'web/comment-ranges.mjs'],
   ['/translation.mjs', 'web/translation.mjs'],
   ['/table-cells.mjs', 'web/table-cells.mjs'],

@@ -1,6 +1,29 @@
 // Registry/aliases adapted from Arborium 2.18.2, MIT OR Apache-2.0.
 // Copyright (c) Amos Wenger and contributors. See third-party/highlighting.md.
 // Grammars/queries remain pinned upstream crates, not copied parsers.
+// Cargo features are additive: explicit reduced consumers must fail instead
+// of silently linking excluded grammars through another workspace dependency.
+#[cfg(all(
+    feature = "reduced",
+    any(
+        feature = "cobol",
+        feature = "d",
+        feature = "hlsl",
+        feature = "fsharp",
+        feature = "ocaml",
+        feature = "idris",
+        feature = "odin",
+        feature = "c-sharp",
+        feature = "perl",
+        feature = "ruby",
+        feature = "elixir",
+        feature = "vb",
+        feature = "php"
+    )
+))]
+compile_error!(
+    "syntax-reduced conflicts with full/optional syntax features; disable default features on every MarkNoria dependency"
+);
 use std::sync::OnceLock;
 use tree_sitter_highlight::HighlightConfiguration;
 pub const CAPTURES: &[&str] = &[
@@ -60,6 +83,7 @@ fn metadata_free(query: &str) -> String {
 fn compatible_query(name: &str, query: &str) -> String {
     let mut query = metadata_free(query);
     let patches: &[(&str, &str)] = match name {
+        #[cfg(feature = "fsharp")]
         "fsharp" => &[
             (
                 "(_type\n  (long_identifier (identifier) @type.builtin))",
@@ -70,6 +94,7 @@ fn compatible_query(name: &str, query: &str) -> String {
                 "(simple_type (long_identifier (identifier) @attribute))",
             ),
         ],
+        #[cfg(feature = "perl")]
         "perl" => &[
             (
                 "(postfix_deref [\"@\" \"$#\" ] @variable.array \"*\" @variable.array)",
@@ -215,261 +240,241 @@ pub fn alias(name: &str) -> &str {
     }
 }
 
-pub fn configuration(name: &str) -> Option<&'static HighlightConfiguration> {
-    macro_rules! grammar {
-        ($module:ident,$name:literal) => {{
-            static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
-            CONFIG
-                .get_or_init(|| {
-                    let query = compatible_query($name, &$module::HIGHLIGHTS_QUERY);
-                    let mut config = HighlightConfiguration::new(
-                        $module::language().into(),
-                        $name,
-                        &query,
-                        $module::INJECTIONS_QUERY,
-                        $module::LOCALS_QUERY,
-                    )
-                    .map_err(|_error| {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Bundled query {}: {_error:?}", $name);
-                    })
-                    .ok()?;
-                    config.configure(CAPTURES);
-                    Some(config)
+macro_rules! grammar {
+    ($module:ident,$name:literal) => {{
+        static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+        CONFIG
+            .get_or_init(|| {
+                let query = compatible_query($name, &$module::HIGHLIGHTS_QUERY);
+                let mut config = HighlightConfiguration::new(
+                    $module::language().into(),
+                    $name,
+                    &query,
+                    $module::INJECTIONS_QUERY,
+                    $module::LOCALS_QUERY,
+                )
+                .map_err(|_error| {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Bundled query {}: {_error:?}", $name);
                 })
-                .as_ref()
-        }};
-    }
-    match alias(name) {
-        "ada" => grammar!(arborium_ada, "ada"),
-        "agda" => grammar!(arborium_agda, "agda"),
-        "asciidoc" => grammar!(arborium_asciidoc, "asciidoc"),
-        "asm" => grammar!(arborium_asm, "asm"),
-        "awk" => grammar!(arborium_awk, "awk"),
-        "bash" => grammar!(arborium_bash, "bash"),
-        "batch" => grammar!(arborium_batch, "batch"),
-        "c" => grammar!(arborium_c, "c"),
-        "c-sharp" => grammar!(arborium_c_sharp, "c-sharp"),
-        "caddy" => grammar!(arborium_caddy, "caddy"),
-        "capnp" => grammar!(arborium_capnp, "capnp"),
-        "cedar" => grammar!(arborium_cedar, "cedar"),
-        "cedarschema" => grammar!(arborium_cedarschema, "cedarschema"),
-        "clojure" => grammar!(arborium_clojure, "clojure"),
-        "cmake" => grammar!(arborium_cmake, "cmake"),
-        "cobol" => grammar!(arborium_cobol, "cobol"),
-        "commonlisp" => grammar!(arborium_commonlisp, "commonlisp"),
-        "cpp" => grammar!(arborium_cpp, "cpp"),
-        "css" => grammar!(arborium_css, "css"),
-        "d" => grammar!(arborium_d, "d"),
-        "dart" => grammar!(arborium_dart, "dart"),
-        "devicetree" => grammar!(arborium_devicetree, "devicetree"),
-        "diff" => grammar!(arborium_diff, "diff"),
-        "dockerfile" => grammar!(arborium_dockerfile, "dockerfile"),
-        "dot" => grammar!(arborium_dot, "dot"),
-        "elisp" => grammar!(arborium_elisp, "elisp"),
-        "elixir" => grammar!(arborium_elixir, "elixir"),
-        "elm" => grammar!(arborium_elm, "elm"),
-        "erlang" => grammar!(arborium_erlang, "erlang"),
-        "fish" => grammar!(arborium_fish, "fish"),
-        "fsharp" => grammar!(arborium_fsharp, "fsharp"),
-        "gitattributes" => grammar!(arborium_gitattributes, "gitattributes"),
-        "gleam" => grammar!(arborium_gleam, "gleam"),
-        "glsl" => grammar!(arborium_glsl, "glsl"),
-        "go" => grammar!(arborium_go, "go"),
-        "graphql" => grammar!(arborium_graphql, "graphql"),
-        "groovy" => grammar!(arborium_groovy, "groovy"),
-        "haskell" => grammar!(arborium_haskell, "haskell"),
-        "hcl" => grammar!(arborium_hcl, "hcl"),
-        "hlsl" => grammar!(arborium_hlsl, "hlsl"),
-        "html" => grammar!(arborium_html, "html"),
-        "idris" => grammar!(arborium_idris, "idris"),
-        "ini" => grammar!(arborium_ini, "ini"),
-        "java" => grammar!(arborium_java, "java"),
-        "javascript" => grammar!(arborium_javascript, "javascript"),
-        "jinja2" => grammar!(arborium_jinja2, "jinja2"),
-        "jq" => grammar!(arborium_jq, "jq"),
-        "jsdoc" => grammar!(arborium_jsdoc, "jsdoc"),
-        "json" => grammar!(arborium_json, "json"),
-        "julia" => grammar!(arborium_julia, "julia"),
-        "just" => grammar!(arborium_just, "just"),
-        "kconfig" => grammar!(arborium_kconfig, "kconfig"),
-        "kdl" => grammar!(arborium_kdl, "kdl"),
-        "kotlin" => grammar!(arborium_kotlin, "kotlin"),
-        "lean" => grammar!(arborium_lean, "lean"),
-        "lua" => grammar!(arborium_lua, "lua"),
-        "make" => grammar!(arborium_make, "make"),
-        "markdown" => grammar!(arborium_markdown, "markdown"),
-        "matlab" => grammar!(arborium_matlab, "matlab"),
-        "meson" => grammar!(arborium_meson, "meson"),
-        "ninja" => grammar!(arborium_ninja, "ninja"),
-        "nix" => grammar!(arborium_nix, "nix"),
-        "objc" => grammar!(arborium_objc, "objc"),
-        "ocaml" => grammar!(arborium_ocaml, "ocaml"),
-        "odin" => grammar!(arborium_odin, "odin"),
-        "perl" => grammar!(arborium_perl, "perl"),
-        "php" => grammar!(arborium_php, "php"),
-        "postscript" => grammar!(arborium_postscript, "postscript"),
-        "powershell" => grammar!(arborium_powershell, "powershell"),
-        "prolog" => grammar!(arborium_prolog, "prolog"),
-        "proto" => grammar!(arborium_proto, "proto"),
-        "python" => grammar!(arborium_python, "python"),
-        "query" => grammar!(arborium_query, "query"),
-        "r" => grammar!(arborium_r, "r"),
-        "regex" => grammar!(arborium_regex, "regex"),
-        "rego" => grammar!(arborium_rego, "rego"),
-        "rescript" => grammar!(arborium_rescript, "rescript"),
-        "ron" => grammar!(arborium_ron, "ron"),
-        "ruby" => grammar!(arborium_ruby, "ruby"),
-        "rust" => grammar!(arborium_rust, "rust"),
-        "scala" => grammar!(arborium_scala, "scala"),
-        "scheme" => grammar!(arborium_scheme, "scheme"),
-        "scss" => grammar!(arborium_scss, "scss"),
-        "solidity" => grammar!(arborium_solidity, "solidity"),
-        "sparql" => grammar!(arborium_sparql, "sparql"),
-        "sql" => grammar!(arborium_sql, "sql"),
-        "ssh-config" => grammar!(arborium_ssh_config, "ssh-config"),
-        "starlark" => grammar!(arborium_starlark, "starlark"),
-        "styx" => grammar!(arborium_styx, "styx"),
-        "svelte" => grammar!(arborium_svelte, "svelte"),
-        "swift" => grammar!(arborium_swift, "swift"),
-        "textproto" => grammar!(arborium_textproto, "textproto"),
-        "thrift" => grammar!(arborium_thrift, "thrift"),
-        "tlaplus" => grammar!(arborium_tlaplus, "tlaplus"),
-        "toml" => grammar!(arborium_toml, "toml"),
-        "tsx" => grammar!(arborium_tsx, "tsx"),
-        "typescript" => grammar!(arborium_typescript, "typescript"),
-        "typst" => grammar!(arborium_typst, "typst"),
-        "vb" => grammar!(arborium_vb, "vb"),
-        "verilog" => grammar!(arborium_verilog, "verilog"),
-        "vhdl" => grammar!(arborium_vhdl, "vhdl"),
-        "vim" => grammar!(arborium_vim, "vim"),
-        "vue" => grammar!(arborium_vue, "vue"),
-        "wit" => grammar!(arborium_wit, "wit"),
-        "x86asm" => grammar!(arborium_x86asm, "x86asm"),
-        "xml" => grammar!(arborium_xml, "xml"),
-        "yaml" => grammar!(arborium_yaml, "yaml"),
-        "yuri" => grammar!(arborium_yuri, "yuri"),
-        "zig" => grammar!(arborium_zig, "zig"),
-        "zsh" => grammar!(arborium_zsh, "zsh"),
-        _ => None,
-    }
+                .ok()?;
+                config.configure(CAPTURES);
+                Some(config)
+            })
+            .as_ref()
+    }};
 }
 
-pub const LANGUAGES: &[&str] = &[
-    "ada",
-    "agda",
-    "asciidoc",
-    "asm",
-    "awk",
-    "bash",
-    "batch",
-    "c",
-    "c-sharp",
-    "caddy",
-    "capnp",
-    "cedar",
-    "cedarschema",
-    "clojure",
-    "cmake",
-    "cobol",
-    "commonlisp",
-    "cpp",
-    "css",
-    "d",
-    "dart",
-    "devicetree",
-    "diff",
-    "dockerfile",
-    "dot",
-    "elisp",
-    "elixir",
-    "elm",
-    "erlang",
-    "fish",
-    "fsharp",
-    "gitattributes",
-    "gleam",
-    "glsl",
-    "go",
-    "graphql",
-    "groovy",
-    "haskell",
-    "hcl",
-    "hlsl",
-    "html",
-    "idris",
-    "ini",
-    "java",
-    "javascript",
-    "jinja2",
-    "jq",
-    "jsdoc",
-    "json",
-    "julia",
-    "just",
-    "kconfig",
-    "kdl",
-    "kotlin",
-    "lean",
-    "lua",
-    "make",
-    "markdown",
-    "matlab",
-    "meson",
-    "ninja",
-    "nix",
-    "objc",
-    "ocaml",
-    "odin",
-    "perl",
-    "php",
-    "postscript",
-    "powershell",
-    "prolog",
-    "proto",
-    "python",
-    "query",
-    "r",
-    "regex",
-    "rego",
-    "rescript",
-    "ron",
-    "ruby",
-    "rust",
-    "scala",
-    "scheme",
-    "scss",
-    "solidity",
-    "sparql",
-    "sql",
-    "ssh-config",
-    "starlark",
-    "styx",
-    "svelte",
-    "swift",
-    "textproto",
-    "thrift",
-    "tlaplus",
-    "toml",
-    "tsx",
-    "typescript",
-    "typst",
-    "vb",
-    "verilog",
-    "vhdl",
-    "vim",
-    "vue",
-    "wit",
-    "x86asm",
-    "xml",
-    "yaml",
-    "yuri",
-    "zig",
-    "zsh",
-];
+macro_rules! registry {
+    ($( $(#[$condition:meta])* $name:literal => $module:ident ),* $(,)?) => {
+        pub const LANGUAGES: &[&str] = &[$( $(#[$condition])* $name ),*];
+        pub fn configuration(name: &str) -> Option<&'static HighlightConfiguration> {
+            match alias(name) { $( $(#[$condition])* $name => grammar!($module, $name), )* _ => None }
+        }
+    };
+}
+// One registry owns both dispatch and advertised coverage. Excluded languages
+// have no dependency or compiled initializer; aliases/injections resolve None.
+registry! {
+    "ada" => arborium_ada,
+    "agda" => arborium_agda,
+    "asciidoc" => arborium_asciidoc,
+    "asm" => arborium_asm,
+    "awk" => arborium_awk,
+    "bash" => arborium_bash,
+    "batch" => arborium_batch,
+    "c" => arborium_c,
+    #[cfg(feature = "c-sharp")]
+    "c-sharp" => arborium_c_sharp,
+    "caddy" => arborium_caddy,
+    "capnp" => arborium_capnp,
+    "cedar" => arborium_cedar,
+    "cedarschema" => arborium_cedarschema,
+    "clojure" => arborium_clojure,
+    "cmake" => arborium_cmake,
+    #[cfg(feature = "cobol")]
+    "cobol" => arborium_cobol,
+    "commonlisp" => arborium_commonlisp,
+    "cpp" => arborium_cpp,
+    "css" => arborium_css,
+    #[cfg(feature = "d")]
+    "d" => arborium_d,
+    "dart" => arborium_dart,
+    "devicetree" => arborium_devicetree,
+    "diff" => arborium_diff,
+    "dockerfile" => arborium_dockerfile,
+    "dot" => arborium_dot,
+    "elisp" => arborium_elisp,
+    #[cfg(feature = "elixir")]
+    "elixir" => arborium_elixir,
+    "elm" => arborium_elm,
+    "erlang" => arborium_erlang,
+    "fish" => arborium_fish,
+    #[cfg(feature = "fsharp")]
+    "fsharp" => arborium_fsharp,
+    "gitattributes" => arborium_gitattributes,
+    "gleam" => arborium_gleam,
+    "glsl" => arborium_glsl,
+    "go" => arborium_go,
+    "graphql" => arborium_graphql,
+    "groovy" => arborium_groovy,
+    "haskell" => arborium_haskell,
+    "hcl" => arborium_hcl,
+    #[cfg(feature = "hlsl")]
+    "hlsl" => arborium_hlsl,
+    "html" => arborium_html,
+    #[cfg(feature = "idris")]
+    "idris" => arborium_idris,
+    "ini" => arborium_ini,
+    "java" => arborium_java,
+    "javascript" => arborium_javascript,
+    "jinja2" => arborium_jinja2,
+    "jq" => arborium_jq,
+    "jsdoc" => arborium_jsdoc,
+    "json" => arborium_json,
+    "julia" => arborium_julia,
+    "just" => arborium_just,
+    "kconfig" => arborium_kconfig,
+    "kdl" => arborium_kdl,
+    "kotlin" => arborium_kotlin,
+    "lean" => arborium_lean,
+    "lua" => arborium_lua,
+    "make" => arborium_make,
+    "markdown" => arborium_markdown,
+    "matlab" => arborium_matlab,
+    "meson" => arborium_meson,
+    "ninja" => arborium_ninja,
+    "nix" => arborium_nix,
+    "objc" => arborium_objc,
+    #[cfg(feature = "ocaml")]
+    "ocaml" => arborium_ocaml,
+    #[cfg(feature = "odin")]
+    "odin" => arborium_odin,
+    #[cfg(feature = "perl")]
+    "perl" => arborium_perl,
+    #[cfg(feature = "php")]
+    "php" => arborium_php,
+    "postscript" => arborium_postscript,
+    "powershell" => arborium_powershell,
+    "prolog" => arborium_prolog,
+    "proto" => arborium_proto,
+    "python" => arborium_python,
+    "query" => arborium_query,
+    "r" => arborium_r,
+    "regex" => arborium_regex,
+    "rego" => arborium_rego,
+    "rescript" => arborium_rescript,
+    "ron" => arborium_ron,
+    #[cfg(feature = "ruby")]
+    "ruby" => arborium_ruby,
+    "rust" => arborium_rust,
+    "scala" => arborium_scala,
+    "scheme" => arborium_scheme,
+    "scss" => arborium_scss,
+    "solidity" => arborium_solidity,
+    "sparql" => arborium_sparql,
+    "sql" => arborium_sql,
+    "ssh-config" => arborium_ssh_config,
+    "starlark" => arborium_starlark,
+    "styx" => arborium_styx,
+    "svelte" => arborium_svelte,
+    "swift" => arborium_swift,
+    "textproto" => arborium_textproto,
+    "thrift" => arborium_thrift,
+    "tlaplus" => arborium_tlaplus,
+    "toml" => arborium_toml,
+    "tsx" => arborium_tsx,
+    "typescript" => arborium_typescript,
+    "typst" => arborium_typst,
+    #[cfg(feature = "vb")]
+    "vb" => arborium_vb,
+    "verilog" => arborium_verilog,
+    "vhdl" => arborium_vhdl,
+    "vim" => arborium_vim,
+    "vue" => arborium_vue,
+    "wit" => arborium_wit,
+    "x86asm" => arborium_x86asm,
+    "xml" => arborium_xml,
+    "yaml" => arborium_yaml,
+    "yuri" => arborium_yuri,
+    "zig" => arborium_zig,
+    "zsh" => arborium_zsh,
+}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn active_registry_matches_the_selected_profile_and_aliases() {
+        let excluded = [
+            "cobol", "d", "hlsl", "fsharp", "ocaml", "idris", "odin", "c-sharp", "perl", "ruby",
+            "elixir", "vb", "php",
+        ];
+        assert_eq!(
+            super::LANGUAGES
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            super::LANGUAGES.len()
+        );
+        #[cfg(feature = "full")]
+        assert_eq!(super::LANGUAGES.len(), 110);
+        #[cfg(feature = "reduced")]
+        {
+            assert_eq!(super::LANGUAGES.len(), 97);
+            for name in excluded {
+                assert!(
+                    super::configuration(name).is_none(),
+                    "Excluded grammar {name} linked"
+                );
+            }
+        }
+        for name in [
+            "lean",
+            "verilog",
+            "v",
+            "sv",
+            "systemverilog",
+            "rust",
+            "python",
+            "html",
+            "javascript",
+            "css",
+            "regex",
+            "jsdoc",
+        ] {
+            assert!(
+                super::configuration(name).is_some(),
+                "Retained grammar/alias missing: {name}"
+            );
+        }
+        for (alias, name) in [
+            ("cs", "c-sharp"),
+            ("csharp", "c-sharp"),
+            ("cbl", "cobol"),
+            ("cob", "cobol"),
+            ("cpy", "cobol"),
+            ("dlang", "d"),
+            ("ex", "elixir"),
+            ("exs", "elixir"),
+            ("fs", "fsharp"),
+            ("f#", "fsharp"),
+            ("idr", "idris"),
+            ("ml", "ocaml"),
+            ("pl", "perl"),
+            ("pm", "perl"),
+            ("rb", "ruby"),
+            ("vbnet", "vb"),
+            ("visualbasic", "vb"),
+        ] {
+            assert_eq!(super::alias(alias), name);
+            assert_eq!(
+                super::configuration(alias).is_some(),
+                super::LANGUAGES.contains(&name),
+                "Alias selected another grammar: {alias}"
+            );
+        }
+        let _ = excluded;
+    }
     #[test]
     fn bundled_queries_are_valid() {
         let failed: Vec<_> = super::LANGUAGES

@@ -115,7 +115,7 @@ export function createDocumentWorkspaceController({
   async function readerPresentationSettings(file) {
     const { readerMessages } = await (messageCatalog ||= loadReaderMessages())
     const locale = getLocale()
-    if (messagesLocale !== locale) { messagesLocale = locale; localeMessages = { ...readerMessages(t), 'Ask AI': t('Ask AI'), ...Object.fromEntries(['Match case', 'View full cell', 'View comment', 'View all comments'].map(key => [key, t(key)])) } }
+    if (messagesLocale !== locale) { messagesLocale = locale; localeMessages = { ...readerMessages(t), 'Ask AI': t('Ask AI') } }
     const style = getComputedStyle(document.documentElement)
     const palette = {}
     const canvas = document.createElement('canvas')

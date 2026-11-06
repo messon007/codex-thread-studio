@@ -4,7 +4,11 @@ export async function tableCellsContract(moduleUrl) {
   const { createTranslator } = await import(
     new URL('./translation.mjs', new URL(moduleUrl, location.href))
   )
-  const translate = createTranslator()
+  const { readerMessages } = await import(new URL('./ui-messages.mjs',new URL(moduleUrl,location.href)))
+  const translate = createTranslator({locale:'zh-CN',messages:readerMessages(key=>({
+    'View full cell':'查看完整单元格',
+    'View full cell (Enter on a focused cell)':'查看完整单元格（聚焦后按 Enter）'
+  })[key] || key)})
   const root = document.createElement('section'),
     controls = document.createElement('div'),
     content = document.createElement('div')
@@ -43,6 +47,8 @@ export async function tableCellsContract(moduleUrl) {
     })
   try {
     reader = mount()
+    check(controls.querySelector('.table-cell-view').textContent==='查看完整单元格','Exported catalog lost full-cell label')
+    check(controls.querySelector('.table-cell-view').title==='查看完整单元格（聚焦后按 Enter）','Exported catalog lost full-cell tooltip')
     reader.update()
     const first = body.rows[0].cells[0]
     first.focus()

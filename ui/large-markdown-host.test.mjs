@@ -13,7 +13,7 @@ function fixture(initialView, capabilities = {}, callbacks = {}) {
     if(method==='save'){if(state.error)throw Error(state.error);state={...state,dirty:false}}
     return state
   },async dispose({force}){assert.equal(force,true);closed++}}
-  const frame={src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
+  const frame={ownerDocument:callbacks.ownerDocument,src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
   const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{initialView,...callbacks,createClient(_frame,options){listener=options.onEvent;return client}})
   return {host,requests,states,selections,emit:(type,value)=>listener(type,value),setState:patch=>{state={...state,...patch};listener('state',state)},closed:()=>closed}
 }
@@ -294,4 +294,103 @@ test('jq host uses the shared component and captured owner, and removes late/obs
   assert.equal(mounts[1].options.autoRun,true)
  }finally{adapter.dispose()}
  assert.equal(mounts.at(-1).disposed,true)
+})
+
+// Flush promises without advancing the mocked clock: requests and disposal can
+// settle independently of the heartbeat interval, like a suspended browser.
+async function settleHeartbeat() { for (let i=0;i<12;i++) await Promise.resolve() }
+
+test('terminal reader responses stop polling, invalidate selection and preserve unsaved work', async t => {
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ for (const status of [410,404,401,403]) {
+  let calls=0,cancelled=0,request
+  const errors=[]
+  t.mock.method(globalThis,'fetch',async (url,options)=>{
+   calls++
+   request={url,options}
+   return {ok:false,status,body:{cancel:async()=>{cancelled++}}}
+  })
+  const {host,states,selections,setState,emit,requests}=fixture(undefined,{}, {onError:error=>errors.push(error),translate:value=>'translated: '+value})
+  try {
+   await host.ready
+   setState({dirty:true,busy:true})
+   emit('selection',{documentId:'doc',revision:'a'.repeat(64),quote:'draft',location:{kind:'line',line:1}})
+   t.mock.timers.tick(30000);await settleHeartbeat()
+   assert.equal(calls,1)
+   assert.equal(states.at(-1).ready,false)
+   assert.equal(errors.length,1)
+   assert.match(errors[0].message,/^translated:/)
+   assert.equal(cancelled,1)
+   assert.equal(request.url.pathname,'/markdown-reader/test/api/capabilities')
+   assert.deepEqual(request.options.headers,{'x-reader-token':'token','x-reader-document':'doc'})
+   assert.equal(request.options.cache,'no-store')
+   assert.ok(request.options.signal instanceof AbortSignal)
+   assert.equal(states.at(-1).dirty,true)
+   assert.equal(host.dirty,true);assert.equal(host.busy,false)
+   assert.equal(selections.at(-1),null)
+   assert.match(states.at(-1).status,status===410||status===404?/Refresh to reopen/:/Reconnect to Studio/)
+   const count=requests.length
+   await assert.rejects(host.save(),/Refresh to reopen|Reconnect to Studio/)
+   assert.equal(requests.length,count)
+   setState({dirty:false,busy:true,state:'ready'})
+   emit('error',Error('late child failure'))
+   assert.equal(states.at(-1).ready,false);assert.equal(host.dirty,true);assert.equal(host.busy,false)
+   t.mock.timers.tick(600000);await settleHeartbeat()
+   assert.equal(calls,1);assert.equal(errors.length,1)
+  } finally { await host.dispose(); t.mock.restoreAll() }
+ }
+})
+
+test('heartbeat transient failures retry without duplicate reports and recover',async t=>{
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ let calls=0,fail=true
+ const errors=[]
+ const {host,states}=fixture(undefined,{}, {heartbeat:async()=>{calls++;if(fail)throw Error('offline')},onError:error=>errors.push(error)})
+ try {
+  await host.ready
+  for(let i=0;i<3;i++){t.mock.timers.tick(30000);await settleHeartbeat()}
+  assert.equal(calls,3);assert.equal(errors.length,1);assert.equal(states.at(-1).ready,true)
+  fail=false;t.mock.timers.tick(30000);await settleHeartbeat()
+  fail=true;t.mock.timers.tick(30000);await settleHeartbeat()
+  assert.equal(calls,5);assert.equal(errors.length,2)
+ } finally {await host.dispose()}
+})
+
+test('resume probes coalesce, time out and detach when the host closes',async t=>{
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ const ownerDocument=new EventTarget(),window=new EventTarget(),signals=[],errors=[]
+ ownerDocument.defaultView=window;ownerDocument.visibilityState='hidden'
+ const {host}=fixture(undefined,{}, {ownerDocument,heartbeat:signal=>{
+  signals.push(signal)
+  return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))
+ },onError:error=>errors.push(error)})
+ try {
+  await host.ready
+  ownerDocument.dispatchEvent(new Event('visibilitychange'))
+  assert.equal(signals.length,0)
+  ownerDocument.visibilityState='visible';ownerDocument.dispatchEvent(new Event('visibilitychange'))
+  window.dispatchEvent(new Event('pageshow'));window.dispatchEvent(new Event('online'))
+  assert.equal(signals.length,1)
+  t.mock.timers.tick(10000);await settleHeartbeat()
+  assert.equal(signals[0].aborted,true);assert.equal(errors.length,1);assert.match(errors[0].message,/timed out/)
+  window.dispatchEvent(new Event('online'));assert.equal(signals.length,2)
+  await host.dispose();await settleHeartbeat()
+  assert.equal(signals[1].aborted,true);assert.equal(errors.length,1)
+  ownerDocument.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('online'))
+  t.mock.timers.tick(120000);await settleHeartbeat()
+  assert.equal(signals.length,2)
+ } finally {await host.dispose()}
+})
+
+test('a late failed heartbeat cannot report into a replacement document',async t=>{
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ let reject
+ const errors=[]
+ const {host,states}=fixture(undefined,{}, {heartbeat:()=>new Promise((_,no)=>{reject=no}),onError:error=>errors.push(error)})
+ await host.ready
+ t.mock.timers.tick(30000);await settleHeartbeat()
+ await host.dispose()
+ const count=states.length
+ reject(Object.assign(Error('gone'),{status:410}));await settleHeartbeat()
+ assert.equal(errors.length,0);assert.equal(states.length,count)
 })

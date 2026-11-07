@@ -453,7 +453,7 @@ function renderArtifact() {
   $('#artifact-edit').classList.toggle('active', state.artifactView === 'edit')
   $('#artifact-edit').classList.toggle('hidden', !editable)
   $('#artifact-save').classList.toggle('hidden', state.artifactView !== 'edit')
-  $('#artifact-save').disabled = !file.dirty || Boolean(file.saving)
+  $('#artifact-save').disabled = !file.readerReady || !file.dirty || Boolean(file.saving)
   const canSearch = largeMarkdownReady && state.artifactView !== 'edit'
   const canInlineSearch = canSearch
   if (!canInlineSearch) state.artifactSearchOpen = false
@@ -563,7 +563,7 @@ function renderArtifact() {
       }, selection => {
         if (state.artifact !== file) return
         void readerSelectionHost?.capture(selection)
-      }, { initialView: state.artifactView, onOpenRequested: () => openResources(),
+      }, { translate: hostTranslate, initialView: state.artifactView, onOpenRequested: () => openResources(),
         onCommentRequested: payload => readerCommentHost?.open(payload),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
         initialReference: file.readerReference, initialFragment: file.readerFragment,

@@ -3,8 +3,18 @@
 export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, options = {}) {
   let client, disposed = false, snapshot = { state: 'indexing' }, request, generation = 0
   let heartbeat = null, signature = '', initialized = false
+  let heartbeatRequest = null, heartbeatTimeout = null, terminalError = null, heartbeatFailure = ''
+  const lifetime = new AbortController()
+  const translate = options.translate || (value => value)
+  const stopHeartbeat = () => {
+    clearInterval(heartbeat); clearTimeout(heartbeatTimeout)
+    heartbeatRequest?.abort()
+    lifetime.abort()
+  }
   const publish = state => {
     if (disposed || !state) return
+    // Once the host lease is gone, late child events must not restore readiness.
+    if (terminalError) state = { ...snapshot, state: 'error', busy: false, error: terminalError.message, editorError: null }
     if (snapshot.documentId && (snapshot.documentId !== state.documentId || snapshot.revision !== state.revision || snapshot.view !== state.view)) {
       onSelection(null)
       request?.abort(); ++generation
@@ -23,7 +33,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (next !== signature) { signature = next; onState(visible) }
   }
   const capture = selection => {
-    if (disposed) return
+    if (disposed || terminalError) return
     if (!selection) { onSelection(null); return }
     if (!selection.quote || selection.documentId !== snapshot.documentId || selection.revision !== snapshot.revision) return
     const local = selection.viewportRect, outer = frame.getBoundingClientRect()
@@ -37,7 +47,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     const factory = options.createClient || (await import(new URL('./reader-assets/host-client.mjs',import.meta.url).href)).createReaderClient
     if (disposed) return
     client = factory(frame,{onEvent(type,payload){
-      if (disposed) return
+      if (disposed || terminalError) return
       if (type==='ready'||type==='state') publish(payload)
       else if (type==='selection') capture(payload)
       else if (type==='commentRequested' && payload?.documentId===snapshot.documentId && payload.revision===snapshot.revision && (payload.id===null || typeof payload.id==='string' && payload.id.length<=256)) options.onCommentRequested?.(payload)
@@ -62,18 +72,58 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (disposed) return
     initialized = true
     publish(snapshot)
-    const keepAlive = options.heartbeat || (async()=>{
-      const url=new URL(frame.src)
-      const response=await fetch(new URL('./api/capabilities',url),{headers:{'x-reader-token':url.hash.slice(1),'x-reader-document':snapshot.documentId}})
-      if(!response.ok)throw Error('Reader keepalive failed ('+response.status+')')
+    const keepAlive = options.heartbeat || (async signal => {
+      const url = new URL(frame.src)
+      const response = await fetch(new URL('./api/capabilities', url), {
+        headers: { 'x-reader-token': url.hash.slice(1), 'x-reader-document': snapshot.documentId },
+        signal, cache: 'no-store',
+      })
+      // Only the status is needed; release the response body on every path.
+      void response.body?.cancel().catch(() => {})
+      if (!response.ok) throw Object.assign(Error('Reader keepalive failed (' + response.status + ')'), { status: response.status })
     })
-    heartbeat=setInterval(()=>{if(!disposed)Promise.resolve(keepAlive()).catch(error=>options.onError?.(error))},30000)
+    const pulse = async () => {
+      if (disposed || terminalError || heartbeatRequest) return
+      const operation = heartbeatRequest = new AbortController()
+      heartbeatTimeout = setTimeout(() => operation.abort(), 10000)
+      try {
+        await keepAlive(operation.signal)
+        if (!disposed) heartbeatFailure = ''
+      } catch (error) {
+        if (disposed || terminalError) return
+        if ([401, 403, 404, 410].includes(error?.status)) {
+          terminalError = new Error(translate(error.status === 410 || error.status === 404
+            ? 'Document closed or expired. Refresh to reopen it. Unsaved changes will require confirmation.'
+            : 'Reader authorization expired. Reconnect to Studio, then refresh the document.'))
+          stopHeartbeat()
+          request?.abort(); ++generation
+          onSelection(null)
+          publish(snapshot)
+          options.onError?.(terminalError)
+        } else {
+          // A transient outage remains retryable, with one request at a time
+          // and one report per failure until connectivity recovers.
+          const message = operation.signal.aborted ? 'Reader keepalive timed out' : String(error?.message || error)
+          if (message !== heartbeatFailure) { heartbeatFailure = message; options.onError?.(new Error(message)) }
+        }
+      } finally {
+        clearTimeout(heartbeatTimeout)
+        if (heartbeatRequest === operation) heartbeatRequest = null
+      }
+    }
+    heartbeat = setInterval(() => { void pulse() }, 30000)
+    const ownerDocument = frame.ownerDocument
+    const resume = () => { if (ownerDocument?.visibilityState !== 'hidden') void pulse() }
+    ownerDocument?.addEventListener('visibilitychange', resume, { signal: lifetime.signal })
+    ownerDocument?.defaultView?.addEventListener('pageshow', resume, { signal: lifetime.signal })
+    ownerDocument?.defaultView?.addEventListener('online', resume, { signal: lifetime.signal })
     return snapshot
   })()
   void ready.catch(error=>{if(!disposed){publish({...snapshot,state:'error',error:String(error.message||error)});options.onError?.(error)}})
   async function command(method,params,signal) {
     await ready
     if (disposed || !client) throw new DOMException('Reader host disposed','AbortError')
+    if (terminalError) throw terminalError
     return client.request(method,params,{signal})
   }
   async function searchCommand(method, params, owner) {
@@ -131,7 +181,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     dispose(){
       if(disposed)return
       onSelection(null)
-      disposed=true;++generation;request?.abort();clearInterval(heartbeat)
+      disposed=true;++generation;request?.abort();stopHeartbeat()
       // The surrounding Studio discard prompt is authoritative. Backend close
       // separately awaits service cleanup; no credentials enter the child.
       const closing=client?.dispose({force:true})

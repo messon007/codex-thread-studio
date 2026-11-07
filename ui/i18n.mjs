@@ -638,6 +638,8 @@ const chinese = {
   'Markdown parsing timed out': 'Markdown 解析超时',
   'Markdown parser worker failed': 'Markdown 解析工作线程失败',
   'Invalid Markdown parser response': 'Markdown 解析响应无效',
+  'Document closed or expired. Refresh to reopen it. Unsaved changes will require confirmation.': '文档已关闭或过期，请刷新文档重新打开。若有未保存的修改，会先请求确认。',
+  'Reader authorization expired. Reconnect to Studio, then refresh the document.': '阅读器授权已失效，请重新连接 Studio 后刷新文档。',
   'Unable to open document': '无法打开文档',
   'Close document': '关闭文档',
   'Resize document': '调整文档宽度',

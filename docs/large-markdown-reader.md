@@ -46,6 +46,11 @@ and Host/Origin checks remain in place.
 - A two-minute idle lease, renewed by authenticated reading/heartbeat requests.
   Closing, replacing or abandoning a reader cancels indexing/rendering and removes
   its private cache; the idle sweeper catches abruptly disconnected clients.
+  The host probes every 30 seconds and on return to the foreground/online, with
+  one request in flight and a 10-second timeout. A closed/expired or unauthorized
+  lease stops polling and shows a refresh/reconnect message. Refresh still asks
+  before discarding unsaved edits; late child events cannot reactivate a dead lease.
+  Temporary network errors remain retryable without repeatedly reporting the same failure.
 - Disk-backed private caches by default, with the same storage/quota checks as
   MarkNoria. `READER_CACHE_DIR` is an optional disk-backed override; an explicitly
   configured `TMPDIR` also overrides the default. Avoid quota-limited tmpfs.
@@ -128,3 +133,15 @@ than 1,000 document DOM elements at the measured opening viewport. Pagination
 kept the outer viewport stable; two-column projection, paged-source byte fidelity,
 small-file editability, authorization boundaries and cache cleanup passed.
 These are fixture-specific checks, not universal latency or memory guarantees.
+
+The optional actual-server expiry smoke uses an isolated offline backend, closes
+only its own lease to exercise the real `410` response, and checks that refresh
+requires consent before discarding a dirty document. It also verifies no further
+polls, successful reopening, unchanged source bytes and owned cache cleanup:
+
+```bash
+STUDIO_REMOTE_BINARY=/absolute/path/to/codex-thread-studio \
+STUDIO_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+STUDIO_CHROMIUM_PATH=/absolute/path/to/chrome \
+node scripts/smoke-reader-expiry.mjs
+```

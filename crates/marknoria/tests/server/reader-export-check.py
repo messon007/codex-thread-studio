@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='reader-export-contract-', dir=args.temp
     public_cargo = tomllib.loads((root / 'Cargo.toml').read_text())
     assert public_cargo['features']['default'] == ['web', 'syntax-full']
     assert public_cargo['dependencies']['marknoria-syntax']['default-features'] is False
-    for file in ['docs/syntax-profiles.md', 'tests/syntax_profiles.rs', 'examples/syntax-profile-probe.rs']:
+    for file in ['docs/development/highlighting.md', 'tests/syntax_profiles.rs', 'examples/syntax-profile-probe.rs']:
         assert file in manifest['files']
     checks += 1
     assert all(not name.startswith(('native/', 'ffi/', 'src/native/', 'node_modules/', 'target/'))

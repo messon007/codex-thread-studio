@@ -1,6 +1,6 @@
 # MarkNoria 主维护与 Studio 同步计划
 
-Current fixed-import implementation and executed local checks: [adoption status](marknoria-adoption.md). The analysis below preserves its frozen source baseline.
+Current fixed-import implementation and executed local checks: [adoption status](marknoria-adoption.md). The analysis below preserves its frozen source baseline. Current reading controls and the public comparison gap ([MarkNoria #35](https://github.com/messon007/marknoria/issues/35)) are recorded in [the November 9 adoption](marknoria-reading-adoption.md).
 
 共享文档/阅读能力以 MarkNoria 为主维护源，Studio 按经过验证的固定版本同步。
 **同步范围仅为 Web desktop 阅读器：`web/`、`src/web/` 及该路径实际使用的 Rust core/runtime、资源和构建依赖。**

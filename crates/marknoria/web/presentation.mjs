@@ -35,6 +35,7 @@ export function readerPresentation(
       contentFontWeight: 500,
       codeFontSize: null,
       wrap: true,
+      highlightSelectionMatches: false,
       palette: {}
     },
     stopped = false
@@ -115,6 +116,10 @@ export function readerPresentation(
       if (patch.wrap != null) {
         if (typeof patch.wrap !== 'boolean') throw TypeError('Invalid wrap preference')
         next.wrap = patch.wrap
+      }
+      if (patch.highlightSelectionMatches !== undefined) {
+        if (typeof patch.highlightSelectionMatches !== 'boolean') throw TypeError('Invalid selection highlight preference')
+        next.highlightSelectionMatches = patch.highlightSelectionMatches
       }
       if (patch.palette !== undefined) {
         if (!patch.palette || typeof patch.palette !== 'object' || Array.isArray(patch.palette))

@@ -621,14 +621,19 @@
                 <section class="typography-profile settings-section reading">
                   <header><span class="typography-profile-icon typography">T</span><div><strong>Reading content</strong><small>Chat messages, progress text, document previews, comments, and saved excerpts.</small></div></header>
                   <label class="field typography-family"><span>Font</span><input id="content-font-family" /></label>
-                  <label class="field"><span>Base size</span><input id="content-font-size" type="number" min="11" max="24" /></label>
+                  <label class="field"><span>Base size</span><input id="content-font-size" type="number" min="11" max="32" /></label>
                   <label class="field"><span>Weight</span><select id="content-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
                 </section>
                 <section class="typography-profile settings-section code">
                   <header><span class="typography-profile-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 4 4-4 4M11.5 17H19"/></svg></span><div><strong>Code, diff, and terminal</strong><small>Code blocks, source editors, Git diffs, command output, and terminal text.</small></div></header>
                   <label class="field typography-family"><span>Font</span><input id="code-font-family" /></label>
-                  <label class="field"><span>Base size</span><input id="code-font-size" type="number" min="11" max="20" /></label>
+                  <label class="field"><span>Base size</span><input id="code-font-size" type="number" min="11" max="32" /></label>
                   <label class="field"><span>Weight</span><select id="code-font-weight"><option value="400">Regular 400</option><option value="500">Medium 500</option><option value="600">Semibold 600</option></select></label>
+                </section>
+                <section class="settings-section">
+                  <h4>Document reading</h4>
+                  <label class="check-field full"><input id="reader-highlight-matches" type="checkbox" /><span><strong>Highlight matching words</strong><small>Nearby text only. Not available in PDF, images or book readers.</small></span></label>
+                  <label class="check-field full"><input id="reader-automatic-code-size" type="checkbox" /><span><strong>Use automatic code size in documents</strong><small>Use the reader's automatic size for code and source; other technical output keeps the configured size.</small></span></label>
                 </section>
               </div>
             </section>

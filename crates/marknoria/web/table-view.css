@@ -324,7 +324,7 @@
   border-spacing: 0;
   table-layout: fixed;
   width: max(100%, calc(var(--columns) * var(--column-width, 180px)));
-  font-size: 13px;
+  font-size: var(--content-font-size, 13px);
   line-height: 1.6;
 }
 [data-marknoria-table-view] th,

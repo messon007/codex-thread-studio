@@ -14,7 +14,7 @@ export interface PreferencesState {
   rightRailWidthRatio: number
   typography: TypographyProfile
   mermaid: ReturnType<typeof normalizeMermaidPreferences>
-  markdown: { mode: string }
+  markdown: { mode: string; highlightSelectionMatches?: boolean; automaticCodeSize?: boolean }
   translation: ReturnType<typeof normalizeTranslationPreferences>
   desktopNotifications: boolean
   queueDepth: number

@@ -22,6 +22,8 @@ import { readPosition, writePosition } from './position.mjs'
 import { mountOutline } from './outline.mjs'
 import { searchController } from './search-controller.mjs'
 import { sourceTarget, visibleSourceLocation, searchHighlights } from './search-position.mjs'
+import { mountGoToLine, sourcePageForLine } from './go-to-line.mjs'
+import { mountWordHighlights } from './word-highlights.mjs'
 
 const mainLifetime = new AbortController()
 const translate = createTranslator()
@@ -100,6 +102,92 @@ function setStatus(message, values) {
 }
 const shell = document.querySelector('.reader-shell')
 const presentation = readerPresentation(shell, { translate, themeRoot: document.documentElement })
+const wordHighlights = mountWordHighlights(space, { viewport, signal: mainLifetime.signal })
+const goToLine = mountGoToLine(shell, {
+  translate, signal: mainLifetime.signal,
+  state() {
+    if (!index || formatRenderer || !publicState().capabilities.source) return null
+    return { identity: documentId, view: position().view, line: editor?.visible ? editor.line() : position().line,
+      total: editor?.visible ? editor.data?.sourceLines : index.sourceLines,
+      busy: switching || editor?.busy || source?.busy }
+  },
+  async navigate(line, captured) {
+    if (documentId !== captured.identity || position().view !== captured.view) throw Error(translate('The document or view changed. Open Go to line again.'))
+    search.suspend()
+    if (editor?.visible) {
+      if (!await editor.go(line)) throw editor.error || Error(translate('Could not navigate to this source line.'))
+    } else if (source?.visible) {
+      if (!await source.go(line)) throw Error(translate('Could not navigate to this source line.'))
+      source.code?.focus()
+    } else {
+      if (await previewLine({ line }) == null) throw Error(translate('Could not navigate to this source line.'))
+      viewport.focus()
+    }
+    bridge?.publish('state', publicState())
+  }
+})
+function syncWordHighlights() {
+  const enabled = presentation.state().highlightSelectionMatches
+  const supported = Boolean(index && ['markdown','csv','tsv','text','html'].includes(index.format || 'markdown'))
+  wordHighlights.update({ enabled: Boolean(enabled && supported && !formatRenderer && !source?.visible && !editor?.visible) })
+  source?.code?.wordHighlights(Boolean(enabled && source.visible && !editor?.visible))
+  const input = document.getElementById('highlight-selection-matches')
+  input.checked = enabled
+  input.disabled = !supported || Boolean(formatRenderer || source?.external || editor?.visible)
+  labels.set(document.getElementById('word-highlight-scope'), input.disabled ? 'Matching-word highlights are unavailable in this view.' : 'Nearby text only. Not available in PDF, images or book readers.')
+  syncReadingTypography()
+}
+function syncReadingTypography() {
+  const state = presentation.state(), supported = Boolean(index && !formatRenderer && !index.renderer)
+  const textSize = document.getElementById('reading-text-size'), codeSize = document.getElementById('reading-code-size')
+  textSize.value = state.contentFontSize
+  codeSize.value = state.codeFontSize ?? ''
+  textSize.disabled = !supported || Boolean(editor?.visible || source?.visible)
+  codeSize.disabled = !supported
+  for (const id of ['column-width', 'wrap']) document.getElementById(id).disabled = !supported || Boolean(editor?.visible || source?.visible)
+}
+function typographyAnchor() {
+  const code = editor?.visible ? editor.code : source?.visible ? source.code : null
+  return { code, scroll: code?.scrollSnapshot(), preview: index && !formatRenderer && !editor?.visible && !source?.visible ? position() : null }
+}
+async function refreshTypography(anchor) {
+  syncReadingTypography()
+  anchor.code?.remeasure(anchor.scroll)
+  if (anchor.preview) {
+    virtualizer?.measure()
+    await previewLine(anchor.preview)
+  }
+  highlights.refresh(); wordHighlights.refresh(); commentMarks?.refresh()
+  if (!anchor.code) search.repaint()
+  schedule()
+}
+for (const [id, property] of [['reading-text-size', 'contentFontSize'], ['reading-code-size', 'codeFontSize']]) {
+  on(document.getElementById(id), 'change', async event => {
+    const input = event.target, before = presentation.state()
+    const value = input.value === '' && property === 'codeFontSize' ? null : Number(input.value)
+    if (value !== null && (!input.value || !Number.isFinite(value) || value < 11 || value > 32)) { input.value = before[property] ?? ''; return }
+    const anchor = typographyAnchor()
+    presentation.update({ [property]: value })
+    if (!embedded) try {
+      const state = presentation.state()
+      localStorage.setItem('marknoria-reading-font-sizes', JSON.stringify({ contentFontSize: state.contentFontSize, codeFontSize: state.codeFontSize }))
+    } catch {}
+    try { await refreshTypography(anchor); bridge?.publish('state', publicState()) }
+    catch (error) { if (error.name !== 'AbortError') setStatus(error.message, null) }
+  })
+}
+if (!embedded) try {
+  const stored = JSON.parse(localStorage.getItem('marknoria-reading-font-sizes') || '{}')
+  const patch = {}
+  for (const key of ['contentFontSize', 'codeFontSize']) if (stored?.[key] === null && key === 'codeFontSize' || typeof stored?.[key] === 'number' && stored[key] >= 11 && stored[key] <= 32) patch[key] = stored[key]
+  presentation.update(patch)
+} catch {}
+on(document.getElementById('highlight-selection-matches'), 'change', event => {
+  presentation.update({ highlightSelectionMatches: event.target.checked })
+  try { localStorage.setItem('marknoria-highlight-selection-matches', String(event.target.checked)) } catch {}
+  syncWordHighlights(); bridge?.publish('state', publicState())
+})
+try { presentation.update({ highlightSelectionMatches: localStorage.getItem('marknoria-highlight-selection-matches') === 'true' }) } catch {}
 // Presentation-only startup policy: no authority or storage grants.
 {
   const startup = new URLSearchParams(location.search)
@@ -378,15 +466,19 @@ function readingAnchor() {
   return tables.items[item]?.page ?? 0
 }
 
-async function previewLine(location) {
+async function previewLine(location, options = {}) {
   if (typeof location === 'number') location = { line: location }
   const { line } = location
   if (!index?.pages.length) return
-  const page = Number.isSafeInteger(location.start) ? Math.min(index.pages.length - 1, Math.max(0, index.pages.findIndex(page => page.end > location.start))) : Math.max(0, index.pages.findLastIndex(page => page.line <= line))
+  const snapshot = index, intent = options.intent ?? ++navigationIntent
+  options = { ...options, intent }
+  const page = Number.isSafeInteger(location.start) ? Math.min(index.pages.length - 1, Math.max(0, index.pages.findIndex(page => page.end > location.start))) : sourcePageForLine(index.pages, line)
   const descriptor = index.pages[page]
   let row = null
   if (descriptor.table != null) {
-    const response = await api(`/api/window?target=${page}`, mainLifetime.signal)
+    const response = await api(`/api/window?target=${page}`, options.signal || mainLifetime.signal)
+    options.signal?.throwIfAborted()
+    if (index !== snapshot || intent !== navigationIntent) return
     const content = response.pages.find(item => item.page === page || item.id === page)
     if (content) {
       const fragment = projectionHtml(content.html)
@@ -395,7 +487,7 @@ async function previewLine(location) {
       if (offset >= 0) row = descriptor.rowStart + offset
     }
   }
-  return jump(page, null, row, null, location)
+  return jump(page, null, row, null, location, '', {}, options)
 }
 
 async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}, { intent = ++navigationIntent, signal, keepMounted = false } = {}) {
@@ -546,7 +638,7 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh() }, onReady: () => { commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
+  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh(); wordHighlights.clear() }, onReady: () => { syncWordHighlights(); commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
       virtualizer?.measureElement(article)
@@ -603,10 +695,12 @@ function setup() {
   document.querySelector('#wrap').addEventListener('change', event => {
     changeLayout(() => presentation.update({wrap: event.target.checked}))
   }, { signal: readerAbort.signal })
-  window.readerExperiment = { index, documentId, metrics, jump, virtualizer, cache, readingAnchor, position, diagrams, diagramMetrics, tables, source, editor, get pendingNavigation() { return forcedPage } }
+  window.readerExperiment = { index, documentId, metrics, jump, virtualizer, cache, readingAnchor, position, diagrams, diagramMetrics, tables, source, editor, wordHighlights, get pendingNavigation() { return forcedPage } }
+  syncWordHighlights()
 }
 
 function setupFormat() {
+  syncWordHighlights()
   const owner = { documentId, revision: index.revision, resourceId, signal: readerAbort.signal }
   const pdf = index.renderer === 'pdfjs', label = pdf ? 'PDF' : 'EPUB', saved = readPosition(token, documentId)
   formatLoading = true; space.style.height = pdf ? 'auto' : '100%'; space.style.width = '100%'; files.state('ready')
@@ -685,6 +779,7 @@ function clearTextSelection() {
 }
 
 function teardown() {
+  goToLine.close(); wordHighlights.clear(); wordHighlights.update({ enabled: false })
   clearTextSelection()
   clearSearchResults()
   navigation += 1
@@ -743,11 +838,12 @@ function configureEditor(response) {
     },
     changed(state) {
       bridge?.publish('state', publicState())
-      for (const id of ['preview-mode', 'source-mode', 'edit-mode', 'compare-files']) document.getElementById(id).disabled = state.busy
+      for (const id of ['preview-mode', 'source-mode', 'edit-mode', 'compare-files']) document.getElementById(id).disabled = state.busy || switching
       for (const button of document.querySelectorAll('[data-open-server]')) button.disabled = state.busy
       document.getElementById('contents-toggle').disabled = state.busy || contentsLoading || !index
       document.getElementById('search-toggle').disabled = state.visible || !index
-      document.querySelector('.reader-settings').hidden = state.visible || Boolean(source?.visible)
+      document.querySelector('.reader-settings').hidden = false
+      syncWordHighlights()
       notice.hidden = state.visible || !state.dirty
     },
   })
@@ -787,6 +883,7 @@ async function switchView(view, { restorePreview = true } = {}) {
   const current = editor.visible ? 'edit' : source?.visible ? 'source' : 'preview'
   if (view === current && index && !editor.needsRefresh) return
   switching = true
+  for (const id of ['preview-mode', 'source-mode', 'edit-mode', 'compare-files']) document.getElementById(id).disabled = true
   search.suspend()
   clearTextSelection()
   const location = position()
@@ -817,7 +914,12 @@ async function switchView(view, { restorePreview = true } = {}) {
   } catch (error) {
     setStatus(error.message, null)
     document.querySelector('.reader-diagnostics').open = true
-  } finally { switching = false; bridge?.publish('state', publicState()) }
+  } finally {
+    switching = false
+    for (const id of ['preview-mode', 'source-mode', 'edit-mode', 'compare-files']) document.getElementById(id).disabled = Boolean(editor?.busy)
+    syncWordHighlights()
+    bridge?.publish('state', publicState())
+  }
 }
 for (const view of ['preview', 'source', 'edit']) on(document.getElementById(view + '-mode'), 'click', () => switchView(view))
 
@@ -1094,7 +1196,7 @@ function connectBridge() {
         if (!Number.isSafeInteger(location.line) || location.line < 1 || location.line > index.sourceLines) throw Error('Source line out of range')
         if (editor?.visible) { if (!await editor.go(location.line)) throw Error('Editor navigation failed') }
         else if (source?.visible) await source.go(location.line)
-        else { const page = Math.max(0, index.pages.findLastIndex(page => page.line <= location.line)); await jump(page) }
+        else await previewLine(location, { intent, signal })
       } else if (location.kind === 'cell') {
         const table = Number.isSafeInteger(location.table) && location.table >= 0 ? index.tables[location.table] : null
         if (!table || !Number.isSafeInteger(location.row) || location.row < 0 || location.row >= table.rows || !Number.isSafeInteger(location.column) || location.column < 0 || location.column >= table.columns.length) throw Error('Table cell out of range')
@@ -1130,7 +1232,9 @@ function connectBridge() {
     async save() { if (!editable || !editor) throw Object.assign(Error('Editing was not granted'), { code: 'CAPABILITY' }); if (!await editor.save()) throw editor.error || Error('The editing page was not saved') },
     async settings(params) {
       const before = presentation.state()
+      const typography = ['contentFontSize','codeFontSize','contentFontFamily','codeFontFamily','contentFontWeight'].some(key => params[key] !== undefined) ? typographyAnchor() : null
       presentation.update(params)
+      syncWordHighlights()
       if (embedded && (params.notes !== undefined || params.selectionMenu !== undefined)) {
         const url = new URL(location.href)
         for (const key of ['notes', 'selectionMenu']) {
@@ -1147,6 +1251,7 @@ function connectBridge() {
       if (params.wrap != null && params.wrap !== before.wrap) { const input = document.getElementById('wrap'); input.checked = params.wrap; input.dispatchEvent(new Event('change')) }
       if (formatRenderer && params.pdf) await formatRenderer.settings(params.pdf)
       if (formatRenderer?.state().format === 'epub' && (params.epub || params.theme)) await formatRenderer.settings({ ...(params.theme ? { theme: params.theme } : {}), ...params.epub })
+      if (typography) await refreshTypography(typography)
       schedule()
     },
     async dispose() { search.dispose(); mainLifetime.abort(); presentation.dispose(); lifetime.abort(); shell.inert = true; window.readerExperiment = null; clearTimeout(selectionTimer); selectionRequest?.abort(); stopped = true; const closing = formatRenderer?.dispose(); teardown(); editor?.dispose(); files.dispose(); clearInterval(heartbeat); clearInterval(rendererHeartbeat); await closing },

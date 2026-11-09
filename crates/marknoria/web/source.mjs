@@ -112,7 +112,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   async function go(line) {
     line = Math.max(1, Math.min(index.sourceLines, Math.trunc(Number(line)) || 1))
     if (external) return external.go(line)
-    await load(`line=${line}`, line)
+    return load(`line=${line}`, line)
   }
   async function goRange(start, end, options = {}) {
     const signal = options.signal
@@ -142,7 +142,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     previewViewport.setAttribute('aria-hidden', String(open))
     document.querySelector('#preview-mode').setAttribute('aria-pressed', String(!open))
     document.querySelector('#source-mode').setAttribute('aria-pressed', String(open))
-    document.querySelector('.reader-settings').hidden = open
+    document.querySelector('.reader-settings').hidden = false
     labels.set(document.querySelector('.reader-identity p'), open ? '{format} · Read-only source' : '{format} · Read-only preview', {format:index.format==='markdown'?'Markdown':String(index.format||'text').toUpperCase()})
     if (!open) {
       const line = resumeLine ?? currentLocation()
@@ -176,7 +176,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     get code() { return external ? null : code },
     get external() { return Boolean(external) },
     selection() { return visible && external ? external.selection?.() ?? null : null },
-    get visible() { return visible }, get page() { return page }, currentLine, currentLocation, show, go, goRange,
+    get visible() { return visible }, get busy() { return loading }, get page() { return page }, currentLine, currentLocation, show, go, goRange,
     hide(options) { if (visible) return setVisible(false, options) },
     highlightRange(start, end) {
       if (!visible || !code || !page || start < page.start || end > page.end) { this.clearSearch(); return }

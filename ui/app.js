@@ -293,7 +293,7 @@ const state = {
   rightRailWidthRatio: 0.44,
   typography: { ...typographyDefaults },
   mermaid: { ...MERMAID_PREFERENCES_DEFAULTS },
-  markdown: { mode: 'technical' },
+  markdown: { mode: 'technical', highlightSelectionMatches: false, automaticCodeSize: false },
   translation: { engine: 'backend', ollamaModel: 'gemma3:4b', models: {}, efforts: {} },
   ollamaModels: [],
   desktopNotifications: false,
@@ -6834,6 +6834,8 @@ function populateSettingsForm() {
   $('#code-font-family').value = state.typography.codeFontFamily
   $('#code-font-size').value = String(state.typography.codeFontSize)
   $('#code-font-weight').value = String(state.typography.codeFontWeight)
+  $('#reader-highlight-matches').checked = state.markdown.highlightSelectionMatches === true
+  $('#reader-automatic-code-size').checked = state.markdown.automaticCodeSize === true
   $('#high-contrast').checked = state.typography.highContrast
   $('#desktop-notifications').checked = state.desktopNotifications
   const windowsHost = state.hostPlatform === 'windows'
@@ -7180,6 +7182,7 @@ function applyAppearance() {
   root.style.setProperty('--code-font-family', state.typography.codeFontFamily)
   root.style.setProperty('--code-font-size', `${state.typography.codeFontSize}px`)
   root.style.setProperty('--code-font-weight', state.typography.codeFontWeight)
+  documentWorkspace.syncPresentation()
   workspaceTools.refreshTypography()
   syncEmbeddedBrowserTypography()
   resetDiagramRendering()

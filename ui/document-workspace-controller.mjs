@@ -127,7 +127,7 @@ export function createDocumentWorkspaceController({
       context.clearRect(0,0,1,1);context.fillStyle=value;context.fillRect(0,0,1,1)
       palette[key]='#'+[...context.getImageData(0,0,1,1).data].map(channel=>channel.toString(16).padStart(2,'0')).join('')
     }
-    const settings = {theme:document.documentElement.dataset.theme==='dark'?'dark':'light',toolbar:'host',locale,messages:localeMessages,palette}
+    const settings = {theme:document.documentElement.dataset.theme==='dark'?'dark':'light',toolbar:'host',locale,messages:localeMessages,palette,highlightSelectionMatches:state.markdown?.highlightSelectionMatches === true}
     for (const [key,variable] of Object.entries({fontFamily:'ui-font-family',contentFontFamily:'content-font-family',codeFontFamily:'code-font-family'})) {
       const value=style.getPropertyValue('--'+variable).trim()
       if(value)settings[key]=value
@@ -136,6 +136,7 @@ export function createDocumentWorkspaceController({
       const value=parseFloat(style.getPropertyValue('--'+variable))
       if(Number.isFinite(value)&&value>=11&&value<=32)settings[key]=value
     }
+    if (state.markdown?.automaticCodeSize === true) settings.codeFontSize = null
     const weight=Number(style.getPropertyValue('--content-font-weight'))
     if(Number.isInteger(weight)&&weight>=100&&weight<=900)settings.contentFontWeight=weight
     if (file?.format === 'epub') settings.epub = { theme: file.readingState?.theme || 'light', typography: readingTypography() }
@@ -796,6 +797,7 @@ function formatFileSize(value) {
     open: openArtifact,
     refresh: refreshArtifact,
     syncCommentMarks,
+    syncPresentation: syncLargeMarkdownTheme,
     render: renderArtifact,
     reopenEpubSource: reopenEpubComment,
     save: saveArtifact,

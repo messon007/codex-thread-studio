@@ -1,6 +1,20 @@
 // Finite shared control vocabulary for host-owned translation dictionaries.
 // Document text, filenames, query values and backend errors never enter this list.
 export const readerMessageKeys = Object.freeze([
+  "Text size",
+  "Auto",
+  "Code / source size",
+  "Leave empty for automatic size",
+  "Go to source line",
+  "Enter a source line from 1 to {total}.",
+  "Enter a valid source line.",
+  "Original source file · {total} lines",
+  "The document or view changed. Open Go to line again.",
+  "Could not navigate to this source line.",
+  "Highlight matching words",
+  "Matching-word highlights are unavailable in this view.",
+  "Case-sensitive whole-word matches near the viewport; no full-document scan.",
+  "Nearby text only. Not available in PDF, images or book readers.",
   "Add comment",
   "Selected text excerpt",
   "{current} of at least {total} matches; result limit reached",

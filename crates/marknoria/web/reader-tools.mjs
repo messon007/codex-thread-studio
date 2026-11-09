@@ -34,11 +34,19 @@ export function readerTools(frame, container, currentReader) {
       const originalSettings = child.querySelector('.reader-settings')
       const settings = originalSettings.cloneNode(true)
       settings.open = false
+      const settingsControls = []
       for (const element of settings.querySelectorAll('[id]')) {
         const id = element.id
         element.removeAttribute('id')
         if (id === 'column-width') element.classList.add('reader-column-width')
         const original = child.getElementById(id)
+        if (element.hasAttribute('aria-describedby')) element.removeAttribute('aria-describedby')
+        if (element.tagName === 'BUTTON') {
+          element.addEventListener('click', () => { settings.open = false; original.click() })
+          settingsControls.push([original, element])
+          continue
+        }
+        if (!element.matches('input,select,textarea')) continue
         const update = () => {
           original.value = element.value
           original.checked = element.checked
@@ -49,16 +57,25 @@ export function readerTools(frame, container, currentReader) {
         element.value = original.value
         element.checked = original.checked
         element.addEventListener('change', update)
+        settingsControls.push([original, element])
       }
       settings.dataset.readerTool = 'settings'
       container.append(settings)
       observer.observe(originalSettings, { attributes: true, attributeFilter: ['hidden'] })
+      // Synchronize before opening. The asynchronous toggle event may arrive
+      // after typing has begun and overwrite the user's uncommitted input.
+      settings.querySelector('summary').addEventListener('click', () => { if (!settings.open) sync() })
       function sync() {
         for (const [original, button] of entries) {
           button.disabled = original.disabled
           button.setAttribute('aria-expanded', original.getAttribute('aria-expanded'))
         }
         settings.hidden = originalSettings.hidden
+        for (const [original, control] of settingsControls) {
+          control.disabled = original.disabled
+          control.value = original.value
+          control.checked = original.checked
+        }
         if (settings.hidden) settings.open = false
       }
       const close = event => {

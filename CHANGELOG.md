@@ -4,7 +4,15 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-09
+
 ### Added
+
+- Share a managed Codex App Server with compatible CLI clients, including session handoff and recovery support.
+- Add a shared multi-format Web reader with paged Markdown/source editing, PDF and EPUB reading, structured tables, and bounded SQL/jq queries.
+- Add case-sensitive document search with bounded result paging, exact source-match counts, and verified navigation to individual occurrences.
+- Show persistent Studio comment marks in supported reader text, including overlapping comments and revision-bound source, PDF, EPUB, and table references.
+- Add queued image input and improve session workflow controls.
 
 - Add `/fast` for Codex models that advertise the Fast service tier, with a visible Composer badge and per-session persistence.
 - Document macOS first launch for quarantined browser downloads, including the `curl` install path that never sets the quarantine attribute.
@@ -13,11 +21,22 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Changed
 
+- Track fixed MarkNoria Web reader deliveries while retaining Studio's Copy, Comment, Translate, AI, and workspace integrations. The reader has no separate Favorite/Notes entry; existing Studio favorites remain available.
+- Reduce the linked syntax profile from 110 to 97 grammars. Excluded languages remain readable as plain text, with source positions and escaping preserved.
+- Remove the obsolete Release session write access menu.
+- Update browser and Rust dependencies and strengthen archive, resource-grant, and cross-platform reader validation.
+
 - Ad-hoc sign the macOS bundle so a release ships a sealed app signature without a Developer ID account.
 - Export Apple signing and notarization credentials during releases when they are configured, and enable the macOS hardened runtime that notarization requires.
 - Search `/opt/homebrew/bin` and `/usr/local/bin` on macOS so a Finder or Launchpad launch finds Codex and OpenCode installed through Homebrew, the Node.js installer, or a similar prefix.
 
 ### Fixed
+
+- Stop repeated keepalive errors after a reader lease expires. Returning to the foreground checks the lease; refreshing a dirty document still requires discard confirmation.
+- Keep table navigation targets visible after switching from Source, and improve column resizing, scroll chaining, cell selection, and chart/query interactions.
+- Queue bounded parallel PDF range requests instead of leaving the reader stuck after burst-limit errors.
+- Preserve EPUB reading state, exact comment anchors, live reader translations, and Windows-to-WSL file-reading behavior.
+- Avoid offering native embedded-browser actions in the remote Web client.
 
 - Restore Open Item Location on macOS, which previously reported that the system file manager was unavailable because the route reused the embedded-browser capability flag.
 - Correct the documented settings paths (macOS uses the XDG path, not `~/Library/Application Support`) and the release binary path in the README.
@@ -100,7 +119,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Initial Tauri desktop shell and structured Codex App Server v2 integration.
 
-[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/messon007/codex-thread-studio/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/messon007/codex-thread-studio/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/messon007/codex-thread-studio/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/messon007/codex-thread-studio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/messon007/codex-thread-studio/compare/v0.1.0...v0.2.0

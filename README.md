@@ -97,7 +97,7 @@ cargo run --package codex-thread-studio
 
 ### Experimental remote Linux workspace
 
-The `feature/ssh-remote-studio` prototype can run the complete Studio gateway on Linux and
+The mainline client can also run the complete Studio gateway on Linux and
 display it in a Windows browser through an SSH tunnel. Sessions, Files, Git, Terminal, and
 document reads execute on Linux; content is transferred on demand instead of mounting or
 synchronizing the project directory.

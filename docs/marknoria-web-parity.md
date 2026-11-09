@@ -1,6 +1,8 @@
 # Web desktop 阅读器功能与行为收敛清单
 
-Current fixed-import implementation and executed local checks: [adoption status](marknoria-adoption.md). The analysis below preserves its frozen source baseline. Current reading controls and the public comparison gap ([MarkNoria #35](https://github.com/messon007/marknoria/issues/35)) are recorded in [the November 9 adoption](marknoria-reading-adoption.md).
+Current fixed-import implementation and executed local checks: [adoption status](marknoria-adoption.md). The analysis below preserves its frozen source baseline. Current reading controls and the user-requested exclusion of standalone document comparison are recorded in [the November 9 adoption](marknoria-reading-adoption.md).
+
+用户明确排除：Studio 不需要 MarkNoria 的双栏文档比较（Compare）功能。它不属于功能并集、阅读器一致性缺口或后续同步任务；不再要求上游为 Studio 提供比较嵌入接口。此范围约定不影响现有 Git Review/diff 功能。
 
 用户确定：MarkNoria 主维护，Studio 只跟踪 **Web desktop（browser/WebView 阅读器及其 Rust 服务/内核依赖）**。不跟踪 platform-native desktop 的 GTK/AppKit/WinUI、原生布局或 FFI，也不依赖 Studio 正在开发的原生分支。
 

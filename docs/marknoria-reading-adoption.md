@@ -47,17 +47,18 @@ and public CI need neither private credentials nor an upstream checkout.
   Copy/Comment/Translate remain Studio-owned; no reader Favorite/Notes or obsolete
   Release session write access menu is restored.
 
-## Remaining shared capability
+## Explicit scope exclusion
 
-This source includes improved standalone comparison split sizing and complete
-truncated-source-line actions, but the packaged single-document `web::Service`
-explicitly has no comparison routes. `compare_runtime::Comparisons` is private to
-the standalone application. These improvements are **not exposed in Studio**.
-[MarkNoria #35](https://github.com/messon007/marknoria/issues/35) tracks a public
-comparison delivery with two independently authorized inputs, lifecycle,
-host toolbar/actions, resource budgets and Chromium/WebKit fixtures. Studio will
-adopt that verified interface; it does not open arbitrary paths or depend on the
-standalone application's private DOM/runtime.
+Studio does not need MarkNoria's standalone side-by-side document comparison.
+The user explicitly excluded it from Studio's scope after this integration.
+It is not a reader parity gap, an upstream prerequisite or a future adoption item.
+[MarkNoria #35](https://github.com/messon007/marknoria/issues/35) was withdrawn
+and closed as not planned for Studio.
+
+The verified SDK remains imported unchanged, including upstream comparison source
+files. Studio exposes no Compare entry; no comparison implementation or public
+embedding API is requested on Studio's behalf. This scope decision does not affect
+Studio's existing Git Review/diff capabilities or the shared single-document reader.
 
 ## Verification and limits
 

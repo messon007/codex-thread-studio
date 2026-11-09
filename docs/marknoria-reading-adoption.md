@@ -76,8 +76,9 @@ in Chromium and native WebKit; Chromium additionally verifies the host settings,
 updates and reopen persistence. The actual lease-expiry smoke passes all four
 checks. Independent Studio review verifies default-off overriding old standalone
 localStorage, dirty Edit Ctrl+G, 32 px/Auto/highlights, rejected refresh, unchanged
-source bytes and owned cache cleanup. Public search contracts pass 69 checks per
-engine, including Unicode/case, bounded windows and renderer limits.
+source bytes and owned cache cleanup. Public search contracts pass 150 checks in Chromium (including typed containers
+and PDF/EPUB limits) and the 69-check shared source protocol in WebKit. Both
+cover Unicode/case, bounded windows and ownership/cancellation.
 
 Local Rust results: Studio 152 tests (one pre-existing ignored) plus 15 integration
 tests; the independent fixed SDK workspace/all-targets passes. All 807 UI tests,

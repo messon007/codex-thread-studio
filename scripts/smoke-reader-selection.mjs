@@ -60,7 +60,7 @@ try{
  await page.locator('#annotation-dialog').waitFor({state:'visible'});report.checks.push('Comment opens Studio annotation dialog')
  await page.keyboard.press('Escape')
  await target.click({clickCount:3});await page.locator('#selection-popover').waitFor({state:'visible'})
- await frame.locator('#space h1').first().click();await page.locator('#selection-popover').waitFor({state:'hidden'})
+ await frame.locator('#space h1').first().click({position:{x:8,y:8}});await page.locator('#selection-popover').waitFor({state:'hidden'})
  report.checks.push('cleared child selection clears Studio menu')
  await target.click({clickCount:3});await page.locator('#selection-popover').waitFor({state:'visible'})
  await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path:alternate})

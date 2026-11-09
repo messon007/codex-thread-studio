@@ -64,3 +64,24 @@ test('save failure keeps the settings dialog open and reset does not write stora
   assert.equal(f.state.continueBehavior, 'sessionModelDraft')
   assert.equal(f.calls.includes('persist'), false)
 })
+
+
+test('reader preferences default off, persist explicitly and reset without losing the markdown mode', async () => {
+  const initial = fixture(); await initial.controller().loadPreferences()
+  assert.equal(initial.state.markdown.highlightSelectionMatches, false)
+  assert.equal(initial.state.markdown.automaticCodeSize, false)
+  const f = fixture({ markdown: { mode: 'reading', highlightSelectionMatches: true, automaticCodeSize: true }, typography: {contentFontSize:32,codeFontSize:32} })
+  const c = f.controller(); await c.loadPreferences()
+  assert.equal(f.state.markdown.highlightSelectionMatches, true)
+  assert.equal(f.state.markdown.automaticCodeSize, true)
+  assert.equal(f.state.typography.contentFontSize,32)
+  assert.equal(f.state.typography.codeFontSize,32)
+  f.$('#annotation-template').value='{{annotations}}'
+  f.$('#reader-highlight-matches').checked=true
+  f.$('#reader-automatic-code-size').checked=false
+  await c.saveSettings({preventDefault(){}})
+  assert.deepEqual(f.state.markdown,{mode:'reading',highlightSelectionMatches:true,automaticCodeSize:false})
+  assert.ok(f.calls.includes('persist'))
+  c.resetSettings()
+  assert.deepEqual(f.state.markdown,{mode:'reading',highlightSelectionMatches:false,automaticCodeSize:false})
+})

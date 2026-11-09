@@ -62,8 +62,8 @@ cancellation and scoped component lifecycle are maintained locally.
 The shared Rust Markdown extension uses `linkify` 0.11.0 under MIT OR
 Apache-2.0, pinned by Cargo.lock. Its source and license are supplied by the
 public Cargo package; no code or assets are read from another checkout. See
-[the shared Markdown profile](../docs/markdown-profile.md) for scanner scope,
-source-anchor behavior and the frozen Studio comparison.
+[the shared Markdown profile](../docs/api/documents.md#markdown-compatibility) for scanner scope,
+source-anchor behavior and supported Markdown semantics.
 
 
 The fixed Web export retains installed locked npm LICENSE/COPYING/NOTICE and

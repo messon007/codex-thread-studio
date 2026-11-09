@@ -4,6 +4,15 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ## [Unreleased]
 
+### Added
+
+- Add document settings for bounded matching-word highlights and automatic code sizing, with reading/code font sizes up to 32 px.
+- Adopt shared Ctrl+G source-line navigation in Preview, Source and Edit, preserving source anchors and unsaved edits.
+
+### Changed
+
+- Update the fixed MarkNoria Web SDK to `64765f2`, including stable typography/layout updates while retaining Studio-owned comments, selection actions and reader lease recovery.
+
 ## [0.4.0] - 2026-11-09
 
 ### Added

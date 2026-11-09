@@ -139,8 +139,9 @@ export function editorController(token, options) {
   on(document.getElementById('edit-redo'), 'click', () => code?.redo())
   on(document.getElementById('edit-go'), 'submit', async event => {
     event.preventDefault()
-    const line = Math.max(1, Math.trunc(Number(input.value)) || 1)
-    if (!busy && await save()) await load(`?line=${line}`)
+    const line = Number(input.value)
+    if (!Number.isSafeInteger(line) || line < 1 || line > (data?.sourceLines ?? 0)) { uiMessage('Enter a valid source line.'); return }
+    await go(line)
   })
   on(document.getElementById('edit-reload'), 'click', async () => {
     if (busy || dirty() && !confirm((options.translate || String)('Discard the unsaved current page and reload the file?'))) return

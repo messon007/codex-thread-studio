@@ -21,6 +21,50 @@ let detailRow = null
 let detailPage = null
 let detailGeneration = 0
 
+const splitShell = document.querySelector('.compare-shell')
+const splitBody = document.querySelector('.compare-body')
+const separator = document.getElementById('compare-separator')
+let splitRatio = 50
+let splitPointer = null
+function setSplit(value) {
+  splitRatio = Math.max(30, Math.min(70, value))
+  splitShell.style.setProperty('--compare-left', `${splitRatio}fr`)
+  splitShell.style.setProperty('--compare-right', `${100 - splitRatio}fr`)
+  separator.setAttribute('aria-valuenow', String(Math.round(splitRatio)))
+}
+function moveSplit(event) {
+  if (event.pointerId !== splitPointer) return
+  const bounds = splitBody.getBoundingClientRect()
+  const width = bounds.width - separator.getBoundingClientRect().width
+  if (width > 0) setSplit((event.clientX - bounds.left - 5) / width * 100)
+}
+function endSplit() {
+  const pointer = splitPointer
+  splitPointer = null
+  splitShell.classList.remove('resizing')
+  if (pointer != null && separator.hasPointerCapture(pointer)) separator.releasePointerCapture(pointer)
+}
+separator.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || splitPointer != null) return
+  event.preventDefault()
+  splitPointer = event.pointerId
+  separator.focus()
+  separator.setPointerCapture(event.pointerId)
+  splitShell.classList.add('resizing')
+})
+separator.addEventListener('pointermove', moveSplit)
+separator.addEventListener('pointerup', event => { if (event.pointerId === splitPointer) { moveSplit(event); endSplit() } })
+separator.addEventListener('pointercancel', endSplit)
+separator.addEventListener('lostpointercapture', endSplit)
+addEventListener('blur', endSplit)
+separator.addEventListener('keydown', event => {
+  const target = { ArrowLeft: splitRatio - 2, ArrowRight: splitRatio + 2, Home: 30, End: 70 }[event.key]
+  if (target == null) return
+  event.preventDefault()
+  setSplit(target)
+})
+separator.addEventListener('dblclick', () => setSplit(50))
+
 async function api(path, options = {}) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const response = await fetch(new URL(`.${path}`, import.meta.url), { ...options, headers: { 'x-reader-token': token, ...(comparisonId ? { 'x-reader-comparison': comparisonId } : {}), 'Content-Type': 'application/json' } })
@@ -76,8 +120,12 @@ function ensureDiff(side) {
       const ticket = ++pane.generation
       try {
         const result = await api(`/api/compare/row?side=${side}&line=${line}`)
-        if (!stopped && ticket === pane.generation && pane.mode === 'source') pane.diff.show(result.row, line)
+        if (!stopped && ticket === pane.generation && pane.mode === 'source') {
+          pane.diff.show(result.row, line)
+          return true
+        }
       } catch (error) { if (!stopped && ticket === pane.generation) status.textContent = error.message }
+      return false
     },
   })
 }
@@ -254,7 +302,16 @@ async function loadLine(offset, previous = false) {
   } catch (error) { if (error.name !== 'AbortError') document.querySelector('#line-text').textContent = error.message }
 }
 
-function openLine(row, side) { detailRow = { row, side }; detailPage = null; detail.showModal(); void loadLine(0) }
+function openLine(row, side) {
+  detailRow = { row, side }; detailPage = null
+  const viewport = panes[side].diff?.viewport
+  if (viewport) {
+    const style = viewport.ownerDocument.defaultView.getComputedStyle(viewport.querySelector('.compare-text') || viewport)
+    const text = document.getElementById('line-text')
+    text.style.fontSize = style.fontSize; text.style.fontFamily = style.fontFamily
+  }
+  detail.showModal(); void loadLine(0)
+}
 document.querySelector('#line-close').addEventListener('click', () => detail.close())
 detail.addEventListener('close', () => { detailGeneration += 1; detailRequest?.abort() })
 document.querySelector('#line-previous').addEventListener('click', () => { if (detailPage?.offset) void loadLine(detailPage.offset, true) })
@@ -306,6 +363,7 @@ document.querySelector('#compare-close').addEventListener('click', async () => {
   } catch (error) { status.textContent = error.message }
 })
 addEventListener('pagehide', () => {
+  endSplit()
   stopped = true
   for (const side of sides) { capture(side); panes[side].diff?.dispose(); panes[side].tools.clear() }
   detailRequest?.abort()

@@ -12,6 +12,7 @@ import { rust } from '@codemirror/lang-rust'
 import { yaml } from '@codemirror/lang-yaml'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { mountWordHighlights } from './word-highlights.mjs'
 
 const languages = { javascript: javascript().language, js: javascript().language, typescript: typescriptLanguage, ts: typescriptLanguage, json: json().language, python: python().language, py: python().language, cpp: cpp().language, c: cpp().language, rust: rust().language, rs: rust().language, yaml: yaml().language, yml: yaml().language, toml: StreamLanguage.define(toml) }
 const syntax = language => ['markdown', 'md'].includes(language) ? markdown({ codeLanguages: info => languages[info.split(/\s/u)[0].toLowerCase()] || null }) : languages[language] || []
@@ -23,6 +24,7 @@ export function codeView(parent, options = {}) {
   let readOnly = Boolean(options.readOnly)
   let base
   let changes
+  let selectedWords
   const editing = new Compartment()
   const theme = new Compartment()
   const phrases = new Compartment()
@@ -30,7 +32,7 @@ export function codeView(parent, options = {}) {
   const translatedPhrases = () => Object.fromEntries(searchPhrases.map(key => [key,(options.translate || String)(key)]))
   const style = EditorView.theme({
     '&': { height: '100%', backgroundColor: 'var(--reader-panel)', color: 'var(--reader-text)' },
-    '.cm-scroller': { fontFamily: 'var(--code-font-family,Consolas,monospace)', fontSize: 'var(--code-font-size,13px)', lineHeight: '24px', overflow: 'auto' },
+    '.cm-scroller': { fontFamily: 'var(--code-font-family,Consolas,monospace)', fontSize: 'var(--code-font-size,13px)', lineHeight: 'max(24px, 1.7em)', overflow: 'auto' },
     '.cm-content': { padding: '12px 0' },
     '.cm-gutters': { backgroundColor: 'var(--reader-soft)', color: 'var(--reader-faint)', borderColor: 'var(--reader-border)' },
     '.cm-lineNumbers .cm-gutterElement': { minWidth: '48px', padding: '0 10px' },
@@ -56,10 +58,23 @@ export function codeView(parent, options = {}) {
         changes = changes.compose(update.changes)
         if (update.state.doc.eq(base)) changes = ChangeSet.empty(base.length)
       }
+      if (update.selectionSet || update.docChanged || update.viewportChanged || update.geometryChanged) selectedWords?.refresh()
       options.changed?.()
     }),
   ]
   const view = new EditorView({ parent })
+  selectedWords = mountWordHighlights(view.contentDOM, {
+    viewport: view.scrollDOM,
+    selection() {
+      const range = view.state.selection.main
+      if (range.empty || range.to - range.from > 256) return null
+      return {
+        word: view.state.sliceDoc(range.from, range.to),
+        before: Array.from(view.state.sliceDoc(Math.max(0, range.from - 2), range.from)).at(-1) || '',
+        after: Array.from(view.state.sliceDoc(range.to, Math.min(view.state.doc.length, range.to + 2)))[0] || '',
+      }
+    },
+  })
   const unsubscribe = options.translate?.subscribe?.(() => {
     const open = searchPanelOpen(view.state)
     view.dispatch({ effects: phrases.reconfigure(EditorState.phrases.of(translatedPhrases())) })
@@ -74,6 +89,7 @@ export function codeView(parent, options = {}) {
     load(text, startLine, language = 'markdown') {
       line = startLine
       bytes = encoder.encode(text).length
+      selectedWords.clear()
       view.setState(EditorState.create({ doc: text, extensions: [...extensions, syntax(language)] }))
       base = view.state.doc
       changes = ChangeSet.empty(base.length)
@@ -110,7 +126,12 @@ export function codeView(parent, options = {}) {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     },
     focus: () => view.focus(),
+    scrollSnapshot: () => view.scrollSnapshot(),
+    remeasure(snapshot) { if (snapshot) view.dispatch({ effects: snapshot }); view.requestMeasure() },
     search: () => openSearchPanel(view),
-    dispose() { unsubscribe?.(); observer.disconnect(); view.destroy() },
+    // Edit instances always stay off, including temporary save/read-only locks.
+    wordHighlights(enabled) { selectedWords.update({ enabled: Boolean(options.readOnly && enabled) }) },
+    wordHighlightState: () => selectedWords.state(),
+    dispose() { selectedWords.dispose(); unsubscribe?.(); observer.disconnect(); view.destroy() },
   }
 }

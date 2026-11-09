@@ -2,9 +2,9 @@
 
 The public entry is `marknoria::web::{Service, ServiceOptions, DiagramMode}`.
 Hosts serving ordinary components can use the static-only
-[`web::reader_assets()` router](reader-assets.md), without creating a document
+[`web::reader_assets()` router](documents.md#asset-delivery), without creating a document
 service or granting a file.
-The core API is described in [reader-api.md](reader-api.md). Both adapters use
+The core API is described in [Rust reader API](reader.md). Both adapters use
 the same source-coordinate conversion, parsers, complete-input query engines and
 save validation. Neither requires a privileged host DOM or an AI account.
 
@@ -30,7 +30,7 @@ this service. Knowing a sibling path does not grant access to it.
 
 `Service::start(path)` remains a read-only compatibility entry with queries enabled
 and notes disabled. The host executable calls `reader::worker_entry()` before
-normal startup. The headless [embedded-host example](../examples/embedded-host.rs)
+normal startup. The headless [embedded-host example](../../examples/embedded-host.rs)
 owns the service until stdin receives a newline, then awaits cleanup:
 
 ```sh
@@ -129,16 +129,16 @@ mounting its first view.
 | `save` | Saves the current editor page; separate edit and preview revisions remain explicit |
 | `assetInfo` | `id` from `state.document.assets`; returns bounded preview dimensions/frame timing without cache filenames |
 | `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
-| `referenceInfo`, `referenceImageInfo`, `referenceImageFrame` | Markdown target/source metadata and bounded image snapshots; explicit directory grants, image revisions and host navigation events are described in [markdown-references.md](markdown-references.md) |
+| `referenceInfo`, `referenceImageInfo`, `referenceImageFrame` | Markdown target/source metadata and bounded image snapshots; explicit directory grants, image revisions and host navigation events are described in [Markdown resources](documents.md#markdown-resources-and-links) |
 | `navigateFragment` | `fragment`: decoded explicit HTML anchor or supported heading target; bounded to 8192 UTF-8 bytes, with ordinary identity/revision checks |
 | `outline` | `offset` (default 0), at most 256 items, total and revision; `resolve:false` returns renderer labels/IDs without PDF destination lookups |
 | `navigateOutline` | `id`: revision-scoped outline identity; resolves only the selected PDF destination or navigates the indexed heading/EPUB chapter |
 | `search` | `query`, optional validated `offset` and boolean `matchCase`; at most 100 results, owned `searchId`, resolved case option, absolute indices, total/precision and paging metadata; empty query clears |
-| `searchActivate`, `searchClear` | `{searchId,index}` activates a verified occurrence in the current reading view; `{}` clears owned search state/highlights; see [reader-search.md](reader-search.md) |
+| `searchActivate`, `searchClear` | `{searchId,index}` activates a verified occurrence in the current reading view; `{}` clears owned search state/highlights; see [Document search](reader.md#document-search) |
 | `selection` | Typed selection or null, with quote, units, precision and viewport CSS rectangle |
-| `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [projection-components.md](projection-components.md) |
+| `projectionWindow` | `start,count` (at most five); immutable Rust HTML/source/table projections for ordinary DOM hosts; see [Projection windows](documents.md#projection-windows) |
 | `sourceWindow`, `sourceSelection` | Bounded original source by `line`, `offset,previous`, or explicit `offset,end` (at most 128 KiB); exact conversion of a returned window's LF-normalized UTF-16 selection to original UTF-8 bytes |
-| `tableChart` | Complete source/result projection; `source:{kind:table,table}` or `{kind:query,queryId}`, `x` (nullable), `y`; see [table-components.md](table-components.md) |
+| `tableChart` | Complete source/result projection; `source:{kind:table,table}` or `{kind:query,queryId}`, `x` (nullable), `y`; see [Table components](tables.md) |
 | `sql`, `jq` | Complete-input query, returns a bounded result page and result ID |
 | `querySnapshot` | `location:{kind:queryCell,queryId,row,column}`, `quote`, `quoteTruncated`; verifies a live result and returns durable SQL provenance without writing a Note |
 | `notes` | Nested `request` using the public Notes operations; explicit storage grant required |
@@ -176,7 +176,7 @@ their typed row/page/CFI coordinates without fabricating original byte ranges.
 Use `searchActivate` with the owned identity and absolute occurrence index to
 retain the current view and shared highlights. Hosts cannot override the stored
 coordinates. Clearing, cancellation, mode changes, capped results and compatibility
-are specified in [reader-search.md](reader-search.md).
+are specified in [Document search](reader.md#document-search).
 The client supplies its latest state by default; explicitly supplied expectations
 are retained, so stale commands fail. Events are `ready`, `state`, `saved`,
 `selection`, `error`, `openRequested`, `linkRequested`, and `disposed`. Repeated identical state is suppressed.
@@ -312,10 +312,6 @@ scoped to document/revision/backend; disposal cancels fetches, revokes object UR
 and restores owned controls. The shared ordinary-DOM lifecycle contract tests
 same-node remounts and prevents another document's diagram from being reused.
 
-This is the protocol foundation for issues #4/#5/#7. The bounded host presentation
-interface is described below; remaining format UI localization and verified
-Studio adoption remain tracked work, not completed acceptance claims.
-
 ## Shared cell interaction primitive
 
 `web/table-cells.mjs` exports `mountTableCells(content, options)` for ordinary DOM,
@@ -359,10 +355,10 @@ and coordinates; saved reading positions cannot treat these as durable source
 locations. The Notes adapter captures verified durable SQL provenance when saving
 comments/favorites; hosts can use `querySnapshot` for their own draft storage.
 Neither path silently converts a derived value into a source cell. The shared table mount and plots
-are described in [table-components.md](table-components.md).
+are described in [Table components](tables.md).
 
 The shared Notes storage/action/presentation adapters are documented in
-[notes-components.md](notes-components.md).
+[Notes component](notes.md).
 
 
 ## Host presentation settings v1
@@ -374,7 +370,7 @@ The existing settings command accepts:
 ```js
 await client.request('settings', {
   locale: 'fr', messages: { Preview: 'Aperçu', Columns: 'Colonnes' },
-  theme: 'dark', toolbar: 'host', wrap: true,
+  theme: 'dark', toolbar: 'host', wrap: true, highlightSelectionMatches: false,
   fontFamily: 'Noto Sans, sans-serif', contentFontFamily: 'serif',
   codeFontFamily: 'monospace', fontSize: 14, contentFontSize: 20, codeFontSize: 16,
   palette: { brand: '#123456', 'brand-soft': '#dbe9ed', panel: '#ffffff' }
@@ -411,10 +407,19 @@ syntax stylesheet through the existing theme controller. Hosts still own their
 outer application's appearance. Disposal restores prior host styles/attributes.
 The public settings state is session-local and never grants file/write authority.
 
+`highlightSelectionMatches` is a boolean, default false. It enables local,
+case-sensitive selected-word marks in text Preview and Source; unsupported
+renderers retain the preference but do not draw marks. It does not run a search,
+load additional pages, change search results or own Comment marks. Matching stays
+within the viewport plus one screen above/below, capped at 128 KiB of sampled text,
+2,000 node visits and 500 marks per update. Work is cancellable and frame-sliced;
+results may be partial at these limits. Setting it through the host API does not
+persist it to browser storage.
+
 
 The jq window is also available as `mountJqQuery`/`readerJqProvider` for ordinary
 hosts using the same public commands and complete Rust input. See
-[jq-components.md](jq-components.md) for provider contracts, paging/input budgets,
+[JSON query component](json-queries.md) for provider contracts, paging/input budgets,
 locale, clipboard, cancellation and disposal. It does not parse query output or
 map its transient output text to invented source offsets.
 
@@ -452,3 +457,16 @@ without repeat byte reads, cached revocation, source replacement, invalid basena
 rejection and cleanup. `check:embedded-service` checks private byte inputs with
 stable Notes identities across separate paths, revision staleness and environment
 isolation. These synthetic Linux checks do not certify a particular remote OS.
+
+## Transfer admission and cross-window identity
+
+Original-container PDF transfers authorize the document/revision/range before
+queuing. Two transfers may run, at most 16 wait, and queue admission has a
+five-second deadline. Document/service cancellation applies to queued and active
+work. Close file handles before releasing permits and removing private caches;
+stream one bounded chunk at a time with backpressure.
+
+WebKit can misattribute a cross-window sender when a wrapper tail-calls a
+foreign realm's `postMessage`. Keep the reply in its child caller frame. The
+lost-first-hello regression exercises this path; never compensate by relaxing
+exact `event.source` or origin validation.

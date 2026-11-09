@@ -32,6 +32,12 @@ export async function presentationContract(moduleUrl) {
       'Missing bounded presentation defaults'
     )
     check(start.selectionMenu === 'reader', 'Selection menu default changed')
+    check(start.highlightSelectionMatches === false, 'Matching-word highlights must start disabled')
+    first.update({ highlightSelectionMatches: true })
+    check(first.state().highlightSelectionMatches && !second.state().highlightSelectionMatches, 'Word preference escaped its presentation scope')
+    let invalidWords = false
+    try { first.update({ highlightSelectionMatches: 'all', wrap: false }) } catch { invalidWords = true }
+    check(invalidWords && first.state().highlightSelectionMatches && first.state().wrap, 'Word preference validation is not atomic')
     let invalidMenu = false
     try { first.update({ selectionMenu: 'invalid' }) } catch { invalidMenu = true }
     check(invalidMenu && first.state().selectionMenu === 'reader', 'Invalid menu policy was accepted')

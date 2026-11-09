@@ -10,7 +10,7 @@ licenses and provenance remain in `third-party/`, `licenses/` and bundled notice
 Supported package features: `--no-default-features` for the public Rust reader;
 default `web,syntax-full` for the scoped HTTP service with all 110 grammars.
 Use `--no-default-features --features web,syntax-reduced` to retain 97 grammars
-and omit the specified 13 at build time. See `docs/syntax-profiles.md` for the
+and omit the specified 13 at build time. See `docs/development/highlighting.md` for the
 exact list, workspace feature conflicts, plaintext fallback and validation. Linux/macOS/Windows consume these same
 sources. Platform-native GTK/AppKit/WinUI, FFI and the standalone Tao/Wry shell are
 maintained in the original project and intentionally absent from this Web-reader
@@ -42,12 +42,12 @@ Linux, macOS or MinGW builds.
 
 Host code calls `marknoria::reader::worker_entry()` before normal startup so its
 own supervised workers work without another MarkNoria installation. See
-`docs/reader-api.md` and `docs/embedding.md` for grants, defaults, capabilities,
+`docs/api/reader.md` and `docs/api/embedding.md` for grants, defaults, capabilities,
 read-only/query/write separation, cancellation and lifecycle. The service grants
 one canonical file; the source's parent folder is never implicitly authorized.
 
 Host search uses `search`, `searchActivate` and `searchClear` through
-`createReaderClient`. See `docs/reader-search.md` for result windows, current/total
+`createReaderClient`. See `docs/api/reader.md#document-search` for result windows, current/total
 state, typed locations, renderer caps and cancellation. It shares the standalone
 reader's search controller; consumers need no private DOM hooks.
 
@@ -64,6 +64,8 @@ license inventory. The verifier checks an exact fresh extraction, including unex
 No package build fetches a private repository or a floating main/latest revision.
 Cargo/npm may fetch public locked dependencies; ordinary consumers need no
 MarkNoria checkout, AI account or private GitHub token.
+
+## Validation
 
 Browser component contracts use generated public strings and isolated localhost
 hosts. Install Playwright explicitly in your own test tools directory and set

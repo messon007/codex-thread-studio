@@ -1,6 +1,6 @@
 # Shared tables and plots
 
-For query syntax, current-table examples, dialect restrictions and error recovery, see [SQL and jq query help](query-help.md).
+For query syntax, current-table examples, dialect restrictions and error recovery, see [SQL and jq query help](../guides/tables-and-queries.md#sql-and-jq-reference).
 
 Rust owns parsing, complete input, numeric projection, queries and caches. The
 Web components own displayed windows, geometry, selection and SVG layout. These
@@ -91,10 +91,10 @@ focus and closes when the owning reader leaves its view. Bars/labels are SVG DOM
 with inert text. Shared component styles are scoped and reference counted; redraw
 aborts old bar listeners and disposal removes owned DOM/listeners/styles. Source
 plot selections can use the common Notes actions inside the active modal;
-query references can use verified durable SQL snapshot notes when the host explicitly grants query Notes storage (see `notes-components.md`).
+query references can use verified durable SQL snapshot notes when the host explicitly grants query Notes storage (see [Notes component](notes.md)).
 
 `mountTableCells` is described in [embedding.md](embedding.md). `tableLayout`
-remains the common measurement/column/scroll geometry primitive. The shared ordinary/virtual table mount is described below. Host note/action/storage adapters are documented in `notes-components.md`.
+remains the common measurement/column/scroll geometry primitive. The shared ordinary/virtual table mount is described below. Host note/action/storage adapters are documented in [Notes component](notes.md).
 
 ## Shared projected table mount
 
@@ -251,15 +251,6 @@ parent host or another pane. Late, superseded navigation cannot steal focus.
 Disposal aborts loads and releases translation subscriptions and style leases,
 including setup failures.
 
-The ordinary component contracts cover 19 translator, 10 toolbar, 28 source-view
-and 25 SQL assertions in Chromium 149 and native Wayland WebKit 2.52.6. The release
-HTTP regression passes 231 shared-table assertions (including equality of 11
-served source assets), 110 SQL/CSV assertions, the cross-origin two-pane public
-host, and the actual Wayland WebView document suite. Whole-reader locale/settings
-integration remains tracked separately; this does not claim all controls are
-translated yet.
-
-
 Layout accessibility, full-cell dialogs and complete-input plots also accept the
 same translator. Open dialogs and chart descriptions update in place; the SVG
 bars, original column names, values and selection are retained. No dataset is
@@ -270,11 +261,10 @@ partial table setup removes its owned scopes/styles/DOM and preserves the host.
 The document's stable horizontal-scroll control identity is retained during
 atomic setup; independent panes still get collision-free content IDs.
 
-The extended ordinary contracts pass **19 layout**, **20 cells**, **20 plot**,
-**29 source-view** and **25 SQL** assertions on Chromium 149 and native Wayland
-WebKit 2.52.6, including maximum columns and exhausted subscription capacity.
-`npm run check:table-layout` runs the standalone layout contract; all component
-checks accept `--webkit` under a native Wayland session.
+`npm run check:table-layout` exercises maximum columns, geometry and subscription
+limits. The table, cell, plot and SQL component checks accept `--webkit` in a
+native Wayland session. Shared renderer tests also cover scoped presentation,
+disposal and failed-setup recovery.
 
 ## Delimited input and workbook scalar compatibility
 
@@ -318,3 +308,12 @@ frames plus200 ms; no probe or host DOM workaround enters reader runtime. It
 checks original row/column/quote, hidden-column restoration, cancellation/latest
 requests, user scrolling and host-owned Notes. Ordinary host contracts also cover
 delayed layout, oversized cells, continuously unstable layout and disposal.
+
+## Measurement-only work limits
+
+Column measurement is distinct from table projection and complete-input SQL.
+Sample at most 200 rows, 2,048 cells and 256 Ki UTF-16 units, with no more than 8,192
+canvas measurements. Per-cell traversal is capped at 512 nodes/16,384 units; a
+fit sample uses at most 64 lines. Never clone or measure an unbounded table or
+infer a query dataset from its displayed page. These caps accompany the existing
+projection/transport limits rather than replacing them.

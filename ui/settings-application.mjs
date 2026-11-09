@@ -44,7 +44,7 @@ export function createSettingsApplication(state, services) {
         state.typography = normalizeTypography({ ...typographyDefaults, ...migrateDefaultFontFamilies(saved.typography) });
         state.mermaid = normalizeMermaidPreferences(saved.mermaid);
         const markdownMode = record(saved.markdown).mode;
-        state.markdown = { mode: typeof markdownMode === 'string' && ['reading', 'technical', 'compact'].includes(markdownMode) ? markdownMode : 'technical' };
+        state.markdown = { mode: typeof markdownMode === 'string' && ['reading', 'technical', 'compact'].includes(markdownMode) ? markdownMode : 'technical', highlightSelectionMatches: record(saved.markdown).highlightSelectionMatches === true, automaticCodeSize: record(saved.markdown).automaticCodeSize === true };
         state.translation = normalizeTranslationPreferences(saved.translation);
         state.desktopNotifications = Boolean(saved.desktopNotifications);
         state.queueDepth = normalizeQueueDepth(saved.queueDepth);
@@ -145,6 +145,7 @@ export function createSettingsApplication(state, services) {
             codeFontWeight: Number($('#code-font-weight').value),
             highContrast: $('#high-contrast').checked,
         });
+        state.markdown = { ...state.markdown, highlightSelectionMatches: $('#reader-highlight-matches').checked, automaticCodeSize: $('#reader-automatic-code-size').checked };
         const wantsNotifications = $('#desktop-notifications').checked;
         if (wantsNotifications && 'Notification' in window && Notification.permission === 'default') {
             await Notification.requestPermission().catch(() => 'denied');
@@ -187,6 +188,7 @@ export function createSettingsApplication(state, services) {
         state.theme = 'light';
         state.contentWidth = 'comfortable';
         state.typography = { ...typographyDefaults };
+        state.markdown = { ...state.markdown, highlightSelectionMatches: false, automaticCodeSize: false };
         state.translation = normalizeTranslationPreferences(null);
         state.desktopNotifications = false;
         state.queueDepth = 1;

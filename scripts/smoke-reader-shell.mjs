@@ -36,14 +36,29 @@ try{
  if(await actual.text()!==await readFile(join(root,'ui/document-workspace-controller.mjs'),'utf8'))throw Error('Stale Studio binary frontend')
  const cases=[['markdown',file],['table',csv],['pdf',pdf],['epub',epub]].filter(([format])=>!process.argv.includes('--markdown-only')||format==='markdown'), results=[]
  await writeFile(join(dir,'corpus.json'),JSON.stringify({project,cases}))
- const settings=async(theme,locale='en-US')=>{
+ const settings=async(theme,locale='en-US',reading=null)=>{
   await page.evaluate(()=>__studioDeveloper.click('#settings-button'))
+  await page.locator('[data-settings-pane=general]').click()
   await page.locator('#theme-select').selectOption(theme)
   await page.locator('#language-select').selectOption(locale)
+  if(reading){
+   await page.locator('[data-settings-pane=typography]').click()
+   await page.locator('#content-font-size').fill(String(reading.text))
+   await page.locator('#code-font-size').fill(String(reading.code))
+   await page.locator('#reader-highlight-matches').setChecked(reading.matches)
+   await page.locator('#reader-automatic-code-size').setChecked(reading.auto)
+  }
   await page.locator('#settings-form').evaluate(form=>form.requestSubmit())
   await page.locator('#settings-dialog').waitFor({state:'hidden'})
  }
  const command=(method,params={})=>page.evaluate(({method,params})=>shellClient.request(method,params),{method,params})
+ const waitState=async predicate=>{
+  const deadline=Date.now()+15000
+  while(Date.now()<deadline){const state=await command('state');if(predicate(state))return state;await pause(25)}
+  throw Error('Public reader state did not reach expected value')
+ }
+ // An old standalone preference must not override the host default.
+ await page.evaluate(()=>localStorage.setItem('marknoria-highlight-selection-matches','true'))
  const inspect=async frame=>{
   const check=()=>{
    const visible=node=>node.getClientRects().length&&getComputedStyle(node).visibility!=='hidden'
@@ -83,6 +98,32 @@ try{
    if(await frame.locator('pre code').filter({hasText:'fn retained_rust()'}).locator('[class*=mn-h]').count()===0)throw Error('Retained Rust grammar lost highlighting')
    if(await frame.locator('body').evaluate(()=>Boolean(globalThis.syntaxExecuted)))throw Error('Code fixture executed markup')
 
+   if(first.presentation.highlightSelectionMatches!==false)throw Error('Standalone word preference overrode host default')
+   await settings('dark','zh-CN',{text:32,code:11,matches:true,auto:false})
+   await waitState(s=>s.presentation.contentFontSize===32&&s.presentation.codeFontSize===11&&s.presentation.highlightSelectionMatches)
+   const fonts=await frame.locator('#space').evaluate(node=>({text:getComputedStyle(node.querySelector('td')).fontSize,code:getComputedStyle(node.querySelector('pre')).fontSize}))
+   if(fonts.text!=='32px'||fonts.code!=='11px')throw Error('Text/code size roles were not applied: '+JSON.stringify(fonts))
+   await settings('dark','en-US',{text:11,code:32,matches:true,auto:true})
+   await waitState(s=>s.presentation.contentFontSize===11&&s.presentation.codeFontSize===null)
+   // Open Source through real host controls, then invoke the child's shared keyboard dialog.
+   await page.locator('#artifact-source').click()
+   await waitState(s=>s.view==='source')
+   await frame.locator('.cm-content').click()
+   await page.keyboard.press('Control+g')
+   await frame.locator('.reader-go-to-line[open]').waitFor()
+   await frame.locator('#reader-go-to-line-input').fill('3')
+   await frame.locator('.reader-go-to-line form').evaluate(form=>form.requestSubmit())
+   await frame.locator('.reader-go-to-line').waitFor({state:'hidden'})
+   const navigated=await waitState(s=>s.view==='source'&&s.position?.location?.line===3)
+   if(navigated.capabilities.edit!==first.capabilities.edit||navigated.dirty)throw Error('Source navigation changed authority or dirtied the document')
+   await page.locator('#artifact-preview').click()
+   await waitState(s=>s.view==='preview')
+   // Only booleans change: this must update immediately without a CSS mutation.
+   await settings('dark','en-US',{text:11,code:32,matches:false,auto:false})
+   await waitState(s=>s.presentation.codeFontSize===32&&!s.presentation.highlightSelectionMatches)
+   await settings('dark','en-US',{text:15,code:14,matches:true,auto:true})
+   await waitState(s=>s.presentation.codeFontSize===null&&s.presentation.highlightSelectionMatches)
+
    if((await command('state')).presentation.notes!=='host')throw Error('Reader Notes ownership was not delegated')
    if((await command('state')).presentation.selectionMenu!=='host')throw Error('Reader selection ownership was not delegated')
    if(await page.locator('#artifact-notes-tools button').count())throw Error('Unexpected document Favorites/Notes entry')
@@ -116,7 +157,7 @@ try{
   const started=performance.now()
   await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path})
   await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
-  const initial=await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');const frame=document.querySelector('.artifact-large-markdown-frame');const client=createReaderClient(frame);await client.ready();const state=await client.request('state');client.disconnect();return {...state.timings,mounted:frame.contentDocument.querySelectorAll('#space *').length}})
+  const initial=await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');const frame=document.querySelector('.artifact-large-markdown-frame');const client=createReaderClient(frame);await client.ready();const state=await client.request('state');if(state.presentation.highlightSelectionMatches!==true||state.presentation.codeFontSize!==null)throw Error('Reader preferences lost on reopen');client.disconnect();return {...state.timings,mounted:frame.contentDocument.querySelectorAll('#space *').length}})
   results.push({format,phase:'reopen-browser-cache',initial:{...initial,hostFirstUsefulMs:performance.now()-started}})
   await page.locator('#close-artifact').click()
  }
@@ -124,6 +165,6 @@ try{
  let webkit
  if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
  if(process.argv.includes('--webkit')&&!webkit?.ok)throw Error('Native WebKit shell did not pass')
- console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,excludedSyntaxPlaintext:excludedSyntax,retainedRustHighlight:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,results,webkit,artifacts:dir}))
+ console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,excludedSyntaxPlaintext:excludedSyntax,retainedRustHighlight:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,readingControls:true,sourceGoToLine:true,results,webkit,artifacts:dir}))
 
 }catch(error){console.error('Artifacts: '+dir);throw error}finally{await browser?.close();if(server.exitCode==null){server.kill('SIGTERM');await Promise.race([once(server,'exit'),pause(3000)]);if(server.exitCode==null)server.kill('SIGKILL')}}

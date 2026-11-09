@@ -11,10 +11,26 @@ export function sourcePane(viewport, side, metadata, api, openLine) {
   let activeRow = null
   let hint = 1
   let failedRow = null
+  let rowHeight = 28
   const schedule = () => { if (!stopped && frame == null) frame = requestAnimationFrame(render) }
-  const virtualizer = new Virtualizer({ count: metadata.rows, getScrollElement: () => viewport, estimateSize: () => 28, observeElementRect, observeElementOffset, scrollToFn: elementScroll, overscan: 5, onChange: schedule })
+  const virtualizer = new Virtualizer({ count: metadata.rows, getScrollElement: () => viewport, estimateSize: () => rowHeight, observeElementRect, observeElementOffset, scrollToFn: elementScroll, overscan: 5, onChange: schedule })
   const stop = virtualizer._didMount()
   virtualizer._willUpdate()
+  const probe = document.createElement('span')
+  probe.style.cssText = 'position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;width:0;height:max(28px,calc(var(--code-font-size,12px) * 1.7))'
+  probe.setAttribute('aria-hidden', 'true')
+  viewport.append(probe)
+  const resize = new viewport.ownerDocument.defaultView.ResizeObserver(() => {
+    const height = probe.getBoundingClientRect().height
+    if (stopped || height < 1 || Math.abs(height - rowHeight) < 0.1) return
+    const position = viewport.scrollTop / rowHeight
+    rowHeight = height
+    virtualizer.measure()
+    space.style.height = `${virtualizer.getTotalSize()}px`
+    viewport.scrollTop = position * rowHeight
+    schedule()
+  })
+  resize.observe(probe)
 
   async function load(row) {
     const controller = new AbortController()
@@ -52,30 +68,30 @@ export function sourcePane(viewport, side, metadata, api, openLine) {
       row.style.transform = `translateY(${item.start}px)`
       row.dataset.row = item.index
       if (!entry && missing == null) missing = item.index
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = `compare-cell ${side}${entry && !cell ? ' empty' : ''}`
-      button.disabled = !cell
+      const element = document.createElement('div')
+      element.className = `compare-cell ${side}${entry && !cell ? ' empty' : ''}`
       for (const [name, text] of [
         ['number', cell?.line ?? ''],
         ['sign', cell && entry.kind !== 'equal' ? side === 'left' ? '−' : '+' : ''],
-        ['text', cell ? cell.text.replace(/\r?\n$/u, '') + (cell.truncated ? ' … [open complete line]' : '') : entry ? '' : 'Loading…'],
+        ['text', cell ? cell.text.replace(/\r?\n$/u, '') : entry ? '' : 'Loading…'],
         ['ending', cell?.ending || ''],
       ]) {
         const span = document.createElement('span')
         span.className = `compare-${name}`
         span.textContent = text
-        button.append(span)
+        element.append(span)
       }
-      if (cell) {
-        button.setAttribute('aria-label', `${side} line ${cell.line}. Open complete source line`)
-        button.addEventListener('click', () => {
-          const selection = document.getSelection()
-          if (selection && !selection.isCollapsed && selection.toString().trim()) return
-          openLine(item.index, side)
-        })
+      if (cell?.truncated) {
+        const open = document.createElement('button')
+        open.type = 'button'
+        open.className = 'compare-open-line'
+        open.textContent = '…'
+        open.setAttribute('aria-label', `Open complete ${side} source line ${cell.line}`)
+        open.title = 'Open complete source line'
+        open.addEventListener('click', () => openLine(item.index, side))
+        element.append(open)
       }
-      row.append(button)
+      row.append(element)
       fragment.append(row)
     }
     space.style.height = `${virtualizer.getTotalSize()}px`
@@ -147,6 +163,7 @@ export function sourcePane(viewport, side, metadata, api, openLine) {
       viewport.removeEventListener('wheel', retry)
       viewport.removeEventListener('keydown', retry)
       stop()
+      resize.disconnect(); probe.remove()
       space.replaceChildren()
     },
   }

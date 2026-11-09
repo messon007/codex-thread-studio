@@ -1,6 +1,6 @@
 # Shared jq query component
 
-For query syntax, current-table examples, dialect restrictions and error recovery, see [SQL and jq query help](query-help.md).
+For query syntax, current-table examples, dialect restrictions and error recovery, see [SQL and jq query help](../guides/tables-and-queries.md#sql-and-jq-reference).
 
 Rust owns the complete JSON/JSONL/NDJSON input, filter evaluation and immutable
 result cache. `web/jq-query.mjs` exports `mountJqQuery` and `readerJqProvider` for

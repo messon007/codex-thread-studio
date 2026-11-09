@@ -293,12 +293,18 @@ impl Default for MermaidPreferences {
 #[serde(rename_all = "camelCase")]
 struct MarkdownPreferences {
     mode: String,
+    #[serde(default)]
+    highlight_selection_matches: bool,
+    #[serde(default)]
+    automatic_code_size: bool,
 }
 
 impl Default for MarkdownPreferences {
     fn default() -> Self {
         Self {
             mode: "technical".to_string(),
+            highlight_selection_matches: false,
+            automatic_code_size: false,
         }
     }
 }
@@ -4064,12 +4070,12 @@ fn validate_preferences(preferences: &StudioPreferences) -> Result<(), String> {
                 .is_some_and(|family| family.trim().is_empty() || family.len() > 512)
             || typography
                 .content_font_size
-                .is_some_and(|size| !(11.0..=24.0).contains(&size))
+                .is_some_and(|size| !(11.0..=32.0).contains(&size))
             || typography
                 .content_font_weight
                 .is_some_and(|weight| ![400, 500, 600].contains(&weight))
             || !(11.0..=20.0).contains(&typography.workspace_font_size)
-            || !(11.0..=20.0).contains(&typography.code_font_size)
+            || !(11.0..=32.0).contains(&typography.code_font_size)
         {
             return Err("typography settings are invalid".to_string());
         }
@@ -6180,6 +6186,36 @@ mod tests {
             ..StudioPreferences::default()
         };
         assert!(validate_preferences(&preferences).is_err());
+    }
+
+    #[test]
+    fn reader_preferences_roundtrip_with_font_bounds_and_legacy_defaults() {
+        let legacy: StudioPreferences =
+            serde_json::from_value(json!({"markdown":{"mode":"reading"}})).unwrap();
+        assert!(!legacy.markdown.highlight_selection_matches);
+        assert!(!legacy.markdown.automatic_code_size);
+        let mut preferences = legacy;
+        preferences.markdown.highlight_selection_matches = true;
+        preferences.markdown.automatic_code_size = true;
+        preferences.typography = Some(
+            serde_json::from_value(json!({
+                "uiFontFamily":"sans-serif","uiFontSize":14,"uiFontWeight":400,
+                "contentFontSize":32,"codeFontFamily":"monospace","codeFontSize":32,
+                "codeFontWeight":400,"highContrast":false
+            }))
+            .unwrap(),
+        );
+        assert!(validate_preferences(&preferences).is_ok());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        save_preferences(&path, &preferences).unwrap();
+        let loaded = load_preferences(&path).unwrap();
+        assert_eq!(loaded.markdown, preferences.markdown);
+        assert_eq!(loaded.typography, preferences.typography);
+        for size in [10.0, 33.0, f64::NAN] {
+            preferences.typography.as_mut().unwrap().code_font_size = size;
+            assert!(validate_preferences(&preferences).is_err());
+        }
     }
 
     #[test]

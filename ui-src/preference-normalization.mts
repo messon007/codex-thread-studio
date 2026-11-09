@@ -43,10 +43,10 @@ export function normalizeTypography(input: unknown, typographyDefaults: Typograp
     uiFontSize: Math.min(20, Math.max(11, Number(value.uiFontSize) || typographyDefaults.uiFontSize)),
     uiFontWeight,
     contentFontFamily: String(value.contentFontFamily || uiFontFamily).trim().slice(0, 512) || uiFontFamily,
-    contentFontSize: Math.min(24, Math.max(11, Number(value.contentFontSize) || typographyDefaults.contentFontSize)),
+    contentFontSize: Math.min(32, Math.max(11, Number(value.contentFontSize) || typographyDefaults.contentFontSize)),
     contentFontWeight: weights.includes(Number(value.contentFontWeight)) ? Number(value.contentFontWeight) : uiFontWeight,
     codeFontFamily: String(value.codeFontFamily || typographyDefaults.codeFontFamily).trim().slice(0, 512) || typographyDefaults.codeFontFamily,
-    codeFontSize: Math.min(20, Math.max(11, Number(value.codeFontSize) || typographyDefaults.codeFontSize)),
+    codeFontSize: Math.min(32, Math.max(11, Number(value.codeFontSize) || typographyDefaults.codeFontSize)),
     codeFontWeight: weights.includes(Number(value.codeFontWeight)) ? Number(value.codeFontWeight) : typographyDefaults.codeFontWeight,
     highContrast: value.highContrast === undefined ? typographyDefaults.highContrast : Boolean(value.highContrast),
   }

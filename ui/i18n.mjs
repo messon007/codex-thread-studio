@@ -10,6 +10,23 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Text size": "文字字号",
+  "Auto": "自动",
+  "Code / source size": "代码／源码字号",
+  "Leave empty for automatic size": "留空使用自动字号",
+  "Go to source line": "跳转到源码行",
+  "Enter a source line from 1 to {total}.": "请输入 1 到 {total} 之间的源码行号。",
+  "Enter a valid source line.": "请输入有效的源码行号。",
+  "Original source file · {total} lines": "原始源文件 · {total} 行",
+  "The document or view changed. Open Go to line again.": "文档或视图已变化，请重新打开行号跳转。",
+  "Could not navigate to this source line.": "无法跳转到此源码行。",
+  "Highlight matching words": "高亮相同词语",
+  "Matching-word highlights are unavailable in this view.": "此视图不支持相同词语高亮。",
+  "Case-sensitive whole-word matches near the viewport; no full-document scan.": "匹配阅读位置附近的完整词语，区分大小写，不扫描全文。",
+  "Nearby text only. Not available in PDF, images or book readers.": "仅限附近文字，PDF、图片和书籍阅读器不适用。",
+  "Document reading": "文档阅读",
+  "Use automatic code size in documents": "文档内使用自动代码字号",
+  "Use the reader's automatic size for code and source; other technical output keeps the configured size.": "文档内的代码和源码使用自动字号，其他技术内容仍使用配置的字号。",
   'Turn actions': 'Turn 操作',
   'Enable supervision': '开启监工',
   'Supervise this turn': '监工此轮',

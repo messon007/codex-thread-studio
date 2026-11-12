@@ -25,6 +25,27 @@ use tempfile::TempDir;
 
 pub(crate) const SQL_BYTES: usize = 16 * 1024;
 pub(crate) const RESULT_BYTES: u64 = 32 * 1024 * 1024;
+const INPUT_TEXT_BYTES: usize = 128 * 1024;
+// A JSON control character can occupy six bytes. Reserve punctuation, the
+// physical line number and up to256 cells without increasing SQLite's limit.
+const INPUT_RECORD_BYTES: usize = 6 * INPUT_TEXT_BYTES + 4096;
+
+fn read_input_record(input: &mut impl BufRead, buffer: &mut Vec<u8>) -> io::Result<Option<crate::core::documents::TableRecord>> {
+    buffer.clear();
+    input.take(INPUT_RECORD_BYTES as u64 + 1).read_until(b'\n', buffer)?;
+    if buffer.is_empty() {
+        return Ok(None);
+    }
+    if buffer.len() > INPUT_RECORD_BYTES {
+        return Err(error("Complete table row exceeds the serialized SQL input budget"));
+    }
+    let record: crate::core::documents::TableRecord = serde_json::from_slice(buffer)?;
+    let bytes = record.cells.iter().try_fold(0usize, |total, cell| total.checked_add(cell.len()));
+    if bytes.is_none_or(|bytes| bytes > INPUT_TEXT_BYTES) {
+        return Err(error("Complete table row exceeds the SQL input text budget"));
+    }
+    Ok(Some(record))
+}
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
 }
@@ -144,7 +165,7 @@ pub struct Window {
 
 fn limited(connection: &Connection) -> io::Result<()> {
     for (limit, value) in [
-        (Limit::SQLITE_LIMIT_LENGTH, 128 * 1024),
+        (Limit::SQLITE_LIMIT_LENGTH, INPUT_TEXT_BYTES as i32),
         (Limit::SQLITE_LIMIT_SQL_LENGTH, SQL_BYTES as i32),
         (Limit::SQLITE_LIMIT_COLUMN, 512),
         (Limit::SQLITE_LIMIT_EXPR_DEPTH, 64),
@@ -202,14 +223,21 @@ fn build_input(
     let mut number = 0;
     if let Some(file) = &metadata.data_file {
         let file = File::open(parent.join(file))?;
-        for line in BufReader::new(file).lines() {
-            if number % 1000 == 0 && (cancelled.load(Ordering::Relaxed) || started.elapsed()>Duration::from_secs(15)) {return Err(error("SQL input preparation cancelled or exceeded 15 seconds"));}
-            let record: crate::core::documents::TableRecord = serde_json::from_str(&line?)?;
+        let mut input = BufReader::new(file);
+        let mut buffer = Vec::new();
+        loop {
+            if cancelled.load(Ordering::Relaxed) || started.elapsed()>Duration::from_secs(15) {return Err(error("SQL input preparation cancelled or exceeded 15 seconds"));}
+            let Some(record) = read_input_record(&mut input, &mut buffer)? else { break };
+            if cancelled.load(Ordering::Relaxed) || started.elapsed()>Duration::from_secs(15) {return Err(error("SQL input preparation cancelled or exceeded 15 seconds"));}
             if record.cells.len()!=schema.columns.len() { return Err(error("Indexed table column count changed")); }
             number+=1;
             let mut values=vec![rusqlite::types::Value::Integer(number as i64),rusqlite::types::Value::Integer(record.line as i64)];
             values.extend(record.cells.into_iter().map(rusqlite::types::Value::Text));
-            insert.execute(rusqlite::params_from_iter(values)).map_err(error)?;
+            insert.execute(rusqlite::params_from_iter(values)).map_err(|e| {
+                if e.sqlite_error_code() == Some(rusqlite::ErrorCode::TooBig) {
+                    error("Complete table row exceeds the SQLite record budget")
+                } else { error(e) }
+            })?;
         }
     } else if let Some(delimiter) = crate::core::csv_document::indexed_delimiter(index) {
         let mut csv = csv::ReaderBuilder::new()
@@ -296,6 +324,39 @@ fn build_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn complete_table_records_are_bounded_before_json_parsing() {
+        let mut input = io::Cursor::new(vec![b'x'; INPUT_RECORD_BYTES + 4096]);
+        let mut buffer = Vec::new();
+        let failure = read_input_record(&mut input, &mut buffer).err().unwrap();
+        assert!(failure.to_string().contains("serialized SQL input budget"));
+        assert_eq!(input.position(), INPUT_RECORD_BYTES as u64 + 1);
+        assert_eq!(buffer.len(), INPUT_RECORD_BYTES + 1);
+
+        let record = crate::core::documents::TableRecord {
+            line: 42, cells: vec!["x".repeat(INPUT_TEXT_BYTES + 1)],
+        };
+        let mut input = io::Cursor::new(serde_json::to_vec(&record).unwrap());
+        assert!(read_input_record(&mut input, &mut buffer).err().unwrap().to_string().contains("SQL input text budget"));
+    }
+
+    #[test]
+    fn complete_table_records_preserve_escaped_text_tail_and_next_record() {
+        let value = format!("{}汉😀TAIL", "\u{0001}".repeat(INPUT_TEXT_BYTES - 20));
+        let first = crate::core::documents::TableRecord { line: 3, cells: vec![value.clone()] };
+        let second = crate::core::documents::TableRecord { line: 4, cells: vec!["001".into(), "".into()] };
+        let mut source = serde_json::to_vec(&first).unwrap();
+        assert!(source.len() > INPUT_TEXT_BYTES);
+        source.push(b'\n');
+        source.extend(serde_json::to_vec(&second).unwrap());
+        let mut input = io::Cursor::new(source);
+        let mut buffer = Vec::new();
+        let first = read_input_record(&mut input, &mut buffer).unwrap().unwrap();
+        assert_eq!((first.line, first.cells), (3, vec![value]));
+        let second = read_input_record(&mut input, &mut buffer).unwrap().unwrap();
+        assert_eq!((second.line, second.cells), (4, vec!["001".into(), "".into()]));
+        assert!(read_input_record(&mut input, &mut buffer).unwrap().is_none());
+    }
     #[test]
     fn sqlite_diagnostics_use_engine_offsets_and_unicode_columns() {
         let db = Connection::open_in_memory().unwrap();

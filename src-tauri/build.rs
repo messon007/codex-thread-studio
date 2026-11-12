@@ -1,5 +1,9 @@
+#[path = "build/reader_compat.rs"]
+mod reader_compat;
+
 fn main() {
     verify_typescript_assets();
+    reader_compat::generate();
     tauri_build::build()
 }
 

@@ -58,9 +58,9 @@ export function sourceTarget(article, location, query = '', { matchCase = true }
     // A verbatim token can contain repeated occurrences on one original line.
     if (byte && target.dataset.sourceStart != null && new TextEncoder().encode(map.text).length === Number(target.dataset.sourceEnd) - Number(target.dataset.sourceStart)) {
       const prefix = new TextEncoder().encode(map.text).subarray(0, location.start - Number(target.dataset.sourceStart))
-      const exact = new TextDecoder().decode(prefix).length
+      const exact = new TextDecoder('utf-8', { ignoreBOM: true }).decode(prefix).length
       const suffix = new TextEncoder().encode(map.text).subarray(0, location.end - Number(target.dataset.sourceStart))
-      const exactEnd = new TextDecoder().decode(suffix).length
+      const exactEnd = new TextDecoder('utf-8', { ignoreBOM: true }).decode(suffix).length
       pattern.lastIndex = 0
       const found = pattern.exec(map.text.slice(exact, exactEnd))
       if (found?.index === 0 && found[0].length === exactEnd - exact) return rangeAt(map, exact, exactEnd) || target

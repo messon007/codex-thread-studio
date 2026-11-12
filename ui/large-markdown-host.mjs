@@ -3,6 +3,19 @@
 export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, options = {}) {
   let client, disposed = false, snapshot = { state: 'indexing' }, request, generation = 0
   let heartbeat = null, signature = '', initialized = false
+  let appliedPresentation = {}, presentationQueue = Promise.resolve()
+  const presentationDelta = (next, previous) => Object.fromEntries(Object.entries(next).flatMap(([key, value]) => {
+    if (value === undefined) return []
+    if (key === 'epub' && value && typeof value === 'object') {
+      const changed = presentationDelta(value, previous[key] || {})
+      return Object.keys(changed).length ? [[key, changed]] : []
+    }
+    return JSON.stringify(value) === JSON.stringify(previous[key]) ? [] : [[key, value]]
+  }))
+  const rememberPresentation = patch => {
+    const epub = patch.epub ? { ...appliedPresentation.epub, ...patch.epub } : appliedPresentation.epub
+    appliedPresentation = { ...appliedPresentation, ...patch, ...(epub ? { epub } : {}) }
+  }
   let heartbeatRequest = null, heartbeatTimeout = null, terminalError = null, heartbeatFailure = ''
   const lifetime = new AbortController()
   const translate = options.translate || (value => value)
@@ -59,7 +72,13 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     }})
     publish(await client.ready())
     if (disposed) { await client.dispose({force:true}); return }
-    publish(await client.request('settings',{...options.presentation,toolbar:'host',notes:'host',selectionMenu:'host'}))
+    // Equal typography must not reset the shared reader's layout measurements.
+    // Compare initialization with public state, then retain only acknowledged settings.
+    appliedPresentation = structuredClone(snapshot.presentation || {})
+    const initialPresentation = structuredClone({...options.presentation,toolbar:'host',notes:'host',selectionMenu:'host'})
+    const initialPatch = presentationDelta(initialPresentation, appliedPresentation)
+    if (Object.keys(initialPatch).length) publish(await client.request('settings',initialPatch))
+    rememberPresentation(initialPresentation)
     if (disposed) return
     const initialView = options.initialView
     if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
@@ -157,7 +176,24 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     async setView(view){publish(await command('setView',{view}))},
     async save(){publish(await command('save',{}));return true},
     async setOutline(open){publish(await command('contents',{open}))},
-    async settings(settings){publish(await command('settings',settings))},
+    settings(settings) {
+      const desired = structuredClone(settings)
+      // Serialize per iframe; a failed command must remain retryable. Comparing
+      // after the previous acknowledgement also coalesces repeated render updates.
+      const operation = presentationQueue.then(async () => {
+        await ready
+        if (disposed) throw new DOMException('Reader host disposed', 'AbortError')
+        const patch = presentationDelta(desired, appliedPresentation)
+        if (!Object.keys(patch).length) return
+        const documentId = snapshot.documentId
+        const next = await command('settings', patch, lifetime.signal)
+        if (disposed || snapshot.documentId !== documentId) throw new DOMException('Reader owner changed', 'AbortError')
+        rememberPresentation(patch)
+        publish(next)
+      })
+      presentationQueue = operation.catch(() => {})
+      return operation
+    },
     request(method, params, { signal } = {}) { return command(method, params, signal) },
     querySnapshot(selection, { signal } = {}) {
       return command('querySnapshot',{documentId:selection.documentId,revision:selection.revision,location:selection.location,quote:selection.quote,quoteTruncated:selection.quoteTruncated === true},signal)

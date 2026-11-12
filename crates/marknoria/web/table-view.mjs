@@ -153,7 +153,9 @@ export function mountTableView(article, options) {
             }
           : null,
       onSelection: (value) => options.onSelection?.(value),
-      translate: options.translate
+      translate: options.translate,
+      loadSource: options.loadSource,
+      revision: options.revision
     })
   } catch (error) {
     layout.dispose()
@@ -353,6 +355,8 @@ export function mountTableView(article, options) {
     }),
     selection: cells.selection,
     captureSelection: cells.captureSelection,
+    isOpen: cells.isOpen,
+    closeOverlay: cells.close,
     position: layout.position,
     anchor: anchorRow,
     capture: () => {
@@ -493,6 +497,10 @@ export async function readerTableProvider(client, owner, table, { signal } = {})
     revision: owner.revision,
     metadata,
     load: ({ row, columns, signal }) =>
-      client.request('tableWindow', { ...identity, row, columns }, { signal })
+      client.request('tableWindow', { ...identity, row, columns }, { signal }),
+    loadSource: ({ line, offset, previous, signal }) =>
+      client.request('sourceWindow', { documentId: owner.documentId, revision: owner.revision,
+        ...(line === undefined ? {} : { line }), ...(offset === undefined ? {} : { offset }),
+        ...(previous === undefined ? {} : { previous }) }, { signal })
   }
 }

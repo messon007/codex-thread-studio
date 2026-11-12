@@ -200,7 +200,10 @@ export async function tableCellsContract(moduleUrl) {
     check(rejected, 'Ordinary DOM silently accepted an oversized unpaged window')
     reader.dispose()
     check(translate.state().subscribers === 0, 'Cell disposal retained translation bindings')
+    await sourcePreviewContract(mountTableCells, translate, check)
+    check(translate.state().subscribers === 0, 'Source dialog disposal retained translation bindings')
     return {
+      boundedOriginalSource: true,
       assertions,
       unicode: true,
       completeCellCopy: true,
@@ -211,4 +214,111 @@ export async function tableCellsContract(moduleUrl) {
     reader?.dispose()
     root.remove()
   }
+}
+
+// The explicit source viewer never promotes a bounded preview to a full cell.
+async function sourcePreviewContract(mountTableCells, translate, check) {
+  const root = document.createElement('section'), controls = document.createElement('div'), content = document.createElement('div')
+  root.append(controls, content); document.body.append(root)
+  content.innerHTML = '<table><thead><tr><th data-cell-preview="true">Header prefix</th></tr></thead><tbody><tr><td data-cell-preview="true">Prefix 中文😀</td></tr></tbody></table>'
+  const cell = content.querySelector('td'), row = cell.parentElement, header = content.querySelector('thead tr')
+  const encode = value => new TextEncoder().encode(value), decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+  const chunks = ['\ufeff| 中文😀\r\n' + 'a'.repeat(60000), '中😀' + 'b'.repeat(60000), 'TAIL |\r\n']
+  const rowText = chunks.join(''), start = 100, end = start + encode(rowText).length
+  const boundaries = [start]
+  for (const chunk of chunks) boundaries.push(boundaries.at(-1) + encode(chunk).length)
+  for (const tr of [row, header]) Object.assign(tr.dataset, { sourceStart: String(start), sourceEnd: String(end), sourceLine: '4', sourceEndLine: '7' })
+  let reader, mode = 'normal', pending = [], calls = [], copied = [], selected = []
+  const response = ({ offset, previous }) => {
+    const index = boundaries.indexOf(offset) - (previous ? 1 : 0)
+    if (index < 0 || index >= chunks.length) throw Error('Unexpected source boundary')
+    const text = chunks[index] + (index === chunks.length - 1 ? 'ADJACENT ROW MUST NOT APPEAR\n' : '')
+    return { revision: 'revision-1', result: { start: boundaries[index], end: boundaries[index] + encode(text).length, line: 4 + index, endLine: 5 + index, text } }
+  }
+  const loadSource = params => {
+    calls.push(params)
+    if (mode === 'pending') return new Promise(resolve => pending.push({ params, resolve }))
+    const result = response(params)
+    if (mode === 'revision') result.revision = 'revision-2'
+    if (mode === 'oversized') {
+      result.result.text = 'x'.repeat(128 * 1024 + 1)
+      result.result.end = result.result.start + result.result.text.length
+    }
+    return Promise.resolve(result)
+  }
+  const wait = async predicate => {
+    const until = performance.now() + 3000
+    while (!predicate()) {
+      if (performance.now() > until) throw Error('Source preview contract timed out')
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  }
+  const modal = () => document.querySelector('.table-cell-dialog')
+  const open = () => { getSelection().removeAllRanges(); cell.click(); controls.querySelector('.table-cell-view').click() }
+  const close = () => modal().querySelector('.dialog-close').click()
+  try {
+    reader = mountTableCells(content, { controls, translate, loadSource, revision: 'revision-1', locate: () => ({ kind: 'cell', table: 0, row: 0, column: 0 }), copy: async text => copied.push(text), onSelection: value => selected.push(value) })
+    reader.update(); cell.click()
+    check(root.querySelector('.table-cell-preview-notice')?.textContent.includes('shortened preview'), 'Abbreviated cells lack an explicit omission notice')
+    check(reader.selection().quote === cell.textContent && reader.selection().quoteTruncated, 'Preview object was represented as a complete cell')
+    check(controls.querySelector('.table-cell-copy').textContent === 'Copy preview' && controls.querySelector('.table-cell-view').textContent === 'View original row', 'Preview actions claim full-cell content')
+    controls.querySelector('.table-cell-copy').click()
+    await wait(() => copied.length === 1)
+    check(copied[0] === 'Prefix 中文😀', 'Preview copy included omission UI or invented complete text')
+    open(); await wait(() => modal()?.querySelector('pre').textContent.length > 0)
+    check(modal().getAttribute('aria-label') === 'Original source row' && modal().querySelector('pre').textContent === chunks[0], 'Source page lost BOM/CRLF/Unicode or used the truncated cell')
+    check(modal().querySelector('.table-source-previous').disabled && !modal().querySelector('.table-source-next').disabled, 'Source paging boundaries are incorrect')
+    const range = document.createRange(); range.selectNodeContents(modal().querySelector('pre')); getSelection().addRange(range)
+    modal().querySelector('pre').dispatchEvent(new Event('pointerup', { bubbles: true }))
+    check(reader.selection() === null && await reader.captureSelection() === null && selected.at(-1) === null, 'Raw source syntax produced a false precise cell anchor')
+    const original = modal().querySelector('pre').textContent
+    translate.update({ locale: 'zh-CN', messages: readerMessagesForSource() })
+    check(modal().querySelector('h2').textContent === '原始行' && modal().querySelector('pre').textContent === original, 'Source translation changed literal bytes or failed to update labels')
+    translate.update({ locale: 'en', messages: {} })
+    modal().querySelector('.table-source-next').click()
+    await wait(() => modal().querySelector('pre').textContent === chunks[1])
+    check(calls.at(-1).offset === boundaries[1] && modal().querySelectorAll('pre').length === 1, 'Continuation appended unbounded DOM or lost its byte cursor')
+    modal().querySelector('.table-source-previous').click()
+    await wait(() => modal().querySelector('pre').textContent === chunks[0])
+    check(calls.at(-1).previous === true && calls.at(-1).offset === boundaries[1], 'Previous source page did not use the existing backward-window protocol')
+    modal().querySelector('.table-source-next').click(); await wait(() => modal().querySelector('pre').textContent === chunks[1])
+    modal().querySelector('.table-source-next').click(); await wait(() => modal().querySelector('pre').textContent === chunks[2])
+    check(modal().querySelector('.table-source-next').disabled && !modal().textContent.includes('ADJACENT ROW'), 'Last source page leaked an adjacent row or allowed endless Next')
+    modal().querySelector('.table-source-copy').click(); await wait(() => copied.length === 2)
+    check(copied[1] === chunks[2], 'Copy source page implied a whole cell or copied adjacent bytes')
+    close()
+    root.querySelector('.table-cell-preview-notice button').click()
+    await wait(() => modal()?.querySelector('pre').textContent === chunks[0])
+    check(modal().getAttribute('aria-label') === 'Original source row', 'Abbreviated header has no usable source access')
+    close()
+    mode = 'revision'; open()
+    await wait(() => !modal().querySelector('.table-source-retry').hidden)
+    check(modal().querySelector('pre').textContent === '' && modal().textContent.includes('revision'), 'Stale source response painted data from another revision')
+    mode = 'normal'; modal().querySelector('.table-source-retry').click()
+    await wait(() => modal().querySelector('pre').textContent === chunks[0]); close()
+    mode = 'oversized'; open(); await wait(() => !modal().querySelector('.table-source-retry').hidden)
+    check(modal().querySelector('pre').textContent === '', 'Oversized source provider response reached the DOM'); close()
+    mode = 'pending'; open(); const old = pending.at(-1); close()
+    check(old.params.signal.aborted, 'Closing the source dialog did not cancel its provider request')
+    open(); const fresh = pending.at(-1); fresh.resolve(response(fresh.params))
+    await wait(() => modal().querySelector('pre').textContent === chunks[0])
+    old.resolve({ revision: 'revision-1', result: { start, end: start + 5, line: 4, endLine: 4, text: 'STALE' } })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    check(modal().querySelector('pre').textContent === chunks[0], 'Closed source request overwrote a newly opened dialog')
+    close(); open(); const onUpdate = pending.at(-1); reader.update()
+    check(onUpdate.params.signal.aborted && !modal(), 'Table replacement retained a source request/dialog')
+    open(); const onDispose = pending.at(-1); reader.dispose()
+    check(onDispose.params.signal.aborted && !modal() && !root.querySelector('.table-cell-preview-notice'), 'Disposal retained source work or omission controls')
+    // A minimal third-party host must disclose that source access is unavailable.
+    reader = mountTableCells(content, { controls, locate: () => ({ kind: 'cell', table: 0, row: 0, column: 0 }) })
+    reader.update(); open()
+    check(modal().textContent.includes('Original source access is unavailable') && modal().querySelector('pre').textContent === '', 'Missing source provider masqueraded as a full-cell viewer')
+    close(); delete cell.dataset.cellPreview; delete content.querySelector('th').dataset.cellPreview; reader.update()
+    check(!root.querySelector('.table-cell-preview-notice'), 'Omission notice survived a complete table replacement')
+    // Validate the test's byte math independently of string UTF-16 offsets.
+    check(decoder.decode(encode(rowText)) === rowText && end > start + rowText.length, 'Unicode source fixture did not exercise UTF-8 byte boundaries')
+  } finally { reader?.dispose(); root.remove(); getSelection().removeAllRanges() }
+}
+function readerMessagesForSource() {
+  return { 'Original source row': '原始行', 'Copy source page': '复制当前源码页' }
 }

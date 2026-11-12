@@ -10,6 +10,24 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Copy preview": "复制预览",
+  "View original row": "查看原始行",
+  "View original row (Enter on a focused cell)": "查看原始行（聚焦单元格后按 Enter）",
+  "View original header row": "查看原始表头行",
+  "Some cells show a shortened preview. View the original row for omitted text.": "部分单元格显示缩略预览。查看原始行可读取省略的文字。",
+  "Original source row": "原始源码行",
+  "Original row syntax, not a complete cell value. Comments are unavailable in this source window; use Source view to select original text.": "这里显示原始行的源码语法，并非完整单元格值。此源码窗口不支持评论，请在源码视图中选择原文。",
+  "Previous source page": "上一页源码",
+  "Next source page": "下一页源码",
+  "Copy source page": "复制本页源码",
+  "Copied source page": "已复制本页源码",
+  "Loading source…": "正在加载源码…",
+  "Original row · bytes {start}–{end} · source page {from}–{to}": "原始行 · 字节 {start}–{end} · 本页源码 {from}–{to}",
+  "This source page shows part of the original row. Use Previous or Next for omitted text.": "本页仅显示原始行的一部分。可翻至上一页或下一页读取其余文字。",
+  "This source page contains the entire original row.": "本页包含完整的原始行。",
+  "Original row source coordinates are unavailable.": "无法获取原始行的源码位置。",
+  "Original source access is unavailable in this host.": "当前宿主不支持读取原始源码。",
+
   "Text size": "文字字号",
   "Auto": "自动",
   "Code / source size": "代码／源码字号",

@@ -119,7 +119,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     signal?.throwIfAborted()
     if (external) throw Error('This source renderer cannot restore byte ranges')
     if (![start,end].every(Number.isSafeInteger) || start < 0 || end < start || end > index.sourceBytes || end-start > 128*1024) throw Error('Source range out of bounds')
-    setVisible(true)
+    setVisible(true, { preserveSearch: options.search === true })
     if (!await load(`offset=${start}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source navigation was cancelled or failed') }
     if (page.end < end && !await load(`offset=${start}&end=${end}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source range navigation was cancelled or failed') }
     signal?.throwIfAborted()
@@ -128,10 +128,10 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     await code.select(from,to)
     signal?.throwIfAborted()
   }
-  function setVisible(open, { restore = true } = {}) {
+  function setVisible(open, { restore = true, preserveSearch = false } = {}) {
     // Read while CodeMirror still has layout; hidden panels report line one.
     const resumeLine = !open && visible ? currentLocation() : null
-    if (visible !== open) options.onVisibilityChange?.()
+    if (visible !== open) options.onVisibilityChange?.({ preserveSearch })
     if (open) pausePreview()
     visible = open
     panel.hidden = !open || Boolean(external)

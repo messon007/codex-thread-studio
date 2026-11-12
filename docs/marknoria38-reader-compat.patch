@@ -1,0 +1,37 @@
+--- a/web/reader.mjs
++++ b/web/reader.mjs
+@@ -150,11 +150,24 @@
+   const code = editor?.visible ? editor.code : source?.visible ? source.code : null
+   return { code, scroll: code?.scrollSnapshot(), preview: index && !formatRenderer && !editor?.visible && !source?.visible ? position() : null }
+ }
++// Temporary Studio compatibility layer for MarkNoria #38; remove on fixed SDK adoption.
++function remeasureMountedPages() {
++  if (!virtualizer) return
++  virtualizer.measure()
++  virtualizer.getVirtualItems()
++  for (const [index, node] of nodes) {
++    if (node.isConnected && node.dataset.ready === 'true' && !node.classList.contains('placeholder')) {
++      virtualizer.resizeItem(index, virtualizer.options.measureElement(node, undefined, virtualizer))
++    }
++  }
++  commitVirtualGeometry()
++}
++
+ async function refreshTypography(anchor) {
+   syncReadingTypography()
+   anchor.code?.remeasure(anchor.scroll)
+   if (anchor.preview) {
+-    virtualizer?.measure()
++    remeasureMountedPages()
+     await previewLine(anchor.preview)
+   }
+   highlights.refresh(); wordHighlights.refresh(); commentMarks?.refresh()
+@@ -697,7 +710,7 @@
+     const node = nodes.get(tables.itemForPage[anchor])
+     const row = item?.table == null ? null : tables.anchor(node)
+     update()
+-    virtualizer.measure()
++    remeasureMountedPages()
+     if (item) jump(anchor, null, row)
+   }
+   document.querySelector('#column-width').addEventListener('change', event => {

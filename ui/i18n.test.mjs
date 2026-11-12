@@ -217,7 +217,8 @@ test('public reader catalog carries Studio translations and overlap placeholders
     const messages = readerMessages(t)
     const translate = createTranslator({ locale: 'zh-CN', messages })
     assert.equal(translate('Comment {current} / {total}', { current: 2, total: 17 }), '批注 2 / 17')
-    for (const key of ['Match case', 'View full cell', 'View full cell (Enter on a focused cell)', 'View comment', 'View all comments', '{count} matches; case-sensitive', '{count} matches; case-insensitive']) {
+    assert.equal(translate('Original row · bytes {start}–{end} · source page {from}–{to}', {start:3,end:200000,from:3,to:131075}), '原始行 · 字节 3–200,000 · 本页源码 3–131,075')
+    for (const key of ['Copy preview', 'View original row', 'View original header row', 'Original source row', 'Next source page', 'Previous source page', 'Copy source page', 'Match case', 'View full cell', 'View full cell (Enter on a focused cell)', 'View comment', 'View all comments', '{count} matches; case-sensitive', '{count} matches; case-insensitive']) {
       assert.notEqual(messages[key], key)
     }
   } finally { setLanguage('en-US') }

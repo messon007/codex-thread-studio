@@ -39,6 +39,14 @@ repeated-header fragments. Pagination is performed in Rust against the existing
 indexed cache; it does not reparse the Markdown or send the entire table.
 Pages contain at most 50 rows / 512 selected body cells / 128 KiB of HTML.
 The original maximum row size also conservatively bounds each page's size.
+Oversized Markdown cells show an explicit shortened-preview notice. **Copy preview**
+copies only the displayed prefix; **View original row** opens the original row's
+syntax in bounded source pages (at most 128 KiB each), with Previous/Next and
+**Copy source page**. An abbreviated header has a separate **View original header
+row** action. These pages stop at the original row boundary, so adjacent rows
+are not copied. They are source syntax, not a reconstructed complete cell;
+comment actions are unavailable there. Use Source view to select original text.
+SQL still queries the complete indexed values, including omitted text.
 Previous/Next and a page-number input appear when multiple pages are needed.
 Search computes the exact body-row position so navigation opens the correct
 table page, including when a cache fragment straddles a display-page boundary.
@@ -67,6 +75,10 @@ bottom edge. The scrollbar is keyboard accessible and local to each comparison
 pane. These interactions are shared by browser and WebView desktop readers.
 Tables nested in lists/quotes retain the existing ordinary-fragment behavior;
 pagination and column selection currently apply only to top-level tables.
+If a nested table exceeds the rich-preview limits, the document still opens:
+Preview explicitly shows the complete original Markdown as paged source. Source
+and Edit retain original bytes/lines; table queries are unavailable in this
+source-only fallback. It never presents a shortened table as complete input.
 Every body row and repeated header carries its original UTF-8 byte range and
 one-based source line range. Repeated headers point back to the real header,
 not to an invented line at each fragment. Hovering a table row shows its source

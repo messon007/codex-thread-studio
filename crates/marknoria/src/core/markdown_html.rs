@@ -299,6 +299,128 @@ pub(super) fn cell_fragment(source: &str) -> Option<String> {
         .filter(|sink| !sink.table_structure)
         .map(|sink| sink.output)
 }
+
+/// Complete cell text, following the existing cached-HTML projection without a
+/// DOM. Fragment boundaries are not text-node boundaries: raw tags and decoded
+/// Markdown text can belong to the same node.
+#[derive(Default)]
+pub(super) struct CellText {
+    output: String,
+    text: String,
+    pre_newline: bool,
+    literal_cr: bool,
+}
+impl CellText {
+    fn flush(&mut self) {
+        if self.text.is_empty() {
+            return;
+        }
+        // The HTML tree builder removes the first LF after <pre>; the existing
+        // native projection separately removes one formatting LF after a break.
+        let text = if self.pre_newline {
+            self.text.strip_prefix('\n').unwrap_or(&self.text)
+        } else {
+            &self.text
+        };
+        let text = if self.output.ends_with('\n') {
+            text.strip_prefix("\r\n")
+                .or_else(|| text.strip_prefix('\n'))
+                .unwrap_or(text)
+        } else {
+            text
+        };
+        self.output.push_str(text);
+        self.text.clear();
+        self.pre_newline = false;
+    }
+    /// A real HTML/formatting boundary, not merely another parser event.
+    pub(super) fn boundary(&mut self) {
+        self.flush();
+        self.pre_newline = false;
+        self.literal_cr = false;
+    }
+    /// Parser-decoded literal text. Never parse angle brackets or entities here.
+    pub(super) fn push_text(&mut self, text: &str) {
+        // HTML serialization preserves raw CR; HTML input preprocessing turns
+        // CR/CRLF into LF, including a CRLF split across adjacent Text events.
+        for ch in text.chars() {
+            if ch == '\n' && self.literal_cr {
+                self.literal_cr = false;
+                continue;
+            }
+            self.literal_cr = ch == '\r';
+            self.text.push(if self.literal_cr { '\n' } else { ch });
+        }
+    }
+    pub(super) fn push_code(&mut self, text: &str) {
+        self.boundary();
+        self.push_text(text);
+        self.boundary();
+    }
+    /// Markdown HardBreak is serialized as <br /> followed by a formatting LF.
+    pub(super) fn push_break(&mut self) {
+        self.boundary();
+        self.output.push('\n');
+        self.push_text("\n");
+    }
+    /// Already sanitized/projected inline HTML only; this is not a sanitizer.
+    pub(super) fn push_html(&mut self, source: &str) {
+        struct Sink<'a>(&'a mut CellText);
+        impl TokenSink for Sink<'_> {
+            type Handle = ();
+            fn process_token(&mut self, token: Token, _line: u64) -> TokenSinkResult<()> {
+                match token {
+                    Token::CharacterTokens(text) => {
+                        // Entity CRs have already passed input preprocessing and
+                        // must not be normalized a second time.
+                        self.0.text.push_str(&text);
+                        self.0.literal_cr = false;
+                    }
+                    Token::ParseError(_) | Token::EOFToken => {}
+                    token => {
+                        self.0.boundary();
+                        if let Token::TagToken(tag) = token {
+                            match tag.name.as_ref() {
+                                "br" => self.0.output.push('\n'),
+                                "pre" if tag.kind == TagKind::StartTag => self.0.pre_newline = true,
+                                "input" if tag.kind == TagKind::StartTag => {
+                                    self.0.output.push_str(
+                                        if tag
+                                            .attrs
+                                            .iter()
+                                            .any(|a| a.name.local.as_ref() == "checked")
+                                        {
+                                            "[x] "
+                                        } else {
+                                            "[ ] "
+                                        },
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                TokenSinkResult::Continue
+            }
+        }
+        let mut tokenizer = Tokenizer::new(Sink(self), Default::default());
+        let mut input = BufferQueue::new();
+        input.push_back(StrTendril::from_slice(source));
+        let _ = tokenizer.feed(&mut input);
+        tokenizer.end();
+    }
+    pub(super) fn finish(mut self) -> String {
+        self.flush();
+        self.output
+    }
+}
+#[cfg(test)]
+fn plain_fragment(source: &str) -> String {
+    let mut text = CellText::default();
+    text.push_html(source);
+    text.finish()
+}
 pub(super) fn scopes(source: &str) -> Vec<(Scope, bool)> {
     tokenize(source).map(|sink| sink.scopes).unwrap_or_default()
 }
@@ -341,6 +463,121 @@ pub(super) fn web_fragment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn complete_cell_plain_text_decodes_entities_and_owned_breaks() {
+        assert_eq!(
+            plain_fragment("<strong>汉字 &amp; 😀</strong><br />\n<code>x &lt; y</code>"),
+            "汉字 & 😀\nx < y"
+        );
+        assert_eq!(plain_fragment("<br>&#10;&amp;tail"), "\n&tail");
+        assert_eq!(
+            plain_fragment("<input checked disabled><input disabled>"),
+            "[x] [ ] "
+        );
+        assert_eq!(
+            plain_fragment("<a href=\"#\" data-link-reference=\"4\">visible</a><!-- hidden -->"),
+            "visible"
+        );
+        assert_eq!(
+            plain_fragment("<span>[image: <em>alt</em>]</span>"),
+            "[image: alt]"
+        );
+        assert_eq!(plain_fragment("<pre>\nbody</pre>"), "body");
+        assert_eq!(
+            plain_fragment(&"<em>v</em> ".repeat(6000)),
+            "v ".repeat(6000)
+        );
+    }
+    #[test]
+    fn cell_text_keeps_dom_text_nodes_across_parser_fragments() {
+        let mut text = CellText::default();
+        text.push_html("<br>");
+        text.push_text("\n");
+        text.push_text("\ntail");
+        assert_eq!(text.finish(), "\n\ntail");
+
+        let mut text = CellText::default();
+        text.push_html("<pre>");
+        text.push_text("\nbody");
+        text.push_html("</pre>");
+        text.push_code("<b>&amp;</b>");
+        assert_eq!(text.finish(), "body<b>&amp;</b>");
+
+        let mut text = CellText::default();
+        text.push_break();
+        text.push_text("\ntail");
+        assert_eq!(text.finish(), "\n\ntail", "only the writer's LF is removed");
+
+        let mut text = CellText::default();
+        text.push_text("one\r");
+        text.push_text("\ntwo\rthree");
+        assert_eq!(text.finish(), "one\ntwo\nthree");
+    }
+
+    #[test]
+    fn complete_cell_text_matches_existing_cached_html_projection() {
+        use crate::core::{self, blocks};
+        use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+        // Independent oracle: the existing HTML tree + native Span projection,
+        // not the new full-value sidecar or the bounded fallback renderer.
+        for body in [
+            "<br>&#10;tail",
+            "<br>&#10;&#10;tail",
+            "<pre>&#10;tail</pre>",
+            "<br><pre>&#10;&#10;tail</pre>",
+            "<br>*&#10;*&#10;tail",
+            "<br>`<b>&amp;</b>`",
+            "a &amp; 汉😀 <strong>b</strong><br>tail",
+            "<br>&#10;<!-- boundary -->&#10;tail",
+        ] {
+            let source = format!("| Header |\n| --- |\n| {body} |\n");
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("input.md");
+            let cache = root.path().join("cache");
+            std::fs::create_dir(&cache).unwrap();
+            std::fs::write(&path, &source).unwrap();
+            let index = core::build_index(&path, &cache).unwrap();
+            let expected = blocks::read_blocks(&cache, &index, 0)
+                .unwrap()
+                .into_iter()
+                .find_map(|block| match block {
+                    blocks::Block::Table { rows, .. } => Some(
+                        rows[0][0]
+                            .iter()
+                            .map(|span| span.text.as_str())
+                            .collect::<String>(),
+                    ),
+                    _ => None,
+                })
+                .unwrap();
+            let mut text = CellText::default();
+            let mut cell = 0;
+            let mut inside = false;
+            for event in Parser::new_ext(
+                &source,
+                Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH,
+            ) {
+                let event = core::inert_cell_event(event);
+                match event {
+                    Event::Start(Tag::TableCell) => {
+                        cell += 1;
+                        inside = cell == 2;
+                    }
+                    Event::End(TagEnd::TableCell) => inside = false,
+                    event if inside => match event {
+                        Event::Text(value) => text.push_text(&value),
+                        Event::Code(value) => text.push_code(&value),
+                        Event::Html(value) | Event::InlineHtml(value) => text.push_html(&value),
+                        Event::SoftBreak | Event::HardBreak => text.push_break(),
+                        Event::Start(_) | Event::End(_) => text.boundary(),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            assert_eq!(text.finish(), expected, "{body}");
+        }
+    }
     #[test]
     fn inline_boundaries_are_not_closed_by_fragment_parsing() {
         assert_eq!(fragment("<strong>"), Some("<strong>".into()));

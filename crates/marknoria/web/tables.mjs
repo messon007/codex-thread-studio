@@ -44,6 +44,13 @@ export function tableController(index, api, changed, options = {}) {
       metadata: index.tables[id], table: id, state: stateFor(id), revision: index.revision,
       viewport: document.querySelector('#viewport'), workspace: document.querySelector('#workspace'), shell: document.querySelector('.reader-shell'),
       load: ({ row, columns, signal }) => api(`/api/table?id=${id}&row=${row}&columns=${columns.join(',')}`, signal),
+      loadSource: ({ line, offset, previous, signal }) => {
+        const params = new URLSearchParams()
+        if (line !== undefined) params.set('line', line)
+        if (offset !== undefined) params.set('offset', offset)
+        if (previous !== undefined) params.set('previous', previous)
+        return api(`/api/source?${params}`, signal)
+      },
       readWidths: () => widths.get(id), saveWidths: value => saveWidths(id, value), onChange: changed,
       onSelection: value => { if (value) selectedTable = controller; else if (selectedTable === controller) selectedTable = null; options.onSelection?.(value) },
       translate: options.translate,
@@ -55,6 +62,7 @@ export function tableController(index, api, changed, options = {}) {
     active.set(article, controller)
   }
 
+  const overlayTable = () => [...active.values()].find(controller => controller.isOpen())
   return {
     items, itemForPage, target, columnCount, mount,
     async go(table, row, column, navigation) {
@@ -65,10 +73,10 @@ export function tableController(index, api, changed, options = {}) {
       if (!navigated) throw new DOMException('Table navigation superseded', 'AbortError')
       selectedTable = entry[1]
     },
-    hasOverlay() { return Boolean(chartDialog?.isOpen() || queryDialog?.isOpen()) },
-    closeOverlays() { chartDialog?.dispose(); queryDialog?.dispose() },
-    async captureSelection(options = {}, signal) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.captureSelection(options, signal); return selectedTable?.captureSelection(options, signal) || null },
-    selection(options = {}) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.selection(options); return selectedTable?.selection(options) || null },
+    hasOverlay() { return Boolean(chartDialog?.isOpen() || queryDialog?.isOpen() || overlayTable()) },
+    closeOverlays() { chartDialog?.dispose(); queryDialog?.dispose(); for (const controller of active.values()) controller.closeOverlay() },
+    async captureSelection(options = {}, signal) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.captureSelection(options, signal); return (overlayTable() || selectedTable)?.captureSelection(options, signal) || null },
+    selection(options = {}) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.selection(options); return (overlayTable() || selectedTable)?.selection(options) || null },
     anchor(article) { return active.get(article)?.anchor() ?? 0 },
     capture(article) { active.get(article)?.capture() },
     refresh(article) { active.get(article)?.refresh() },

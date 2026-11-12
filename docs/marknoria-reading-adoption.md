@@ -1,5 +1,8 @@
 # Reading controls delivery (2026-11-09)
 
+Historical checkpoint; the current fixed delivery and typography-layout limitation
+are recorded in [the November 12 adoption](marknoria-large-tables-adoption.md).
+
 Studio adopts MarkNoria `64765f26d9c56d16b7970e632cde0b56d34e66fd` from
 Studio `a73296618252138b8b3a91a86ba8e012e050d873`. Version remains 0.4.0;
 this is an Unreleased integration, not another release.

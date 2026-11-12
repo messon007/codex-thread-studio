@@ -158,6 +158,9 @@ pub fn table_row_for_line(
 }
 
 /// Native equivalent of the shared selected-column table projection.
+/// This single-table API does not return surrounding generated Details notices.
+/// Hosts needing omission guidance should retain the notices from `read_blocks`
+/// and provide bounded `source::read_source` navigation for original row text.
 pub fn read_table_blocks(
     directory: &Path,
     index: &crate::core::Index,
@@ -209,6 +212,36 @@ mod tests {
         std::fs::write(&path, source).unwrap();
         let index = build_index(&path, directory.path()).unwrap();
         read_blocks(directory.path(), &index, 0).unwrap()
+    }
+
+    #[test]
+    fn shortened_table_guidance_is_separate_from_literal_cells() {
+        let root = TempDir::new().unwrap();
+        let path = root.path().join("large.md");
+        std::fs::write(&path, format!("| Key | Value |\n| --- | --- |\n| original-key | {}TAIL |\n", "x".repeat(140_000))).unwrap();
+        let index = build_index(&path, root.path()).unwrap();
+        let check = |blocks: &[Block]| {
+            let notice = blocks.iter().position(|block| matches!(block, Block::Details { label, text }
+                if label == "Shortened table preview" && text.contains("source line 3") && text.contains("Source view"))).unwrap();
+            let table = blocks.iter().position(|block| matches!(block, Block::Table { .. })).unwrap();
+            assert!(notice < table);
+            if let Block::Table { header, rows, row_lines, .. } = &blocks[table] {
+                assert_eq!(row_lines, &[3]);
+                assert_eq!(rows[0][0].iter().map(|span| span.text.as_str()).collect::<String>(), "original-key");
+                for cell in header.iter().chain(rows.iter().flatten()) {
+                    let text = cell.iter().map(|span| span.text.as_str()).collect::<String>();
+                    assert!(!text.contains("Shortened table preview") && !text.contains("Source view"));
+                }
+            }
+        };
+        check(&read_blocks(root.path(), &index, 0).unwrap());
+        // The omitted column is not mounted, but the row-level marker retains
+        // the warning for hosts projecting the selected-column HTML to blocks.
+        let window = crate::core::read_table(root.path(), &index, 0, 0, &[0]).unwrap();
+        assert!(!window.html.contains("data-cell-preview"));
+        assert!(window.html.contains("data-row-preview"));
+        check(&projection::project(&window.html, &index, 1).unwrap());
+        assert!(!page_blocks("| Key |\n| --- |\n| ordinary |\n").iter().any(|block| matches!(block, Block::Details { .. })));
     }
 
     #[test]

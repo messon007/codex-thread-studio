@@ -14,6 +14,7 @@ pub mod source;
 pub mod table_query;
 mod markdown;
 mod markdown_html;
+mod markdown_tables;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -342,6 +343,7 @@ struct Writer<'a> {
     text_spans: std::collections::BTreeMap<usize, Range<usize>>,
     tables: Vec<Table>,
     web_references: bool,
+    table_data_bytes: u64,
 }
 
 impl Writer<'_> {
@@ -355,7 +357,9 @@ impl Writer<'_> {
         row_spans: &[Range<usize>],
         header_span: Option<Range<usize>>,
     ) -> io::Result<()> {
+        let nested_table = columns == 0 && events.iter().any(|event| matches!(event, Event::Start(Tag::Table(_))));
         if events.len() > MAX_EVENTS {
+            if nested_table { return Err(markdown_tables::nested_budget()); }
             return Err(invalid(
                 "An indivisible block exceeds the prototype event budget",
             ));
@@ -410,7 +414,8 @@ impl Writer<'_> {
                 vec![Event::Html(format!("<span data-source-start=\"{}\" data-source-end=\"{}\" data-source-line=\"{}\" data-source-end-line=\"{}\">", range.start, range.end, range.line, range.end_line).into()), event, Event::Html("</span>".into())]
             } else { vec![event] }
         });
-        let safe_events = markdown::autolinks(safe_events.collect())?.into_iter();
+        let safe_events = markdown::autolinks(safe_events.collect())
+            .map_err(|error| if nested_table { markdown_tables::nested_budget() } else { error })?.into_iter();
         if columns > 0 {
             push_markdown_html(&mut rendered, safe_events);
             let anchors = header_span.into_iter().chain(row_spans.iter().cloned());
@@ -526,6 +531,12 @@ impl Writer<'_> {
                 rendered = annotate_rows(&rendered, anchors, &self.starts)?;
             }
         }
+        if nested_table && rendered.len() > MAX_HTML { return Err(markdown_tables::nested_budget()); }
+        self.commit_page(rendered, span, rows, columns, table)
+    }
+
+    fn commit_page(&mut self, rendered: String, span: Range<usize>, rows: usize,
+        columns: usize, table: Option<usize>) -> io::Result<()> {
         if rendered.len() > MAX_HTML {
             return Err(invalid(
                 "An indivisible block exceeds 128 KiB of HTML; this prototype cannot display it safely",
@@ -547,7 +558,7 @@ impl Writer<'_> {
                 );
             }
         }
-        if self.offset + rendered.len() as u64 > MAX_CACHE || self.pages.len() >= MAX_PAGES {
+        if self.offset + self.table_data_bytes + rendered.len() as u64 > MAX_CACHE || self.pages.len() >= MAX_PAGES {
             return Err(invalid("Document exceeds the prototype cache/index budget"));
         }
         let line = self.starts.partition_point(|start| *start <= span.start);
@@ -568,23 +579,45 @@ impl Writer<'_> {
     }
 }
 
-fn table_page<'a>(
-    alignments: &[Alignment],
-    header: &[Event<'a>],
-    rows: &mut Vec<Event<'a>>,
-) -> Vec<Event<'a>> {
-    let mut events = vec![Event::Start(Tag::Table(alignments.to_vec()))];
-    events.extend(header.iter().cloned());
-    events.append(rows);
-    events.push(Event::End(TagEnd::Table));
-    events
-}
-
 pub fn build_index(path: &Path, directory: &Path) -> io::Result<Index> {
     build_index_with_profile(path, directory, ProjectionProfile::Indexed)
 }
 
 pub fn build_index_with_profile(path: &Path, directory: &Path, profile: ProjectionProfile) -> io::Result<Index> {
+    if document_format::DocumentFormat::for_path(path) != Some(document_format::DocumentFormat::Markdown) {
+        return build_index_inner(path, directory, profile);
+    }
+    // A failed rich projection never leaves a partial cache mixed with the
+    // source-only fallback. Each attempt owns exactly its fresh private tree;
+    // caller documents or unrelated files in `directory` are never removed.
+    let started = Instant::now();
+    fs::create_dir_all(directory)?;
+    let attempt = tempfile::Builder::new().prefix(".markdown-attempt-").tempdir_in(directory)?;
+    let (index, attempt) = match build_index_inner(path, attempt.path(), profile) {
+        Ok(index) => (index, attempt),
+        Err(error) if error.get_ref().is_some_and(|error| error.is::<markdown_tables::NestedBudget>()) => {
+            let fallback = tempfile::Builder::new().prefix(".markdown-source-").tempdir_in(directory)?;
+            for name in ["source.md", "lines.bin"] { fs::rename(attempt.path().join(name), fallback.path().join(name))?; }
+            attempt.close()?;
+            let source = fs::read_to_string(fallback.path().join("source.md"))?;
+            let starts = std::iter::once(0).chain(source.match_indices('\n').map(|(at, _)| at + 1)).collect::<Vec<_>>();
+            fs::write(fallback.path().join("preview-note.txt"),
+                "A nested Markdown table exceeds the bounded rich-preview budget. Preview shows the complete original Markdown source instead. Source and Edit retain original bytes and line numbers; rendered table queries are unavailable in this source-only preview.")?;
+            let index = documents::text(path, fallback.path(), &source, &starts, document_format::DocumentFormat::Markdown, started)?;
+            (index, fallback)
+        }
+        Err(error) => return Err(error),
+    };
+    let mut files = fs::read_dir(attempt.path())?.collect::<io::Result<Vec<_>>>()?;
+    files.sort_by_key(|entry| entry.file_name() == "index.json");
+    for entry in files {
+        if !entry.file_type()?.is_file() { return Err(invalid("Unexpected Markdown cache entry")); }
+        fs::rename(entry.path(), directory.join(entry.file_name()))?;
+    }
+    Ok(index)
+}
+
+fn build_index_inner(path: &Path, directory: &Path, profile: ProjectionProfile) -> io::Result<Index> {
     let started = Instant::now();
     let format = document_format::DocumentFormat::for_path(path).ok_or_else(||invalid("Unsupported binary file type"))?;
     if profile == ProjectionProfile::Web && format == document_format::DocumentFormat::Pdf {
@@ -633,6 +666,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
         text_spans: std::collections::BTreeMap::new(),
         tables: Vec::new(),
         web_references: profile == ProjectionProfile::Web,
+        table_data_bytes: 0,
     };
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
@@ -702,122 +736,7 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
                 )?;
                 pending_weight = 0;
             }
-            let alignments = alignments.clone();
-            if alignments.len() > 256 {
-                return Err(invalid(
-                    "Tables above 256 columns are not supported by this prototype",
-                ));
-            }
-            let mut header = Vec::new();
-            let mut header_weight = 0usize;
-            for item in events.by_ref() {
-                let (event, header_span) = item?;
-                header_weight = header_weight.saturating_add(references::event_weight(&event));
-                if (if profile == ProjectionProfile::Web { header_weight } else { header_span.end.saturating_sub(span.start) }) > MAX_HTML {
-                    return Err(invalid("Table header exceeds the prototype byte budget"));
-                }
-                let finished = matches!(event, Event::End(TagEnd::TableHead));
-                header.push(event);
-                if header.len() > MAX_EVENTS {
-                    return Err(invalid("Table header exceeds the prototype budget"));
-                }
-                if finished {
-                    break;
-                }
-            }
-            let row_limit = (512 / alignments.len().max(1)).clamp(1, 16);
-            let mut labels = Vec::new();
-            for event in &header {
-                match event {
-                    Event::Start(Tag::TableCell) => labels.push(String::new()),
-                    Event::Text(text) | Event::Code(text) => {
-                        if let Some(label) = labels.last_mut() {
-                            let remaining = 160usize.saturating_sub(label.chars().count());
-                            label.extend(text.chars().take(remaining));
-                        }
-                    }
-                    Event::InlineHtml(value) if inline_break(value) => {
-                        if let Some(label) = labels.last_mut() {
-                            if label.chars().count() < 160 {
-                                label.push(' ');
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            labels.resize(alignments.len(), String::new());
-            writer.tables.push(Table {
-                label: None, data_file: None,
-                first_page: writer.pages.len(),
-                end_page: writer.pages.len(),
-                rows: 0,
-                columns: labels,
-                max_row_bytes: 0,
-                header_bytes: 0,
-            });
-            let mut rows = Vec::new();
-            let header_span = span.start
-                ..source[span.start..]
-                    .find('\n')
-                    .map_or(span.end, |length| span.start + length);
-            let mut row_spans = Vec::new();
-            let mut row_count = 0;
-            let mut row_weight = 0usize;
-            let mut chunk_span = span.start..span.end;
-            let mut emitted = false;
-            for item in events.by_ref() {
-                let (event, row_span) = item?;
-                if matches!(event, Event::End(TagEnd::Table)) {
-                    if row_count > 0 || !emitted {
-                        writer.page(
-                            table_page(&alignments, &header, &mut rows),
-                            chunk_span.clone(),
-                            row_count,
-                            alignments.len(),
-                            Some(table_id),
-                            &row_spans,
-                            Some(header_span.clone()),
-                        )?;
-                    }
-                    break;
-                }
-                if matches!(event, Event::Start(Tag::TableRow)) && row_count == 0 {
-                    chunk_span.start = if emitted { row_span.start } else { span.start };
-                }
-                if matches!(event, Event::Start(Tag::TableRow)) {
-                    row_spans.push(row_span.clone());
-                }
-                let end_row = matches!(event, Event::End(TagEnd::TableRow));
-                chunk_span.end = row_span.end;
-                row_weight = row_weight.saturating_add(references::event_weight(&event));
-                rows.push(event);
-                if rows.len() + header.len() > MAX_EVENTS
-                    || (if profile == ProjectionProfile::Web { row_weight.saturating_add(header_weight) } else { chunk_span.end.saturating_sub(chunk_span.start) }) > MAX_HTML
-                {
-                    return Err(invalid("A table row exceeds the prototype event budget"));
-                }
-                if end_row {
-                    row_count += 1;
-                    if row_count >= row_limit
-                        || chunk_span.end.saturating_sub(chunk_span.start) >= PAGE_BYTES
-                    {
-                        writer.page(
-                            table_page(&alignments, &header, &mut rows),
-                            chunk_span.clone(),
-                            row_count,
-                            alignments.len(),
-                            Some(table_id),
-                            &row_spans,
-                            Some(header_span.clone()),
-                        )?;
-                        row_count = 0;
-                        row_weight = 0;
-                        row_spans.clear();
-                        emitted = true;
-                    }
-                }
-            }
+            markdown_tables::build(&mut writer, &mut events, alignments, span, directory, table_id)?;
             table_id += 1;
             continue;
         }
@@ -891,8 +810,17 @@ pub fn build_index_with_profile(path: &Path, directory: &Path, profile: Projecti
             in_code = false;
         }
         if pending.len() > MAX_EVENTS
-            || (if profile == ProjectionProfile::Web { pending_weight } else { pending_span.end.saturating_sub(pending_span.start) }) > MAX_HTML
+            || (profile == ProjectionProfile::Web && pending_weight > MAX_HTML)
+            // A Start event spans its entire container, including content the
+            // streaming consumer has not seen yet. Check raw progress on its
+            // text/end events so nested table failures are classified safely.
+            || (profile == ProjectionProfile::Indexed
+                && !matches!(pending.last(), Some(Event::Start(_)))
+                && pending_span.end.saturating_sub(pending_span.start) > MAX_HTML)
         {
+            if pending.iter().any(|event| matches!(event, Event::Start(Tag::Table(_)))) {
+                return Err(markdown_tables::nested_budget());
+            }
             return Err(invalid("An indivisible block exceeds the prototype budget"));
         }
         if active_diagram && depth == 0 {
@@ -1191,6 +1119,13 @@ pub(crate) fn row_anchor(row: &str) -> io::Result<SourceRange> {
 }
 
 pub fn audit_tables(directory: &Path, index: &Index) -> io::Result<TableAudit> {
+    if index.format == document_format::DocumentFormat::Markdown && index.text_pages {
+        return markdown_tables::audit_source(directory, index);
+    }
+    if index.format == document_format::DocumentFormat::Markdown && !index.tables.is_empty()
+        && index.tables.iter().all(|table| table.data_file.as_deref().is_some_and(|name| name.starts_with("markdown-table-"))) {
+        return markdown_tables::audit(directory, index);
+    }
     if index.format!=document_format::DocumentFormat::Markdown && index.format.delimiter().is_none(){return documents::audit(directory,index);}
     let source = fs::read_to_string(directory.join("source.md"))?;
     let options =

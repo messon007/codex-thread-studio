@@ -22,6 +22,13 @@ config = json.loads(sys.argv[2])
 def receive(_manager, message):
     global result
     value = json.loads(message.get_js_value().to_string())
+    if 'resize' in value:
+        width = value['resize']
+        if not isinstance(width, int) or not 900 <= width <= 2400:
+            raise RuntimeError('Invalid test window size')
+        window.resize(width, 1100)
+        GLib.timeout_add(250, lambda: (view.run_javascript('window.__shellResize=' + str(width), None, None, None), False)[1])
+        return
     if 'snapshot' in value:
         name = value['snapshot']
         if not re.fullmatch('[a-z-]{1,40}', name):
@@ -52,6 +59,45 @@ def loaded(_view, event):
         const {createReaderClient}=await import('/reader-assets/host-client.mjs');
         const {setLanguage,t}=await import('/i18n.mjs');
         const results=[];
+        if(cfg.layout){
+          const samples=[];let frame,doc,client,pages;
+          const open=async()=>{
+            await __studioDeveloper.openArtifact({root:cfg.project,path:cfg.cases[0][1]});
+            await until(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled,'layout reader initialized');
+            frame=document.querySelector('.artifact-large-markdown-frame');doc=frame.contentDocument;
+            client=createReaderClient(frame);await client.ready();pages=(await client.request('state')).document.projectionPages;
+            if(pages<50)throw Error('Layout fixture must exceed the mounted window');
+          };
+          const sample=async name=>{
+            let geometry,stable=0;const end=performance.now()+5000;
+            while(performance.now()<end){
+              await new Promise(resolve=>setTimeout(resolve,100));
+              const nodes=[...doc.querySelectorAll('#space > article[data-ready="true"]')].map(node=>{const rect=node.getBoundingClientRect();return {index:Number(node.dataset.index),top:rect.top,bottom:rect.bottom}}).sort((a,b)=>a.index-b.index);
+              geometry={mounted:doc.querySelectorAll('#space > article').length,dom:doc.querySelectorAll('#space *').length,gaps:nodes.slice(1).flatMap((node,i)=>node.index===nodes[i].index+1?[node.top-nodes[i].bottom]:[])};
+              if(geometry.gaps.length&&geometry.gaps.every(gap=>Math.abs(gap)<1)){if(++stable===3)break}else stable=0;
+            }
+            if(stable!==3||geometry.mounted>30||geometry.mounted>=pages/2||geometry.dom>=15000)throw Error(name+': invalid geometry '+JSON.stringify(geometry));
+            samples.push({name,...geometry});
+          };
+          const scroll=async name=>{for(const offset of [0,400,1200,2400,5000,0]){doc.querySelector('#viewport').scrollTop=offset;await sample(name+'-'+offset)}};
+          const settings=async(theme,locale,typography)=>{
+            __studioDeveloper.click('#settings-button');
+            document.querySelector('#theme-select').value=theme;document.querySelector('#language-select').value=locale;
+            if(typography){document.querySelector('#content-font-size').value=typography.content;document.querySelector('#code-font-size').value=typography.code;document.querySelector('#reader-automatic-code-size').checked=typography.auto}
+            document.querySelector('#settings-form').requestSubmit();await until(()=>!document.querySelector('#settings-dialog').open,'layout settings close');
+            for(let attempt=0;attempt<200;attempt++){const state=await client.request('state');if(state.presentation.theme===theme&&state.presentation.locale===locale&&(!typography||state.presentation.contentFontSize===typography.content&&state.presentation.codeFontSize===(typography.auto?null:typography.code)))return;await pause()}
+            throw Error('Layout presentation update did not complete');
+          };
+          await open();await scroll('initial');
+          await settings('light','en-US');await scroll('theme');await settings('light','zh-CN');await scroll('locale');
+          await settings('light','zh-CN',{content:15,code:14,auto:true});await scroll('code-auto');
+          await settings('light','zh-CN',{content:15,code:14,auto:false});await scroll('code-only');
+          await settings('light','zh-CN',{content:18,code:24,auto:false});await scroll('actual-font');
+          for(const width of [1200,2100,1800]){send({resize:width});await until(()=>window.__shellResize===width,'native window resize');await scroll('resize-'+width)}
+          client.disconnect();document.querySelector('#close-artifact').click();await until(()=>!document.querySelector('.artifact-large-markdown-frame'),'layout close');
+          await open();await scroll('reopen');client.disconnect();document.querySelector('#close-artifact').click();
+          send({ok:true,fullApp:true,nativeWayland:true,layout:true,samples,projectionPages:pages,browserVersion:'WebKit '+VERSION});return;
+        }
         for(const [format,path] of cfg.cases){
           const started=performance.now();
           __studioDeveloper.openArtifact({root:cfg.project,path});
@@ -144,6 +190,7 @@ def loaded(_view, event):
 manager.connect('script-message-received::shellResult', receive)
 view.connect('load-changed', loaded)
 window.show_all()
+window.present()
 view.load_uri(sys.argv[1])
 GLib.timeout_add_seconds(160, lambda: (Gtk.main_quit(), False)[1])
 Gtk.main()

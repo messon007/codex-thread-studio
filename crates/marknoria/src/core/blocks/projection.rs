@@ -292,17 +292,41 @@ fn table(node: &NodeRef, output: &mut Vec<Block>) {
     let mut header = vec![];
     let mut rows = vec![];
     let mut lines = vec![];
+    let mut shortened = false;
+    let mut shortened_lines: Option<(usize, usize)> = None;
     for row in node.descendants().filter(|node| name(node) == "tr") {
         let cells: Vec<_> = row
             .children()
             .filter(|node| matches!(name(node), "th" | "td"))
             .collect();
+        if attribute(&row, "data-row-preview").as_deref() == Some("true")
+            || cells.iter().any(|cell| attribute(cell, "data-cell-preview").as_deref() == Some("true"))
+        {
+            shortened = true;
+            if let Some(first) = number(&row, "data-source-line").filter(|line| *line > 0) {
+                let last = number(&row, "data-source-end-line").unwrap_or(first).max(first);
+                shortened_lines = Some(shortened_lines.map_or((first, last), |(a, b)| (a.min(first), b.max(last))));
+            }
+        }
         if cells.first().is_some_and(|cell| name(cell) == "th") {
             header = cells.iter().map(runs).collect();
         } else {
             lines.push(number(&row, "data-source-line").unwrap_or(0));
             rows.push(cells.iter().map(runs).collect::<Vec<_>>());
         }
+    }
+    if shortened {
+        let location = shortened_lines.map_or_else(String::new, |(first, last)| {
+            if first == last { format!(" at source line {first}") }
+            else { format!(" at source lines {first}–{last}") }
+        });
+        // Generated UI guidance is a separate block, never a fabricated cell
+        // value or a source/selection anchor. Native frontends already render
+        // Details; no new wire variant or platform dependency is required.
+        output.push(Block::Details {
+            label: "Shortened table preview".into(),
+            text: format!("Some table cells{location} show only a prefix. Use Source view to read the complete original row syntax. Copying a preview cell copies only its displayed text."),
+        });
     }
     let count = rows.len();
     let names: Vec<String> = header

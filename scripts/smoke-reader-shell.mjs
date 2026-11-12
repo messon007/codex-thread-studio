@@ -14,6 +14,8 @@ await mkdir(project)
 const excludedSyntax=['cobol','d','hlsl','fsharp','ocaml','idris','odin','c-sharp','perl','ruby','elixir','vb','php']
 const syntaxText=language=>`profile_${language} 中文 😀 <script>globalThis.syntaxExecuted=true</script> &`
 const file=join(project,'document.md');await writeFile(file,'# Full shell sentinel\n\nA selectable paragraph.\n\n## Table\n\n| Name | Value |\n|---|---|\n| alpha | 42 |\n\n'+excludedSyntax.map(language=>'```'+language+'\n'+syntaxText(language)+'\n```\n').join('\n')+'\n```rust\nfn retained_rust() -> bool { true }\n```\n')
+const largeTable=join(project,'oversized.md'),largeRow='| large | '+('中文😀&'.repeat(27000))+' OriginalTailNeedle |\r\n'
+await writeFile(largeTable,'# Bounded table\r\n\r\n| Key | Value |\r\n| --- | --- |\r\n'+largeRow)
 const csv=join(project,'wide.csv');await writeFile(csv,['ID,Count,Description,'+Array.from({length:20},(_,i)=>'Field'+i).join(','),...Array.from({length:123},(_,i)=>[i,i+1,'Long cell '+('safe content '.repeat(8)),...Array.from({length:20},(_,n)=>n+i)].join(','))].join('\n'))
 const pdf=join(project,'document.pdf');await writeFile(pdf,pdfFixture())
 const epub=JSON.parse(execFileSync('/usr/bin/python3',[join(root,'crates/marknoria/tests/browser/epub_fixtures.py'),project],{encoding:'utf8'})).book
@@ -34,7 +36,7 @@ try{
  await page.waitForFunction(()=>Boolean(window.__studioDeveloper))
  const actual=await page.request.get(new URL('/document-workspace-controller.mjs',url).href)
  if(await actual.text()!==await readFile(join(root,'ui/document-workspace-controller.mjs'),'utf8'))throw Error('Stale Studio binary frontend')
- const cases=[['markdown',file],['table',csv],['pdf',pdf],['epub',epub]].filter(([format])=>!process.argv.includes('--markdown-only')||format==='markdown'), results=[]
+ const cases=[['markdown',file],['large-table',largeTable],['table',csv],['pdf',pdf],['epub',epub]].filter(([format])=>!process.argv.includes('--markdown-only')||format==='markdown'), results=[]
  await writeFile(join(dir,'corpus.json'),JSON.stringify({project,cases}))
  const settings=async(theme,locale='en-US',reading=null)=>{
   await page.evaluate(()=>__studioDeveloper.click('#settings-button'))
@@ -139,6 +141,29 @@ try{
    if(!await page.locator('#artifact-search-input').isVisible())throw Error('Rail search shortcut unavailable')
    await page.keyboard.press('Escape')
   }
+  if(format==='large-table'){
+   await frame.locator('td[data-cell-preview="true"]').first().click()
+   if(await frame.locator('.table-cell-copy').first().textContent()!=='Copy preview')throw Error('Abbreviated value claimed complete copy')
+   await frame.locator('.table-cell-view').first().click()
+   const dialog=frame.getByRole('dialog',{name:'Original source row',exact:true}),parts=[]
+   await dialog.waitFor()
+   for(let index=0;index<8;index++){
+    await dialog.locator('pre:not([aria-busy])').waitFor()
+    const part=await dialog.locator('pre').textContent()
+    if(Buffer.byteLength(part)>128*1024||await dialog.locator('pre').count()!==1)throw Error('Original source window is unbounded')
+    parts.push(part)
+    if(await dialog.locator('.table-source-next').isDisabled())break
+    await dialog.locator('.table-source-next').click()
+   }
+   if(parts.length<2||parts.join('')!==largeRow)throw Error('Original row lost bytes across bounded windows')
+   if(await command('selection')!==null)throw Error('Raw source window published a rendered-cell comment anchor')
+   await page.evaluate(async()=>{const {setLanguage}=await import('/i18n.mjs');setLanguage('zh-CN')})
+   await frame.getByRole('dialog',{name:'原始源码行',exact:true}).waitFor()
+   await frame.getByRole('button',{name:'复制本页源码',exact:true}).waitFor()
+   await page.evaluate(async()=>{const {setLanguage}=await import('/i18n.mjs');setLanguage('en-US')})
+   await dialog.getByRole('button',{name:'Close',exact:true}).click()
+   if(await readFile(largeTable,'utf8')!=='# Bounded table\r\n\r\n| Key | Value |\r\n| --- | --- |\r\n'+largeRow)throw Error('Original fixture changed')
+  }
   if(format==='table'){
    if((await command('tableInfo',{table:0})).rows!==123)throw Error('Malformed synthetic table')
    await frame.locator('.table-query-open').first().click()
@@ -163,8 +188,8 @@ try{
  }
  if(errors.length)throw Error(JSON.stringify(errors))
  let webkit
- if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases,output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
+ if(process.argv.includes('--webkit'))webkit=JSON.parse((await promisify(execFile)('/usr/bin/python3',[join(root,'scripts/smoke-reader-shell-webkit.py'),url,JSON.stringify({project,cases:cases.filter(([format])=>format!=='large-table'),output:dir,profileInteractions:process.argv.includes('--profile-interactions')})],{timeout:175000,maxBuffer:1000000})).stdout)
  if(process.argv.includes('--webkit')&&!webkit?.ok)throw Error('Native WebKit shell did not pass')
- console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,excludedSyntaxPlaintext:excludedSyntax,retainedRustHighlight:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,readingControls:true,sourceGoToLine:true,results,webkit,artifacts:dir}))
+ console.log(JSON.stringify({ok:true,fullApp:true,noAppReplacement:true,excludedSyntaxPlaintext:excludedSyntax,retainedRustHighlight:true,liveLocale:true,hostMenuOwnership:true,railSearch:true,readingControls:true,sourceGoToLine:true,boundedOriginalRow:true,results,webkit,artifacts:dir}))
 
 }catch(error){console.error('Artifacts: '+dir);throw error}finally{await browser?.close();if(server.exitCode==null){server.kill('SIGTERM');await Promise.race([once(server,'exit'),pause(3000)]);if(server.exitCode==null)server.kill('SIGKILL')}}

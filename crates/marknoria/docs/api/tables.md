@@ -16,6 +16,40 @@ resets their ownership and disposal removes both. A custom right-click menu is
 deliberately avoided so native Copy/link menus and host/Notes selection policy
 retain ownership. The same actions serve Markdown/CSV and SQL result tables.
 
+## Large Markdown values
+
+Markdown indexing streams complete rows into a private input store separately
+from their bounded HTML projection. Pages flush at row boundaries before the
+serialized HTML or expanded event budget is exceeded. Excessive inline markup
+may render as plain cell text; an oversized value has an explicit abbreviated
+preview. Neither path changes the immutable source, original row/column IDs or
+source byte/line anchors. SQL and charts use complete input, never those prefixes.
+SQL retains its existing 128-KiB record/text limit and reports a budget error when
+a complete row does not fit; an aggregate does not silently bypass that limit.
+
+Nested tables inside lists/quotes retain their ordinary rich projection when it
+fits. If that container exceeds a rich-preview budget, Markdown opens as a
+complete, bounded source-only preview with an explicit notice. Its source bytes,
+physical lines, Source/Edit behavior and grants are retained. It exposes no
+rendered table inventory or SQL/chart inputs, rather than inventing cell IDs or
+querying a shortened projection. Failed rich attempts are discarded before the
+source-only cache is built; only the indexer's own temporary files are removed.
+
+Abbreviated cells use **Copy preview** and **View original row**, rather than
+claiming a complete value. The latter reads at most 128 KiB of original syntax
+at a time through the existing revision-bound source-window API. Its controls
+replace the displayed window; they do not append an unbounded DOM. A raw-source
+window does not publish rendered-cell selection/comment offsets. Use ordinary
+Source mode for exact original-text selections. Search still scans all original
+bytes and reveals a match in an abbreviated row in Source mode.
+
+Custom table providers may supply `loadSource({offset,previous,signal})`,
+returning the existing `{revision,result:{start,end,line,endLine,text,...}}`
+source response. `readerTableProvider` supplies this adapter automatically via
+the public `sourceWindow` command; no additional bridge command or file grant
+is required. A provider without source access shows an explicit unavailable
+message instead of displaying the abbreviated value as complete.
+
 ## Complete-input plot API
 
 ```rust,ignore

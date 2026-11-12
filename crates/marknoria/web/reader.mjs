@@ -270,7 +270,20 @@ const search = searchController({
     searchJump = owned
     const abort = () => { if (searchJump === owned) cancelSearchNavigation() }
     signal.addEventListener('abort', abort, { once: true })
-    try { await pending; signal.throwIfAborted() }
+    try {
+      const completed = await pending; signal.throwIfAborted()
+      if (owned === null || completed !== owned || navigation !== owned)
+        throw new DOMException('Search navigation superseded', 'AbortError')
+      // Search scans the immutable source, including omitted preview tails.
+      // Resolve these matches in Source rather than claiming that the visible
+      // cell prefix contains the selected occurrence.
+      const article = nodes.get(tables.itemForPage[match.page])
+      const sourceRow = article?.querySelector(`tr[data-source-line="${match.line}"]`)
+      if (sourceRow?.matches('[data-row-preview="true"]') || sourceRow?.querySelector('[data-cell-preview="true"]')) {
+        highlights.clear()
+        await source.goRange(match.start, match.end, { signal, search: true })
+      }
+    }
     finally { signal.removeEventListener('abort', abort); if (searchJump === owned) searchJump = null }
   },
   paint(query, active, { matchCase }) {
@@ -638,7 +651,7 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate, onVisibilityChange: () => { search.suspend(); clearTextSelection(); highlights.refresh(); wordHighlights.clear() }, onReady: () => { syncWordHighlights(); commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
+  }, { buttons: !editable, translate, onVisibilityChange: ({ preserveSearch = false } = {}) => { if (!preserveSearch) search.suspend(); clearTextSelection(); highlights.refresh(); wordHighlights.clear() }, onReady: () => { syncWordHighlights(); commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
       virtualizer?.measureElement(article)
@@ -1032,6 +1045,7 @@ function renderSearchResults() {
     renderedSearchWindow = response.matches; list.replaceChildren()
     for (const match of response.matches) {
       const item = document.createElement('li'), button = document.createElement('button')
+      button.type = 'button'
       button.textContent = formatRenderer ? `${match.label || `Page ${match.page}`}: ${match.excerpt}` : `${match.line}: ${match.snippet}`
       button.dataset.matchIndex = match.index
       button.addEventListener('click', () => activateSearchMatch(match.index))
@@ -1039,7 +1053,10 @@ function renderSearchResults() {
     }
     if (response.query && !response.loading && !response.total) { const empty = document.createElement('li'); labels.set(empty, 'No matches'); list.append(empty) }
   }
-  for (const button of list.querySelectorAll('button')) button.setAttribute('aria-current', String(Number(button.dataset.matchIndex) === response.current))
+  for (const button of list.querySelectorAll('button')) {
+    button.disabled = response.loading
+    button.setAttribute('aria-current', String(Number(button.dataset.matchIndex) === response.current))
+  }
 }
 async function activateSearchMatch(index) {
   const state = search.state()

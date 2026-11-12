@@ -11,7 +11,12 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Changed
 
-- Update the fixed MarkNoria Web SDK to `64765f2`, including stable typography/layout updates while retaining Studio-owned comments, selection actions and reader lease recovery.
+- Update the fixed MarkNoria Web SDK to `0a60f69`, including bounded large Markdown table indexing and original-row access while retaining Studio-owned comments, selection actions and reader lease recovery.
+
+### Fixed
+
+- Open Markdown reports with oversized or densely formatted table rows using bounded previews and paged original-source access, without truncating complete query input.
+- Send only changed reader presentation settings so theme and language updates do not unnecessarily reset measured page heights. A narrowly pinned temporary reader fix restores mounted-page measurements after actual typography/layout changes, tracked upstream in MarkNoria #38.
 
 ## [0.4.0] - 2026-11-09
 

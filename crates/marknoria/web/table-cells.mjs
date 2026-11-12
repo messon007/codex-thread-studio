@@ -8,7 +8,7 @@ import { uiLabels } from './translation.mjs'
 
 export function mountTableCells(
   content,
-  { controls, locate, onSelection = () => {}, translate = (value) => value, copy = copyText, commentOwner = content } = {}
+  { controls, locate, loadSource, revision, onSelection = () => {}, translate = (value) => value, copy = copyText, commentOwner = content } = {}
 ) {
   if (!(content instanceof HTMLElement) || typeof locate !== 'function')
     throw Error('Table cells require a content root and coordinate provider')
@@ -24,6 +24,7 @@ export function mountTableCells(
     dialogLifetime = null,
     dialogLabels = null,
     stopped = false,
+    sourceDialog = false,
     timer
   const tabIndices = new Map()
   let values = new WeakMap()
@@ -39,6 +40,21 @@ export function mountTableCells(
   labels.set(viewButton, 'View full cell (Enter on a focused cell)', {}, 'title')
   viewButton.disabled = true
   controls?.append(button, viewButton)
+  const notice = document.createElement('div')
+  notice.className = 'table-cell-preview-notice'
+  notice.setAttribute('role', 'note')
+  const noticeText = document.createElement('span'), headerSource = document.createElement('button')
+  labels.set(noticeText, 'Some cells show a shortened preview. View the original row for omitted text.')
+  headerSource.type = 'button'
+  labels.set(headerSource, 'View original header row')
+  notice.append(noticeText, headerSource)
+  headerSource.addEventListener('click', () => {
+    const header = content.querySelector('thead th[data-cell-preview="true"]')
+    if (header) viewCell(header, true)
+  }, options)
+  const preview = cell => cell?.dataset.cellPreview === 'true'
+  const copyLabel = () => preview(selected) ? 'Copy preview' : 'Copy cell'
+  const viewLabel = () => preview(selected) ? 'View original row' : 'View full cell'
   const close = (restoreFocus = false) => {
     dialogLabels?.dispose()
     dialogLabels = null
@@ -46,6 +62,7 @@ export function mountTableCells(
     dialogLifetime = null
     dialog?.remove()
     dialog = null
+    sourceDialog = false
     if (restoreFocus && selected?.isConnected) selected.focus({ preventScroll: true })
   }
   const cellFor = (target) => {
@@ -57,7 +74,7 @@ export function mountTableCells(
     return null
   }
   function selection({ textOnly = false } = {}) {
-    if (!selected?.isConnected || !content.contains(selected)) return null
+    if (sourceDialog || !selected?.isConnected || !content.contains(selected)) return null
     const location = locate(selected)
     if (!location) return null
     let text = values.get(selected) || '',
@@ -91,7 +108,7 @@ export function mountTableCells(
     return {
       location,
       quote,
-      quoteTruncated: quote.length < text.length,
+      quoteTruncated: quote.length < text.length || (selectionType === 'object' && preview(selected)),
       precision: 'exact',
       viewportRect: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
     }
@@ -103,6 +120,9 @@ export function mountTableCells(
     selected.classList.add('table-cell-selected')
     button.disabled = false
     viewButton.disabled = false
+    labels.set(button, copyLabel())
+    labels.set(viewButton, viewLabel())
+    labels.set(viewButton, preview(selected) ? 'View original row (Enter on a focused cell)' : 'View full cell (Enter on a focused cell)', {}, 'title')
     onSelection(selection())
   }
   async function copySelected() {
@@ -113,7 +133,7 @@ export function mountTableCells(
       labels.set(button, 'Copied')
       clearTimeout(timer)
       timer = setTimeout(() => {
-        labels.set(button, 'Copy cell')
+        labels.set(button, copyLabel())
       }, 2000)
     } catch (error) {
       if (!stopped) {
@@ -122,15 +142,16 @@ export function mountTableCells(
       }
     }
   }
-  function viewCell(cell) {
-    select(cell)
+  function viewCell(cell, headerOnly = false) {
+    if (!headerOnly) select(cell)
     close()
+    sourceDialog = preview(cell)
     dialogLifetime = new AbortController()
     const dialogOptions = { signal: dialogLifetime.signal }
     dialogLabels = uiLabels(translate, dialogOptions)
     dialog = document.createElement('dialog')
     dialog.className = 'table-cell-dialog'
-    dialogLabels.set(dialog, 'Cell content', {}, 'aria-label')
+    dialogLabels.set(dialog, sourceDialog ? 'Original source row' : 'Cell content', {}, 'aria-label')
     const presentation = getComputedStyle(content)
     for (const name of [
       'panel',
@@ -148,7 +169,7 @@ export function mountTableCells(
     }
     const header = document.createElement('header'),
       title = document.createElement('h2')
-    dialogLabels.set(title, 'Cell content')
+    dialogLabels.set(title, sourceDialog ? 'Original source row' : 'Cell content')
     const closeButton = dialogClose(() => close(true))
     dialogLabels.set(closeButton, 'Close', {}, 'aria-label')
     dialogLabels.set(closeButton, 'Close', {}, 'title')
@@ -156,16 +177,17 @@ export function mountTableCells(
     const address = document.createElement('p'),
       location = locate(cell)
     address.className = 'table-cell-address'
-    dialogLabels.set(address, 'Row {row} · Column {column}', {
+    if (!sourceDialog) dialogLabels.set(address, 'Row {row} · Column {column}', {
       row: location.row + 1,
       column: location.column + 1
     })
     const full = document.createElement('pre')
     full.className = 'table-cell-full'
     full.tabIndex = 0
-    full.textContent = values.get(cell) || ''
-    registerCommentScope(full, location, commentOwner)
+    full.textContent = sourceDialog ? '' : values.get(cell) || ''
+    if (!sourceDialog) registerCommentScope(full, location, commentOwner)
     dialog.append(header, address, full)
+    if (sourceDialog) mountSourceRow(cell, dialog, full, address, dialogLifetime, dialogLabels)
     document.body.append(dialog)
     dialog.addEventListener('cancel', () => close(true), dialogOptions)
     // Update the owning table before Notes handles the same bubbling input.
@@ -175,6 +197,82 @@ export function mountTableCells(
     content.ownerDocument.getSelection()?.removeAllRanges()
     dialog.showModal()
     onSelection(null)
+  }
+  function mountSourceRow(cell, ownedDialog, full, address, lifetime, ui) {
+    const row = cell.closest('tr'), start = Number(row?.dataset.sourceStart), end = Number(row?.dataset.sourceEnd)
+    const help = document.createElement('p'), status = document.createElement('p'), footer = document.createElement('footer')
+    help.className = status.className = 'table-cell-address'
+    status.setAttribute('role', 'status')
+    ui.set(help, 'Original row syntax, not a complete cell value. Comments are unavailable in this source window; use Source view to select original text.')
+    const previous = document.createElement('button'), next = document.createElement('button'), copyPage = document.createElement('button'), retry = document.createElement('button')
+    for (const control of [previous, next, copyPage, retry]) control.type = 'button'
+    previous.className = 'table-source-previous'; next.className = 'table-source-next'; copyPage.className = 'table-source-copy'; retry.className = 'table-source-retry'
+    ui.set(previous, 'Previous source page'); ui.set(next, 'Next source page'); ui.set(copyPage, 'Copy source page'); ui.set(retry, 'Retry')
+    footer.append(previous, next, copyPage, retry)
+    ownedDialog.insertBefore(help, full)
+    ownedDialog.append(status, footer)
+    let page = null, request = null, generation = 0, loading = false, query = null
+    const live = () => !stopped && !lifetime.signal.aborted && dialog === ownedDialog
+    const update = () => {
+      previous.disabled = loading || !page || page.start <= start
+      next.disabled = loading || !page || page.end >= end
+      copyPage.disabled = loading || !page
+    }
+    const valid = Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && end > start
+    retry.hidden = true
+    update()
+    async function load(params) {
+      request?.abort()
+      const current = request = new AbortController(), abort = () => current.abort(), ticket = ++generation
+      lifetime.signal.addEventListener('abort', abort, { once: true })
+      query = params; loading = true; retry.hidden = true; update()
+      full.setAttribute('aria-busy', 'true')
+      ui.set(status, 'Loading source…')
+      try {
+        const response = await loadSource({ ...params, signal: current.signal })
+        if (!live() || current.signal.aborted || ticket !== generation) return
+        if (revision !== undefined && response?.revision !== revision) throw Error('Source revision changed; reopen the owning document')
+        const value = response?.result
+        if (!value || typeof value.text !== 'string' || value.text.length > 128 * 1024 ||
+            ![value.start, value.end, value.line, value.endLine].every(Number.isSafeInteger) ||
+            value.start < 0 || value.end <= value.start || value.end - value.start > 128 * 1024 || value.line < 1 || value.endLine < value.line)
+          throw Error('Invalid bounded source window')
+        const bytes = new TextEncoder().encode(value.text)
+        if (bytes.length !== value.end - value.start ||
+            (params.previous ? value.end !== params.offset || value.start >= params.offset : value.start !== params.offset || value.end <= params.offset))
+          throw Error('Source window did not advance from the requested byte boundary')
+        const from = Math.max(start, value.start), to = Math.min(end, value.end)
+        if (to <= from) throw Error('Source window does not intersect the original row')
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(from - value.start, to - value.start))
+        page = { start: from, end: to, text }
+        content.ownerDocument.getSelection()?.removeAllRanges()
+        full.textContent = text
+        full.scrollTop = full.scrollLeft = 0
+        ui.set(address, 'Original row · bytes {start}–{end} · source page {from}–{to}', { start, end, from, to })
+        ui.set(status, from > start || to < end ? 'This source page shows part of the original row. Use Previous or Next for omitted text.' : 'This source page contains the entire original row.')
+        onSelection(null)
+      } catch (error) {
+        if (live() && !current.signal.aborted && ticket === generation) {
+          ui.clear(status); status.textContent = String(error.message || error).slice(0, 800)
+          retry.hidden = false
+        }
+      } finally {
+        lifetime.signal.removeEventListener('abort', abort)
+        if (live() && ticket === generation) { loading = false; full.removeAttribute('aria-busy'); update() }
+      }
+    }
+    previous.addEventListener('click', () => { if (!previous.disabled) void load({ offset: page.start, previous: true }) }, { signal: lifetime.signal })
+    next.addEventListener('click', () => { if (!next.disabled) void load({ offset: page.end }) }, { signal: lifetime.signal })
+    retry.addEventListener('click', () => { if (!loading && query) void load(query) }, { signal: lifetime.signal })
+    copyPage.addEventListener('click', async () => {
+      if (copyPage.disabled) return
+      const text = page.text
+      try { await copy(text); if (live()) ui.set(status, 'Copied source page') }
+      catch (error) { if (live()) { ui.clear(status); status.textContent = String(error.message || error).slice(0, 800) } }
+    }, { signal: lifetime.signal })
+    if (!valid) ui.set(status, 'Original row source coordinates are unavailable.')
+    else if (typeof loadSource !== 'function') ui.set(status, 'Original source access is unavailable in this host.')
+    else void load({ offset: start })
   }
   document.addEventListener(
     'pointerdown',
@@ -259,6 +357,8 @@ export function mountTableCells(
   }, options)
   return {
     selection,
+    isOpen: () => Boolean(dialog?.open),
+    close: () => close(),
     async captureSelection(options = {}, signal) {
       const value = selection(options)
       if (!value) return null
@@ -323,6 +423,14 @@ export function mountTableCells(
         cell.tabIndex = 0
         registerCommentScope(cell, locate(cell), commentOwner)
       }
+      const omitted = content.querySelector('[data-cell-preview="true"]')
+      if (omitted) {
+        content.before(notice)
+        headerSource.hidden = !content.querySelector('thead th[data-cell-preview="true"]')
+      } else notice.remove()
+      labels.set(button, 'Copy cell')
+      labels.set(viewButton, 'View full cell')
+      labels.set(viewButton, 'View full cell (Enter on a focused cell)', {}, 'title')
       onSelection(null)
     },
     dispose() {
@@ -335,6 +443,7 @@ export function mountTableCells(
       selected?.classList.remove('table-cell-selected')
       button.remove()
       viewButton.remove()
+      notice.remove()
       selected = null
       for (const [cell, original] of tabIndices)
         original == null

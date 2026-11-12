@@ -394,3 +394,67 @@ test('a late failed heartbeat cannot report into a replacement document',async t
  reject(Object.assign(Error('gone'),{status:410}));await settleHeartbeat()
  assert.equal(errors.length,0);assert.equal(states.length,count)
 })
+
+function presentationFixture(initial, presentation = initial) {
+  const requests = [], states = []
+  let gate = null
+  const state = {state:'ready',documentId:'presentation-doc',revision:'a'.repeat(64),view:'preview',presentation:{...initial},capabilities:{}}
+  const host = createLargeMarkdownHost({src:'http://localhost/reader/#token'}, value=>states.push(value),()=>{}, {
+    presentation,
+    createClient:()=>({
+      ready:async()=>state,
+      async request(method, params, {signal}={}) {
+        requests.push({method,params,signal})
+        if(gate){const pending=gate;gate=null;await pending}
+        state.presentation={...state.presentation,...params}
+        return {...state,presentation:{...state.presentation}}
+      }, dispose:async()=>{}, disconnect(){},
+    }),
+  })
+  return {host,requests,states,defer(){let resolve,reject;gate=new Promise((yes,no)=>{resolve=yes;reject=no});return {resolve,reject}}}
+}
+
+test('public presentation sends only changed fields after initialization, including partial EPUB settings',async()=>{
+ const initial={toolbar:'reader',notes:'reader',selectionMenu:'reader',contentFontSize:15,codeFontSize:14,theme:'light',locale:'en-US',palette:{text:'#112233'},epub:{theme:'light',flow:'paginated',fontScale:1}}
+ const f=presentationFixture(initial)
+ try {
+  await f.host.ready
+  assert.deepEqual(f.requests[0].params,{toolbar:'host',notes:'host',selectionMenu:'host'})
+  const owned={...initial,toolbar:'host',notes:'host',selectionMenu:'host'}
+  await f.host.settings(owned);assert.equal(f.requests.length,1)
+  await f.host.settings({...owned,theme:'dark',epub:{theme:'dark'}})
+  assert.deepEqual(f.requests.at(-1).params,{theme:'dark',epub:{theme:'dark'}})
+  await f.host.settings({locale:'zh-CN',messages:{Close:'关闭'},contentFontSize:15,codeFontSize:14})
+  assert.deepEqual(f.requests.at(-1).params,{locale:'zh-CN',messages:{Close:'关闭'}})
+  await f.host.settings({codeFontSize:null});assert.deepEqual(f.requests.at(-1).params,{codeFontSize:null})
+  await f.host.settings({codeFontSize:32});assert.deepEqual(f.requests.at(-1).params,{codeFontSize:32})
+ } finally {await f.host.dispose()}
+})
+
+test('presentation waits for acknowledgement and retries failed values without resending unchanged typography',async()=>{
+ const f=presentationFixture({theme:'light',contentFontSize:15})
+ try {
+  await f.host.ready
+  const gate=f.defer(),first=f.host.settings({theme:'dark',contentFontSize:15})
+  const failed=assert.rejects(first,/temporary failure/)
+  await new Promise(resolve=>setImmediate(resolve))
+  const before=f.requests.length,second=f.host.settings({theme:'dark',contentFontSize:15})
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.requests.length,before)
+  gate.reject(Error('temporary failure'));await failed;await second
+  assert.deepEqual(f.requests.slice(-2).map(call=>call.params),[{theme:'dark'},{theme:'dark'}])
+  await f.host.settings({theme:'dark',contentFontSize:15});assert.equal(f.requests.length,before+1)
+ } finally {await f.host.dispose()}
+})
+
+test('disposed presentation owner cancels in-flight and queued updates without publishing late state',async()=>{
+ const f=presentationFixture({theme:'light'})
+ await f.host.ready
+ const gate=f.defer(),first=f.host.settings({theme:'dark'})
+ const firstRejected=assert.rejects(first,{name:'AbortError'})
+ await new Promise(resolve=>setImmediate(resolve))
+ const second=f.host.settings({theme:'light'}),secondRejected=assert.rejects(second,{name:'AbortError'})
+ const count=f.requests.length,states=f.states.length
+ await f.host.dispose();assert.equal(f.requests.at(-1).signal.aborted,true)
+ gate.resolve();await Promise.all([firstRejected,secondRejected])
+ assert.equal(f.requests.length,count);assert.equal(f.states.length,states)
+})

@@ -1,6 +1,6 @@
 // Ordinary hosts and virtual reader containers mount this exact table view.
 export async function tableViewContract(moduleUrl) {
-  const { mountTableView } = await import(moduleUrl)
+  const { mountTableView, readerTableProvider } = await import(moduleUrl)
   let assertions = 0
   const check = (value, message) => {
     if (!value) throw Error(message)
@@ -14,6 +14,10 @@ export async function tableViewContract(moduleUrl) {
       await tick()
     }
   }
+  const sourceCalls = [], sourceSignal = new AbortController().signal
+  const exportedProvider = await readerTableProvider({ request: async (...args) => { sourceCalls.push(args); return {} } }, { documentId: 'source-owner', revision: 'source-revision' }, 2)
+  await exportedProvider.loadSource({ offset: 17, previous: true, signal: sourceSignal })
+  check(sourceCalls[1][0] === 'sourceWindow' && sourceCalls[1][1].documentId === 'source-owner' && sourceCalls[1][1].revision === 'source-revision' && sourceCalls[1][1].offset === 17 && sourceCalls[1][1].previous === true && sourceCalls[1][2].signal === sourceSignal, 'Public table provider lost source ownership, backward cursor or cancellation')
   const existingStyles = document.querySelectorAll('link[href$="/table-view.css"]').length
   const host = document.createElement('section')
   host.style.cssText =

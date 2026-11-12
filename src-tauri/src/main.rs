@@ -40,6 +40,7 @@ mod item_location;
 mod large_markdown;
 mod ollama;
 mod opencode_server;
+mod reader_compat;
 mod router_history;
 mod session_map;
 mod session_state;
@@ -1211,10 +1212,7 @@ fn gateway_router(state: GatewayState) -> Router {
             "/large-markdown-host.mjs",
             get(|| async { javascript(include_str!("../../ui/large-markdown-host.mjs")) }),
         )
-        .nest(
-            "/reader-assets",
-            marknoria::web::reader_assets().with_state(()),
-        )
+        .nest("/reader-assets", reader_compat::assets().with_state(()))
         .route("/markdown-reader/{id}/", get(large_markdown::page))
         .route(
             "/markdown-reader/{id}/{*path}",

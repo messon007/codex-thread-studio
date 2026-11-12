@@ -486,17 +486,15 @@ async fn proxy(state: GatewayState, id: String, path: String, request: Request) 
         let Some(raw) = request.uri().path().strip_prefix(&prefix) else {
             return json_error(StatusCode::BAD_REQUEST, "Invalid reader route prefix");
         };
-        // The upstream stateless router alone defines its resource inventory.
+        // The upstream stateless router defines the inventory; Studio replaces
+        // only the fixed, documented #38 reader.mjs compatibility asset.
         // It has no document, path, query or write endpoints. No host headers,
         // token or request body enter this asset request.
         let asset = Request::builder()
             .uri(format!("/{raw}"))
             .body(Body::empty())
             .unwrap();
-        return marknoria::web::reader_assets()
-            .oneshot(asset)
-            .await
-            .unwrap();
+        return crate::reader_compat::assets().oneshot(asset).await.unwrap();
     }
     if !allowed_path(&path) {
         return json_error(StatusCode::NOT_FOUND, "Unknown reader route");

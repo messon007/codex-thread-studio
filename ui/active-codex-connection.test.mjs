@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createActiveCodexConnection } from './active-codex-connection.mjs'
+import { PendingRpcRequests } from './rpc-lifecycle.mjs'
 import { createCodexViewModel } from './codex-native.mjs'
 
 function fixture() {
@@ -10,6 +11,7 @@ function fixture() {
     model: createCodexViewModel(), threadModels: new Map(), threadLoads: new Map(), appServerGenerations: {},
   }
   const loads = new Map(), services = {
+    pendingRpcRequests: { settle: () => false, rejectAll: () => {} },
     $: () => ({ textContent: '' }), backendDescriptor: () => ({ name: 'Codex' }),
     codexBackendsNeedingRestartRecovery: new Set(), sessionDispatch: { clearPrepared: b => calls.push(['clear', b]) },
     clearStartedThreadsForBackend: b => calls.push(['clear-started', b]), setBackendState: () => {}, setNativeError: () => {},
@@ -75,3 +77,17 @@ test('RPC replies are settled before notification routing', () => {
   f.controller().handleAppServerMessage({ id: 2, result: {} })
   assert.deepEqual(f.calls, [['worker'], ['settle']])
 })
+
+for (const status of ['stopped', 'error']) {
+  test(`${status} rejects outstanding RPC immediately with the transport reason`, async () => {
+    const f = fixture(), pending = new PendingRpcRequests(new Map())
+    f.services.pendingRpcRequests = pending
+    const request = pending.request(7, 'thread/resume', () => {}, 60_000, 'misleading timeout')
+    const reason = 'App Server WebSocket receive failed: message too long'
+    const rejected = assert.rejects(request, error => error.message === reason)
+    f.controller().handleAppServerMessage({ method:'studio/appServer/status', params:{ state:status, reason } })
+    await rejected
+    assert.equal(pending.pending.size, 0)
+    assert.equal(pending.settle({id:7,result:{}}), false)
+  })
+}

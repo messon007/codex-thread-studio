@@ -3,6 +3,40 @@ import type { HistoryTurn, TurnPage, TurnTailOptions } from './session-types.mjs
 export const DEFAULT_TURN_TAIL_PAGE_SIZE = 4
 export const MAX_TURN_TAIL_PAGES = 100
 
+// Full history is still displayed, but never requested as one unbounded RPC.
+// A finite cursor walk also protects against a broken server producing endless pages.
+export async function collectCodexTurnHistory<T extends HistoryTurn>({
+  initialPage, fetchPage, maxPages = 10_000, maxBytes = 256 * 1024 * 1024,
+}: Omit<TurnTailOptions<T>, 'cachedTurns'> & { maxBytes?: number }) {
+  const turns: T[] = []
+  const ids = new Set<string>()
+  const cursors = new Set<string>()
+  let page = initialPage
+  let pageCount = 0
+  let bytes = 0
+  const encoder = new TextEncoder()
+  while (true) {
+    if (!page || !Array.isArray(page.data)) throw new Error('Malformed Codex history page')
+    bytes += encoder.encode(JSON.stringify(page)).byteLength
+    if (bytes > maxBytes) throw new Error('Codex history pagination exceeded its byte budget')
+    pageCount++
+    for (const turn of page.data) {
+      const id = String(turn?.id || '')
+      if (!id) throw new Error('Codex history turn has no identity')
+      // Descending pages can overlap while a running turn is being updated.
+      // Retain the first (newest) authoritative copy.
+      if (!ids.has(id)) { ids.add(id); turns.push(turn) }
+    }
+    const cursor = stringOrNull(page.nextCursor)
+    if (!cursor) return { turns: turns.reverse(), pageCount, fetchedTurnCount: turns.length, appendedTurnCount: turns.length }
+    if (cursors.has(cursor)) throw new Error('Codex history pagination repeated a cursor')
+    if (pageCount >= maxPages) throw new Error('Codex history pagination exceeded its page budget')
+    if (!fetchPage) throw new Error('Codex history pagination cannot continue')
+    cursors.add(cursor)
+    page = await fetchPage(cursor)
+  }
+}
+
 export async function collectCodexTurnTail<T extends HistoryTurn>({
   cachedTurns,
   initialPage,

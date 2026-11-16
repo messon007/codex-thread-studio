@@ -232,7 +232,7 @@ impl CodexAppServer {
         }));
 
         let events = self.events.clone();
-        let (upstream_tx, mut upstream_rx) = mpsc::channel::<String>(512);
+        let (upstream_tx, mut upstream_rx) = mpsc::channel::<Result<String, String>>(512);
         if shared {
             // The official proxy carries a WebSocket byte stream over stdio,
             // rather than JSONL. The daemon owns independent client connections.
@@ -257,34 +257,7 @@ impl CodexAppServer {
                     return Err(format!("Shared Codex daemon handshake failed: {error:?}"));
                 }
             };
-            let (mut writer, mut reader) = socket.split();
-            tokio::spawn(async move {
-                use tokio_tungstenite::tungstenite::Message as UpstreamMessage;
-                // The official byte proxy can retain stdout after its socket
-                // closes until stdin is written. Pings detect this half-close.
-                let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(5));
-                heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                let mut last_received = tokio::time::Instant::now();
-                loop {
-                    tokio::select! {
-                        _ = heartbeat.tick() => {
-                            if last_received.elapsed() >= std::time::Duration::from_secs(30) { break; }
-                            if writer.send(UpstreamMessage::Ping(Vec::new().into())).await.is_err() { break; }
-                        }
-                        line = input_rx.recv() => {
-                            let Some(line) = line else { break };
-                            if writer.send(UpstreamMessage::Text(line.into())).await.is_err() { break; }
-                        }
-                        message = reader.next() => match message {
-                            Some(Ok(UpstreamMessage::Text(text))) => { last_received = tokio::time::Instant::now(); if upstream_tx.send(text.to_string()).await.is_err() { break; } }
-                            Some(Ok(UpstreamMessage::Ping(data))) => { last_received = tokio::time::Instant::now(); if writer.send(UpstreamMessage::Pong(data)).await.is_err() { break; } }
-                            Some(Ok(UpstreamMessage::Pong(_))) => { last_received = tokio::time::Instant::now(); }
-                            Some(Ok(UpstreamMessage::Close(_))) | Some(Err(_)) | None => break,
-                            _ => {}
-                        }
-                    }
-                }
-            });
+            tokio::spawn(pump_shared_transport(socket, input_rx, upstream_tx));
         } else {
             tokio::spawn(async move {
                 let mut stdin = stdin;
@@ -300,7 +273,7 @@ impl CodexAppServer {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    if upstream_tx.send(line).await.is_err() {
+                    if upstream_tx.send(Ok(line)).await.is_err() {
                         break;
                     }
                 }
@@ -311,6 +284,13 @@ impl CodexAppServer {
         let reader_input = input.clone();
         tokio::spawn(async move {
             while let Some(line) = upstream_rx.recv().await {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(reason) => {
+                        reader_server.mark_stopped(generation, &reason).await;
+                        return;
+                    }
+                };
                 let value = match serde_json::from_str::<Value>(&line) {
                     Ok(value) => value,
                     Err(_) => {
@@ -497,6 +477,7 @@ impl CodexAppServer {
         if !ready {
             return Err("codex app-server is still initializing".to_string());
         }
+        let generation = self.generation.load(Ordering::SeqCst);
         let id = format!(
             "studio-internal-{}",
             INTERNAL_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
@@ -509,6 +490,15 @@ impl CodexAppServer {
                 let payload = events.recv().await.map_err(|error| error.to_string())?;
                 let value: Value =
                     serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+                if value["method"] == "studio/appServer/status"
+                    && value["params"]["generation"].as_u64() == Some(generation)
+                    && matches!(value["params"]["state"].as_str(), Some("stopped" | "error"))
+                {
+                    break Err(value["params"]["reason"]
+                        .as_str()
+                        .unwrap_or("App Server stopped")
+                        .to_string());
+                }
                 if value.get("id").and_then(Value::as_str) == Some(id.as_str()) {
                     break Ok::<Value, String>(value);
                 }
@@ -684,6 +674,58 @@ fn is_executable(path: &Path) -> bool {
     path.is_file()
 }
 
+// Preserve the transport failure in stream order, before the generic EOF status.
+// The 64 MiB limit stays in place; large histories use turn pagination instead.
+async fn pump_shared_transport<S>(
+    socket: tokio_tungstenite::WebSocketStream<S>,
+    mut input: mpsc::Receiver<String>,
+    output: mpsc::Sender<Result<String, String>>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use tokio_tungstenite::tungstenite::Message;
+    let (mut writer, mut reader) = socket.split();
+    // The official proxy may retain stdout after a half-close until stdin is written.
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(5));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_received = tokio::time::Instant::now();
+    let reason = loop {
+        tokio::select! {
+            _ = heartbeat.tick() => {
+                if last_received.elapsed() >= std::time::Duration::from_secs(30) {
+                    break "App Server heartbeat timed out".to_string();
+                }
+                if let Err(error) = writer.send(Message::Ping(Vec::new().into())).await {
+                    break format!("App Server WebSocket write failed: {error}");
+                }
+            }
+            line = input.recv() => {
+                let Some(line) = line else { return };
+                if let Err(error) = writer.send(Message::Text(line.into())).await {
+                    break format!("App Server WebSocket write failed: {error}");
+                }
+            }
+            message = reader.next() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    last_received = tokio::time::Instant::now();
+                    if output.send(Ok(text.to_string())).await.is_err() { return; }
+                }
+                Some(Ok(Message::Ping(data))) => {
+                    last_received = tokio::time::Instant::now();
+                    if let Err(error) = writer.send(Message::Pong(data)).await {
+                        break format!("App Server WebSocket write failed: {error}");
+                    }
+                }
+                Some(Ok(Message::Pong(_))) => { last_received = tokio::time::Instant::now(); }
+                Some(Ok(Message::Close(_))) | None => break "App Server WebSocket closed".to_string(),
+                Some(Err(error)) => break format!("App Server WebSocket receive failed: {error}"),
+                _ => {}
+            }
+        }
+    };
+    let _ = output.send(Err(reason)).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +792,84 @@ esac
         let strict = server.with_connection_mode(ConnectionMode::Shared);
         assert!(strict.shared_daemon().await.is_err());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn shared_transport_preserves_message_limit_failure_after_prior_messages() {
+        use tokio_tungstenite::{
+            tungstenite::protocol::{Role, WebSocketConfig},
+            WebSocketStream,
+        };
+        let (client, peer) = tokio::io::duplex(4096);
+        let socket = WebSocketStream::from_raw_socket(
+            client,
+            Role::Client,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(32))
+                    .max_frame_size(Some(32)),
+            ),
+        )
+        .await;
+        let mut peer = WebSocketStream::from_raw_socket(peer, Role::Server, None).await;
+        let (_input, input_rx) = mpsc::channel(2);
+        let (output, mut received) = mpsc::channel(2);
+        let task = tokio::spawn(pump_shared_transport(socket, input_rx, output));
+        peer.send(tokio_tungstenite::tungstenite::Message::Text(
+            "small".into(),
+        ))
+        .await
+        .unwrap();
+        peer.send(tokio_tungstenite::tungstenite::Message::Text(
+            "x".repeat(64).into(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(received.recv().await.unwrap().unwrap(), "small");
+        let reason = tokio::time::timeout(std::time::Duration::from_secs(1), received.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(reason.contains("WebSocket receive failed"), "{reason}");
+        assert!(reason.contains("Space limit exceeded"), "{reason}");
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn internal_request_fails_on_transport_stop_instead_of_timing_out() {
+        let server = CodexAppServer::new(
+            "unused".into(),
+            BackendRuntime::new(std::ffi::OsString::new(), Default::default()),
+        );
+        let (input, mut requests) = mpsc::channel(2);
+        server.generation.store(1, Ordering::SeqCst);
+        *server.process.lock().await = Some(ProcessConnection {
+            generation: 1,
+            input,
+            ready: true,
+            initialization: None,
+            shared: true,
+        });
+        let requester = server.clone();
+        let task = tokio::spawn(async move {
+            requester
+                .request("thread/resume", json!({"threadId":"fixture"}))
+                .await
+        });
+        requests.recv().await.unwrap();
+        server
+            .mark_stopped(1, "App Server WebSocket receive failed: oversized response")
+            .await;
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "App Server WebSocket receive failed: oversized response"
+        );
     }
 
     #[test]

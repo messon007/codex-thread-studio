@@ -86,3 +86,14 @@ function answer(value) {
 function page(data, nextCursor = null, backwardsCursor = null) {
   return { data, nextCursor, backwardsCursor }
 }
+
+test('full paging preserves order, deduplicates overlap and fails explicitly at safety limits', async () => {
+  const {collectCodexTurnHistory}=await import('./thread-history-tail.mjs')
+  const result=await collectCodexTurnHistory({initialPage:page([turn('new'),turn('middle','fresh')],'older'),fetchPage:async()=>page([turn('middle','stale'),turn('old')])})
+  assert.deepEqual(result.turns.map(t=>t.id),['old','middle','new'])
+  assert.equal(answer(result.turns[1]),'fresh')
+  await assert.rejects(collectCodexTurnHistory({initialPage:page([turn('new')],'older'),maxPages:1,fetchPage:async()=>{throw Error('must not fetch')}}),/page budget/)
+  await assert.rejects(collectCodexTurnHistory({initialPage:{},fetchPage:async()=>null}),/Malformed/)
+  await assert.rejects(collectCodexTurnHistory({initialPage:page([turn('large','测试'.repeat(10))]),maxBytes:64}),/byte budget/)
+  assert.deepEqual((await collectCodexTurnHistory({initialPage:page([])})).turns,[])
+})

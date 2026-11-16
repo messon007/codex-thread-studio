@@ -97,6 +97,7 @@ export function createActiveCodexConnection(state, services) {
                 state.ready = false;
                 sessionDispatch.clearPrepared(backend);
                 const reason = message.params?.message || message.params?.reason || 'App Server stopped';
+                pendingRpcRequests.rejectAll(new Error(reason));
                 setBackendState('error', `${descriptor.name} Unavailable`, reason);
                 setNativeError(reason);
                 renderComposerState();

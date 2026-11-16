@@ -71,3 +71,15 @@ test('only the current socket error revokes Composer readiness', () => {
   assert.equal(state.ready, false)
   assert.deepEqual(errors, [false])
 })
+
+test('one-shot background RPC fails immediately on stopped status and retains its reason', async () => {
+  const socket=new Socket(),result=requestSocketRpc({...options(socket),timeoutMs:60_000})
+  const reason='App Server WebSocket receive failed: message too long'
+  const rejected=assert.rejects(result,error=>error.message===reason)
+  socket.emit({method:'studio/appServer/status',params:{state:'ready'}})
+  socket.emit({method:'studio/appServer/status',params:{state:'stopped',reason}})
+  await rejected
+  assert.equal(socket.closes,1)
+  socket.emit({id:1,result:'late'})
+  assert.equal(socket.closes,1)
+})

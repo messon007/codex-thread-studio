@@ -15,6 +15,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Fixed
 
+- Resume long Codex sessions through bounded history pages on cold opens and background refreshes. Preserve complete transcript ordering and report App Server transport failures immediately instead of a misleading resume timeout.
 - Open Markdown reports with oversized or densely formatted table rows using bounded previews and paged original-source access, without truncating complete query input.
 - Send only changed reader presentation settings so theme and language updates do not unnecessarily reset measured page heights. A narrowly pinned temporary reader fix restores mounted-page measurements after actual typography/layout changes, tracked upstream in MarkNoria #38.
 

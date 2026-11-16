@@ -60,8 +60,8 @@ export function requestSocketRpc(options: {
       let message: Record<string, unknown>
       try { message = record(JSON.parse(event.data)) } catch { return }
       const status = record(message.params)
-      if (message.method === 'studio/appServer/status' && status.state === 'error') {
-        finish(new Error(String(status.message || options.unavailableMessage)))
+      if (message.method === 'studio/appServer/status' && (status.state === 'error' || status.state === 'stopped')) {
+        finish(new Error(String(status.message || status.reason || options.unavailableMessage)))
       } else if (message.method === 'studio/appServer/status' && status.state === 'ready' && !requested) {
         requested = true
         try { socket.send(JSON.stringify({ id, method, params })) } catch (error) { finish(error instanceof Error ? error : new Error(String(error))) }

@@ -19,7 +19,7 @@ export interface ResumeOptions {
   incremental?: boolean
 }
 export interface CodexHistoryServices {
-  dispatchBackendRpc(backend: string, method: 'thread/read', params: { threadId: string; includeTurns: true }): Promise<HistoryResponse>
+  dispatchBackendRpc(backend: string, method: 'thread/read', params: { threadId: string; includeTurns: boolean }): Promise<HistoryResponse>
   dispatchBackendRpc(backend: string, method: 'thread/turns/list', params: { threadId: string; limit: number; sortDirection: 'desc'; itemsView: 'full'; cursor?: string }): Promise<TurnPage<CodexTurn>>
   requestCodexResume(backend: string, id: string, options: ResumeOptions): Promise<HistoryResponse>
   historyTailCapability(backend: string, id: string): boolean | undefined

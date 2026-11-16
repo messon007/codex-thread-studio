@@ -44,7 +44,7 @@ export interface ActiveConnectionServices {
   t: (text: string, values?: Record<string, string | number>) => string
   reportClientError: (error: unknown) => void
   sessionMap: { captureWorkerResponse: (message: ActiveMessage) => unknown; handleToolCall: (message: ActiveMessage) => unknown }
-  pendingRpcRequests: { settle: (message: unknown) => boolean }
+  pendingRpcRequests: { settle: (message: unknown) => boolean; rejectAll: (error: Error) => void }
   handleCodexLifecycleNotification: (backend: string, message: ActiveMessage) => boolean
   captureStructuredUtilityNotification: (backend: string, message: ActiveMessage) => boolean
   sessionRefKey: (backend: string, id: string | undefined) => string
@@ -161,6 +161,7 @@ function handleAppServerMessage(message: ActiveMessage) {
       state.ready = false
       sessionDispatch.clearPrepared(backend)
       const reason = message.params?.message || message.params?.reason || 'App Server stopped'
+      pendingRpcRequests.rejectAll(new Error(reason))
       setBackendState('error', `${descriptor.name} Unavailable`, reason)
       setNativeError(reason)
       renderComposerState()

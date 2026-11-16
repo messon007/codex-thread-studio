@@ -1,134 +1,82 @@
 import type { CachedHistory, HistoryResponse, ResumeOptions, CodexHistoryServices } from './codex-history-types.mjs'
-import { DEFAULT_TURN_TAIL_PAGE_SIZE, collectCodexTurnTail, isHistoryPaginationCompatibilityError } from './thread-history-tail.mjs'
+import { DEFAULT_TURN_TAIL_PAGE_SIZE, collectCodexTurnTail, collectCodexTurnHistory, isHistoryPaginationCompatibilityError } from './thread-history-tail.mjs'
 
 export function createCodexHistoryLoader(services: CodexHistoryServices) {
   const { dispatchBackendRpc, requestCodexResume, historyTailCapability, rememberHistoryTailCapability, threadForRef } = services
 
-  async function readFullCodexHistory(backend: string, id: string, resumed: HistoryResponse | null = null) {
+  async function readLegacyHistory(backend: string, id: string, resumed: HistoryResponse | null = null) {
     const read = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: true })
-    if (!resumed) return read
-    return {
-      ...resumed,
-      ...read,
-      thread: { ...(resumed.thread || {}), ...(read.thread || {}) },
-    }
+    return { ...resumed, ...read, thread: { ...(resumed?.thread || {}), ...(read.thread || {}) } }
   }
-  
-  async function loadCodexHistoryForSelection(backend: string, id: string, cached: CachedHistory | null, {
-    environmentRoot = '',
-    environmentRevision = '',
-  }: ResumeOptions = {}) {
-    const canReusePrefix = cached?.model?.threadId === id
-      && Array.isArray(cached.model.turns)
-      && cached.model.turns.length > 0
-    if (!canReusePrefix || historyTailCapability(backend, id) === false) {
-      return {
-        result: await requestCodexResume(backend, id, { environmentRoot, environmentRevision }),
-        historyMode: 'full',
-        tail: null,
+
+  function fetchPage(backend: string, id: string, cursor?: string) {
+    return dispatchBackendRpc(backend, 'thread/turns/list', {
+      threadId: id, limit: DEFAULT_TURN_TAIL_PAGE_SIZE, sortDirection: 'desc', itemsView: 'full',
+      ...(cursor ? { cursor } : {}),
+    })
+  }
+
+  async function pagedHistory(backend: string, id: string, cached: CachedHistory | null, metadata: HistoryResponse, refreshFullMetadata = false) {
+    const initialPage = Array.isArray(metadata.initialTurnsPage?.data)
+      ? metadata.initialTurnsPage : await fetchPage(backend, id)
+    const canReusePrefix = cached?.model?.threadId === id && cached.model.turns.length > 0
+    if (canReusePrefix) {
+      const tail = await collectCodexTurnTail({
+        cachedTurns: cached.model.turns, initialPage, fetchPage: cursor => fetchPage(backend, id, cursor),
+      })
+      if (tail.matched) {
+        rememberHistoryTailCapability(backend, id, true)
+        return { result: { ...metadata, thread: { ...metadata.thread, id, turns: tail.turns } }, historyMode: 'tail', tail }
       }
     }
-  
+    // Cold opens and unmatched caches must not fall back to a giant thread/read.
+    if (refreshFullMetadata) metadata = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: false })
+    const history = await collectCodexTurnHistory({ initialPage, fetchPage: cursor => fetchPage(backend, id, cursor) })
+    rememberHistoryTailCapability(backend, id, true)
+    return {
+      result: { ...metadata, thread: { ...metadata.thread, id, turns: history.turns } },
+      historyMode: 'paged-full', tail: history,
+    }
+  }
+
+  async function loadCodexHistoryForSelection(backend: string, id: string, cached: CachedHistory | null, {
+    environmentRoot = '', environmentRevision = '',
+  }: ResumeOptions = {}) {
+    if (historyTailCapability(backend, id) === false) {
+      return { result: await requestCodexResume(backend, id, { environmentRoot, environmentRevision }), historyMode: 'full', tail: null }
+    }
     let resumed: HistoryResponse | null = null
     try {
-      resumed = await requestCodexResume(backend, id, {
-        environmentRoot,
-        environmentRevision,
-        incremental: true,
-      })
+      resumed = await requestCodexResume(backend, id, { environmentRoot, environmentRevision, incremental: true })
       if (Array.isArray(resumed?.thread?.turns) && resumed.thread.turns.length > 0) {
         rememberHistoryTailCapability(backend, id, false)
         return { result: resumed, historyMode: 'legacy-full', tail: null }
       }
-  
-      let initialPage = resumed?.initialTurnsPage
-      if (!Array.isArray(initialPage?.data)) {
-        initialPage = await dispatchBackendRpc(backend, 'thread/turns/list', {
-          threadId: id,
-          limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-          sortDirection: 'desc',
-          itemsView: 'full',
-        })
-      }
-      const tail = await collectCodexTurnTail({
-        cachedTurns: cached.model.turns,
-        initialPage,
-        fetchPage: (cursor) => dispatchBackendRpc(backend, 'thread/turns/list', {
-          threadId: id,
-          cursor,
-          limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-          sortDirection: 'desc',
-          itemsView: 'full',
-        }),
-      })
-      rememberHistoryTailCapability(backend, id, true)
-      if (tail.matched) {
-        return {
-          result: {
-            ...resumed,
-            thread: { ...(resumed?.thread || {}), id, turns: tail.turns },
-          },
-          historyMode: 'tail',
-          tail,
-        }
-      }
-      return {
-        result: await readFullCodexHistory(backend, id, resumed),
-        historyMode: 'full-fallback',
-        tail,
-      }
+      return await pagedHistory(backend, id, cached, resumed)
     } catch (error) {
       if (!isHistoryPaginationCompatibilityError(error)) throw error
       rememberHistoryTailCapability(backend, id, false)
       return {
-        result: resumed
-          ? await readFullCodexHistory(backend, id, resumed)
+        result: resumed ? await readLegacyHistory(backend, id, resumed)
           : await requestCodexResume(backend, id, { environmentRoot, environmentRevision }),
-        historyMode: 'compatibility-fallback',
-        tail: null,
+        historyMode: 'compatibility-fallback', tail: null,
       }
     }
   }
-  
+
   async function loadCodexHistoryForBackground(backend: string, id: string, cached: CachedHistory | null) {
-    const canReusePrefix = cached?.model?.threadId === id
-      && Array.isArray(cached.model.turns)
-      && cached.model.turns.length > 0
-    if (canReusePrefix && historyTailCapability(backend, id) !== false) {
+    if (historyTailCapability(backend, id) !== false) {
       try {
-        const initialPage = await dispatchBackendRpc(backend, 'thread/turns/list', {
-          threadId: id,
-          limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-          sortDirection: 'desc',
-          itemsView: 'full',
-        })
-        const tail = await collectCodexTurnTail({
-          cachedTurns: cached.model.turns,
-          initialPage,
-          fetchPage: (cursor) => dispatchBackendRpc(backend, 'thread/turns/list', {
-            threadId: id,
-            cursor,
-            limit: DEFAULT_TURN_TAIL_PAGE_SIZE,
-            sortDirection: 'desc',
-            itemsView: 'full',
-          }),
-        })
-        rememberHistoryTailCapability(backend, id, true)
-        if (tail.matched) {
-          const metadata = threadForRef({ backend, id }) || {}
-          return {
-            result: { thread: { ...metadata, id, turns: tail.turns } },
-            historyMode: 'tail',
-            tail,
-          }
-        }
+        const canReusePrefix = cached?.model?.threadId === id && cached.model.turns.length > 0
+        const metadata = canReusePrefix ? { thread: threadForRef({ backend, id }) || {} }
+          : await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: false })
+        return await pagedHistory(backend, id, cached, metadata, canReusePrefix)
       } catch (error) {
         if (!isHistoryPaginationCompatibilityError(error)) throw error
         rememberHistoryTailCapability(backend, id, false)
       }
     }
-    const result = await dispatchBackendRpc(backend, 'thread/read', { threadId: id, includeTurns: true })
-    return { result, historyMode: 'full', tail: null }
+    return { result: await readLegacyHistory(backend, id), historyMode: 'full', tail: null }
   }
   return { loadCodexHistoryForSelection, loadCodexHistoryForBackground }
 }

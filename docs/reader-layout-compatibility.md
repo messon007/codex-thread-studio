@@ -10,7 +10,9 @@ Standalone Compare remains excluded and is not affected.
 
 The imported SDK directory and all 856 manifest entries remain unchanged.
 The normal upstream asset getter and independently built SDK server still serve
-the original reader. Studio derives **one** reader asset at build time:
+the original reader. For #38 Studio derives `reader.mjs` at build time. The independent
+[#39 comment-click correction](reader-comment-click-compatibility.md) also derives
+`comment-marks.mjs`; each has its own removal gate:
 
 | Item | Value |
 | --- | --- |
@@ -32,7 +34,8 @@ build derivation, exact inverse, source/revision rejection, and stateless routes
 Both `/reader-assets/reader.mjs` and the existing authorized
 `/markdown-reader/{id}/reader.mjs` path serve the same derived asset. Lease,
 origin, path and method checks occur before document-scoped asset delivery.
-Every other asset falls through to the unmodified public SDK router. Independent
+Apart from the separate #39 comment module, every other asset falls through to
+the unmodified public SDK router. Independent
 SDK tests and standalone results refer to the original, not the derived asset.
 
 ## Why the correction is needed
@@ -70,8 +73,9 @@ rendered DOM only for QA; they are not production coupling.
 
 Before removing the layer, run this smoke with the newly fixed **unmodified** SDK,
 plus source/dirty editor navigation and existing table/comment/selection fixtures
-in Chromium and native WebKit as applicable. Remove the build generator, helper,
-asset override, associated provenance/diff and fixed-hash tests together. Do not
+in Chromium and native WebKit as applicable. Remove the #38 build generator, helper,
+reader asset override, associated provenance/diff and fixed-hash tests together;
+retain the independent #39 comment derivation until its own adoption gate passes. Do not
 silently repin this workaround onto another upstream version. The adopting PR
 records executed geometry and independent actual-document results; private
 source text/screenshots are not published.

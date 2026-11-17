@@ -33,6 +33,7 @@ for line in sys.stdin:
             values={
                 'initialize':{'userAgent':'studio-offline-fixture','platformFamily':'unix','platformOs':'linux'},
                 'thread/list':{'data':[thread],'nextCursor':None},
+                'thread/turns/list':{'data':[],'nextCursor':None},
                 'thread/loaded/list':{'data':[thread_id]},
                 'thread/start':{'thread':router},
                 'thread/read':{'thread':router if message.get('params',{}).get('threadId')==router['id'] else thread},

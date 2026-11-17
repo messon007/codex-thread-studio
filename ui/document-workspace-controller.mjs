@@ -489,7 +489,8 @@ function renderArtifact() {
       // Keep the child mapped while the shell masks its initial chrome.
       // The shell's loading cover masks initial chrome and restores input only
       // after the public initialization/settings/reference handshake completes.
-      largeMarkdownFrame.inert = true
+      // Do not toggle iframe.inert: WebKit can retain a non-scrollable wheel region
+      // after it is cleared. The loading cover and tab order gate input instead.
       largeMarkdownFrame.tabIndex = -1
       largeMarkdownFrame.setAttribute('aria-hidden','true')
       largeMarkdownFrame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
@@ -524,7 +525,6 @@ function renderArtifact() {
         readerJqHost?.update(snapshot, largeMarkdownHost)
         readerCommentHost?.update(snapshot, largeMarkdownHost, view.currentAnnotations?.() || [], file)
         if (snapshot.initialized && largeMarkdownFrame) {
-          largeMarkdownFrame.inert = false
           largeMarkdownFrame.tabIndex = 0
           largeMarkdownFrame.removeAttribute?.('aria-hidden')
         }

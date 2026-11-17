@@ -15,6 +15,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Fixed
 
+- Restore immediate mouse-wheel scrolling after opening documents from Files in Linux WebKit, while preserving the loading cover and keyboard gating.
+
 - Allow clicking Markdown comment underlines to edit saved comments, with an overlap chooser and preserved native selection/link behavior (Studio #78, MarkNoria #39).
 
 - Resume long Codex sessions through bounded history pages on cold opens and background refreshes. Preserve complete transcript ordering and report App Server transport failures immediately instead of a misleading resume timeout.

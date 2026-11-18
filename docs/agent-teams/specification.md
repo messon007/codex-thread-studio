@@ -1,6 +1,6 @@
 # Studio Agent Teams：松耦合协作设计
 
-状态：设计提案，尚未实现。本文定义目标行为和 v1 接口契约，不表示当前客户端已支持这些能力。
+状态：开发中。[独立 Rust 领域与队列原型](implementation-status.md) 已实现，真实适配与 UI 尚未接入。本文定义目标行为和 v1 接口契约，不表示当前客户端已支持全部能力。
 
 审查状态：GPT-6.2-Astra 的 [最小实施方案](implementation-options.md) 已获设计 PASS，放行纯 Rust 领域模块/替身测试及 G1b/G2b 隔离验证。本文已采用受信宿主的成员归属、Studio 持久队列的一次授权交接；前三轮 [审查](design-review.md) 与 [反例](verification-results.md) 保留为旧候选的证据。真实适配器须按固定版本与部署拓扑通过验证后启用，设计通过不等于接入已验证。所有开发隔离于 `feat/agent-teams`，未经用户后续指示不合入 main。
 

@@ -1,0 +1,62 @@
+{
+  "codex_version": "0.170.0",
+  "synthetic_model": true,
+  "full_gate_pass": false,
+  "source_sha256": {
+    "report.json": "428dfe589acad1cf7206074bc3e670635905258b5702698e8f5e5dcc394ca9ea",
+    "rpc.jsonl": "b470eb4be91c36f350aaa510cd9ec8f190ab2d604d6624513016a9d1b30aac46",
+    "app-server.stderr": "5510bc8b4063896bdf1da5fb84284d7b7c0dadededa04591ba13197f1b2fcccc"
+  },
+  "loaded_thread_inventory": [
+    {
+      "thread": "01a1ef18-bcbb-72d1-ba11-a1368c232bde",
+      "result": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "thread": "01a1ef18-be80-7f80-9663-0e43c3e45777",
+      "result": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "thread": "01a1ef18-bead-7f22-b725-7a3bbc9791af",
+      "result": {
+        "data": [],
+        "nextCursor": null
+      }
+    }
+  ],
+  "global_config_unchanged": true,
+  "idle_add": {
+    "completed_without_explicit_start": true,
+    "remaining_queue": {
+      "data": [],
+      "nextCursor": null
+    }
+  },
+  "busy_add": {
+    "prior_turn_id": "01a1ef18-c180-7e50-90ea-8832e9452bc8",
+    "deleted": {
+      "deleted": true
+    },
+    "during_busy_user_items": 0,
+    "subsequent_inputs": [
+      {
+        "turn_id": "01a1ef18-c278-7573-be42-3fd919f2e60f",
+        "client_id": "keep-once"
+      }
+    ],
+    "remaining_queue": {
+      "data": [],
+      "nextCursor": null
+    }
+  },
+  "run_05": {
+    "report_sha256": "e655b8f4c3007de22572ea2180e1387f59faff5a8abe0ebb2cbcd6f00b31f2e5",
+    "outcome": "unsubscribe acknowledged; thread still loaded during bounded 12s check, experiment stopped"
+  }
+}

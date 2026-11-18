@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "src-tauri",
+    "crates/studio-teams",
 ]
 resolver = "2"
 exclude = ["crates/marknoria"]

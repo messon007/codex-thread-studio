@@ -86,6 +86,8 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (options.initialReference) {
       validateReference(options.initialReference)
       await client.request('navigate',{location:options.initialReference.location})
+    } else if (options.initialPosition?.revision === snapshot.revision && options.initialPosition?.location) {
+      await client.request('navigate',{location:options.initialPosition.location})
     } else if (options.initialLocation) await client.request('navigate',{location:options.initialLocation})
     if (options.initialFragment) await client.request('navigateFragment',{fragment:options.initialFragment})
     if (disposed) return

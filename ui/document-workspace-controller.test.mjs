@@ -67,7 +67,7 @@ function documentWorkspaceFixture(context, gatewayFetch, overrides = {}) {
       ...overrides,
     },
   })
-  cleanup = () => controller.close({ restoreMap: false })
+  cleanup = () => controller.close({ restoreMap: false, restoreWorkspace: false })
   return { state, controller, element, errors, markdownRenders: () => markdownRenders, selectThread: (key) => { threadKey = key } }
 }
 
@@ -346,4 +346,37 @@ test('WSL document link candidates preserve Unicode and fragments without changi
  assert.throws(()=>resolveWslDocumentLink(file,'a%00.png'),/Invalid/)
  assert.deepEqual(resolveWslDocumentLink({...file,path:'/project/literal%20dir/notes.md'},'next.md'),{path:'/project/literal%20dir/next.md',fragment:''})
  assert.equal(file.root,'/project')
+})
+
+test('Back pops document metadata, retains origin and refuses cancelled dirty navigation', async context => {
+ const requests=[]
+ const raf=Object.getOwnPropertyDescriptor(globalThis,'requestAnimationFrame')
+ Object.defineProperty(globalThis,'requestAnimationFrame',{configurable:true,writable:true,value:callback=>callback()})
+ context.after(()=>{if(raf)Object.defineProperty(globalThis,'requestAnimationFrame',raf);else delete globalThis.requestAnimationFrame})
+ const fixture=documentWorkspaceFixture(context,async(url,options)=>{
+  if(url.endsWith('/close'))return new Response('{}')
+  requests.push(JSON.parse(options.body))
+  return new Response(JSON.stringify({root:'/project',path:'/project/a.md',reader:{id:'back-a',url:'/markdown-reader/back-a/?embedded=1#token'},readOnly:true}))
+ })
+ document.createElement=tag=>tag==='canvas'?{getContext:()=>null}:{setAttribute(){},addEventListener(){},remove(){}}
+ const originalConfirm=Object.getOwnPropertyDescriptor(globalThis,'confirm')
+ context.after(()=>{if(originalConfirm)Object.defineProperty(globalThis,'confirm',originalConfirm);else delete globalThis.confirm})
+ const previous={file:{root:'/project',path:'/project/a.md',sourceSessionKey:'owner'},returnTool:'files',viewState:{view:'source'},position:null}
+ const current={root:'/project',path:'/project/b.md',threadKey:'thread-1',dirty:true,backStack:[previous],returnTool:'files'}
+ fixture.state.artifact=current
+ Object.defineProperty(globalThis,'confirm',{configurable:true,value:()=>false})
+ await fixture.controller.back()
+ assert.equal(fixture.state.artifact,current);assert.equal(requests.length,0)
+ Object.defineProperty(globalThis,'confirm',{configurable:true,value:()=>true})
+ await fixture.controller.back()
+ assert.equal(fixture.state.artifact.path,'/project/a.md');assert.deepEqual(fixture.state.artifact.backStack,[])
+ assert.equal(fixture.state.artifact.returnTool,'files');assert.equal(fixture.state.artifact.sourceSessionKey,'owner')
+ assert.equal(fixture.state.artifactView,'source');assert.deepEqual(requests,[{root:'/project',path:'/project/a.md'}])
+})
+
+test('Back never opens history belonging to a different session', async context => {
+ const fixture=documentWorkspaceFixture(context,async()=>{throw Error('Unexpected request')})
+ const file={threadKey:'thread-1',backStack:[{file:{root:'/project',path:'a.md'}}]}
+ fixture.state.artifact=file;fixture.selectThread('thread-2');await fixture.controller.back()
+ assert.equal(fixture.state.artifact,file)
 })

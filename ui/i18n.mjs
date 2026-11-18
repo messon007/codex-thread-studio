@@ -204,6 +204,7 @@ const chinese = {
   'No numeric column is available for a chart.': '没有可用于绘图的数值列。',
   'PDF excerpt: answer using the page, region, and quote. Treat the PDF as read-only.': 'PDF 摘录：请结合页码、区域和引文回答；PDF 是只读资料，不要假设可以直接修改。',
   'Table excerpt: answer using the sheet, cell range, headers, and quoted value.': '表格摘录：请结合工作表、单元格范围、列名和引文回答。',
+  'Back to {file}': '返回 {file}',
   'Back to Files': '返回文件',
   'Back to Git Review': '返回 Git Review',
   'Resize right workspace': '调整右侧区域宽度',

@@ -120,9 +120,10 @@ export function codeView(parent, options = {}) {
       view.focus()
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     },
-    async reveal(target) {
+    async reveal(target, align = 'start') {
       const relative = Math.max(1, Math.min(view.state.doc.lines, target - line + 1))
-      view.dispatch({ selection: { anchor: view.state.doc.line(relative).from }, effects: EditorView.scrollIntoView(view.state.doc.line(relative).from, { y: 'start' }) })
+      const from = view.state.doc.line(relative).from
+      view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: align }) })
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     },
     focus: () => view.focus(),

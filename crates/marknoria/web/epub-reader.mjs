@@ -158,15 +158,17 @@ export function mountEpubReader(root, options) {
       if (!instance?.selection()) captured = null
       return captured
     },
-    async navigate(location) {
+    focus: () => instance?.focus(),
+    async navigate(location, { signal } = {}) {
       return work(async () => {
+        signal?.throwIfAborted()
         captured = null
-        if (location?.kind === 'epub') await instance.display(checkedCfi(location.cfi))
+        if (location?.kind === 'epub') await instance.display(checkedCfi(location.cfi), signal)
         else if (location?.kind === 'epubChapter' && typeof location.href === 'string') {
           const [path, ...fragment] = location.href.split('#'),
             target = new URL(path.split('/').map(encodeURIComponent).join('/'), scope)
           if (fragment.length) target.hash = fragment.join('#')
-          await instance.display(target.href)
+          await instance.display(target.href, signal)
         } else throw Error('An EPUB CFI or original chapter is required')
         reading = instance.state()
       })
@@ -189,7 +191,7 @@ export function mountEpubReader(root, options) {
       signal?.throwIfAborted()
       const items = instance.outline()
       if (!Number.isSafeInteger(id) || id < 0 || id >= items.length) throw Error('Invalid EPUB outline identity')
-      return this.navigate({ kind: 'epubChapter', href: archiveHref(items[id].target.href) })
+      return this.navigate({ kind: 'epubChapter', href: archiveHref(items[id].target.href) }, { signal })
     },
     async outline({ offset = 0 } = {}) {
       await ready
@@ -1020,21 +1022,46 @@ export async function createEpubReader({
     notifyRelocate()
   }
 
-  async function reportPosition() {
-    const updated = new Promise((resolve) => rendition.once('relocated', resolve))
-    await rendition.reportLocation()
-    await awaitBounded(updated, 'EPUB position update')
+  async function reportPosition(operationSignal) {
+    const mounted = rendition
+    let relocate
+    const updated = new Promise(resolve => { relocate = resolve; mounted.once('relocated', relocate) })
+    try {
+      await awaitBounded(Promise.all([mounted.reportLocation(), updated]), 'EPUB position update', 20000, operationSignal)
+    } finally {
+      mounted.off('relocated', relocate)
+    }
   }
-  async function displayTarget(target) {
+  async function displayTarget(target, operationSignal) {
+    operationSignal?.throwIfAborted()
     cancelActivation(true)
     const navigation = ++navigationGeneration
+    const check = () => {
+      operationSignal?.throwIfAborted()
+      if (destroyed || navigation !== navigationGeneration) throw new DOMException('EPUB navigation cancelled', 'AbortError')
+    }
     await activationRecovery
-    if (destroyed || navigation !== navigationGeneration) throw new DOMException('EPUB navigation cancelled', 'AbortError')
+    check()
     activeSearch = null
     searchMarker.clear()
     clearEpubSelection(true)
-    await awaitBounded(rendition.display(target), 'EPUB navigation')
-    await reportPosition()
+    const prior = readerState.cfi, mounted = rendition
+    const cancel = () => {
+      if (!destroyed && navigation === navigationGeneration && mounted === rendition) {
+        // epub.js cannot cancel an in-flight display. Detach the old rendition
+        // so a delayed chapter cannot move the reader after cancellation.
+        activationRecovery = mountRendition(prior).catch(error => { if (!destroyed && error.name !== 'AbortError') onError(error) })
+      }
+    }
+    operationSignal?.addEventListener('abort', cancel, { once: true })
+    try {
+      await awaitBounded(rendition.display(target), 'EPUB navigation', 20000, operationSignal)
+      check()
+      await reportPosition(operationSignal)
+      check()
+    } finally {
+      operationSignal?.removeEventListener('abort', cancel)
+    }
   }
 
   const mountRendition = async (target = '') => {
@@ -1256,7 +1283,7 @@ export async function createEpubReader({
           // only whitespace for this quote consistency check, never to locate it.
           const canonical=value=>value.replace(/\s+/gu,' ').trim()
           if (text.length > 262144 || (note.anchor.quoteTruncated ? !canonical(text).startsWith(canonical(note.quote)) : canonical(text) !== canonical(note.quote))) continue
-          shapes.push({ id:note.id, range, frame:contents.window.frameElement, clip:shell.viewer })
+          shapes.push({ id:note.id, range, paintRoot:contents.document.body, frame:contents.window.frameElement, clip:shell.viewer })
         } catch {} // Unmounted, stale or invalid CFIs have no guessed fallback.
       }
       return shapes
@@ -1285,10 +1312,11 @@ export async function createEpubReader({
         depth: item.depth,
         target: { kind: 'epub', href: item.href }
       })),
-    display: (target) => {
+    focus: () => shell.root.focus({ preventScroll: true }),
+    display: (target, operationSignal) => {
       signal?.throwIfAborted()
       return displayTarget(
-        String(target).startsWith('epubcfi(') ? checkedCfi(target) : chapterTarget(target)
+        String(target).startsWith('epubcfi(') ? checkedCfi(target) : chapterTarget(target), operationSignal
       )
     },
     quoteForCfi: async (cfi) => {
@@ -1341,7 +1369,7 @@ export async function createEpubReader({
         operation.engine = true
         await awaitBounded(rendition.display(owned.cfi), 'EPUB search navigation', 20000, controller.signal)
         check()
-        await reportPosition()
+        await reportPosition(controller.signal)
         check()
         activeSearch = owned
         showCurrentSearch()

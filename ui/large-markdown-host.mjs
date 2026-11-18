@@ -38,7 +38,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
       editable: Boolean(state.capabilities?.edit), view: state.view, dirty: Boolean(state.dirty),
       busy: Boolean(state.busy && state.capabilities?.edit), outlineOpen: Boolean(state.outline?.open), hasOutline: Boolean(state.outline?.available),
       lineCount: state.document?.sourceLines, size: state.document?.fileBytes, name: state.name,
-      documentId: state.documentId, revision: state.revision, format: state.format,
+      documentId: state.documentId, resourceId: state.resourceId, revision: state.revision, format: state.format,
       status: state.editorError?.message || state.error || '', error: state.error,
       position: state.position, search: state.search, capabilities: state.capabilities, formatState: state.formatState,
     }
@@ -51,7 +51,7 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (!selection.quote || selection.documentId !== snapshot.documentId || selection.revision !== snapshot.revision) return
     const local = selection.viewportRect, outer = frame.getBoundingClientRect()
     const line = selection.location?.kind === 'line' ? selection.location.line : null
-    onSelection({ ...selection, startLine: line, endLine: line,
+    onSelection({ ...selection, resourceId: snapshot.resourceId, startLine: line, endLine: line,
       rect: local ? { left: outer.left + local.x, top: outer.top + local.y,
         right: outer.left + local.x + local.width, bottom: outer.top + local.y + local.height,
         width: local.width, height: local.height } : null })
@@ -83,9 +83,9 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     const initialView = options.initialView
     if (initialView === 'source' && snapshot.capabilities?.source || initialView === 'edit' && snapshot.capabilities?.edit) publish(await client.request('setView',{view:initialView}))
     if (disposed) return
+    let initialPassage
     if (options.initialReference) {
-      validateReference(options.initialReference)
-      await client.request('navigate',{location:options.initialReference.location})
+      initialPassage = await restoreReference(options.initialReference)
     } else if (options.initialPosition?.revision === snapshot.revision && options.initialPosition?.location) {
       await client.request('navigate',{location:options.initialPosition.location})
     } else if (options.initialLocation) await client.request('navigate',{location:options.initialLocation})
@@ -93,6 +93,8 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     if (disposed) return
     initialized = true
     publish(snapshot)
+    await focusReference(initialPassage)
+    if (disposed) return
     const keepAlive = options.heartbeat || (async signal => {
       const url = new URL(frame.src)
       const response = await fetch(new URL('./api/capabilities', url), {
@@ -169,8 +171,32 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
   function validateReference(reference) {
       if(reference.revision!==snapshot.revision)throw Error('The document has changed since this reference was captured')
       if(reference.location?.kind==='source'&&!snapshot.capabilities?.sourceRangeNavigation)throw Error('This reader package does not support exact source-range navigation')
+      if(reference.resourceId != null && reference.resourceId !== snapshot.resourceId)throw Error('This reference belongs to a different document')
       if(reference.precision==='draft')throw Error('An unsaved draft reference cannot be restored after reopening')
       if(reference.location?.kind==='queryCell')throw Error('This SQL result reference is transient; run the original query again')
+  }
+  async function restoreReference(reference) {
+    validateReference(reference)
+    const precise = reference.textRange || ['source', 'pdf', 'epub'].includes(reference.location?.kind)
+    // Old records have no durable resource ID. Preserve their existing typed
+    // location behavior; never pretend an old session ID owns a new document.
+    const owned = reference.resourceId != null || reference.documentId === snapshot.documentId
+    if (precise && owned && snapshot.capabilities?.passageNavigation?.version === 1) {
+      return client.request('navigatePassage', { anchor: {
+        version: 1, revision: reference.revision,
+        ...(reference.resourceId != null ? {resourceId: reference.resourceId} : {documentId: reference.documentId}),
+        location: reference.location, ...(reference.textRange ? {textRange: reference.textRange} : {}),
+      } }, { signal: lifetime.signal })
+    }
+    await client.request('navigate', {location: reference.location}, { signal: lifetime.signal })
+  }
+  async function focusReference(passage) {
+    if (!passage?.focusToken || disposed) return
+    lifetime.signal.throwIfAborted()
+    // Initial navigation runs under the loading cover. Publish readiness first
+    // so the shell reveals the frame before the public focus handoff.
+    frame.focus?.({ preventScroll: true })
+    await client.request('focusPassage', {focusToken: passage.focusToken}, { signal: lifetime.signal })
   }
   return {
     ready,
@@ -206,8 +232,8 @@ export function createLargeMarkdownHost(frame, onState, onSelection = () => {}, 
     navigateFragment(fragment){return command('navigateFragment',{fragment})},
     async navigateReference(reference){
       await ready
-      validateReference(reference)
-      return command('navigate',{location:reference.location})
+      if (disposed || terminalError) throw terminalError || new DOMException('Reader host disposed','AbortError')
+      await focusReference(await restoreReference(reference))
     },
     search(query, offset = 0, matchCase = snapshot.capabilities?.search?.defaultMatchCase) { return searchCommand('search', { query, offset, matchCase }) },
     activateSearch(search, index) {

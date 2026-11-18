@@ -445,6 +445,7 @@ struct SourceQuery {
     line: Option<usize>,
     offset: Option<usize>,
     end: Option<usize>,
+    before: Option<usize>,
     #[serde(default)]
     previous: bool,
 }
@@ -456,7 +457,11 @@ async fn source_window(State(app): State<App>, Query(query): Query<SourceQuery>,
         let _permit = permit;
         let index = index(&document)?;
         if !index.format.is_text(){return Err((StatusCode::BAD_REQUEST,"Source view applies to text documents; use the extracted page text instead".into()));}
-        let window = if let Some(end) = query.end {
+        let window = if let Some(before) = query.before {
+            let line = query.line.filter(|_| query.offset.is_none() && query.end.is_none() && !query.previous)
+                .ok_or_else(|| (StatusCode::BAD_REQUEST, "Source context requires a line number".into()))?;
+            crate::core::source::read_source_with_context(&document.directory, &index, line, before)
+        } else if let Some(end) = query.end {
             let start = query.offset.filter(|start| query.line.is_none() && !query.previous && *start <= end && end - *start <= crate::core::source::SOURCE_BYTES)
                 .ok_or_else(|| (StatusCode::BAD_REQUEST,"Invalid bounded source range".into()))?;
             crate::core::source::read_range(&document.directory, &index, start, end)
@@ -499,6 +504,7 @@ fn assets() -> Router {
         .route("/reader-ui.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/reader-ui.mjs")) }))
         .route("/ui-messages.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/ui-messages.mjs")) }))
         .route("/translation.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/translation.mjs")) }))
+        .route("/note-passage.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/note-passage.mjs")) }))
         .route("/comment-ranges.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/comment-ranges.mjs")) }))
         .route("/comment-marks.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/comment-marks.mjs")) }))
         .route("/source-comment-marks.mjs", get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], include_str!("../../web/source-comment-marks.mjs")) }))

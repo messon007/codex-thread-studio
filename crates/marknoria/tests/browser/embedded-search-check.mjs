@@ -53,7 +53,10 @@ try {
     child.stdout.on('data', data => output += data); child.stderr.on('data', data => errors += data)
     const deadline = Date.now() + 30000
     while (!output.includes('\n') && child.exitCode == null && Date.now() < deadline) await pause(20)
-    assert.match(output, /http:\/\/127\.0\.0\.1:/, errors); urls.push(output.trim())
+    assert.match(output, /http:\/\/127\.0\.0\.1:/, errors)
+    const url = new URL(output.trim())
+    if (i === 0) url.searchParams.set('sourceFlow', 'paged') // This contract delays individual Source window requests.
+    urls.push(url.href)
   }
   if (process.argv.includes('--webkit')) {
     const { stdout } = await promisify(execFile)('/usr/bin/python3', ['tests/browser/contract-webkit.py', parentOrigin], { encoding: 'utf8', timeout: 190000 })

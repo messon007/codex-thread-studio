@@ -186,12 +186,14 @@ export function normalizeReaderReference(value) {
     if (encoded.length > 32768 || new TextEncoder().encode(encoded).length > 32768
         || !['source', 'line', 'projection', 'cell', 'queryCell', 'pdf', 'epub', 'epubChapter'].includes(String(location.kind))
         || !['exact', 'approximate', 'draft'].includes(String(input.precision))
+        || input.resourceId != null && (typeof input.resourceId !== 'string' || !input.resourceId || input.resourceId.length > 256 || new TextEncoder().encode(input.resourceId).length > 256)
         || typeof input.documentId !== 'string' || !input.documentId || input.documentId.length > 256
         || typeof input.revision !== 'string' || !/^[a-f0-9]{64}$/iu.test(input.revision)) {
         throw new TypeError('Invalid public reader reference');
     }
     return {
         documentId: input.documentId, revision: input.revision,
+        ...(input.resourceId != null ? { resourceId: input.resourceId } : {}),
         precision: input.precision, location: JSON.parse(encoded),
         quoteTruncated: Boolean(input.quoteTruncated),
         ...(typeof input.quote === 'string' && input.quote.length <= 16000 && new TextEncoder().encode(input.quote).length <= 16384 ? { quote: input.quote } : {}),

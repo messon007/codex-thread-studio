@@ -15,6 +15,13 @@ if '--init-script' in arguments:
     if len(init_script.encode()) > 65536:
         raise ValueError('Test init script exceeds 64 KiB')
     del arguments[at:at + 2]
+run_script = None
+if '--run-script' in arguments:
+    at = arguments.index('--run-script')
+    run_script = Path(arguments[at + 1]).read_text()
+    if len(run_script.encode()) > 65536:
+        raise ValueError('Test contract script exceeds 64 KiB')
+    del arguments[at:at + 2]
 manager = WebKit2.UserContentManager()
 if init_script is not None:
     manager.add_script(WebKit2.UserScript.new(init_script, WebKit2.UserContentInjectedFrames.ALL_FRAMES,
@@ -34,7 +41,8 @@ def receive(_manager, message):
 
 def loaded(_view, event):
     if event == WebKit2.LoadEvent.FINISHED:
-        view.run_javascript("(async()=>{try{const {run}=await import('/contract.mjs');window.webkit.messageHandlers.result.postMessage(JSON.stringify(await run()))}catch(error){window.webkit.messageHandlers.result.postMessage(JSON.stringify({error:String(error),stack:error.stack}))}})();void 0;", None, None, None)
+        prefix = run_script if run_script is not None else "const {run}=await import('/contract.mjs');"
+        view.run_javascript("(async()=>{try{" + prefix + "window.webkit.messageHandlers.result.postMessage(JSON.stringify(await run()))}catch(error){window.webkit.messageHandlers.result.postMessage(JSON.stringify({error:String(error),stack:error.stack}))}})();void 0;", None, None, None)
 
 manager.connect('script-message-received::result', receive)
 view.connect('load-changed', loaded)

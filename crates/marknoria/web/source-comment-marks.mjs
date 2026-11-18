@@ -39,7 +39,7 @@ export function sourceCommentContext(code, page) {
           if (to <= from) continue
           const a = view.domAtPos(from, 1), b = view.domAtPos(to, -1), range = view.dom.ownerDocument.createRange()
           range.setStart(a.node, a.offset); range.setEnd(b.node, b.offset)
-          shapes.push({ id: note.id, range, clip: view.scrollDOM })
+          shapes.push({ id: note.id, range, paintRoot: view.contentDOM, clip: view.scrollDOM })
           if (shapes.length > 512) throw Error('Source comment geometry exceeds its budget')
         }
       }

@@ -4,16 +4,17 @@ import { createLargeMarkdownHost, createReaderSelectionHost, readerCommentRefere
 function fixture(initialView, capabilities = {}, callbacks = {}) {
   const requests=[],states=[],selections=[]
   let listener,closed=0
-  let state={state:'ready',view:'preview',documentId:'doc',revision:'a'.repeat(64),capabilities:{edit:true,source:true,sourceRangeNavigation:true,...capabilities},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
+  let state={state:'ready',view:'preview',documentId:'doc',resourceId:'resource-1',revision:'a'.repeat(64),capabilities:{edit:true,source:true,sourceRangeNavigation:true,...capabilities},timings:{firstUsefulContentMs:10},document:{sourceLines:100,fileBytes:2000},outline:{open:false,available:true,total:2},dirty:false,busy:false}
   const client={ready:async()=>state,async request(method,params,{signal}={}){
     requests.push({method,params,signal})
+    if(method==='navigatePassage'){if(callbacks.passageError)throw callbacks.passageError;return {focusToken:'focus-1'}}
     if(method==='setView')state={...state,view:params.view}
     if(method==='contents')state={...state,outline:{...state.outline,open:params.open}}
     if(method==='search')return callbacks.searchResponse || {matches:[{line:8,location:{kind:'cell',table:0,row:4,column:0}}]}
     if(method==='save'){if(state.error)throw Error(state.error);state={...state,dirty:false}}
     return state
   },async dispose({force}){assert.equal(force,true);closed++}}
-  const frame={ownerDocument:callbacks.ownerDocument,src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
+  const frame={focus(){callbacks.onFrameFocus?.(states.at(-1))},ownerDocument:callbacks.ownerDocument,src:'http://127.0.0.1:4000/markdown-reader/test/#token',getBoundingClientRect:()=>({left:100,top:200}),get contentDocument(){throw Error('Private child DOM accessed')},get contentWindow(){throw Error('Private child global accessed')}}
   const host=createLargeMarkdownHost(frame,state=>states.push(state),value=>selections.push(value),{initialView,...callbacks,createClient(_frame,options){listener=options.onEvent;return client}})
   return {host,requests,states,selections,emit:(type,value)=>listener(type,value),setState:patch=>{state={...state,...patch};listener('state',state)},closed:()=>closed}
 }
@@ -45,7 +46,8 @@ test('typed reference navigation retains coordinates and refuses stale, draft, a
  const {host,requests}=fixture();await host.ready
  const reference={revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:3,endByte:13}}
  await host.navigateReference(reference)
- assert.deepEqual(requests.at(-1),{method:'navigate',params:{location:reference.location},signal:undefined})
+ assert.deepEqual(requests.at(-1),{method:'navigate',params:{location:reference.location},signal:requests.at(-1).signal})
+ assert.ok(requests.at(-1).signal instanceof AbortSignal)
  const count=requests.length
  await assert.rejects(host.navigateReference({...reference,revision:'b'.repeat(64)}),/changed/)
  await assert.rejects(host.navigateReference({...reference,precision:'draft'}),/draft/)
@@ -470,4 +472,44 @@ test('Back restores a public reading position only for the same revision', async
    if(matching){assert.deepEqual(navigation[0].params,{location:position.location});assert.ok(requests.findIndex(r=>r.method==='setView')<requests.findIndex(r=>r.method==='navigate'))}
   } finally {await host.dispose()}
  }
+})
+
+test('durable references use exact public passage navigation and one-shot focus handoff',async()=>{
+ const f=fixture(undefined,{passageNavigation:{version:1}});await f.host.ready
+ try {
+  const ref={documentId:'old-session',resourceId:'resource-1',revision:'a'.repeat(64),precision:'approximate',location:{kind:'line',line:3},textRange:{version:1,segments:[]}}
+  await f.host.navigateReference(ref)
+  assert.deepEqual(f.requests.slice(-2).map(r=>r.method),['navigatePassage','focusPassage'])
+  assert.deepEqual(f.requests.at(-2).params.anchor,{version:1,resourceId:'resource-1',revision:ref.revision,location:ref.location,textRange:ref.textRange})
+  const count=f.requests.length
+  await assert.rejects(f.host.navigateReference({...ref,resourceId:'other-resource'}),/different document/)
+  assert.equal(f.requests.length,count)
+  await f.host.navigateReference({...ref,resourceId:undefined})
+  assert.equal(f.requests.at(-1).method,'navigate','old saved records keep typed-location behavior')
+ } finally {await f.host.dispose()}
+})
+test('precise navigation failures never fall back to coarse positions or hand off focus',async()=>{
+ const f=fixture(undefined,{passageNavigation:{version:1}},{passageError:Object.assign(Error('Fingerprint changed'),{code:'PASSAGE_MISMATCH'})});await f.host.ready
+ try {
+  const count=f.requests.length
+  await assert.rejects(f.host.navigateReference({resourceId:'resource-1',revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:0,endByte:5}}),/Fingerprint changed/)
+  assert.deepEqual(f.requests.slice(count).map(r=>r.method),['navigatePassage'])
+ } finally {await f.host.dispose()}
+})
+test('selection capture binds resource identity to the current reader state',async()=>{
+ const f=fixture();await f.host.ready
+ try {
+  f.emit('selection',{documentId:'doc',revision:'a'.repeat(64),resourceId:'forged',quote:'saved',precision:'exact',location:{kind:'source',startByte:0,endByte:5}})
+  assert.equal(f.selections.at(-1).resourceId,'resource-1')
+ } finally {await f.host.dispose()}
+})
+
+test('initial exact reference hands off focus only after the shell is initialized',async()=>{
+ const focused=[]
+ const f=fixture(undefined,{passageNavigation:{version:1}},{initialReference:{resourceId:'resource-1',documentId:'previous-session',revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:0,endByte:5}},onFrameFocus:state=>focused.push(state.initialized)})
+ try {
+  await f.host.ready
+  assert.deepEqual(focused,[true])
+  assert.deepEqual(f.requests.slice(-2).map(r=>r.method),['navigatePassage','focusPassage'])
+ } finally {await f.host.dispose()}
 })

@@ -58,3 +58,10 @@ test('rendered selector validation rejects malformed, duplicate, unbounded and f
   assert.throws(()=>normalizeReaderReference({...reference,textRange}),/Invalid public reader text range/)
  }
 })
+
+test('durable resource identity survives persistence and rejects malformed identities',()=>{
+ const reference={documentId:'old-session',resourceId:'stable-resource',revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:0,endByte:5}}
+ assert.equal(normalizeReaderReference(reference).resourceId,'stable-resource')
+ assert.equal(normalizeReaderReference({...reference,resourceId:undefined}).resourceId,undefined)
+ for(const resourceId of ['',3,'x'.repeat(257),'中'.repeat(100)])assert.throws(()=>normalizeReaderReference({...reference,resourceId}),/Invalid public reader reference/)
+})

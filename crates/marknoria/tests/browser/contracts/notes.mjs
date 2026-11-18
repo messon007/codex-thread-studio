@@ -29,6 +29,12 @@ export async function notesContract(moduleUrl) {
     late,
     lateSignal,
     lateSelection,
+    lateGet,
+    finishUpdate,
+    finishNavigation,
+    navigationMode = 'normal',
+    navigationSignal,
+    navigated = [],
     selectionSignal,
     actionReference,
     copy = []
@@ -61,6 +67,15 @@ export async function notesContract(moduleUrl) {
   const storage = async (request, { owner, signal }) => {
     calls.push({ request: structuredClone(request), documentId: owner.documentId })
     const items = records.get(owner.documentId)
+    if (mode === 'mutation-error' && ['update','delete'].includes(request.operation)) throw Error('Write failed; retry')
+    if (mode === 'update-pending' && request.operation === 'update') await new Promise(resolve => { finishUpdate = resolve })
+    if (request.operation === 'get') {
+      const note = structuredClone(items.find(item => item.id === request.id))
+      if (mode === 'get-pending') return new Promise(resolve => { lateGet = () => resolve(note) })
+      if (mode === 'get-error') throw Error('Comment fetch failed')
+      if (mode === 'get-stale') note.revision = 'different-revision'
+      return note
+    }
     if (mode === 'pending' && request.operation === 'add') {
       lateSignal = signal
       return await new Promise((resolve) => (late = resolve))
@@ -116,6 +131,14 @@ export async function notesContract(moduleUrl) {
       storage,
       queryNotes,
       translate,
+      navigate: async (note, {signal}) => {
+        navigationSignal = signal
+        navigated.push(note)
+        if (navigationMode === 'error') throw Error('Passage is unavailable')
+        if (navigationMode === 'pending') await new Promise(resolve => { finishNavigation = resolve })
+        signal.throwIfAborted()
+        return {focus:()=>check(!left.root.querySelector('.notes-dialog'),'Navigation focused behind the Notes dialog')}
+      },
       // This synthetic provider models a remote textOnly selection response.
       selectionAllowed: () => true,
       selection: async (signal) => {
@@ -219,9 +242,9 @@ export async function notesContract(moduleUrl) {
     )
     editor.querySelector('textarea').value = 'Comment 中文😀'
     button(editor, 'Save comment').click()
-    await wait(() =>
-      left.root.querySelector('.notes-library .notes-footer')?.textContent.includes('2 saved')
-    )
+    await wait(() => !left.root.querySelector('.notes-dialog'))
+    check(!left.root.querySelector('.notes-library'),'Saving a comment unexpectedly opened Notes')
+    await notes.open()
     check(
       records.get(owner.documentId).length === 2 && records.get(ownerB.documentId).length === 0,
       'Storage crossed owning documents'
@@ -239,6 +262,80 @@ export async function notesContract(moduleUrl) {
       )
     }
     const library = () => left.root.querySelector('.notes-library')
+    const savedComment = records.get(owner.documentId).find(note => note.kind === 'comment')
+    navigationMode = 'error'
+    button(library(), 'Go to passage').click()
+    await wait(()=>library()?.textContent.includes('Passage is unavailable'))
+    check(Boolean(library()),'Failed navigation closed Notes')
+    navigationMode = 'normal'
+    button(library(), 'Go to passage').click()
+    await wait(()=>!library())
+    check(navigated.at(-1).anchor.location.kind==='source','Navigation lost the typed saved anchor')
+    await notes.open()
+    navigationMode='pending'
+    button(library(),'Go to passage').click()
+    await wait(()=>finishNavigation)
+    library().querySelector('.notes-close').click()
+    finishNavigation();await tick()
+    check(navigationSignal.aborted&&!library(),'Canceled navigation reopened Notes')
+    navigationMode='normal'
+    const beforeOpen = calls.length
+    await notes.openComment(savedComment.id)
+    check(left.root.querySelector('.notes-editor textarea')?.value === 'Comment 中文😀' && !library(),
+      'Marked comment did not open directly in its full-body editor')
+    check(calls.slice(beforeOpen).map(call => call.request.operation).join() === 'get',
+      'Opening one comment fetched the Notes list')
+    left.root.querySelector('.notes-editor textarea').value='Discard this draft'
+    button(left.root.querySelector('.notes-editor'),'Cancel').click()
+    check(!left.root.querySelector('.notes-dialog'),'Cancel returned to the Notes manager')
+    check(records.get(owner.documentId).find(note=>note.id===savedComment.id).comment==='Comment 中文😀','Cancel persisted an unsaved draft')
+    mode = 'get-pending'
+    const pendingOpen = notes.openComment(savedComment.id)
+    await wait(() => lateGet)
+    check(!left.root.querySelector('.notes-editor textarea'), 'Loading exposed an empty editable draft')
+    left.root.querySelector('.notes-close').click()
+    lateGet(); await pendingOpen
+    check(!left.root.querySelector('.notes-dialog'), 'Late comment fetch reopened a closed editor')
+    mode = 'get-error'
+    await notes.openComment(savedComment.id)
+    check(left.root.querySelector('.notes-editor [role="status"]')?.textContent === 'Comment fetch failed' &&
+      !left.root.querySelector('.notes-editor textarea'), 'Failed fetch enabled a blank editor')
+    mode = 'get-stale'
+    await notes.openComment(savedComment.id)
+    check(!left.root.querySelector('.notes-editor textarea'), 'Foreign revision entered the editor')
+    mode = 'normal'
+    await notes.openComment(savedComment.id)
+    check(left.root.querySelector('.notes-editor textarea')?.value === savedComment.comment,
+      'Comment could not reopen after a failed fetch')
+    mode='mutation-error'
+    const draft=left.root.querySelector('.notes-editor textarea')
+    draft.value='Draft retained after failure'
+    button(left.root.querySelector('.notes-editor'),'Save comment').click()
+    await wait(()=>left.root.querySelector('.notes-editor [role=status]')?.textContent.includes('Write failed'))
+    check(draft.value==='Draft retained after failure'&&!library(),'Failed save discarded draft or opened manager')
+    mode='update-pending'
+    button(left.root.querySelector('.notes-editor'),'Save comment').click()
+    await wait(()=>finishUpdate)
+    check(left.root.querySelector('.notes-editor textarea').readOnly,'Pending save allowed draft edits that would be discarded')
+    button(left.root.querySelector('.notes-editor'),'Cancel').click()
+    const nextEditor=notes.openComment(savedComment.id)
+    finishUpdate();await nextEditor
+    check(left.root.querySelector('.notes-editor textarea')?.value==='Draft retained after failure',
+      'Late save closed or replaced a newer editor')
+    mode='normal'
+    button(left.root.querySelector('.notes-editor'),'Cancel').click()
+    const disposable={...savedComment,id:crypto.randomUUID()}
+    records.get(owner.documentId).push(disposable)
+    await notes.openComment(disposable.id)
+    mode='mutation-error'
+    button(left.root.querySelector('.notes-editor'),'Delete').click()
+    await wait(()=>left.root.querySelector('.notes-editor [role=status]')?.textContent.includes('Write failed'))
+    check(records.get(owner.documentId).some(note=>note.id===disposable.id),'Failed delete lost comment')
+    mode='normal'
+    button(left.root.querySelector('.notes-editor'),'Delete').click()
+    await wait(()=>!left.root.querySelector('.notes-dialog'))
+    check(!records.get(owner.documentId).some(note=>note.id===disposable.id),'Editor delete did not persist')
+    await notes.open()
     button(library(), 'Comments').click()
     await wait(() => library()?.querySelector('.notes-footer')?.textContent.includes('1 saved'))
     button(library(), 'Clear comments').click()

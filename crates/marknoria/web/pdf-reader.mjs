@@ -355,9 +355,10 @@ export function mountPdfReader(root, options) {
     },
     { root: viewport, rootMargin: '400px 0px' }
   )
-  async function go(number, fraction = 0, searchGuard = null) {
+  async function go(number, fraction = 0, searchGuard = null, operationSignal) {
     ensure()
     await ready
+    operationSignal?.throwIfAborted()
     if (searchGuard && !searchGuard()) throw aborted()
     if (!searchGuard) clearCurrentSearch()
     if (!Number.isSafeInteger(number) || number < 1 || number > pdf.numPages)
@@ -715,14 +716,32 @@ export function mountPdfReader(root, options) {
     },
     settings: apply,
     dispose,
-    async navigate(location) {
+    async navigate(location, { signal: operationSignal } = {}) {
       if (location?.kind !== 'pdf' || !Array.isArray(location.pages) || !location.pages.length)
         throw Error('A PDF page location is required')
       const target = location.pages[0],
-        fraction = target.rects?.[0]?.y ?? 0
-      if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1)
+        region = target.rects?.[0], fraction = region?.y ?? 0, x = region?.x ?? 0, width = region?.width ?? 0
+      if (!Number.isSafeInteger(target.page) || target.page < 1 || target.page > pages.length)
+        throw Error('PDF page out of range')
+      if (![fraction,x,width].every(Number.isFinite) || fraction < 0 || fraction > 1 || x < 0 || width < 0 || x + width > 1.001)
         throw Error('Invalid PDF page coordinate')
-      await go(target.page, fraction)
+      operationSignal?.throwIfAborted()
+      if (region) {
+        const pdfPage = await bounded(pdf.getPage(target.page), 'PDF passage geometry', 20000, operationSignal)
+        operationSignal?.throwIfAborted()
+        const size = pdfPage.getViewport({ scale: 1 })
+        const node = pages[target.page - 1]
+        node.dataset.pdfWidth = size.width
+        node.dataset.pdfHeight = size.height
+        dimensions(node, size.width, size.height)
+      }
+      await go(target.page, fraction, null, operationSignal)
+      operationSignal?.throwIfAborted()
+      const page = pages[target.page - 1].getBoundingClientRect(), bounds = viewport.getBoundingClientRect()
+      const left = bounds.left + viewport.clientLeft, right = left + viewport.clientWidth
+      const start = page.left + x * page.width, end = start + width * page.width
+      if (start < left) viewport.scrollLeft += start - left
+      else if (end > right) viewport.scrollLeft += Math.min(end - right, start - left)
     },
     clearSearch,
     repaintSearch(match, { query, matchCase = searchMatchCase } = {}) {

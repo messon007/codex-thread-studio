@@ -1,10 +1,16 @@
 import { uiLabels } from './translation.mjs'
 import { pagerIcon } from './icons.mjs'
 
+const SOURCE_WINDOW_BYTES = 128 * 1024 // The /api/source byte-range limit.
+const SOURCE_READING_LIMITS = Object.freeze({
+  wholeFileBytes: SOURCE_WINDOW_BYTES, tableRows: 50, tableCells: 512,
+  windowBytes: SOURCE_WINDOW_BYTES, windowLines: 200, contextLines: 24,
+})
+
 // Convert only the bounded source window to CodeMirror's LF/UTF-16 DOM units.
 // Original byte coordinates stay unchanged in the public reference.
 export function sourceRangeOffsets(window, start, end) {
-  if (![start,end,window.start,window.end].every(Number.isSafeInteger) || start < window.start || end < start || end > window.end || window.end - window.start > 128 * 1024) throw Error('Source range does not fit this bounded window')
+  if (![start,end,window.start,window.end].every(Number.isSafeInteger) || start < window.start || end < start || end > window.end || window.end - window.start > SOURCE_WINDOW_BYTES) throw Error('Source range does not fit this bounded window')
   const bytes = new TextEncoder().encode(window.text)
   if (bytes.length !== window.end - window.start) throw Error('Source window byte length changed')
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
@@ -29,6 +35,12 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   labels.set(retry,'Go to retry')
   const previous = document.querySelector('#source-previous')
   const next = document.querySelector('#source-next')
+  // Use the table reader's row and cell budgets to screen out large tables.
+  const { wholeFileBytes, tableRows, tableCells, contextLines } = SOURCE_READING_LIMITS
+  const flow = options.flow === 'paged' ? 'paged' : 'auto'
+  const fullSource = flow === 'auto' && index.sourceBytes <= wholeFileBytes
+    && index.tables.every(table => table.rows <= tableRows && table.rows * table.columns.length <= tableCells)
+  previous.parentElement.hidden = fullSource
   previous.replaceChildren(pagerIcon('previous'))
   next.replaceChildren(pagerIcon('next'))
   let page = null
@@ -65,7 +77,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     next.setAttribute('aria-disabled', String(loading || !page || page.end >= index.sourceBytes))
     input.readOnly = loading
   }
-  async function load(query, target = null, signal = null) {
+  async function load(query, target = null, signal = null, align = 'start') {
     signal?.throwIfAborted()
     request?.abort()
     request = new AbortController()
@@ -78,25 +90,36 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
     update()
     labels.set(range, 'Loading source…')
     try {
-      const response = await api(`/api/source?${query}`, request.signal)
-      if (ticket !== generation || !visible || response.revision !== index.revision) return
-      signal?.throwIfAborted()
-      page = response.result
-      const module = await import('./vendor/editor.mjs')
-      if (ticket !== generation || !visible) return
-      signal?.throwIfAborted()
-      if (!code) code = module.codeView(mount, { readOnly: true, translate: options.translate })
+      if (!fullSource || !page) {
+        const params = fullSource ? `offset=0&end=${index.sourceBytes}` : query
+        const response = await api(`/api/source?${params}`, controller.signal)
+        if (ticket !== generation || !visible || response.revision !== index.revision) return
+        signal?.throwIfAborted()
+        const module = await import('./vendor/editor.mjs')
+        if (ticket !== generation || !visible) return
+        signal?.throwIfAborted()
+        if (!code) code = module.codeView(mount, { readOnly: true, translate: options.translate })
+        const window = response.result
+        code.load(window.text.replaceAll('\r\n', '\n'), window.line, response.language)
+        document.querySelector('.source-content').hidden = true
+        text.textContent = window.text
+        if (!fullSource) {
+          const count = window.text.split('\n').length
+          numbers.textContent = Array.from({ length: count }, (_, row) => `${window.line + row}${row === 0 && window.startsMidLine ? '↳' : ''}`).join('\n')
+        }
+        page = window
+      }
       searchSelection = null
-      code.load(page.text.replaceAll('\r\n', '\n'), page.line, response.language)
-      document.querySelector('.source-content').hidden = true
-      text.textContent = page.text
-      const count = page.text.split('\n').length
-      numbers.textContent = Array.from({ length: count }, (_, row) => `${page.line + row}${row === 0 && page.startsMidLine ? '↳' : ''}`).join('\n')
       input.value = target ?? page.line
-      labels.set(range, page.startsMidLine || page.endsMidLine ? '{start}–{end} / {total} lines · continued line' : '{start}–{end} / {total} lines', {start:page.line,end:page.endLine,total:index.sourceLines})
-      viewport.scrollTop = Math.max(0, (target ?? page.line) - page.line) * lineHeight()
-      viewport.scrollLeft = 0
-      await code.reveal(target ?? page.line)
+      if (fullSource) {
+        labels.set(range, 'Original source file · {total} lines', { total: index.sourceLines })
+        if (target != null) await code.reveal(target)
+      } else {
+        labels.set(range, page.startsMidLine || page.endsMidLine ? '{start}–{end} / {total} lines · continued line' : '{start}–{end} / {total} lines', {start:page.line,end:page.endLine,total:index.sourceLines})
+        viewport.scrollTop = Math.max(0, (target ?? page.line) - page.line) * lineHeight()
+        viewport.scrollLeft = 0
+        await code.reveal(target ?? page.line, align)
+      }
       if (ticket !== generation || !visible) return false
       signal?.throwIfAborted()
       panel.dataset.ready = 'true'
@@ -109,30 +132,33 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
       if (ticket === generation) { loading = false; text.removeAttribute('aria-busy'); update() }
     }
   }
-  async function go(line) {
+  async function go(line, { signal } = {}) {
     line = Math.max(1, Math.min(index.sourceLines, Math.trunc(Number(line)) || 1))
     if (external) return external.go(line)
-    return load(`line=${line}`, line)
+    if (!fullSource && options.contextual !== false)
+      return load(`line=${line}&before=${contextLines}`, line, signal, 'center')
+    return load(`line=${line}`, line, signal)
   }
   async function goRange(start, end, options = {}) {
     const signal = options.signal
     signal?.throwIfAborted()
     if (external) throw Error('This source renderer cannot restore byte ranges')
-    if (![start,end].every(Number.isSafeInteger) || start < 0 || end < start || end > index.sourceBytes || end-start > 128*1024) throw Error('Source range out of bounds')
-    setVisible(true, { preserveSearch: options.search === true })
+    if (![start,end].every(Number.isSafeInteger) || start < 0 || end < start || end > index.sourceBytes || end-start > SOURCE_WINDOW_BYTES) throw Error('Source range out of bounds')
+    setVisible(true, { preserveSearch: options.search === true, intent: options.intent })
     if (!await load(`offset=${start}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source navigation was cancelled or failed') }
     if (page.end < end && !await load(`offset=${start}&end=${end}`, null, signal)) { signal?.throwIfAborted(); throw Error('Source range navigation was cancelled or failed') }
     signal?.throwIfAborted()
     const { from, to } = sourceRangeOffsets(page,start,end)
+    if (fullSource) input.value = code.view.state.doc.lineAt(from).number
     if (options.search) searchSelection = { from, to }
     await code.select(from,to)
     signal?.throwIfAborted()
   }
-  function setVisible(open, { restore = true, preserveSearch = false } = {}) {
+  function setVisible(open, { restore = true, preserveSearch = false, intent } = {}) {
     // Read while CodeMirror still has layout; hidden panels report line one.
     const resumeLine = !open && visible ? currentLocation() : null
+    if (open) pausePreview({ intent })
     if (visible !== open) options.onVisibilityChange?.({ preserveSearch })
-    if (open) pausePreview()
     visible = open
     panel.hidden = !open || Boolean(external)
     if (external) external.viewport.hidden = !open
@@ -171,6 +197,7 @@ export function sourceController(index, api, preview, anchor, pausePreview, opti
   on(previous, 'click', () => { if (!loading && page?.start > 0) load(`offset=${page.start}&previous=true`) })
   on(next, 'click', () => { if (!loading && page && page.end < index.sourceBytes) load(`offset=${page.end}`) })
   return {
+    reading: { version: 1, flow, continuous: fullSource, ...SOURCE_READING_LIMITS },
     search: () => code?.search(),
     selectionLine() { return code&&page ? page.line+code.view.state.doc.lineAt(code.view.state.selection.main.from).number-1 : null },
     get code() { return external ? null : code },

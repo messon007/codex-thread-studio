@@ -73,6 +73,11 @@ export function tableController(index, api, changed, options = {}) {
       if (!navigated) throw new DOMException('Table navigation superseded', 'AbortError')
       selectedTable = entry[1]
     },
+    openCell(table) {
+      const entry = [...active].find(([article]) => article.isConnected && Number(article.dataset.table) === table)
+      if (!entry) throw Error('The requested table is not mounted')
+      return entry[1].openCell()
+    },
     hasOverlay() { return Boolean(chartDialog?.isOpen() || queryDialog?.isOpen() || overlayTable()) },
     closeOverlays() { chartDialog?.dispose(); queryDialog?.dispose(); for (const controller of active.values()) controller.closeOverlay() },
     async captureSelection(options = {}, signal) { if (chartDialog?.isOpen()) return options.textOnly ? null : chartDialog.selection(); if (queryDialog?.isOpen()) return queryDialog.captureSelection(options, signal); return (overlayTable() || selectedTable)?.captureSelection(options, signal) || null },

@@ -43,15 +43,16 @@ try{
  const token=new URL(url).hash.slice(7)
  const savedDrafts=async()=>{const saved=await page.request.get(new URL('/studio/session-state',url).href,{headers:{Authorization:'Bearer '+token}});assert.equal(saved.status(),200);const state=await saved.json();return state.annotationDrafts?.['codex:00000000-0000-4000-8000-000000000777']||[]}
  let drafts=await savedDrafts();assert.equal(drafts.length,1);assert.equal(drafts[0].note,'Persistent host comment fixture');assert.deepEqual(drafts[0].source.anchor.readerReference.textRange,selection.textRange)
+ assert.equal(drafts[0].source.anchor.readerReference.resourceId,readerState.resourceId)
  const commentId=drafts[0].id, exactDraft=structuredClone(drafts[0])
  report.checks.push('real double-click selects second repeated word; exact textRange survives gateway and SQLite save')
  const marks=()=>frame.locator('body').evaluate(()=>[...CSS.highlights.entries()].filter(([n])=>n.startsWith('marknoria-comments-')).flatMap(([,ranges])=>[...ranges].map(range=>{const p=range.startContainer.parentElement.closest('p');let preceding=null;if(p){const before=document.createRange();before.selectNodeContents(p);before.setEnd(range.startContainer,range.startOffset);preceding=before.toString().split('TARGET').length-1}const r=range.getBoundingClientRect();return{text:range.toString(),preceding,x:r.left+r.width/2,y:r.top+r.height/2}})))
  const waitMarks=async(count)=>{for(let i=0;i<100;i++){const current=await marks();if(current.length===count)return current;await pause(30)}assert.fail(`Expected ${count} comment ranges, got ${JSON.stringify(await marks())}`)}
  let visible=await waitMarks(1);assert.equal(visible[0].text,'TARGET');assert.equal(visible[0].preceding,1)
- assert.match(await frame.locator('style[data-comment-style]').innerText(),/text-decoration-style:dashed/)
+ assert.match((await frame.locator('style[data-comment-style]').allTextContents()).join('\n'),/text-decoration-style:dashed/)
  await frame.locator('#space h1').first().click();visible=await waitMarks(1)
  report.checks.push('only second occurrence has a dashed underline; clearing selection retains it')
- assert.match(await (await page.request.get(new URL('/reader-assets/comment-marks.mjs',url).href)).text(),/Temporary MarkNoria #39/)
+ assert.equal(await (await page.request.get(new URL('/reader-assets/comment-marks.mjs',url).href)).text(),await readFile(join(repo,'crates/marknoria/web/comment-marks.mjs'),'utf8'))
  await page.mouse.click(frameBox.x+visible[0].x,frameBox.y+visible[0].y)
  await page.locator('#annotation-dialog').waitFor({state:'visible',timeout:3000})
  assert.equal(await page.locator('#annotation-comment').inputValue(),'Persistent host comment fixture')
@@ -76,11 +77,22 @@ try{
  await page.mouse.move(frameBox.x+visible[0].x,frameBox.y+visible[0].y);await frame.locator('.comment-mark-popup').waitFor({state:'visible'})
  await frame.locator('.comment-mark-popup').getByRole('button',{name:'View comment',exact:true}).click();await page.locator('#annotation-dialog').waitFor({state:'visible'});assert.equal(await page.locator('#annotation-comment').inputValue(),'Edited through underline')
  await page.keyboard.press('Escape');report.checks.push('real hover action crosses iframe into Studio editor for the owned saved comment')
- await page.evaluate(()=>hostReview.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'))
+ await page.evaluate(()=>window.hostReview?.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'))
  await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
  await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.hostReview=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await hostReview.ready()})
  drafts=await savedDrafts();assert.equal(drafts[0].note,'Edited through underline');assert.equal(drafts[0].id,commentId);assert.deepEqual(drafts[0].source.anchor.readerReference.textRange,selection.textRange);visible=await waitMarks(1);assert.equal(visible[0].preceding,1)
  report.checks.push('page reload and document reopen restore the same exact saved underline from SQLite')
+ await page.evaluate(()=>window.hostReview?.disconnect())
+ await page.locator('#open-thread-comments').click()
+ await page.locator(`.annotation-card[data-draft-id="${commentId}"] .annotation-source`).click()
+ await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden'))
+ await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.hostReview=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await hostReview.ready()})
+ let restored
+ for(let i=0;i<100;i++){restored=await page.evaluate(()=>hostReview.request('selection',{textOnly:true}));if(restored?.quote==='TARGET'&&restored.textRange?.segments[0]?.startUtf16===selection.textRange.segments[0].startUtf16)break;await pause(25)}
+ assert.equal(restored?.quote,'TARGET');assert.deepEqual(restored.textRange,selection.textRange)
+ assert.equal((await page.evaluate(()=>hostReview.request('state'))).resourceId,readerState.resourceId)
+ report.checks.push('actual saved-comment source action reopens a fresh reader and selects the second repeated occurrence through durable public passage navigation')
+
  await page.locator('#artifact-search-toggle').click();await page.locator('#artifact-search-input').fill('needle')
  const searchCase=page.locator('#artifact-search-match-case');assert.equal(await searchCase.isChecked(),true)
  async function searchState(total,matchCase){const end=Date.now()+30000;let value;while(Date.now()<end){value=await page.evaluate(()=>hostReview.request('state'));if(value.search.total===total&&value.search.matchCase===matchCase&&value.search.current===0)return value;await pause(25)}throw Error('Search state timeout: '+JSON.stringify(value?.search))}
@@ -108,7 +120,7 @@ try{
  await page.locator('#open-thread-comments').click();const sourceRemoved=page.waitForResponse(r=>r.url().endsWith('/studio/session-state/annotations')&&r.request().method()==='PUT');await page.locator('.annotation-delete').click();assert.equal((await sourceRemoved).status(),204)
  const overlap=Array.from({length:2},(_,i)=>({...structuredClone(exactDraft),id:'overlap-'+i,note:'Overlap '+i}))
  const seeded=await page.request.put(new URL('/studio/session-state/annotations',url).href,{headers:{Authorization:'Bearer '+token},data:{sessionKey:'codex:00000000-0000-4000-8000-000000000777',drafts:overlap,additional:''}});assert.equal(seeded.status(),204)
- await page.evaluate(()=>hostReview.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'));await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
+ await page.evaluate(()=>window.hostReview?.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'));await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
  visible=await waitMarks(2);assert.ok(visible.every(x=>x.text==='TARGET'&&x.preceding===1));const overlapFrame=await page.locator('.artifact-large-markdown-frame').boundingBox();await page.mouse.click(overlapFrame.x+visible[0].x,overlapFrame.y+visible[0].y)
  await frame.locator('.comment-mark-popup').waitFor({state:'visible'});assert.equal(await frame.locator('.comment-mark-popup button').count(),2);for(const index of [0,1]){
   await page.mouse.move(0,0);await page.mouse.click(overlapFrame.x+visible[0].x,overlapFrame.y+visible[0].y)
@@ -117,6 +129,25 @@ try{
  }
  await page.locator('#open-thread-comments').click();page.once('dialog',dialog=>dialog.accept());const cleared=page.waitForResponse(r=>r.url().endsWith('/studio/session-state/annotations')&&r.request().method()==='PUT');await page.locator('#clear-annotations').click();assert.equal((await cleared).status(),204);assert.equal((await savedDrafts()).length,0);await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>!document.querySelector('#artifact-preview').disabled);await waitMarks(0)
  report.checks.push('overlapping saved references expose two separate owned click actions; actual Clear comments removes persisted records and every underline')
+
+ for(const [name,contents,continuous] of [
+  ['continuous.md',Array.from({length:320},(_,i)=>`Line ${i} 中文😀`).join('\n'),true],
+  ['paged-table.md','| Value |\n| --- |\n'+Array.from({length:320},(_,i)=>`| Row ${i} |`).join('\n'),false],
+ ]) {
+  const sourcePath=join(project,name);await writeFile(sourcePath,contents)
+  await page.evaluate(()=>window.hostReview?.disconnect())
+  await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path:sourcePath})
+  await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden'))
+  await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.hostReview=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await hostReview.ready()})
+  const state=await page.evaluate(()=>hostReview.request('state'));assert.equal(state.capabilities.sourceReading.continuous,continuous)
+  await page.locator('#artifact-source').click()
+  const targetLine=continuous?state.document.sourceLines:210
+  const moved=await page.evaluate(line=>hostReview.request('navigate',{location:{kind:'line',line}}),targetLine)
+  assert.ok(moved.position.location.line>180)
+  if(!continuous)assert.ok(moved.position.location.line<targetLine,'paged Source retains preceding context')
+  assert.equal(await readFile(sourcePath,'utf8'),contents)
+ }
+ report.checks.push('Studio Source uses continuous small-file reading beyond 200 lines and bounded contextual paging for large tables')
 
  if(process.argv.includes('--webkit')){
   const seed=await page.request.put(new URL('/studio/session-state/annotations',url).href,{headers:{Authorization:'Bearer '+token},data:{sessionKey:'codex:00000000-0000-4000-8000-000000000777',drafts:[{...exactDraft,note:'Native WebKit comment'}],additional:''}});assert.equal(seed.status(),204)

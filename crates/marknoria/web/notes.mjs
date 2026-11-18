@@ -21,6 +21,7 @@ export function mountNotes({
   actions = [],
   eventRoot = root,
   presentationRoot = root,
+  navigate = null,
   onMutation = () => {}
 }) {
   if (
@@ -58,6 +59,8 @@ export function mountNotes({
     throw TypeError('Invalid Notes display policy')
   if (typeof selectionProvider !== 'function')
     throw Error('Notes require the public selection provider')
+  if (navigate !== null && typeof navigate !== 'function')
+    throw TypeError('Invalid Notes navigation provider')
   owner = Object.freeze({
     documentId: owner.documentId,
     revision: owner.revision,
@@ -123,7 +126,7 @@ export function mountNotes({
     activeRequests++
     const task = (async () => {
       try {
-        if (mutation || request.operation === 'list') await prior
+        if (mutation || request.operation === 'list' || request.operation === 'get') await prior
         lifetime.signal.throwIfAborted()
         if (new TextEncoder().encode(JSON.stringify(request)).length > 131072)
           throw Error('Note request exceeds its transport budget')
@@ -227,7 +230,7 @@ export function mountNotes({
     controls.append(item)
   }
   controls.addEventListener('pointerdown', (e) => e.preventDefault())
-  const header = button('Notes', () => list())
+  const header = button('Notes', () => list(listOffset, filterKind))
   header.className = headerIconOnly ? 'reader-icon-button notes-open' : 'reader-action notes-open'
   labels.clear(header)
   header.setAttribute('data-marknoria-notes', '')
@@ -250,7 +253,8 @@ export function mountNotes({
     filterKind = null,
     listOffset = 0
   let confirmation = null,
-    previousFocus = null
+    previousFocus = null,
+    navigationRequest = null
   function detachOverlay(target) {
     if (!target) return
     // Feedback/selection controls temporarily live in the active modal's top
@@ -262,6 +266,8 @@ export function mountNotes({
     }
   }
   function close(restoreFocus = true) {
+    navigationRequest?.abort()
+    navigationRequest = null
     detachOverlay(confirmation)
     detachOverlay(dialog)
     confirmation?.remove()
@@ -421,38 +427,84 @@ export function mountNotes({
     message.role = 'status'
     const actions = document.createElement('footer')
     actions.className = 'notes-editor-actions'
-    const save = button('Save comment', async () => {
+    let busy = false, remove = null
+    const mutate = async request => {
+      if (busy || dialog !== target) return
+      busy = true
+      input.readOnly = true
       save.disabled = true
+      if (remove) remove.disabled = true
       try {
-        await noteApi(
-          note
-            ? { operation: 'update', id: note.id, comment: input.value }
-            : {
-                operation: 'add',
-                kind: 'comment',
-                quote: selection.quote,
-                comment: input.value,
-                anchor: selection.anchor,
-                revision: index.revision
-              }
-        )
-        feedback('Saved comment')
-        if (dialog === target) await list(listOffset, filterKind)
+        await noteApi(request)
+        // A completed write may refresh marks, but never replace a newer UI.
+        if (dialog === target) {
+          close()
+          feedback(request.operation === 'delete' ? 'Deleted comment' : 'Saved comment')
+        }
       } catch (e) {
-        labels.clear(message)
-        message.textContent = noteError(e)
-        save.disabled = false
-      }
+        if (dialog === target) {
+          labels.clear(message)
+          message.textContent = noteError(e)
+          save.disabled = false
+          input.readOnly = false
+          if (remove) remove.disabled = false
+        }
+      } finally { busy = false }
+    }
+    const save = button('Save comment', async () => {
+      await mutate(
+        note
+          ? { operation: 'update', id: note.id, comment: input.value }
+          : {
+              operation: 'add',
+              kind: 'comment',
+              quote: selection.quote,
+              comment: input.value,
+              anchor: selection.anchor,
+              revision: index.revision
+            }
+      )
     })
     save.className = 'notes-primary'
+    if (note) {
+      remove = button('Delete', () => mutate({ operation: 'delete', id: note.id }))
+      remove.className = 'notes-danger'
+      actions.append(remove)
+    }
     actions.append(
       message,
-      button('Cancel', () => list(listOffset, filterKind)),
+      button('Cancel', () => close()),
       save
     )
     content.append(quoteTitle, quote, label, input)
     target.append(content, actions)
     input.focus()
+  }
+  async function openComment(id) {
+    if (stopped) return
+    if (typeof id !== 'string' || !id.length || id.length > 256) throw TypeError('Invalid comment identity')
+    const target = shell('Edit comment', 'editor')
+    const message = document.createElement('p')
+    message.className = 'notes-editor-body'
+    message.role = 'status'
+    labels.set(message, 'Loading…')
+    target.append(message)
+    try {
+      const note = await noteApi({ operation: 'get', id })
+      if (stopped || dialog !== target) return
+      if (!note || note.id !== id || note.kind !== 'comment' || note.revision !== owner.revision || note.stale ||
+          (note.documentId != null && note.documentId !== owner.documentId) ||
+          typeof note.quote !== 'string' || note.quote.length > 32768 || new TextEncoder().encode(note.quote).length > 32768 ||
+          typeof note.comment !== 'string' || note.comment.length > 16384 || new TextEncoder().encode(note.comment).length > 16384 ||
+          !note.anchor || typeof note.anchor !== 'object') throw Error('Comment is unavailable for this document revision')
+      selectedId = id
+      edit(note)
+    } catch (error) {
+      if (!stopped && dialog === target) {
+        labels.clear(message)
+        message.textContent = noteError(error)
+      }
+    }
   }
   async function list(offset = 0, kind = null, preferredId = null) {
     if (stopped) return
@@ -529,6 +581,8 @@ export function mountNotes({
         count: result.total
       })
       function show(note) {
+        navigationRequest?.abort()
+        navigationRequest = null
         selectedId = note.id
         for (const row of sidebar.children)
           row.setAttribute('aria-pressed', String(row.dataset.noteId === note.id))
@@ -567,11 +621,38 @@ export function mountNotes({
         else labels.set(body, 'No comment added.')
         const actions = document.createElement('div')
         actions.className = 'notes-actions'
+        let navigationStatus = null
+        if (navigate) {
+          navigationStatus = document.createElement('p')
+          navigationStatus.role = 'status'
+          const go = button('Go to passage', async () => {
+            navigationRequest?.abort()
+            const request = new AbortController()
+            navigationRequest = request
+            go.disabled = true
+            navigationStatus.textContent = ''
+            try {
+              const result = await navigate(structuredClone(note), { signal: request.signal })
+              if (stopped || dialog !== target || request.signal.aborted) return
+              close(false)
+              previousFocus = null
+              if (typeof result?.focus === 'function') await result.focus()
+            } catch (error) {
+              if (stopped || dialog !== target || request.signal.aborted) return
+              navigationStatus.textContent = noteError(error)
+              go.disabled = false
+            }
+          })
+          go.className = 'notes-primary'
+          go.disabled = Boolean(note.stale || note.revision !== owner.revision)
+          if (go.disabled) labels.set(navigationStatus, 'This note belongs to an earlier document revision.')
+          actions.append(go)
+        }
         const copy = button('Copy reference', async () => {
           const value = await noteApi({ operation: 'copy', id: note.id })
           await copyText(value.text)
         })
-        copy.className = 'notes-primary'
+        if (!navigate) copy.className = 'notes-primary'
         const remove = button('Delete', async () => {
           await noteApi({ operation: 'delete', id: note.id })
           selectedId = null
@@ -584,6 +665,7 @@ export function mountNotes({
           remove
         )
         card.append(bar, origin, quoteLabel, quote, commentLabel, body, actions)
+        if (navigationStatus) card.append(navigationStatus)
         detail.replaceChildren(card)
       }
       // Keep row summaries compact; full passages belong in the detail pane.
@@ -786,7 +868,7 @@ export function mountNotes({
       filter: filterKind
     }),
     open: list,
-    openComment: id => list(0, 'comment', id),
+    openComment,
     selectionChanged: selected,
     clearSelection,
     dispose() {
@@ -823,6 +905,7 @@ export function notesController(index, api, canSave = () => true, selectionProvi
     headerIconOnly: true,
     selectionMenu: options.selectionMenu !== 'host',
     translate: options.translate,
+    navigate: options.navigate,
     onMutation: options.onMutation
   })
 }

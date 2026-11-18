@@ -683,11 +683,13 @@ function renderAnnotationRail() {
   $('#insert-annotations').disabled = !drafts.length
   $('#annotation-additional').value = state.selectedId ? state.annotationAdditional[selectedStateKey()] || '' : ''
   $('#annotation-list').innerHTML = drafts.map((draft, index) => `<article class="annotation-card" data-draft-id="${escapeHtml(draft.id)}">
-    <header><button class="annotation-source" type="button">${escapeHtml(annotationSourceLabel(draft, index))}</button><button class="annotation-delete" type="button" aria-label="${t('Delete comment {index}', { index: index + 1 })}">×</button></header>
+    <header><span class="annotation-source-label">${escapeHtml(annotationSourceLabel(draft, index))}</span><button class="annotation-delete" type="button" aria-label="${t('Delete comment {index}', { index: index + 1 })}">×</button></header>
     <blockquote>${escapeHtml(draft.excerpt)}</blockquote>${draft.note ? `<p>${escapeHtml(draft.note)}</p>` : ''}
+    <footer class="annotation-actions"><button class="annotation-source" type="button">${t(draft.source?.anchor?.readerReference?.querySnapshot ? 'Open saved result' : 'Go to source')}</button><button class="annotation-edit" type="button">${t('Edit comment')}</button></footer>
   </article>`).join('')
   $$('.annotation-delete').forEach((button) => button.addEventListener('click', () => deleteAnnotation(button.closest('.annotation-card').dataset.draftId)))
   $$('.annotation-source').forEach((button) => button.addEventListener('click', () => reopenAnnotationSource(button.closest('.annotation-card').dataset.draftId).catch(showError)))
+  $$('.annotation-edit').forEach((button) => button.addEventListener('click', () => openAnnotationEditor(button.closest('.annotation-card').dataset.draftId)))
   $$('.annotation-card').forEach((card) => card.addEventListener('click', (event) => {
     if (!event.target.closest('button')) openAnnotationEditor(card.dataset.draftId)
   }))

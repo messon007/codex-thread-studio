@@ -31,7 +31,7 @@ try{
    const event=(name,detail=1)=>target.dispatchEvent(new doc.defaultView[name.startsWith('pointer')?'PointerEvent':'MouseEvent'](name,{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,isPrimary:true,pointerId:1,pointerType:'mouse',detail}));
    return {doc,range,event};
  };
- let mark=await open();mark.event('pointerdown');mark.event('pointerup');mark.event('click');
+ let mark=await open();mark.event('pointermove');await pause(750);check(mark.doc.querySelector('.comment-mark-popup').hidden,'no hover chooser');mark.event('pointerdown');mark.event('pointerup');mark.event('click');
  await until(()=>document.querySelector('#annotation-dialog').open,'direct click editor');
  check(document.querySelector('#annotation-comment').value==='Native WebKit comment','saved note');
  const note=document.querySelector('#annotation-comment');note.value='Edited in native WebKit';note.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#save-annotation').click();

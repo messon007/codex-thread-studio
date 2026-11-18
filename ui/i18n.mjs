@@ -734,6 +734,7 @@ const chinese = {
   'Favorites are stored in a local SQLite database independently from session history.': '收藏保存在本机 SQLite 数据库，与会话历史相互独立。',
   'Comment on selection': '批注选中内容',
   'Edit comment': '编辑批注',
+  'This selection already has a comment. Edit it from Comments.': '这段选区已有批注，请从批注列表编辑。',
   'Go to source': '跳到原文',
   'Open saved result': '打开已保存的结果',
   'Comment updated': '批注已更新',

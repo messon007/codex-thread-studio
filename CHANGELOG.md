@@ -13,6 +13,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Changed
 
+- Comment underlines edit directly without a hover menu; re-commenting the same owned selection reuses the existing comment. Historical overlaps remain accessible through Comments.
+
 - Comments now show explicit Go to source and Edit comment actions; saved SQL results are labeled separately.
 
 - Update the fixed MarkNoria Web SDK to `18d122e`: share bounded continuous Source and contextual line jumps, restore exact saved comment passages through the public protocol, and retire the local layout/comment compatibility assets.

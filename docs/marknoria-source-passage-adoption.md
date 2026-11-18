@@ -42,3 +42,7 @@ cover resource identity persistence, legacy compatibility, refusal of mismatched
 resources, no coarse fallback on exact failures, and state-bound selection capture.
 The runtime gate includes full Studio Chromium/WebKit comments and exact reopen,
 layout, first-wheel and four-entry Back regressions, plus independent SDK checks.
+
+After this adoption, Studio added a user-requested [direct-edit comment policy](reader-comment-direct-edit.md)
+that suppresses the chooser and reuses exact selections. Its single-module
+derivation is separately version/hash guarded; the imported SDK remains intact.

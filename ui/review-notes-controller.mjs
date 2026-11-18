@@ -10,6 +10,7 @@ import { CommentSubmissionCoordinator, insertCommentPrompt } from './comment-sub
 import {
   chatCommentSource,
   documentCommentSource,
+  sameCommentSelection,
 } from './comment-source-providers.mjs'
 import { createFileRangeTarget, structuredPreviewSourceRange, isMarkdownFile } from './document-review.mjs'
 import {
@@ -533,6 +534,8 @@ function openAnnotationFromSelection() {
   }
   state.pendingAnnotation = commentSelectionSnapshot(state.pendingSelection, commentSources)
   if (!state.pendingAnnotation) return toast('Select the text to comment on again', 'error')
+  const existing = currentAnnotations().find(draft => sameCommentSelection(draft, state.pendingAnnotation))
+  if (existing) return openAnnotationEditor(existing.id)
   populateAnnotationDialog(state.pendingAnnotation)
 }
 
@@ -622,6 +625,11 @@ function addAnnotation(event) {
   const key = selectedStateKey()
   const drafts = currentAnnotations()
   const editingId = state.editingAnnotationId
+  if (!editingId && drafts.some(draft => sameCommentSelection(draft, annotation))) {
+    errorBox.textContent = t('This selection already has a comment. Edit it from Comments.')
+    errorBox.classList.remove('hidden')
+    return
+  }
   if (!editingId && drafts.length >= 32) {
     errorBox.textContent = 'A session can keep up to 32 comments.'
     errorBox.classList.remove('hidden')

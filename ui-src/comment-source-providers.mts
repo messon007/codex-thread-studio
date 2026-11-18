@@ -149,3 +149,33 @@ function boundedOffset(value: unknown) {
   const offset = Number(value)
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : null
 }
+
+// Compare owned positions, never quote text: repeated words at different
+// locations remain independent comments, and changed revisions never coalesce.
+export function sameCommentSelection(left: unknown, right: unknown): boolean {
+  const a = commentRecord(commentRecord(left).source), b = commentRecord(commentRecord(right).source)
+  if (!a.provider || a.provider !== b.provider) return false
+  const x = commentRecord(a.anchor), y = commentRecord(b.anchor)
+  const rangeEqual = () => typeof x.startOffset === 'number' && Number.isSafeInteger(x.startOffset) && x.startOffset >= 0
+    && typeof x.endOffset === 'number' && Number.isSafeInteger(x.endOffset) && x.endOffset > x.startOffset
+    && x.startOffset === y.startOffset && x.endOffset === y.endOffset
+  if (a.provider === CHAT_COMMENT_PROVIDER) return Boolean(x.turnId && x.itemId
+    && x.turnId === y.turnId && x.itemId === y.itemId && x.sessionKey === y.sessionKey && rangeEqual())
+  if (!['document', 'epub'].includes(String(a.provider)) || !x.filePath || x.filePath !== y.filePath || x.root !== y.root) return false
+  if (x.readerReference || y.readerReference) {
+    const r = commentRecord(x.readerReference), t = commentRecord(y.readerReference)
+    if (!r.revision || r.revision !== t.revision || r.precision === 'draft' || t.precision === 'draft'
+      || r.querySnapshot || t.querySnapshot || r.resourceId && t.resourceId && r.resourceId !== t.resourceId) return false
+    if (r.textRange || t.textRange) return Boolean(r.textRange && t.textRange && canonical(r.textRange) === canonical(t.textRange))
+    return r.precision === 'exact' && t.precision === 'exact'
+      && ['source', 'pdf', 'epub'].includes(String(commentRecord(r.location).kind))
+      && canonical(r.location) === canonical(t.location)
+  }
+  if (a.provider === 'epub') return Boolean(x.bookHash && x.bookHash === y.bookHash && x.cfiRange && x.cfiRange === y.cfiRange)
+  return Boolean(x.baseHash && x.baseHash === y.baseHash && rangeEqual())
+}
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']'
+  if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}'
+  return JSON.stringify(value) ?? 'null'
+}

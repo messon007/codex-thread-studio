@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 // Actual Studio comment persistence and case search with an offline, non-inference backend.
 import assert from 'node:assert/strict'
 import {promisify} from 'node:util'
@@ -52,7 +53,7 @@ try{
  assert.match((await frame.locator('style[data-comment-style]').allTextContents()).join('\n'),/text-decoration-style:dashed/)
  await frame.locator('#space h1').first().click();visible=await waitMarks(1)
  report.checks.push('only second occurrence has a dashed underline; clearing selection retains it')
- assert.equal(await (await page.request.get(new URL('/reader-assets/comment-marks.mjs',url).href)).text(),await readFile(join(repo,'crates/marknoria/web/comment-marks.mjs'),'utf8'))
+ const commentAsset=await (await page.request.get(new URL('/reader-assets/comment-marks.mjs',url).href)).text();assert.equal(createHash('sha256').update(commentAsset).digest('hex'),'662d3c703bbcd80a114efb72a745ac9c61a91ad7c3a57cf4133f14364fe52733')
  await page.mouse.click(frameBox.x+visible[0].x,frameBox.y+visible[0].y)
  await page.locator('#annotation-dialog').waitFor({state:'visible',timeout:3000})
  assert.equal(await page.locator('#annotation-comment').inputValue(),'Persistent host comment fixture')
@@ -74,9 +75,17 @@ try{
  await page.keyboard.down('Control');await page.mouse.click(frameBox.x+visible[0].x,frameBox.y+visible[0].y);await page.keyboard.up('Control');await pause(650)
  assert.equal(await page.locator('#annotation-dialog').isVisible(),false)
  report.checks.push('modified underline click does not open comment editor')
- await page.mouse.move(frameBox.x+visible[0].x,frameBox.y+visible[0].y);await frame.locator('.comment-mark-popup').waitFor({state:'visible'})
- await frame.locator('.comment-mark-popup').getByRole('button',{name:'View comment',exact:true}).click();await page.locator('#annotation-dialog').waitFor({state:'visible'});assert.equal(await page.locator('#annotation-comment').inputValue(),'Edited through underline')
- await page.keyboard.press('Escape');report.checks.push('real hover action crosses iframe into Studio editor for the owned saved comment')
+ await page.mouse.move(frameBox.x+visible[0].x,frameBox.y+visible[0].y);await pause(750)
+ assert.equal(await frame.locator('.comment-mark-popup').isVisible(),false)
+ await page.mouse.dblclick(frameBox.x+visible[0].x,frameBox.y+visible[0].y)
+ await page.locator('#selection-comment').waitFor({state:'visible'});await page.locator('#selection-comment').click()
+ await page.locator('#annotation-dialog').waitFor({state:'visible'})
+ assert.equal(await page.locator('#annotation-dialog-title').textContent(),'Edit comment')
+ assert.equal(await page.locator('#annotation-comment').inputValue(),'Edited through underline')
+ const reused=page.waitForResponse(r=>r.url().endsWith('/studio/session-state/annotations')&&r.request().method()==='PUT')
+ await page.locator('#save-annotation').click();assert.equal((await reused).status(),204)
+ drafts=await savedDrafts();assert.equal(drafts.length,1);assert.equal(drafts[0].id,commentId)
+ report.checks.push('no hover chooser; selecting the same passage and Comment edits the saved ID without adding a duplicate')
  await page.evaluate(()=>window.hostReview?.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'))
  await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
  await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.hostReview=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await hostReview.ready()})
@@ -129,13 +138,14 @@ try{
  const seeded=await page.request.put(new URL('/studio/session-state/annotations',url).href,{headers:{Authorization:'Bearer '+token},data:{sessionKey:'codex:00000000-0000-4000-8000-000000000777',drafts:overlap,additional:''}});assert.equal(seeded.status(),204)
  await page.evaluate(()=>window.hostReview?.disconnect());await page.reload();await page.waitForFunction(()=>Boolean(window.__studioDeveloper));await page.locator('.thread-row[data-thread-id="00000000-0000-4000-8000-000000000777"]').click();await page.waitForFunction(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'));await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled)
  visible=await waitMarks(2);assert.ok(visible.every(x=>x.text==='TARGET'&&x.preceding===1));const overlapFrame=await page.locator('.artifact-large-markdown-frame').boundingBox();await page.mouse.click(overlapFrame.x+visible[0].x,overlapFrame.y+visible[0].y)
- await frame.locator('.comment-mark-popup').waitFor({state:'visible'});assert.equal(await frame.locator('.comment-mark-popup button').count(),2);for(const index of [0,1]){
-  await page.mouse.move(0,0);await page.mouse.click(overlapFrame.x+visible[0].x,overlapFrame.y+visible[0].y)
-  await frame.locator('.comment-mark-popup').waitFor({state:'visible'})
-  await frame.locator('.comment-mark-popup button').nth(index).click();await page.locator('#annotation-dialog').waitFor({state:'visible'});assert.equal(await page.locator('#annotation-comment').inputValue(),'Overlap '+index);await page.keyboard.press('Escape')
+ await page.locator('#annotation-rail').waitFor({state:'visible'})
+ assert.equal(await frame.locator('.comment-mark-popup').isVisible(),false)
+ for(const index of [0,1]){
+  await page.locator(`.annotation-card[data-draft-id="overlap-${index}"] .annotation-edit`).click()
+  await page.locator('#annotation-dialog').waitFor({state:'visible'});assert.equal(await page.locator('#annotation-comment').inputValue(),'Overlap '+index);await page.keyboard.press('Escape')
  }
- await page.locator('#open-thread-comments').click();page.once('dialog',dialog=>dialog.accept());const cleared=page.waitForResponse(r=>r.url().endsWith('/studio/session-state/annotations')&&r.request().method()==='PUT');await page.locator('#clear-annotations').click();assert.equal((await cleared).status(),204);assert.equal((await savedDrafts()).length,0);await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>!document.querySelector('#artifact-preview').disabled);await waitMarks(0)
- report.checks.push('overlapping saved references expose two separate owned click actions; actual Clear comments removes persisted records and every underline')
+ page.once('dialog',dialog=>dialog.accept());const cleared=page.waitForResponse(r=>r.url().endsWith('/studio/session-state/annotations')&&r.request().method()==='PUT');await page.locator('#clear-annotations').click();assert.equal((await cleared).status(),204);assert.equal((await savedDrafts()).length,0);await page.evaluate(({root,path})=>__studioDeveloper.openArtifact({root,path}),{root:project,path});await page.waitForFunction(()=>!document.querySelector('#artifact-preview').disabled);await waitMarks(0)
+ report.checks.push('historical overlaps open the host list without a popup; both saved notes remain editable; actual Clear comments removes persisted records and every underline')
 
  for(const [name,contents,continuous] of [
   ['continuous.md',Array.from({length:320},(_,i)=>`Line ${i} 中文😀`).join('\n'),true],

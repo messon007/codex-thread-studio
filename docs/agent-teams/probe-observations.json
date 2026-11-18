@@ -1,0 +1,186 @@
+{
+  "codex_version": "0.170.0",
+  "synthetic_model": true,
+  "live_llm_tested": false,
+  "scope": "G1/G2 partial negative evidence only",
+  "source_sha256": {
+    "report.json": "4df575cd585f899ab1e77fcc085bb978e02bd9d943f151936a3c5c011002b4aa",
+    "rpc.jsonl": "3671e724e295bea9aa45f6d32d1fba0e87fbbd915ed256167facce92d483f7e1",
+    "mcp-calls.jsonl": "0b0ad67f6de00757eec42622d90d7dab5daf963badfe563bb380205ff962697e",
+    "model-requests.jsonl": "1de4feb811569ad861f2e13592f4c8c0a8bda5228c5aa6aaa93a21e53a556285"
+  },
+  "queue_duplicate_add": {
+    "name": "queue_duplicate_add",
+    "first": {
+      "queuedSubmission": {
+        "id": "01a1eef6-ba08-7d81-ae7e-3f59fcb6823d",
+        "input": [
+          {
+            "type": "text",
+            "text": "Queued fixture only; never interrupt prior work.",
+            "text_elements": []
+          }
+        ],
+        "clientUserMessageId": "teams-probe-stable-delivery",
+        "responsesapiClientMetadata": null
+      }
+    },
+    "second": {
+      "queuedSubmission": {
+        "id": "01a1eef6-ba0a-7000-a5ef-465203e16dc5",
+        "input": [
+          {
+            "type": "text",
+            "text": "Queued fixture only; never interrupt prior work.",
+            "text_elements": []
+          }
+        ],
+        "clientUserMessageId": "teams-probe-stable-delivery",
+        "responsesapiClientMetadata": null
+      }
+    },
+    "list": {
+      "data": [
+        {
+          "id": "01a1eef6-ba08-7d81-ae7e-3f59fcb6823d",
+          "input": [
+            {
+              "type": "text",
+              "text": "Queued fixture only; never interrupt prior work.",
+              "text_elements": []
+            }
+          ],
+          "clientUserMessageId": "teams-probe-stable-delivery",
+          "responsesapiClientMetadata": null
+        },
+        {
+          "id": "01a1eef6-ba0a-7000-a5ef-465203e16dc5",
+          "input": [
+            {
+              "type": "text",
+              "text": "Queued fixture only; never interrupt prior work.",
+              "text_elements": []
+            }
+          ],
+          "clientUserMessageId": "teams-probe-stable-delivery",
+          "responsesapiClientMetadata": null
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  "queue_start_while_busy": {
+    "name": "queue_start_while_busy",
+    "busyTurn": "01a1eef6-b9dd-7a53-ba44-1d4744d777e6",
+    "outcome": {
+      "error": {
+        "code": -32600,
+        "message": "thread already has an active or pending turn"
+      }
+    },
+    "events": []
+  },
+  "auto_consumed_user_items": [
+    {
+      "item": {
+        "type": "userMessage",
+        "id": "01a1eef6-ba4e-7fa2-8b97-33b4ef01407f",
+        "clientId": "teams-probe-stable-delivery",
+        "content": [
+          {
+            "type": "text",
+            "text": "Queued fixture only; never interrupt prior work.",
+            "text_elements": []
+          }
+        ],
+        "startedAtMs": 1795010509391,
+        "completedAtMs": null
+      },
+      "threadId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+      "turnId": "01a1eef6-ba41-7203-8567-f4c194b05976",
+      "startedAtMs": 1795010509391
+    },
+    {
+      "item": {
+        "type": "userMessage",
+        "id": "01a1eef6-ba67-7822-aadc-99c92b8936e1",
+        "clientId": "teams-probe-stable-delivery",
+        "content": [
+          {
+            "type": "text",
+            "text": "Queued fixture only; never interrupt prior work.",
+            "text_elements": []
+          }
+        ],
+        "startedAtMs": 1795010509415,
+        "completedAtMs": null
+      },
+      "threadId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+      "turnId": "01a1eef6-ba62-7152-af07-cdcea49842e7",
+      "startedAtMs": 1795010509415
+    }
+  ],
+  "mcp_overlapping_requests": [
+    {
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "callId": "native_probe_6",
+          "itemId": "fc_6",
+          "progressToken": 2,
+          "sessionId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+          "threadId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+          "windowId": "01a1eef6-b7d8-7733-8227-c3ea54934e38:0",
+          "x-codex-turn-metadata": {
+            "auto_review_enabled": false,
+            "codex_version": "0.170.0",
+            "model": "gpt-5.1-codex",
+            "node_repl_auto_review_required": false,
+            "node_repl_disabled": false,
+            "sandbox": "seccomp",
+            "sandbox_mode": "read-only",
+            "session_id": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+            "thread_id": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+            "turn_id": "01a1eef6-beae-74a3-96ab-c3da860367c4",
+            "turn_started_at_unix_ms": 1795010510513
+          }
+        },
+        "arguments": {
+          "value": "fixture-only"
+        },
+        "name": "echo"
+      }
+    },
+    {
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "callId": "native_probe_6",
+          "itemId": "fc_6",
+          "progressToken": 3,
+          "sessionId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+          "threadId": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+          "windowId": "01a1eef6-b7d8-7733-8227-c3ea54934e38:0",
+          "x-codex-turn-metadata": {
+            "auto_review_enabled": false,
+            "codex_version": "0.170.0",
+            "model": "gpt-5.1-codex",
+            "node_repl_auto_review_required": false,
+            "node_repl_disabled": false,
+            "sandbox": "seccomp",
+            "sandbox_mode": "read-only",
+            "session_id": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+            "thread_id": "01a1eef6-b7d8-7733-8227-c3ea54934e38",
+            "turn_id": "01a1eef6-beae-74a3-96ab-c3da860367c4",
+            "turn_started_at_unix_ms": 1795010510513
+          }
+        },
+        "arguments": {
+          "value": "fixture-only"
+        },
+        "name": "echo"
+      }
+    }
+  ],
+  "interpretation": "See verification-results.md: identity fields match, progressToken differs; authenticated host direct-call threat assumption. Product gates not approved."
+}

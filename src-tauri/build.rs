@@ -1,4 +1,8 @@
+#[path = "build/comment_policy.rs"]
+mod comment_policy;
+
 fn main() {
+    comment_policy::generate();
     verify_typescript_assets();
     tauri_build::build()
 }

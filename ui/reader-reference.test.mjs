@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommentSourceRegistry, createCommentDraft } from './comment-core.mjs'
-import { createDocumentCommentProvider, documentCommentSource } from './comment-source-providers.mjs'
+import { createDocumentCommentProvider, documentCommentSource, sameCommentSelection } from './comment-source-providers.mjs'
 import { normalizeReaderReference } from './document-review.mjs'
 const reference={documentId:'doc',revision:'a'.repeat(64),precision:'exact',location:{kind:'source',startByte:3,endByte:13}}
 const registry=new CommentSourceRegistry().register(createDocumentCommentProvider())
@@ -64,4 +64,35 @@ test('durable resource identity survives persistence and rejects malformed ident
  assert.equal(normalizeReaderReference(reference).resourceId,'stable-resource')
  assert.equal(normalizeReaderReference({...reference,resourceId:undefined}).resourceId,undefined)
  for(const resourceId of ['',3,'x'.repeat(257),'中'.repeat(100)])assert.throws(()=>normalizeReaderReference({...reference,resourceId}),/Invalid public reader reference/)
+})
+
+test('same selection reuses identity across reader sessions, never by repeated quote text', () => {
+ const make=ref=>({excerpt:'same text',source:documentCommentSource({kind:'fileRange',root:'/work',filePath:'/work/a.md',readerReference:ref})})
+ const first=make({...reference,resourceId:'file-a'})
+ const reopened=make({...reference,resourceId:'file-a',documentId:'another-session'})
+ assert.equal(sameCommentSelection(first,reopened),true)
+ for(const patch of [{revision:'b'.repeat(64)},{resourceId:'file-b'},{location:{...reference.location,startByte:20,endByte:30}},{precision:'draft'},{precision:'approximate'}]) {
+  assert.equal(sameCommentSelection(first,make({...reference,resourceId:'file-a',...patch})),false)
+ }
+ const elsewhere=structuredClone(reopened);elsewhere.source.anchor.filePath='/work/b.md';assert.equal(sameCommentSelection(first,elsewhere),false)
+ const otherRoot=structuredClone(reopened);otherRoot.source.anchor.root='/other';assert.equal(sameCommentSelection(first,otherRoot),false)
+})
+test('painted text ranges compare scoped positions; coarse line or query references do not merge', () => {
+ const segment={scope:{kind:'projection',page:2},startUtf16:10,endUtf16:16,textHash:'b'.repeat(64)}
+ const ref={...reference,precision:'approximate',location:{kind:'line',line:3},textRange:{version:1,segments:[segment]}}
+ const make=ref=>({source:documentCommentSource({kind:'fileRange',root:'/work',filePath:'/work/a.md',readerReference:ref})})
+ assert.equal(sameCommentSelection(make(ref),make({...ref,documentId:'new'})),true)
+ const snapshot=make(ref);snapshot.source.anchor.readerReference.querySnapshot={version:1};assert.equal(sameCommentSelection(snapshot,snapshot),false)
+ const changed=structuredClone(ref);changed.textRange.segments[0].scope.page=3
+ assert.equal(sameCommentSelection(make(ref),make(changed)),false)
+ assert.equal(sameCommentSelection(make({...ref,textRange:undefined}),make({...ref,textRange:undefined})),false)
+})
+test('chat selections and legacy file offsets require complete owned position identity', () => {
+ const chat={source:{provider:'chat',anchor:{turnId:'turn',itemId:'item',startOffset:2,endOffset:6}}}
+ assert.equal(sameCommentSelection(chat,structuredClone(chat)),true)
+ const other=structuredClone(chat);other.source.anchor.startOffset=3;assert.equal(sameCommentSelection(chat,other),false)
+ const missing=structuredClone(chat);missing.source.anchor.startOffset=null;assert.equal(sameCommentSelection(missing,missing),false)
+ const file={source:{provider:'document',anchor:{root:'/work',filePath:'/work/a',baseHash:'hash',startOffset:2,endOffset:6}}}
+ assert.equal(sameCommentSelection(file,structuredClone(file)),true)
+ delete file.source.anchor.baseHash;assert.equal(sameCommentSelection(file,file),false)
 })

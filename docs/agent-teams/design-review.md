@@ -96,3 +96,10 @@
 证据索引按 NDJSON 文件行号定位。队列见 rpc 行 65–76、83–144，装载与原生工具项见行 145–173，以及末态读取行 193–196。两个客户端记录同一 Turn 时，以原生 Turn ID 去重。MCP 接收记录见第 2、3 行，合成模型记录见第 6、7 行。原始文件保留在任务专用磁盘目录，摘要仅引用合成数据。[App Server 收发记录](../../../validation/run-03/rpc.jsonl) · [MCP 接收记录](../../../validation/run-03/mcp-calls.jsonl) · [合成模型请求](../../../validation/run-03/model-requests.jsonl) · [测试汇总](../../../validation/run-03/report.json)
 
 复核同期修订的 [验证结果摘要](verification-results.md) 与 [产品规范](specification.md)。结果摘要准确标出 stdio 探针所观察的身份字段、进度标识差异、宿主客户端前提和 G2 的两次实际执行；以原始 run-03 为准，历史 report.json 中“indistinguishable”的表述仅适用于所用身份判据。规范已补充第二轮要求的 reconcile_review 接口和同一屏障检查、ready 再次失效与分代、稳定 operation_id 和阶段重放、effect_id 与延迟物化的区别、QueuePort 的 fence/已领取回执，以及 8 KiB 消息摘要。第二轮列出的这批文档修订已完成。总体裁决仍由本轮两项运行时缺口决定。可移植证据摘要见仓库内 verification-results.md；上段原始记录链接对应本机专用磁盘布局。
+
+
+## 后续设计选择 · Astra 提供可实施替代方案
+
+用户要求 Astra 不仅审查，也提出解决路线。Astra 已在 [最小实施方案](implementation-options.md) 中给出 **设计 PASS**：采用单用户受信宿主的合作归属、Studio 持久队列的一次授权后原生入队。放行纯 Rust 领域模块与替身测试，以及 G1b/G2b 隔离验证；真实适配器在固定版本/拓扑验证后开放。原生 metadata 可复制、重复 add 不幂等的证据未被否定，新方案改变其责任边界，不要求原生队列实现 Studio 的幂等或消费前回调。
+
+主规范已同步信任边界、authorized/native_queued/started 区别、精确撤回和 unknown 不重发、旧会话配置保护与新版验证阶段。新方案不合入 main，不新增 Router，不通过 Steer 或替换已有 thread 达成协作。此前三轮裁决作为历史保留；当前开发边界以本次方案为准。

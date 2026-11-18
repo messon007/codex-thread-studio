@@ -1,6 +1,6 @@
 # Agent Teams：审查后隔离验证计划
 
-状态：GPT-6.2-Astra 第二轮已批准 G1/G2 隔离探针；部分探针已运行，见 [验证结果](verification-results.md)。G3/G4 与产品开发未批准。
+状态：历史 G1/G2 已运行部分反例，见 [结果](verification-results.md)。GPT-6.2-Astra 随后通过 [最小实施方案](implementation-options.md)，放行其中 G1b/G2b 和纯领域开发。本文 G1/G2 保留为旧候选验证记录，其强宿主身份/原生消费回调假设不再作为新版单用户方案的前提；新一轮严格采用 G1b/G2b 的范围与标准。G3 未批准。
 
 ## 放行原则
 

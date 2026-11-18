@@ -2,7 +2,7 @@
 
 状态：设计提案，尚未实现。本文定义目标行为和 v1 接口契约，不表示当前客户端已支持这些能力。
 
-审查状态：GPT-6.2-Astra 已完成三轮 [审查](design-review.md)。第二轮批准 G1/G2 隔离探针，第三轮确认候选适配未满足两项必要条件，产品开发仍为 CHANGES_REQUIRED；见 [验证结果](verification-results.md)。业务契约修订已完成，但不能以此代替运行时能力证明。开发隔离于 `feat/agent-teams`，未经用户后续指示不合入 main。
+审查状态：GPT-6.2-Astra 的 [最小实施方案](implementation-options.md) 已获设计 PASS，放行纯 Rust 领域模块/替身测试及 G1b/G2b 隔离验证。本文已采用受信宿主的成员归属、Studio 持久队列的一次授权交接；前三轮 [审查](design-review.md) 与 [反例](verification-results.md) 保留为旧候选的证据。真实适配器须按固定版本与部署拓扑通过验证后启用，设计通过不等于接入已验证。所有开发隔离于 `feat/agent-teams`，未经用户后续指示不合入 main。
 
 ## 1. 已确定的产品约束
 
@@ -142,7 +142,7 @@ v1 每个会话只加入一个未归档组；暂停不释放成员绑定。归�
 - `revision` 是单个聚合的单调递增乐观锁。Task 内的执行状态、问题和结果变更都提升 Task revision；单纯交付进度不提升。
 - `delivery_id` 表示一条具体排队消息，不等于 task ID。一个任务可以有执行、问题、回答、验收、续接等多条消息。
 - 原生 `turn_id` 只用于关联一次实际执行。一个任务可以跨多轮，一个会话可以交错处理多个任务。
-- 投递状态采用 `outbox → queued → authorized → started → settled`；另外有 `held`、`withdrawn`、`unknown`。authorized 表示已持久取得开始权但原生执行尚未确认。`settled` 只表示该消息关联的轮次已结束，**不是任务完成**。
+- 投递状态采用 `outbox → queued → authorized → native_queued → started → settled`；另外有 `held`、`withdrawn`、`unknown`。queued 是 Studio 本地队列，authorized 是已取得交接权但可能尚未发起 RPC，native_queued 是原生确认入队，started 才是原生已开始。`settled` 只表示该消息关联的轮次已结束，**不是任务完成**。
 - `held` 必须记录原因，例如组暂停、审批、队列满、离线或能力不满足；`unknown` 表示可能已交付但无法确认，不自动重发。
 
 ## 5. 接口公共契约
@@ -151,7 +151,7 @@ v1 每个会话只加入一个未归档组；暂停不释放成员绑定。归�
 
 ### 5.1 身份和权限
 
-服务从受认证的调用绑定获得 caller 的 Studio 实例、session_ref、member_id 和授权组；**不信任模型传入的 caller、角色或 cwd**。成员接口与实例用户控制接口使用分离授权，不下发 Studio 用户 gateway bearer。
+v1 是单用户受信宿主下的协作协议，不是同 OS 用户的不互信租户隔离。服务从受认证且由受信宿主归属的调用绑定获得 caller 的 Studio 实例、session_ref、member_id 和授权组；**不信任模型传入的 caller、角色或 cwd**。成员接口与实例用户控制接口使用分离授权，不下发 Studio 用户 gateway bearer。
 工具中的 `group_id` 是作用域选择，不是授权凭证。跨组 ID 即使存在也不能访问。
 成员调用只作用于所属组。用户操作经现有 Studio 用户授权进入；不把一个 MCP 全局 bearer token 当成任意会话身份。
 为已有会话注册和恢复工具时，必须验证同一原生 thread 的绑定，不能通过进程名或目录猜测身份。
@@ -402,46 +402,37 @@ Teams 模块懒加载；关闭时隐藏页面和协作工具入口，不在普�
 
 ```text
 capabilities(session_ref) -> admission / status / withdraw / correlation 支持情况
-enqueue(session_ref, delivery_id, visible_message, origin, guards) -> receipt
-lookup(session_ref, delivery_id) -> known_state | unknown
-withdraw(session_ref, delivery_id, intent_id) -> withdrawn | authorized(receipt) | started(receipt) | unknown
-fence_scope(scope, generation, intent_id) -> durable_fence_seq + authorized_receipts[] + started_receipts[] | unknown
+admit(session_ref, source, stable_id, visible_message, scope_generation) -> local_receipt
+reserve(session_ref, owner, generation, reason) -> reservation_receipt
+release(reservation_id, generation) -> released | needs_reconciliation
+lookup(session_ref, stable_id) -> known_state | unknown
+fence_scope(scope, generation, intent_id) -> fence_seq + per_delivery_receipts
 subscribe(receipt_cursor) -> queue/turn receipts
 ```
 
-`origin` 是结构化来源标识，不是伪装为人工授权的文本。消息在原会话中可见。
-guards 包括 module/group dispatch epoch、task attempt 和允许派发状态；入队和真正开始前都必须检查。
-适配层只理解通用的有效性凭证/暂停门控，不导入任务业务模型。
-能力声明必须通过实测；仅支持 enqueue 而不支持稳定 ID/撤回/开始前检查的后端不能开启完整 Teams。
+Teams 通过 admit 把 delivery_id 作为 stable_id，普通排队输入走同一通用服务。origin/scope 是结构化来源和有效性标识，不是人工授权文本。接口只理解通用来源、保留与有效性凭证，不导入任务业务模型。通用消费者内部有 authorize_head 和 submit_authorized，两者不暴露给成员模型。域内按稳定 ID 幂等，原生 add 不假定幂等。
 
-### 8.1.1 唯一消费裁决与开始线性化
+### 8.1.1 唯一交接裁决
 
-这是**通用队列的先决能力**，不是 Teams 另建的直接派发器。每个已接纳条目保存稳定 message_id、每会话单调 enqueue_seq、来源、状态及消费凭证。outbox 遭遇背压时尚未取得队列位置；入队后保持已有人工项的相对顺序。
-任何旧前端整队列快照覆盖、页面自发消费和新后台消费方必须互斥迁移。源条目必须始终保留持久 ID，重试不能新生成 clientUserMessageId。
+Rust 通用队列保存稳定 message_id、每会话 enqueue_seq、来源、状态和凭证。先迁移旧页面整数组覆盖/消费权，多个页面不得各自启动同一条目；保持普通用户消息、附件和逐轮选项，不为统一队列粗暴改写普通发送。Teams 不另建直接派发器。
 
-权威消费者按会话将以下判断与领取在**同一个消费序列**中裁决：队首、人工暂停、审批/用户输入等待、失败停顿、监督保留、活跃 Turn、来源有效性、派发代数。暂停/取消/关停与领取竞争同一序列：
+消费者把队首、暂停、审批/输入等待、失败停顿、监督保留、来源有效性及派发代数与授权放在同一持久裁决序列。默认观察到无活跃工作才领取；随后即使外部 CLI 抢先启动，Teams 路径也只调用 `thread/queue/add`，必须排到后续独立轮次。不得调用 turn/start、queue/start、Steer 或 interrupt 来唤醒成员。
 
-- 撤销先提交：条目 held/withdrawn，不能开始。
-- 领取先提交：返回 authorized 及 durable receipt；后续关闭承认它是在途，不谎称底层 Turn 已开始，也不强停。
-- RPC 发起前后断线：authorized 不能自动重发。先通过稳定 ID/原生 receipt 对账，证据不足变 unknown。
-- 原生端必须原子拒绝“目标其实已忙”的开始，且不得把它解释成追加/steer；确定拒绝才可释放未开始的领取，未知冻结。
+每会话最多一项已交接但尚未确认开始的 Teams 通知。授权事务生成 dispatch_id 和稳定 clientUserMessageId；发送前持久记录“可能已发送”，唯一 worker 只 add 一次。成功保存 queuedSubmission.id 后由原生自然消费，started 由原生事件/历史证明。原生 add 重复 ID 会创建副本，因此网络未知不能重试；稳定 ID 用于对账，不是原生幂等保证。
 
-Studio 用户主动 Steer 仍是原有人工动作，不转换成 Teams 权限；普通用户队列与 Teams 共用消费权。外部 CLI 与直接人工启动仍可能竞争，因此后端就绪检查必须有原生最终裁决，页面锁和 Studio 实例锁都不能代替它。
-未经授权的 Teams 正文保留在受保护的权威队列，不能先放进会被其他 CLI 自动/手动取走或编辑的原生队列再期待本地 epoch 保护。只有原生端提供等价完整门控时，才可直接以原生队列作为权威队列。
-若原生端无法提供所需裁决，也无法安全承接独立通用队列的授权开始，则 capability=unavailable；不以“通常不冲突”上线。
+原生队列中只出现已授权输入。撤销先赢则本地 held/withdrawn；授权先赢则按证据区分未发送、native_queued、started 和 unknown。原生消费不会再同步检查 Studio epoch；这是相对早期候选的明确边界改变。交接后用精确删除、核对和任务 begin/attempt 校验阻止过期业务操作，不能承诺点击停止后已经交给原生的消息绝不产生一个新的 Turn。
 
-### 8.1.2 持久保留与跨数据库撤销
+Studio 队列有自己的持久顺序；原生已有人工项遵守原生顺序。本地待办尚未交接时没有原生队列位置，不承诺所有外部客户端按现实提交时间的全局 FIFO。普通用户主动发送/Steer 的既有行为保留。G2b 必须验证 add 不注入活跃 Turn，不能用 queue/start 的一次拒忙推导 turn/start 或 add 的行为。
 
-人工暂停、审批停顿、监督保留都在队列权威层持久化，并带 owner generation 与原因。监督明确结束才释放；页面退出/租约失效只标记需核对，不推断监督已成功结束。UI 订阅快照和游标，不再各持有一份消费事实。
-独立 Teams DB 与通用队列 DB 不假装有跨库原子事务。取消/返工/关停采用有持久记录的 fence 协议：
+### 8.1.2 保留、撤回与不确定恢复
 
-1. Teams 事务验证版本并建立 mutation_intent，保留修订并暂缓相关新命令/投递，返回阶段状态而非“已停止”。
-2. 队列权威层以稳定 intent_id 在自身消费序列内撤销旧 scope/attempt 凭证，返回 durable fence_seq 和已领取的 receipts。
-3. Teams 原子保存 fence receipt、最终业务变更和事件，再返回完成。已领取集合按在途处理。
-4. 任一步崩溃按同 intent_id 对账，不重开旧凭证。队列 fence 先完成而业务未落盘时保持保守停派；不得先返回取消成功再补撤销。
+人工暂停与监督保留有 owner/generation。监督在根任务可能出现轮间空档前 reserve，与授权同序；明确结束或核对后才 release。页面关闭/租约超时不表示任务完成。新监督与已交接通知竞争时，先精确撤回/核对或等待已开始项，不提前报告已取得独占保留。外部 CLI 可以正常使用原 thread，但外部自定义的跨轮逻辑监督须登记 reservation；已知存在不可观察的保留时停止该成员自动派发。
 
-这是通用 `fence_scope` 能力，scope 为不透明来源标识；队列不导入 Teams 的任务模型。开通时也通过权威层发放新 scope generation，两个 DB 各自增加数字不构成证明。
-需要此基础改进时必须独立设计/验收，不能宣称今天的队列已有该能力；G1/G2 只验证能力，不授权直接改造生产队列。
+跨 Teams DB/通用队列 DB 仍使用 mutation_intent + durable fence，不假装跨库原子：先冻结新命令/交接并创建意图，通用队列撤销未来授权并返回分项凭证，Teams 保存凭证与业务结果。已原生排队项按服务端 ID 删除，不能触碰普通人工消息。paused/disabled 的完整确认须等未开始项明确撤回，其余有真实 started/settled 证据；未决保持 stopping/disabling/needs_reconciliation，不能把 authorized 说成 started。
+
+崩溃在发送意图之前可重新领取；意图之后的断线、超时、确认丢失都视为 unknown。原生队列唯一稳定 ID 命中且收件人/内容相符可补 receipt，历史/事件中的关联 Turn 可证明开始；查无、仅正文相同或多命中都不能证明没提交。未知停止自动重发，用户可记入可信凭证或放弃；只有明确未提交/被拒绝才允许重新入本地队列。业务命令和 effect 的本地幂等不等于原生交接的 exactly-once。
+
+通用队列可用替身先开发；改变普通消费前必须验证旧数据、多页面、暂停和监督兼容。真实交接须通过 G2b；该设计不要求 Codex 原生 add 自带幂等或消费前回调。
 
 ### 8.2 执行资格
 
@@ -457,7 +448,7 @@ Studio 用户主动 Steer 仍是原有人工动作，不转换成 Teams 权限�
 
 ### 8.3 防止过期工作
 
-组暂停、任务取消、返工更换 attempt、关闭功能都提升相应派发 epoch。尚未开始的旧消息在消费前失效，并尝试从底层队列撤回。
+组暂停、任务取消、返工更换 attempt、关闭功能都提升相应派发 epoch。尚未交接的旧消息在本地领取前失效；已交接的旧消息按 §8.1.2 精确撤回和核对，领域 begin/attempt 校验拒绝过期工作，不假定原生消费会回查本地 epoch。
 已经开始的轮次无法撤回，也不能删除会话历史。迟到工具调用由 task/attempt/revision 校验拒绝产生新业务效果。
 如果后端不能区分 queued 与 started，必须显示 unknown 并停止重放；不能谎称“已取消执行”。
 
@@ -533,35 +524,28 @@ Studio 的 [session-map.mts](../../ui-src/session-map.mts) 和 [active-codex-con
 2. 使用官方重载接口请求刷新，在安全的轮次边界检查各成员 thread 的工具目录。若必须恢复会话，恢复同一 thread，不能中断忙碌任务或新建替代会话。
 3. 配置 `required=false`，使可选协作服务不可用时不连带阻断普通会话启动。工具不就绪的组只显示未就绪，不派发依赖工具回执的任务。
 4. 端点必须位于 App Server 可达的执行主机/环境；SSH、WSL 和远端环境里的 localhost 不等于浏览器的 localhost。认证材料保存在受保护的宿主配置/凭证渠道，不能放进提示词、仓库或通用消息队列。
-5. 全局 MCP 注册可能让非组成员也看到工具名；可见性不授予使用权。服务仍拒绝未绑定 thread、跨组调用和关闭后的新动作。
+5. 未经明确配置不采用全局 MCP 注册；它可能让非组成员也看到工具名；可见性不授予使用权。服务仍拒绝未绑定 thread、跨组调用和关闭后的新动作。
 6. 当前上游源码的 MCP 请求会包含宿主生成的 threadId、sessionId、callId 等元数据；这是接入线索，不是 MCP 标准对所有客户端的保证。必须在目标版本验证，并结合受认证连接和 App Server 调用事件关联，不把任意 HTTP `_meta`、模型 arguments 或通用 bearer token 当作可冒充任何成员的身份。
 7. 需要 turn 绑定的命令还要证明 call 与实际 Turn 的关联；`sessionId` 也不能代替 `threadId`。元数据缺失、矛盾或无法核对时拒绝，而不是让模型补一个 caller ID。
 8. 关闭时先撤销新业务操作授权，再安全卸载/禁用专属 MCP 注册并刷新目录；在途回执按 §11 处理。旧客户端缓存着工具名也不能绕过服务开关。
 
-### 10.3.1 受信身份与逐调用关联的放行契约
+### 10.3.1 受信宿主下的归属与接口权限
 
-候选只支持认证材料、签发能力、Teams 数据库及实例用户控制面不向成员命令环境暴露的拓扑。连接凭证按 instance/backend 隔离，不把共享用户 token 下发到仓库、CLI 或任务消息。
-如果原会话保留的权限足以等价读取宿主密钥/数据库或直接操作用户控制面，保持原权限但将该接入配置标为 unavailable；不能声称在这种配置下仍建立了成员隔离。
+v1 支持一位实例所有者管理自己的 Codex 会话。原生宿主及拥有等价管理权的客户端受信，不提供针对其刻意伪造上下文的抗抵赖证明。全权限同用户 shell 本就不构成隔离租户；保留原权限，明确采用合作归属，不以不存在的安全隔离做宣传。不受信租户部署需要独立更强适配，不属于这一支持模式。
 
-后端持久 backend 身份与 thread 绑定成员，generation 仅标识一代连接。受信 App Server 模型工具事件与受认证 MCP 调用必须逐次匹配：
+成员 MCP 与用户管理接口分离；产品不把 Studio 用户 bearer 发给成员、仓库或消息。网页、未注册会话和普通网络请求不能获得宿主代理权限。优先采用按成员注册的连接绑定；共享注册只认证 backend，成员身份另由受信宿主 thread/turn/call 上下文及对应模型工具事件归属。模型业务参数、cwd 和自称角色均不能决定 caller。
 
-```text
-instance / backend / generation / thread / turn / native_call_id
-+ MCP registration identity / server / tool / canonical arguments digest
-```
+关联键为 instance/backend/registration_generation/thread/turn/native_call_id，加工具名、参数摘要及返回连接。缺失/冲突/换代/未批准调用有界等待后拒绝；读取也检查组归属，匹配消费与业务命令事务去重。同参数并发不能按参数单独匹配。宿主诊断直调只走无业务数据诊断工具；维护操作按 user 审计。受信客户端不得把成员参数转发成任意宿主直调。
 
-每一半先到只能短暂有界等待；事件缺失、拒绝审批、世代变化、参数不同或过期都拒绝。匹配记录与领域命令在同一事务一次性消费；业务 request_id 与 native call ID 独立，下一次真实模型调用可用同一 request_id 查询原结果。
-读取也必须认证，不因“没有副作用”允许任意 HTTP 请求抢走合法调用的结果。两个相同参数的并发调用必须通过原生调用身份区分。
-**原生事件不能只证明存在一份内容相同的请求，还必须证明当前 MCP 请求来自那个请求。** 宿主 `mcpServer/tool/call` 可带 `_meta/threadId`，因此 metadata 自称 caller、时间重合、内容一致、item.id 恰好相同都不自动获得权限。
-G1 必须证明宿主直调、直接 HTTP、重放，即使与合法模型调用重叠，也无法消费其授权或取得其读结果。若现有 API 不能区分来源或无法认证两侧，必须上游提供不可伪造的逐调用证明/受保护传输，否则关闭成员命令能力。
-item.id 与 callId 的对应、其他客户端模型事件可见性、审批前后事件时序都属于待证能力，不写成既有事实。当前只含四类生命周期事件的旁路不能承担这个证明，需要独立、完整、可对账的工具事件路径。
-配置安装/移除使用本组件指纹与比较再写；与用户并发编辑冲突时不覆盖。验证前后对照原 thread/cwd/模型/权限/历史，不通过扩大权限或替换 thread 让测试变绿。
+这个判据防误路由和非授权入口，不声称 metadata 本身不可伪造。前次已认证宿主复制 metadata 的反例依然成立，但不再是单用户模式的阻塞前提。若低权限入口实际能获取宿主等价权限，不能通过声明受信就掩盖该权限扩散。
+
+工具先在安全边界尝试同一 thread 的 resume.config 专属注册，不传模型/cwd/审批/sandbox 覆盖；是否对已加载 thread 生效须实测。备选仅限用户已配置或明确为 Studio 配置的独立受管层；全局注册不可静默回退，不能新建/fork 替代会话或另起进程争抢同一运行权。安装/移除仅修改自身注册并比较指纹，冲突不覆盖。G1b 对照完整历史和原配置，未通过的成员 held。
 
 ### 10.4 接入放行条件
 
 在隔离测试配置与两条可恢复的测试会话上验证：工具目录、一次只读调用、一次模型真实调用、委派→排队→结果回执、错误/超时、重载旧 thread、CLI 与 Studio 使用同一 thread、伪造身份拒绝、关闭/重启。
-必须同时区分三个证据层次：协议支持、宿主直调成功、模型在原会话中真实调用成功。缺少后两层时只能报告“接入方案已确定，尚未验证可用”。
-这项验证是实现的第一步，早于 Teams UI；若无法建立可靠身份或安全重载，需要补适配能力或上游支持，不能牺牲已有会话和权限边界来绕过。
+按 [G1b/G2b](implementation-options.md#验证实施与需要上游的情形) 检查。必须同时区分三个证据层次：协议支持、宿主直调成功、模型在原会话中真实调用成功。缺少后两层时只能报告“接入方案已确定，尚未验证可用”。
+领域模块可独立用替身开发；真实适配接入验证早于 Teams UI 自动派发；若无法建立可靠身份或安全重载，需要补适配能力或上游支持，不能牺牲已有会话和权限边界来绕过。
 
 参考：官方 [MCP 配置说明](https://developers.openai.com/codex/mcp)、[App Server](https://learn.chatgpt.com/docs/app-server)、[MCP 调用元数据源码](https://github.com/openai/codex/blob/main/codex-rs/core/src/mcp_tool_call.rs)。源码 main 是核查线索，不是已经验证的发行版本契约。
 
@@ -682,7 +666,7 @@ v1 关闭是可恢复停用，不等于删除数据；删除历史是另一个�
 
 ### 第一阶段：无 UI 的协议与适配验证
 
-- 先通过 Astra 对修订规范与 G1/G2 的复审，随后仅运行明确批准的隔离验证；G3 另批，G4 不等于开发授权。
+- Astra 已通过最小实施方案：先开发纯领域模块和替身测试，并开展 G1b/G2b 隔离验证；真实适配按结果启用。历史 G1/G2 反例保留，Hooks/G3 不是默认开发依赖。
 - 按用户磁盘要求，开发 worktree、target、验证配置和日志都位于 `/media/rui/codex-thread-studio-agent-teams/` 的独立子目录；不开启 `/tmp` 构建，不复用其他任务的 target。
 - 定义共享 JSON Schema、枚举和错误，生成 UI/工具类型；每个写命令有权限、版本和幂等测试。
 - 用可控队列替身验证事务/outbox，再用两个已有 Codex 会话验证真实工具身份、入队、提交、验收和恢复。

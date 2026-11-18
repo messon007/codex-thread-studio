@@ -166,7 +166,7 @@ export function createDocumentWorkspaceController({
     bound = true
     const unsubscribeLocale = onLanguageChange(syncLargeMarkdownTheme)
     window.addEventListener('pagehide', unsubscribeLocale, { once: true })
-    $('#close-artifact')?.addEventListener('click', closeArtifactRail)
+    $('#close-artifact')?.addEventListener('click', () => backOrCloseArtifact().catch(showError))
     $('#refresh-artifact')?.addEventListener('click', () => refreshArtifact().catch(showError))
     $('#artifact-preview')?.addEventListener('click', () => setArtifactView('preview'))
     $('#artifact-source')?.addEventListener('click', () => setArtifactView('source'))
@@ -197,14 +197,33 @@ async function openReaderLink(file, reference) {
   const local=reference.localPath ? {path:reference.localPath,fragment:reference.target.includes('#')?reference.target.slice(reference.target.indexOf('#')):''}
     : file.executionEnvironment==='wsl' ? resolveWslDocumentLink(file,reference.target) : null
   if(local) {
-    if(local.path===file.path&&local.fragment&&largeMarkdownHost) return largeMarkdownHost.navigateFragment(local.fragment)
-    return openArtifact({root:file.root,path:local.path,readerFragment:local.fragment,
-      sourceSessionKey:file.sourceSessionKey},{allowDetachedRoot:true,returnTool:file.returnTool})
+    const fragment = local.fragment ? decodeURIComponent(local.fragment.replace(/^#/,'')) : ''
+    if(local.path===file.path) return fragment && largeMarkdownHost ? largeMarkdownHost.navigateFragment(fragment) : undefined
+    const threadKey = selectedStateKey(), host = largeMarkdownHost
+    const snapshot = host ? await host.request('state') : null
+    if (state.artifact !== file || file.threadKey !== threadKey || selectedStateKey() !== threadKey) return
+    // Store only owned navigation metadata, never old frames, grants or leases.
+    const previous = { file: { root:file.root, path:file.path, sourceSessionKey:file.sourceSessionKey },
+      returnTool:file.returnTool, viewState:{view:snapshot?.view || state.artifactView}, position:snapshot?.position || null }
+    const backStack = [...(file.backStack || []), previous].slice(-4)
+    return openArtifact({root:file.root,path:local.path,readerFragment:fragment,
+      sourceSessionKey:file.sourceSessionKey},{allowDetachedRoot:true,returnTool:file.returnTool,backStack})
   }
   throw Error(t('This link is outside the authorized document directories or uses an unsupported scheme.'))
 }
 
-async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null, discardUnsaved = false } = {}) {
+async function backOrCloseArtifact() {
+  const file = state.artifact
+  if (!file) return
+  if (file.threadKey !== selectedStateKey()) return
+  const stack = file.backStack || [], previous = stack.at(-1)
+  if (!previous) return closeArtifactRail()
+  // openArtifact retains busy/dirty confirmation and existing canonical grants.
+  return openArtifact(previous.file, { allowDetachedRoot:true, returnTool:previous.returnTool,
+    viewState:previous.viewState, readerPosition:previous.position, backStack:stack.slice(0,-1) })
+}
+
+async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', viewState = null, discardUnsaved = false, backStack = [], readerPosition = null } = {}) {
   if (largeMarkdownHost?.busy) return
   if (largeMarkdownHost?.dirty && state.artifact) state.artifact.dirty = true
   const thread = selectedThread()
@@ -248,7 +267,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
   $('#artifact-loading').classList.remove('hidden')
   disposeLargeMarkdown()
   const requestId = randomId()
-  state.artifact = { root, path, kind, readerReference: file.readerReference, readerFragment: file.readerFragment, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: true }
+  state.artifact = { root, path, kind, readerReference: file.readerReference, readerFragment: file.readerFragment, requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, backStack, readerPosition, loading: true }
   try {
     const response = await gatewayFetch('/studio/reader/open', {
       method: 'POST',
@@ -281,7 +300,7 @@ async function openArtifact(file, { allowDetachedRoot = false, returnTool = '', 
     catch (error) { releaseLargeMarkdown(result); throw error }
     if (state.artifact?.requestId !== requestId || state.artifact.threadKey !== selectedStateKey()) { releaseLargeMarkdown(result); return }
     state.artifact = { ...result, initialPresentation, readingState, hash: result.bookHash, largeMarkdown: result.reader, readerSourceAvailable: result.sourceAvailable,
-      readerReference: file.readerReference, readerFragment: file.readerFragment, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, loading: false }
+      readerReference: file.readerReference, readerFragment: file.readerFragment, kind: 'large-markdown', requestId, threadKey: selectedStateKey(), returnTool, sourceSessionKey, backStack, readerPosition, loading: false }
     largeMarkdownFile = state.artifact
     state.artifactView = 'preview'
     if (viewState) {
@@ -315,7 +334,7 @@ async function refreshArtifact() {
   if (largeMarkdownHost?.busy) return
   if (largeMarkdownHost?.dirty) state.artifact.dirty = true
   if (state.artifact.dirty && !confirm(t('Reloading will discard unsaved changes. Continue?'))) return
-  await openArtifact({ root: state.artifact.root, path: state.artifact.path, sourceSessionKey: state.artifact.sourceSessionKey }, { returnTool: state.artifact.returnTool, discardUnsaved: true })
+  await openArtifact({ root: state.artifact.root, path: state.artifact.path, sourceSessionKey: state.artifact.sourceSessionKey }, { returnTool: state.artifact.returnTool, backStack: state.artifact.backStack, discardUnsaved: true })
 }
 
 function closeArtifactRail({ restoreMap = true, restoreWorkspace = true } = {}) {
@@ -425,8 +444,9 @@ function renderArtifact() {
   $('#artifact-path').textContent = artifactPath
   $('#artifact-path').title = artifactPath
   const closeButton = $('#close-artifact')
-  const returnLabel = file.returnTool === 'files' ? t('Back to Files') : file.returnTool === 'review' ? t('Back to Git Review') : file.returnTool === 'resources' ? t('Back to Resources') : t('Close document')
-  closeButton.classList.toggle('returning', Boolean(file.returnTool))
+  const previousDocument = file.backStack?.at(-1)
+  const returnLabel = previousDocument ? t('Back to {file}', {file:fileDisplayName(previousDocument.file.path)}) : file.returnTool === 'files' ? t('Back to Files') : file.returnTool === 'review' ? t('Back to Git Review') : file.returnTool === 'resources' ? t('Back to Resources') : t('Close document')
+  closeButton.classList.toggle('returning', Boolean(previousDocument || file.returnTool))
   closeButton.title = returnLabel
   closeButton.setAttribute('aria-label', returnLabel)
   $('#artifact-loading').classList.toggle('hidden', !file.loading)
@@ -567,7 +587,7 @@ function renderArtifact() {
       }, { translate: hostTranslate, initialView: state.artifactView, onOpenRequested: () => openResources(),
         onCommentRequested: payload => readerCommentHost?.open(payload),
         onError: showError, onLinkRequested: reference => openReaderLink(file, reference),
-        initialReference: file.readerReference, initialFragment: file.readerFragment,
+        initialReference: file.readerReference, initialFragment: file.readerFragment, initialPosition: file.readerPosition,
         presentation: { ...file.initialPresentation, ...(file.format === 'epub' ? { epub: { theme: file.readingState?.theme || 'light',
           flow: file.readingState?.flow || 'paginated', fontScale: file.readingState?.fontScale || 1,
           typography: readingTypography() } } : file.format === 'pdf' && file.pdfPresentation ? { pdf: file.pdfPresentation } : {}) },
@@ -576,6 +596,7 @@ function renderArtifact() {
           : file.format === 'pdf' && file.page ? {kind:'pdf',pages:[{page:file.page,rects:[{x:0,y:0,width:1,height:0.000001}]}]} : undefined,
       })
       delete file.readerReference
+      delete file.readerPosition
       delete file.readerFragment
     }
     syncLargeMarkdownTheme()
@@ -792,6 +813,7 @@ function formatFileSize(value) {
   return {
     bind,
     close: closeArtifactRail,
+    back: backOrCloseArtifact,
     goToPdfPage,
     jumpToLine: jumpArtifactToLine,
     open: openArtifact,

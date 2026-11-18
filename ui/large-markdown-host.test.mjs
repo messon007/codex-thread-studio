@@ -458,3 +458,16 @@ test('disposed presentation owner cancels in-flight and queued updates without p
  gate.resolve();await Promise.all([firstRejected,secondRejected])
  assert.equal(f.requests.length,count);assert.equal(f.states.length,states)
 })
+
+test('Back restores a public reading position only for the same revision', async () => {
+ for (const matching of [true,false]) {
+  const position={version:1,revision:(matching?'a':'b').repeat(64),view:'source',location:{kind:'line',line:42}}
+  const {host,requests}=fixture('source',{}, {initialPosition:position})
+  try {
+   await host.ready
+   const navigation=requests.filter(request=>request.method==='navigate')
+   assert.equal(navigation.length,matching?1:0)
+   if(matching){assert.deepEqual(navigation[0].params,{location:position.location});assert.ok(requests.findIndex(r=>r.method==='setView')<requests.findIndex(r=>r.method==='navigate'))}
+  } finally {await host.dispose()}
+ }
+})

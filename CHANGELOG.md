@@ -6,6 +6,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Added
 
+- Add four-entry Back navigation for linked documents, retaining each visit’s reading position and original workspace entry (#82).
+
 - Add document settings for bounded matching-word highlights and automatic code sizing, with reading/code font sizes up to 32 px.
 - Adopt shared Ctrl+G source-line navigation in Preview, Source and Edit, preserving source anchors and unsaved edits.
 

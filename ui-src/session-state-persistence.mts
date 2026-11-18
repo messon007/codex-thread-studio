@@ -51,3 +51,31 @@ export function createSessionStatePersistence(
     },
   }
 }
+
+/** Keep queue edits atomic across tabs. A stale writer stops rather than overwriting another page. */
+export function createVersionedMessageQueueWriter(
+  state: { messageQueues: Record<string, QueuedMessage[]>; messageQueueRevisions?: Record<string, number> },
+  transport: typeof fetch, ready: () => boolean,
+  onConflict: (key: string, error: Error) => void,
+) {
+  const chains = new Map<string, Promise<void>>()
+  function write(key: string): Promise<void> {
+    if (!key || !ready()) return Promise.resolve()
+    const messages = JSON.parse(JSON.stringify(state.messageQueues[key] || [])) as QueuedMessage[]
+    const pending = (chains.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
+      const revision = state.messageQueueRevisions?.[key] || 0
+      const response = await transport('/studio/session-state/message-queue', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionKey: key, messages, expectedRevision: revision }) })
+      if (!response.ok) {
+        const error = new Error(response.status === 409 ? 'Another window changed this queue. Reload before editing or sending.' : `Queue save failed (HTTP ${response.status}); reload before retrying.`)
+        throw error
+      }
+      const next = Number(response.headers.get('x-studio-queue-revision'))
+      if (!Number.isSafeInteger(next) || next <= revision) throw new Error('Missing queue revision receipt; reload before retrying.')
+      state.messageQueueRevisions ||= {}; state.messageQueueRevisions[key] = next
+    })
+    const guarded = pending.catch(error => { onConflict(key, error instanceof Error ? error : new Error(String(error))); throw error })
+    chains.set(key, guarded)
+    return guarded
+  }
+  return { write }
+}

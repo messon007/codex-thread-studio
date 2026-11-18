@@ -1,5 +1,7 @@
 # Agent Teams 设计审查
 
+> 当前实现与验收见 [implementation status](implementation-status.md)、[host integration](host-integration.md) 和 [实现审查](implementation-review.md)。本文保留早期候选/探针的时间顺序及未通过结论；它们不代表最终适配器状态。
+
 2026-11-18，GPT-6.2-Astra。审查对象为 `feat/agent-teams` 基线 `f7a8b7f` 上的 [specification.md](specification.md)，正文 SHA-256 为 `06315d262371b800af996b478847d1f2f5b14b91228883fe2fb144c7ee8c30aa`。取证范围为仓库源码、已有 0.170.0 协议 schema 和官方文档。本次只作静态审查。
 
 **完整方案裁决为 CHANGES_REQUIRED。** 保留最多五个既有 thread、任务级等待、可选组内协调者、成员直接协作、独立 Rust 服务及事务 outbox。把以下 P0/P1 写入规范后复审，再决定是否运行文末两个受限的能力实验。当前未批准产品开发。业务接口可以明确规定的行为，应在实验前规定。

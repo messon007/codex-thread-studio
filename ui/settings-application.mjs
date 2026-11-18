@@ -73,6 +73,7 @@ export function createSettingsApplication(state, services) {
         state.selectedId = state.selectedByBackend[state.backend];
         state.turnOptions = normalizeStoredTurnOptions(storedSessionState.turnOptions);
         state.messageQueues = normalizeStoredMessageQueues(storedSessionState.messageQueues);
+        state.messageQueueRevisions = Object.fromEntries(Object.entries(storedSessionState.messageQueueRevisions || {}).filter(([, value]) => Number.isSafeInteger(value) && Number(value) >= 0));
         state.pausedMessageQueues = new Set(Object.keys(state.messageQueues));
         state.runningMessageQueues = new Set();
         state.messageQueueErrors = new Map();

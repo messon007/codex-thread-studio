@@ -1,5 +1,7 @@
 # Agent Teams：隔离能力验证结果
 
+> 当前实现与验收见 [implementation status](implementation-status.md)、[host integration](host-integration.md) 和 [实现审查](implementation-review.md)。本文保留早期候选/探针的时间顺序及未通过结论；它们不代表最终适配器状态。
+
 本页记录前三轮候选的历史实验，反例仍有效。后续 Astra 已通过 [最小实施方案](implementation-options.md)，允许纯领域开发及 G1b/G2b 验证；下文“不能进入产品开发”是当时旧候选的裁决，不是新方案的当前状态。
 
 2026-11-18，Codex CLI/App Server 0.170.0，设计基线 `f7a8b7f`。范围为 Astra 第二轮批准的 G1/G2；没有产品实现、生产接入或主线合并。

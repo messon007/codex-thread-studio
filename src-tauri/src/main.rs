@@ -1,3 +1,6 @@
+mod teams;
+mod teams_dispatch;
+mod teams_receipts;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
@@ -86,6 +89,7 @@ struct ServeOptions {
 
 #[derive(Clone)]
 struct GatewayState {
+    teams: teams::Teams,
     markdown_readers: large_markdown::Readers,
     codex: CodexAppServer,
     codex_backends: Arc<BTreeMap<String, CodexBackendInstance>>,
@@ -476,6 +480,8 @@ struct TurnOptionsStateRequest {
 struct MessageQueueStateRequest {
     session_key: String,
     #[serde(default)]
+    expected_revision: Option<u64>,
+    #[serde(default)]
     messages: Vec<session_state::QueuedMessage>,
 }
 
@@ -568,6 +574,13 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
+    if let Some(result) = teams::bridge_entry() {
+        if let Err(error) = result {
+            eprintln!("Teams bridge: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Some(result) = marknoria::reader::worker_entry() {
         if let Err(error) = result {
             eprintln!("Markdown indexing failed: {error}");
@@ -657,6 +670,7 @@ fn main() {
         .setup(move |app| {
             let router = gateway_router(state.clone());
             tauri::async_runtime::spawn(async move {
+                state.teams.start(state.clone());
                 match tokio::net::TcpListener::from_std(gateway_listener) {
                     Ok(listener) => {
                         if let Err(error) = axum::serve(listener, router).await {
@@ -761,7 +775,7 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
     let security = GatewaySecurity::new(origin.clone());
     let access_url = format!("{origin}/#token={}", security.token());
     let (state, _, _profile_lock) = initialize_gateway(security, false, false)?;
-    let router = gateway_router(state);
+    let router = gateway_router(state.clone());
 
     println!("Codex Thread Studio remote server is listening on {origin}");
     println!("Forward the same port over SSH, then open: {access_url}");
@@ -772,6 +786,7 @@ fn run_remote_server(options: ServeOptions) -> Result<(), String> {
         .build()
         .map_err(|error| format!("unable to start the asynchronous runtime: {error}"))?;
     runtime.block_on(async move {
+        state.teams.start(state.clone());
         let listener = tokio::net::TcpListener::from_std(listener)
             .map_err(|error| format!("unable to start the server listener: {error}"))?;
         axum::serve(listener, router)
@@ -830,7 +845,9 @@ fn initialize_gateway(
     if let Err(error) = epub_reader::initialize(&epub_reading_path) {
         eprintln!("Codex Thread Studio could not initialize EPUB reading state: {error}");
     }
+    let teams = teams::Teams::new(preferences_path.with_file_name("teams"))?;
     let state = GatewayState {
+        teams,
         markdown_readers: large_markdown::Readers::default()
             .with_notes_directory(epub_reading_path.with_file_name("reader-notes")),
         codex,
@@ -883,6 +900,14 @@ fn lock_studio_profile(preferences_path: &std::path::Path) -> Result<fs::File, S
 
 fn gateway_router(state: GatewayState) -> Router {
     let protected = Router::new()
+        .route(
+            "/studio/teams",
+            axum::routing::post(teams::api).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route(
+            "/studio/teams/dispatch",
+            axum::routing::post(teams::api).layer(DefaultBodyLimit::max(96 * 1024 * 1024)),
+        )
         .route("/studio/codex", get(codex_info))
         .route("/studio/backends", get(backend_registry_info))
         .route("/studio/backend/{backend}", get(codex_instance_info))
@@ -1033,6 +1058,11 @@ fn gateway_router(state: GatewayState) -> Router {
         ));
 
     Router::new()
+        .route(
+            "/teams/mcp/{backend}",
+            axum::routing::post(teams::mcp).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route("/teams.mjs", get(teams_js))
         .route("/", get(index))
         .route("/bootstrap-errors.js", get(bootstrap_errors_js))
         .route("/remote-bootstrap.js", get(remote_bootstrap_js))
@@ -3472,6 +3502,8 @@ async fn put_message_queue_state(
     State(state): State<GatewayState>,
     body: String,
 ) -> Response<Body> {
+    let queue_gate = state.teams.gate.clone();
+    let _queue_guard = queue_gate.lock().await;
     run_studio_database(move || {
         if body.len() > 96 * 1024 * 1024 {
             return json_error(
@@ -3517,12 +3549,20 @@ async fn put_message_queue_state(
             Ok(guard) => guard,
             Err(_) => return gateway_error("Studio database lock is unavailable"),
         };
-        match session_state::replace_message_queue(
+        match session_state::replace_message_queue_checked(
             &state.studio_path,
             &request.session_key,
             &request.messages,
+            request.expected_revision,
         ) {
-            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Ok(revision) => (
+                StatusCode::NO_CONTENT,
+                [("x-studio-queue-revision", revision.to_string())],
+            )
+                .into_response(),
+            Err(error) if error.starts_with("queue revision conflict") => {
+                json_error(StatusCode::CONFLICT, &error)
+            }
             Err(error) => gateway_error(&format!("failed to save message queue: {error}")),
         }
     })
@@ -3591,12 +3631,48 @@ async fn put_preferences(State(state): State<GatewayState>, body: String) -> Res
     if let Err(message) = validate_preferences(&preferences) {
         return json_error(StatusCode::BAD_REQUEST, &message);
     }
+    // Serialize Router membership changes with Teams group mutations.
+    let teams_gate = state.teams.gate.clone();
+    let _teams_guard = teams_gate.lock().await;
+    let router_sessions = |preferences: &StudioPreferences| {
+        let mut sessions = Vec::new();
+        if let Some(router) = &preferences.router {
+            sessions.extend(router.controllers.iter().map(|(backend, thread)| {
+                studio_teams::Session {
+                    backend: backend.clone(),
+                    thread: thread.clone(),
+                }
+            }));
+            if let Some(thread) = &router.thread_id {
+                sessions.push(studio_teams::Session {
+                    backend: "codex".into(),
+                    thread: thread.clone(),
+                });
+            }
+        }
+        sessions
+    };
+    let proposed = router_sessions(&preferences);
+    if let Err(error) = state.teams.check_router_sessions(&proposed) {
+        return json_error(StatusCode::CONFLICT, &error);
+    }
     let _guard = match state.preferences_lock.lock() {
         Ok(guard) => guard,
         Err(_) => return gateway_error("preferences lock is unavailable"),
     };
+    if let Ok(previous) = load_preferences(&state.preferences_path) {
+        if let Err(error) = state
+            .teams
+            .record_router_sessions(&router_sessions(&previous))
+        {
+            return gateway_error(&error);
+        }
+    }
     match save_preferences(&state.preferences_path, &preferences) {
         Ok(()) => {
+            if let Err(error) = state.teams.record_router_sessions(&proposed) {
+                return gateway_error(&error);
+            }
             let Ok(mut shared_directories) = state.shared_document_directories.lock() else {
                 return gateway_error("shared document directory lock is unavailable");
             };
@@ -4705,6 +4781,10 @@ mod tests {
     fn secured_test_gateway(security: GatewaySecurity) -> GatewayState {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         GatewayState {
+            teams: teams::Teams::new(
+                env::temp_dir().join(format!("studio-teams-test-{}", uuid::Uuid::new_v4())),
+            )
+            .expect("test Teams store"),
             markdown_readers: large_markdown::Readers::default(),
             codex: CodexAppServer::new(
                 "codex".to_string(),
@@ -4743,6 +4823,71 @@ mod tests {
             embedded_browser: false,
             system_file_manager: false,
         }
+    }
+
+    #[test]
+    fn teams_control_plane_and_mcp_credentials_are_separate() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let state = secured_test_gateway(GatewaySecurity::for_tests(
+                "http://127.0.0.1:38080",
+                "fixture-ui-token",
+            ));
+            let router = gateway_router(state);
+            for path in ["/studio/teams", "/studio/teams/dispatch"] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri(path)
+                            .header("host", "127.0.0.1:38080")
+                            .header("content-type", "application/json")
+                            .body(Body::from(r#"{"action":"snapshot"}"#))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            }
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/teams/mcp/codex")
+                        .header("host", "127.0.0.1:38080")
+                        .header("authorization", "Bearer fixture-ui-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/studio/teams")
+                        .header("host", "127.0.0.1:38080")
+                        .header("authorization", "Bearer fixture-ui-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"action":"snapshot"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["enabled"], false);
+            assert!(value["registrations"].as_array().unwrap().is_empty());
+        });
     }
 
     #[test]
@@ -5106,6 +5251,10 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
+                teams: teams::Teams::new(
+                    env::temp_dir().join(format!("studio-teams-test-{}", uuid::Uuid::new_v4())),
+                )
+                .expect("test Teams store"),
                 markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
@@ -5363,6 +5512,10 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("test runtime");
         runtime.block_on(async {
             let state = GatewayState {
+                teams: teams::Teams::new(
+                    env::temp_dir().join(format!("studio-teams-test-{}", uuid::Uuid::new_v4())),
+                )
+                .expect("test Teams store"),
                 markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
@@ -5433,6 +5586,10 @@ mod tests {
             );
             let maps_path = env::temp_dir().join(unique);
             let state = GatewayState {
+                teams: teams::Teams::new(
+                    env::temp_dir().join(format!("studio-teams-test-{}", uuid::Uuid::new_v4())),
+                )
+                .expect("test Teams store"),
                 markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
@@ -5573,6 +5730,10 @@ mod tests {
             );
             let studio_path = env::temp_dir().join(unique);
             let state = GatewayState {
+                teams: teams::Teams::new(
+                    env::temp_dir().join(format!("studio-teams-test-{}", uuid::Uuid::new_v4())),
+                )
+                .expect("test Teams store"),
                 markdown_readers: large_markdown::Readers::default(),
                 codex: CodexAppServer::new(
                     "codex".to_string(),
@@ -6545,4 +6706,8 @@ mod tests {
         router.fallbacks.push(router.fallbacks[0].clone());
         assert!(validate_preferences(&preferences).is_err());
     }
+}
+
+async fn teams_js() -> impl IntoResponse {
+    javascript(include_str!("../../ui/teams.mjs"))
 }

@@ -279,3 +279,27 @@ fn abandoned_unknown_still_blocks_strict_reservation_until_late_receipt_settles(
     );
     q.activate("teams", 2).unwrap();
 }
+
+#[test]
+fn two_owners_cannot_hold_the_same_idle_session() {
+    let (dir, mut first) = queue();
+    let mut second = Queue::open(dir.path().join("queue.sqlite3")).unwrap();
+    let supervisor = first
+        .reserve(&session(), "supervisor", 1, "work in progress")
+        .unwrap();
+    assert!(supervisor.granted);
+    assert_eq!(
+        second
+            .reserve(&session(), "sender", 1, "user message")
+            .unwrap_err(),
+        Error::Blocked
+    );
+    assert_eq!(second.reservations(&session()).unwrap().len(), 1);
+    first.release(&supervisor.id, 1).unwrap();
+    assert!(
+        second
+            .reserve(&session(), "sender", 1, "user message")
+            .unwrap()
+            .granted
+    );
+}

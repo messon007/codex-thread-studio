@@ -72,6 +72,9 @@ fn save_group(db: &Connection, g: &Group) -> Result<()> {
 }
 fn access(g: &Group, caller: &Caller) -> Result<()> {
     if let Actor::Member(member_id) = &caller.actor {
+        if g.archived {
+            return Err(Error::Forbidden);
+        }
         let member = g
             .members
             .iter()
@@ -323,6 +326,8 @@ impl Store {
             return Err(Error::Storage("unsupported Teams schema version".into()));
         }
         db.execute_batch("BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS wire_meta(k INTEGER PRIMARY KEY CHECK(k=1),instance TEXT NOT NULL);
+INSERT OR IGNORE INTO wire_meta VALUES(1,lower(hex(randomblob(16))));
 CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY,body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS members(id TEXT PRIMARY KEY,group_id TEXT NOT NULL REFERENCES groups(id),backend TEXT NOT NULL,thread TEXT NOT NULL,UNIQUE(backend,thread));
 CREATE TABLE IF NOT EXISTS controllers(backend TEXT NOT NULL,thread TEXT NOT NULL,PRIMARY KEY(backend,thread));
@@ -333,6 +338,7 @@ CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,group_id
 CREATE INDEX IF NOT EXISTS events_group ON events(group_id,seq);
 CREATE TABLE IF NOT EXISTS effects(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,group_id TEXT NOT NULL,task_id TEXT NOT NULL,body TEXT NOT NULL,withdrawn INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS effects_group ON effects(group_id,seq);
+CREATE TABLE IF NOT EXISTS blocker_decisions(id TEXT PRIMARY KEY,group_id TEXT NOT NULL,task_id TEXT NOT NULL,attempt_id TEXT NOT NULL,blocker_id TEXT NOT NULL,UNIQUE(task_id,attempt_id,blocker_id));
 CREATE TABLE IF NOT EXISTS turns(turn_key TEXT PRIMARY KEY,state TEXT NOT NULL);
 PRAGMA user_version=1; COMMIT;")?;
         Ok(Self { db })
@@ -364,6 +370,16 @@ PRAGMA user_version=1; COMMIT;")?;
         name: &str,
         members: Vec<MemberDraft>,
     ) -> Result<Group> {
+        self.create_group_with_orchestrator(caller, request_id, name, members, None)
+    }
+    pub fn create_group_with_orchestrator(
+        &mut self,
+        caller: &Caller,
+        request_id: &str,
+        name: &str,
+        members: Vec<MemberDraft>,
+        orchestrator: Option<&Session>,
+    ) -> Result<Group> {
         if caller.actor != Actor::User {
             return Err(Error::Forbidden);
         }
@@ -378,7 +394,10 @@ PRAGMA user_version=1; COMMIT;")?;
             text(&m.name, 800)?;
             text(&m.responsibility, 2048)?;
         }
-        let payload = json(&(name, &members))?;
+        let payload = match orchestrator {
+            None => json(&(name, &members))?,
+            Some(session) => json(&(name, &members, session))?,
+        };
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -403,11 +422,13 @@ PRAGMA user_version=1; COMMIT;")?;
                     return Err(Error::InvalidState);
                 }
             }
-            let g = Group {
+            let mut g = Group {
                 id: id(),
                 name: name.into(),
                 revision: 1,
                 paused: false,
+                archived: false,
+                roster_version: 1,
                 orchestrator: None,
                 members: members
                     .into_iter()
@@ -419,6 +440,16 @@ PRAGMA user_version=1; COMMIT;")?;
                     })
                     .collect(),
             };
+            if let Some(session) = orchestrator {
+                g.orchestrator = Some(
+                    g.members
+                        .iter()
+                        .find(|m| &m.session == session)
+                        .ok_or(Error::InvalidArgument)?
+                        .id
+                        .clone(),
+                );
+            }
             tx.execute("INSERT INTO groups VALUES(?,?)", params![g.id, json(&g)?])?;
             for m in &g.members {
                 tx.execute(
@@ -444,6 +475,145 @@ PRAGMA user_version=1; COMMIT;")?;
         )?;
         tx.commit()?;
         outcome
+    }
+    /// Host control-plane only: record a user's decision for a specific still-open blocker.
+    pub fn approve_blocker(
+        &mut self,
+        caller: &Caller,
+        group_id: &str,
+        version: &TaskVersion,
+        blocker_id: &str,
+    ) -> Result<String> {
+        if caller.actor != Actor::User {
+            return Err(Error::Forbidden);
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let t = task(&tx, group_id, &version.task_id)?;
+        if t.attempt_id != version.attempt_id {
+            return Err(Error::StaleAttempt);
+        }
+        if t.revision != version.expected_revision {
+            return Err(Error::RevisionConflict);
+        }
+        if t.status != Status::Waiting
+            || !t
+                .blockers
+                .iter()
+                .any(|b| b.id == blocker_id && b.needs_user && b.resolution.is_none())
+        {
+            return Err(Error::InvalidState);
+        }
+        let decision:String=tx.query_row("INSERT INTO blocker_decisions VALUES(?,?,?,?,?) ON CONFLICT(task_id,attempt_id,blocker_id) DO UPDATE SET blocker_id=excluded.blocker_id RETURNING id",params![id(),group_id,t.id,t.attempt_id,blocker_id],|r|r.get(0))?;
+        tx.commit()?;
+        Ok(decision)
+    }
+    /// Host-only listing. Do not expose this on the member MCP transport.
+    pub fn groups(&self) -> Result<Vec<Group>> {
+        let mut query = self.db.prepare("SELECT body FROM groups ORDER BY rowid")?;
+        let rows = query.query_map([], |r| r.get::<_, String>(0))?;
+        rows.map(|r| decode(r?)).collect()
+    }
+    /// Resolve the caller from a backend-qualified native session supplied by the host.
+    pub fn member_for_session(&self, session: &Session) -> Result<Option<(Group, Member)>> {
+        let group_id: Option<String> = self
+            .db
+            .query_row(
+                "SELECT group_id FROM members WHERE backend=? AND thread=?",
+                params![session.backend, session.thread],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(group_id) = group_id else {
+            return Ok(None);
+        };
+        let group = group(&self.db, &group_id)?;
+        let member = group
+            .members
+            .iter()
+            .find(|m| &m.session == session)
+            .cloned()
+            .ok_or_else(|| Error::Storage("membership index is inconsistent".into()))?;
+        Ok(Some((group, member)))
+    }
+    pub(crate) fn cursor_namespace(&self) -> Result<String> {
+        Ok(self
+            .db
+            .query_row("SELECT instance FROM wire_meta WHERE k=1", [], |r| r.get(0))?)
+    }
+    pub(crate) fn wire_tasks(
+        &self,
+        group_id: &str,
+        after: i64,
+        statuses: &[Status],
+        assignee: Option<&str>,
+        requester: Option<&Actor>,
+        limit: usize,
+    ) -> Result<Vec<(i64, serde_json::Value)>> {
+        let mut q=self.db.prepare("SELECT seq,json_object('task_id',id,'attempt_id',body->>'$.attempt_id','revision',body->>'$.revision','ready',body->'$.ready','title',body->>'$.title','status',lower(body->>'$.status'),'assignee_member_id',body->>'$.assignee','requester',body->'$.requester','parent_task_id',body->>'$.parent_id') FROM tasks WHERE group_id=?1 AND seq>?2 AND (?3='[]' OR body->>'$.status' IN (SELECT value FROM json_each(?3))) AND (?4 IS NULL OR body->>'$.assignee'=?4) AND (?5 IS NULL OR body->'$.requester'=?5) ORDER BY seq LIMIT ?6")?;
+        let rows = q.query_map(
+            params![
+                group_id,
+                after,
+                json(&statuses)?,
+                assignee,
+                requester.map(json).transpose()?,
+                limit as i64
+            ],
+            |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
+        )?;
+        rows.map(|row| {
+            let (seq, body) = row?;
+            Ok((seq, decode(body)?))
+        })
+        .collect()
+    }
+    pub(crate) fn wire_history(
+        &self,
+        group_id: &str,
+        task_id: &str,
+        after: i64,
+        watermark: i64,
+        limit: usize,
+    ) -> Result<Vec<Event>> {
+        let mut q=self.db.prepare("SELECT seq,actor,kind,data FROM events WHERE group_id=?1 AND seq>?2 AND seq<=?3 AND ((kind='task_delegated' AND data->>'$.id'=?4) OR (kind='readiness_changed' AND data->>'$.id'=?4) OR (kind='task_changed' AND data->>'$.task.id'=?4) OR (kind='child_attached' AND (data->>'$.parent.id'=?4 OR data->>'$.child_id'=?4))) ORDER BY seq LIMIT ?5")?;
+        let rows = q.query_map(
+            params![group_id, after, watermark, task_id, limit as i64],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+        rows.map(|row| {
+            let (seq, actor, kind, data) = row?;
+            Ok(Event {
+                seq,
+                group_id: group_id.into(),
+                actor: decode(actor)?,
+                kind,
+                data: decode(data)?,
+            })
+        })
+        .collect()
+    }
+    pub(crate) fn read_watermark(&self, group_id: &str) -> Result<i64> {
+        Ok(self.db.query_row(
+            "SELECT COALESCE(MAX(seq),0) FROM events WHERE group_id=?",
+            [group_id],
+            |r| r.get(0),
+        )?)
+    }
+    pub(crate) fn authorize_tool(&self, caller: &Caller, group_id: &str) -> Result<Group> {
+        let g = self.context(caller, group_id)?;
+        if matches!(caller.actor, Actor::Member(_)) {
+            active_turn(&self.db, caller)?;
+        }
+        Ok(g)
     }
     pub fn context(&self, caller: &Caller, group_id: &str) -> Result<Group> {
         let g = group(&self.db, group_id)?;
@@ -576,6 +746,62 @@ PRAGMA user_version=1; COMMIT;")?;
             params![json(&TurnState::Unknown)?, json(&TurnState::Active)?],
         )?;
         Ok(())
+    }
+    pub fn recover_backend_turns(&mut self, backend: &str) -> Result<()> {
+        self.db.execute("UPDATE turns SET state=? WHERE state=? AND json_extract(turn_key,'$.session.backend')=?",params![json(&TurnState::Unknown)?,json(&TurnState::Active)?,backend])?;
+        Ok(())
+    }
+    /// Historical terminal evidence is valid across connection generations for this native turn.
+    pub fn reconcile_native_terminal(
+        &mut self,
+        session: &Session,
+        id: &str,
+        status: TurnState,
+    ) -> Result<()> {
+        if !matches!(
+            status,
+            TurnState::Succeeded | TurnState::Interrupted | TurnState::Failed
+        ) {
+            return Err(Error::InvalidArgument);
+        }
+        let mut q=self.db.prepare("SELECT turn_key FROM turns WHERE json_extract(turn_key,'$.session.backend')=? AND json_extract(turn_key,'$.session.thread')=? AND json_extract(turn_key,'$.id')=?")?;
+        let rows = q
+            .query_map(params![session.backend, session.thread, id], |r| {
+                r.get::<_, String>(0)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(q);
+        for row in rows {
+            let turn: Turn = decode(row)?;
+            if self.observed_turn(&turn)? != status {
+                self.observe_turn(&turn, status)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn observed_turn(&self, turn: &Turn) -> Result<TurnState> {
+        turn_state(&self.db, turn)
+    }
+    pub fn command_details(
+        &self,
+        caller: &Caller,
+        group_id: &str,
+        request_id: &str,
+    ) -> Result<Option<(Command, Result<Reply>)>> {
+        self.context(caller, group_id)?;
+        let row: Option<(String, String)> = self
+            .db
+            .query_row(
+                "SELECT payload,response FROM commands WHERE scope=? AND actor=? AND request_id=?",
+                params![group_id, json(&caller.actor)?, request_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(payload, response)| {
+            let (_, cmd): (u32, Command) = decode(payload)?;
+            Ok((cmd, decode(response)?))
+        })
+        .transpose()
     }
     pub fn observe_turn(&mut self, turn: &Turn, state: TurnState) -> Result<()> {
         let tx = self
@@ -757,6 +983,44 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
     let audit = serde_json::to_value(&command)?;
     let mut effects = vec![];
     let mut entity_id = None;
+    if g.archived {
+        return Err(Error::InvalidState);
+    }
+    if let Some(reply) = manage_group(tx, &mut g, caller, &command)? {
+        return Ok(reply);
+    }
+    let command = match command {
+        Command::GroupGoal {
+            expected_revision,
+            to_member_id,
+            title,
+            request,
+            acceptance,
+            continuation,
+        } => {
+            if caller.actor != Actor::User {
+                return Err(Error::Forbidden);
+            }
+            if g.revision != expected_revision {
+                return Err(Error::RevisionConflict);
+            }
+            let to_member_id = to_member_id
+                .or_else(|| g.orchestrator.clone())
+                .ok_or(Error::InvalidArgument)?;
+            Command::Delegate {
+                delegation: Delegation {
+                    to_member_id,
+                    title,
+                    request,
+                    acceptance,
+                    continuation,
+                    dependencies: vec![],
+                    parent: None,
+                },
+            }
+        }
+        other => other,
+    };
     if let Command::SetPaused {
         expected_revision,
         paused,
@@ -767,6 +1031,9 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
         }
         if g.revision != expected_revision {
             return Err(Error::RevisionConflict);
+        }
+        if !paused && g.members.len() < 2 {
+            return Err(Error::InvalidState);
         }
         g.paused = paused;
         g.revision += 1;
@@ -798,6 +1065,7 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
             return Err(Error::InvalidArgument);
         }
         g.orchestrator = member_id;
+        g.roster_version += 1;
         g.revision += 1;
         save_group(tx, &g)?;
         event(tx, &g.id, &caller.actor, "orchestrator_changed", &g)?;
@@ -887,9 +1155,13 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
             revision: 1,
             attempt_id: id(),
             attempts: 1,
+            extra_attempts: 0,
+            reconciled_claim_id: None,
+            reconciled_result_id: None,
             ready: false,
             wait_generation: 0,
             claim: None,
+            claim_id: None,
             questions: vec![],
             blockers: vec![],
             results: vec![],
@@ -942,9 +1214,68 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
     if t.attempt_id != version.attempt_id {
         return Err(Error::StaleAttempt);
     }
-    if t.status.terminal() {
+    if t.status.terminal() && !matches!(command, Command::ReconcileReview { .. }) {
         return Err(Error::TaskTerminal);
     }
+    if let Some(reply) = maintain_task(tx, &mut t, caller, &command)? {
+        return Ok(reply);
+    }
+    let mut related = None;
+    let mut approved = false;
+    let command = match command {
+        Command::ReclaimById {
+            task,
+            previous_claim_id,
+            continuation,
+        } => {
+            let previous_turn = t.claim.clone().ok_or(Error::ClaimConflict)?;
+            if previous_claim_id != t.claim_id.as_deref().unwrap_or(&previous_turn.id) {
+                return Err(Error::ClaimConflict);
+            }
+            Command::Reclaim {
+                task,
+                previous_turn,
+                continuation,
+            }
+        }
+        Command::AskRelated {
+            task,
+            to,
+            question,
+            blocking,
+            continuation,
+            related_question_id,
+        } => {
+            if !t.questions.iter().any(|q| q.id == related_question_id) {
+                return Err(Error::NotFound);
+            }
+            related = Some(related_question_id);
+            Command::Ask {
+                task,
+                to,
+                question,
+                blocking,
+                continuation,
+            }
+        }
+        Command::ResolveApproved {
+            task,
+            blocker_id,
+            resolution,
+            user_decision_id,
+        } => {
+            approved=tx.query_row("SELECT EXISTS(SELECT 1 FROM blocker_decisions WHERE id=? AND group_id=? AND task_id=? AND attempt_id=? AND blocker_id=?)",params![user_decision_id,t.group_id,t.id,t.attempt_id,blocker_id],|r|r.get(0))?;
+            if !approved {
+                return Err(Error::Forbidden);
+            }
+            Command::Resolve {
+                task,
+                blocker_id,
+                resolution,
+            }
+        }
+        other => other,
+    };
     match command {
         Command::Begin { .. } | Command::Resume { .. } => {
             let resume = matches!(command, Command::Resume { .. });
@@ -968,10 +1299,16 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
             }
             let turn = active_turn(tx, caller)?;
             if let Some(previous) = &t.claim {
-                if previous != &turn && turn_state(tx, previous)? != TurnState::Succeeded {
+                if previous != &turn
+                    && turn_state(tx, previous)? != TurnState::Succeeded
+                    && t.reconciled_claim_id.as_deref()
+                        != Some(t.claim_id.as_deref().unwrap_or(&previous.id))
+                {
                     return Err(Error::ReconciliationRequired);
                 }
             }
+            t.reconciled_claim_id = None;
+            t.claim_id = Some(id());
             t.claim = Some(turn);
             t.status = Status::Working;
             t.ready = false;
@@ -991,10 +1328,16 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
             if t.status != Status::Working || t.claim.as_ref() != Some(&previous_turn) {
                 return Err(Error::ClaimConflict);
             }
-            if turn_state(tx, &previous_turn)? != TurnState::Succeeded {
+            if turn_state(tx, &previous_turn)? != TurnState::Succeeded
+                && (t.reconciled_claim_id.is_none()
+                    || t.reconciled_claim_id.as_deref()
+                        != t.claim_id.as_deref().or(Some(&previous_turn.id)))
+            {
                 return Err(Error::ReconciliationRequired);
             }
             continuation(&c)?;
+            t.reconciled_claim_id = None;
+            t.claim_id = Some(id());
             t.claim = Some(active_turn(tx, caller)?);
             t.checkpoint = Some(c);
         }
@@ -1064,7 +1407,7 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
                 .iter_mut()
                 .find(|b| b.id == blocker_id)
                 .ok_or(Error::NotFound)?;
-            if blocker.needs_user && caller.actor != Actor::User {
+            if blocker.needs_user && caller.actor != Actor::User && !approved {
                 return Err(Error::Forbidden);
             }
             if blocker.resolution.is_some() {
@@ -1121,6 +1464,7 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
                 continuation(c)?;
             }
             let q = Question {
+                related_question_id: related,
                 id: id(),
                 attempt_id: t.attempt_id.clone(),
                 asked_by: caller.actor.clone(),
@@ -1235,6 +1579,8 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
             match turn_state(tx, &result.turn)? {
                 TurnState::Succeeded => {}
                 TurnState::Active => return Err(Error::ResultNotReady),
+                TurnState::Failed | TurnState::Interrupted
+                    if t.reconciled_result_id.as_ref() == Some(&result.id) => {}
                 _ => return Err(Error::ReconciliationRequired),
             }
             text(&assessment.summary, 32768)?;
@@ -1265,7 +1611,7 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
                     requested_changes.as_deref().ok_or(Error::InvalidArgument)?,
                     32768,
                 )?;
-                if t.attempts >= 4 {
+                if t.attempts >= 4u32.saturating_add(t.extra_attempts) {
                     return Err(Error::LimitExceeded);
                 }
             }
@@ -1291,6 +1637,9 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
                 t.attempt_id = id();
                 t.attempts += 1;
                 t.claim = None;
+                t.claim_id = None;
+                t.reconciled_claim_id = None;
+                t.reconciled_result_id = None;
                 t.blockers.clear();
                 t.ready = false;
                 t.status = Status::Pending;
@@ -1334,3 +1683,7 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
         replayed: false,
     })
 }
+
+#[path = "maintenance.rs"]
+mod maintenance;
+use maintenance::{maintain_task, manage_group};

@@ -214,7 +214,7 @@ export function createSubmissionController(state, services) {
                         beginTranscriptFollowingLatest(model);
                         renderComposerState();
                     }
-                    const clientUserMessageId = randomId();
+                    const clientUserMessageId = message.id;
                     catalogActivity = setCatalogThreadActivity(ref.backend, ref.id, { status: 'active', touch: true });
                     const result = await startTurnWithPreparation({
                         registry: sessionDispatch,
@@ -223,6 +223,7 @@ export function createSubmissionController(state, services) {
                         start: () => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams(backendDescriptor(ref.backend).kind, threadForRef(ref), {
                             threadId: ref.id,
                             clientUserMessageId,
+                            ...services.queuedMessageContext?.(ref, message.id),
                             input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
                             ...queuedTurnOptions(ref),
                         })),

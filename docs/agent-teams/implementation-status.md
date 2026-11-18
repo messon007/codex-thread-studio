@@ -1,50 +1,28 @@
 # Agent Teams 开发状态
 
-2026-11-18，分支 `feat/agent-teams`。本批交付可独立编译、测试的 Rust 领域核心和通用队列组件，**尚不是可在 Studio UI 使用的团队功能**。不合入 main，不接触用户 Codex 配置或现有会话。
+2026-11-19，`feat/agent-teams`。完整功能已接入 Studio：独立面板、已有会话工具安装、协作任务、原生排队、持久恢复和关闭收尾。默认关闭，未合入 main。实现说明见 [host integration](host-integration.md)，协议见 [specification](specification.md)。
 
-## 已实现
+## 使用方式
 
-独立私有 crate [studio-teams](../../crates/studio-teams/README.md)，只依赖现有 SQLite/Serde/UUID 版本，不引入 GTK、阅读器或网络运行时。
+1. 启动功能分支的 Studio，在主菜单打开 **Agent Teams** 并启用。
+2. 在面板预览并安装对应本机 Codex 后端的协作工具。预览会指出实际配置文件、共享此配置的客户端影响，以及仅针对十一项 Teams 工具的批准设置；需用户明确确认。
+3. 选入 2～5 个已有 Codex 会话，填写分工，可从成员中选一位 orchestrator。会话 ID、工作目录和原始上下文不替换；全局 Thread Router 控制会话不能加入。
+4. 创建组目标或向成员委派任务。Agent 可先调用 `team_context({})` 发现自己的组和分工，再直接委派、问答、等待、提交带证据的结果、验收或退回修改。用户也可在面板审阅、处理阻塞和恢复不确定执行。
+5. 暂停/关闭停止新的交接；已开始的工作不被打断，精确保留其结果回执。卸载工具是单独操作，待回执结清后只删除 Studio 自己的配置项。
 
-- 2～5 个既有 backend/thread 成员，唯一绑定、Router 排除登记、可选组内协调者字段。
-- 委派、子任务/依赖与环检查；任务级 waiting、独立执行 claim、问答、用户决定 blocker、显式提交结果、逐条件验收和返工。等待一个任务不锁会话。
-- revision/attempt 校验、组权限与宿主归属、SQLite 事务、确定性业务拒绝回放和幂等冲突；逻辑 effect 与增量审计共同落盘。
-- 提交 Turn 和验收 Turn 屏障；同轮续接只豁免当前成员刚验收的直接子任务屏障，不豁免自身返工或普通依赖。原生完成不会自动完成业务任务。
-- 精确到问题/blocker 的通知撤回；暂停保留当前工作回执、通知 held。重启/新 Turn 使旧活跃 claim 待核对。
-- 独立持久队列：稳定入队 ID、顺序、保留、scope fence、一次发送意图、原生排队/开始/结束回执、确认未提交、unknown 不重发、显式放弃未知项。
+## 已实现的边界
 
-原生不确定项的“放弃”仅释放普通人工排队，不证明原生已撤回；迟到回执继续核对，该项未确定前仍阻止严格监督和原 scope 重新启用。
+- Rust 独立领域 crate 管理组、任务、依赖、问答、结果、审计、幂等及执行/验收屏障。原生 Turn 结束不会自动判定协作任务完成。
+- 忙碌时仅 `thread/queue/add`；Teams 不用 `turn/start`、Steer 或 queue/start 自动唤醒。A 等待某任务时仍可处理其他任务。
+- SQLite 保存发送意图和原生回执；可能送达的请求不自动重发。重启按正向原生证据恢复，查无不等于未执行。UI 提供有证据的人工核对和保守停派。
+- 普通消息保留原附件和逐轮设置，以版本 CAS 防止多页面覆盖队列；发送采用稳定 ID、共享保留及宿主回执账本，监督任务持有完整逻辑任务的保留。
+- 组信息/成员编辑、归档、可选协调者、根目标、任务详情、问答、验收、返工预算、失败执行及结果屏障恢复都在独立面板中。
+- Web UI token 与 MCP credential 分离；调用归属取自宿主观察到的原生工具事件，不接受模型填写调用者。采用单用户、受信 App Server 宿主的边界，不能抵御掌握同等宿主控制凭据的恶意客户端冒充。
 
-## 已验证
+## 兼容与验证
 
-`cargo test -p studio-teams --offline`：30 项集成测试通过；`cargo clippy -p studio-teams --all-targets --offline -- -D warnings` 通过。覆盖跨连接消费互斥、发送前后崩溃、丢确认、明确拒绝、取消/保留先后顺序、迟到回执、权限、错误批次、依赖环、回执屏障、返工、旧 Turn 和写入失败回滚。
+已验证基线为 Linux 本机 Codex 0.170.0。只开放同主机后端；WSL/远端后端需要独立的桥接验证，目前拒绝安装，不偷偷共享凭据。现有 thread 的工具装载使用配置版本 CAS + MCP reload，恢复旧会话不覆盖 cwd/model/权限。
 
-磁盘回归使用 40 对各约 2 KiB 的问答：命令回执小于 2 KiB，审计总量小于 400 KiB，checkpoint 后数据库小于 3 MB。没有在每次命令里存整份增长中的任务。新问题预留答案容量，问答内容预算为 256 KiB，旧批次仅计实际内容；答复、取消和结果不受出站队列背压影响。
+验证包括完整 Rust workspace 测试、全部 UI 测试、类型和生成产物检查，以及真实 Studio + Codex App Server 的隔离端到端测试。具体数量、场景和证据见 [最终验收记录](implementation-validation.json) 与 [实现审查](implementation-review.md)。端到端使用合成 Responses provider，证明实际协议、调度和界面路径；没有声称测过真实模型的自主规划质量或所有外部 daemon 拓扑。
 
-构建输出约 132 MB，工作区和测试运行数据也在 `/media/rui/codex-thread-studio-agent-teams/`。没有全量桌面构建或其他会话 target 复用。
-
-Astra 已对本批实现完成两轮问题审查和一次定向复核，最终允许提交独立组件里程碑；未宣称真实适配或 UI 验收通过。
-
-## 新版接入探针
-
-[探针](../../scripts/probes/agent-teams/README.md) 继续使用真正的 Codex 0.170.0 App Server、本地合成 Responses SSE 和空配置挂载，无真实模型调用或账户凭据。
-
-仓库保留 [观察摘录与原始记录摘要哈希](probe-observations-v2.json)。`validation/run-04` 的部分 G1b/G2b 结果：
-
-- 对已加载旧 thread 调用 `thread/resume.config` 不会装入新 MCP。服务明确记录 `config overrides were provided and ignored while running`。A/B/C 工具目录均为空；A 原历史仍在，隔离配置文件未变化。
-- 目标闲置时，一次 queue/add 会自动执行，不需要 queue/start。
-- 目标忙碌时，另一个客户端 queue/add 未向原 Turn 注入输入；精确删除第二个原生待办返回 true。原 Turn 完成后，仅保留的待办执行；末态原生队列为空。
-
-`validation/run-05` 尝试在安全边界 unsubscribe 再按同 ID resume：unsubscribe 成功，但 12 秒观察窗口内 thread 仍在 loaded 列表，故停止，未归档/删除/fork 或重启用户 daemon。不能把 unsubscribe 当作已证实的卸载接口，也不能由此断言它永远不卸载。
-
-这些是部分协议样本，**G1b/G2b 尚未整体通过**。未验证的包括真实模型自主调用、审批/用户输入等待、完整重连和共享 daemon 拓扑。现有测试不放行真实派发。
-
-## 下一批工作与接入边界
-
-1. 验证安全的旧会话工具注册/受管配置路径：隔离测试服务正常退出后，按同一存储/同一原 thread ID 首次载入，检查显式启用的受管配置；不靠 unsubscribe 推断卸载，也不强制重启真实实例；不得静默改全局配置、扩大权限或替换 thread。
-2. 实现受信宿主适配、MCP wire schema/工具返回、原生事件关联、单一 worker 所有权及跨数据库 fence 协议。启动/重连先 recover，再使用新证据恢复资格。
-3. 将旧普通队列和监督保留迁入共同消费入口，验证多页面、原持久数据、附件/逐轮设置、普通人工发送和 Router 兼容。目前组件没有替换这些入口。
-4. 补全控制面：成员编辑/归档、失败执行与结果屏障的人工对账、阶段状态查询、用户预算、协调者根目标路由和对外分页。内部 Rust 类型目前不是完整 MCP 公共接口。
-5. 固定版本接入验收通过后，连接独立 Teams UI；默认关闭。保持各阶段可回退，不把组件测试当成端到端通过。
-
-领域 `SetPaused/Cancel` 当前只变更自身数据库，不能对外宣称已撤回原生消息；`effect_ready` 是读取候选，不是跨库原子授权。真实适配必须补足同序 fence 后才使用严格 paused/disabled 状态。这些限制在接入前保持明确，不通过新增 Teams 专用 turn/start 绕过。
+工作区、依赖缓存、构建及验证数据均位于 `/media/rui/codex-thread-studio-agent-teams/`。开发可执行文件为 `target/debug/codex-thread-studio`；此分支没有发布 release，也没有修改真实 Codex 配置。历史探针的失败结论保留在 [verification results](verification-results.md)，不能把旧候选或仅领域组件的状态当作当前实现。

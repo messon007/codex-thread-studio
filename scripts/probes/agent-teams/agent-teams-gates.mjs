@@ -62,7 +62,29 @@ try {
  const c1=await connect('one'),c2=await connect('two')
  for(const name of (probeMode==='thread-config'?['A','B','C']:['A','B'])){const cwd=path.join(run,`workspace-${name}`);await fs.mkdir(cwd,{recursive:true});const response=await c1.call('thread/start',{cwd,model:'gpt-5.1-codex',modelProvider:'teams_fixture',approvalPolicy:'never',sandbox:'read-only'});report.threads.push(response.thread.id);await turn(c1,response.thread.id,`Original fixture context ${name}; do not execute shell commands.`)}
  const [a,b]=report.threads
- if (probeMode==='thread-config') {
+ if (probeMode==='managed-config') {
+   const cfg=await c1.call('config/read',{includeLayers:true})
+   const user=cfg.layers.find(l=>l.name.type==='user'&&!l.name.profile)
+   if(!user)throw Error('No writable user config layer')
+   addCheck('managed_config_scope',{name:user.name,version:user.version})
+   const helper=path.join(path.dirname(new URL(import.meta.url).pathname),'agent-teams-echo.py')
+   const callsFile=path.join(run,'mcp-calls.jsonl')
+   const registration={command:'/usr/bin/python3',args:[helper,callsFile],required:false,startup_timeout_sec:5,tool_timeout_sec:10}
+   const installed=await c1.call('config/batchWrite',{filePath:user.name.file,expectedVersion:user.version,reloadUserConfig:false,edits:[{keyPath:'mcp_servers.teams_probe',value:registration,mergeStrategy:'replace'}]})
+   addCheck('managed_config_install',{installed})
+   await c1.call('config/mcpServer/reload',null)
+   const inventory=await until(async()=>{const v=await c1.call('mcpServerStatus/list',{threadId:a,detail:'toolsAndAuthOnly'});return JSON.stringify(v).includes('echo')&&v})
+   modelMode='tool';await turn(c1,a,'Use the echo tool in this existing synthetic thread')
+   addCheck('loaded_thread_managed_tool',{inventory,calls:(await fs.readFile(callsFile,'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)})
+   const beforeDelete=await c1.call('config/read',{includeLayers:true});const layer=beforeDelete.layers.find(l=>l.name.type==='user'&&!l.name.profile)
+   let stale
+   try{await c1.call('config/batchWrite',{filePath:user.name.file,expectedVersion:user.version,reloadUserConfig:false,edits:[{keyPath:'mcp_servers.teams_probe',value:null,mergeStrategy:'replace'}]});stale='UNEXPECTED_ACCEPT'}catch(e){stale=e.rpcError??e.message}
+   let removed
+   try{removed=await c1.call('config/batchWrite',{filePath:user.name.file,expectedVersion:layer.version,reloadUserConfig:false,edits:[{keyPath:'mcp_servers.teams_probe',value:null,mergeStrategy:'replace'}]})}catch(e){removed={error:e.rpcError??e.message}}
+   const after=await c1.call('config/read',{includeLayers:true})
+   addCheck('managed_config_precise_delete',{stale,removed,remaining:after.config.mcp_servers??null,globalConfigText:await fs.readFile(path.join(configRoot,'config.toml'),'utf8')})
+   report.verdict='PARTIAL_MANAGED_CONFIG_EVIDENCE: synthetic fixture only'
+ } else if (probeMode==='thread-config') {
    const helper=path.join(path.dirname(new URL(import.meta.url).pathname),'agent-teams-echo.py')
    const callsFile=path.join(run,'mcp-calls.jsonl')
    const baseline=await c1.call('thread/read',{threadId:a,includeTurns:true})

@@ -1,0 +1,195 @@
+// End-to-end fixture: actual Studio executable + actual Codex App Server, synthetic Responses provider.
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import http from 'node:http'
+import {spawn} from 'node:child_process'
+import {createRequire} from 'node:module'
+import assert from 'node:assert/strict'
+const require=createRequire(import.meta.url)
+const WebSocket=require('/media/rui/codex-thread-studio-agent-teams/validation/probe-deps/node_modules/ws')
+const run=process.argv[2], binary=process.argv[3]
+if(!run?.startsWith('/media/rui/codex-thread-studio-agent-teams/validation/'))throw Error('Dedicated validation directory required')
+const config=path.join(os.homedir(),'.codex')
+assert.equal((await fs.readFile(path.join(config,'.teams-probe-fixture'),'utf8')).trim(),run)
+const pause=ms=>new Promise(r=>setTimeout(r,ms))
+async function until(fn,timeout=20000){const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await pause(75)}throw Error('Condition timed out')}
+let plan=[], count=0, hold=null, namespace='', currentTask=null
+const threadPlans=new Map()
+const log=(name,value)=>fs.appendFile(path.join(run,name),JSON.stringify(value)+'\n')
+const provider=http.createServer(async(req,res)=>{
+ let body='';for await(const chunk of req)body+=chunk
+ if(req.method!=='POST'){res.end('{}');return}
+ const request=JSON.parse(body);await log('model.jsonl',request)
+ const i=++count;let step=threadPlans.get(request.prompt_cache_key)?.shift() ?? plan.shift();if(typeof step==='function')step=await step(request)
+ res.writeHead(200,{'content-type':'text/event-stream'});const emit=e=>res.write(`data: ${JSON.stringify(e)}\n\n`)
+ emit({type:'response.created',response:{id:`r${i}`,object:'response',status:'in_progress'}})
+ const finish=()=>{
+  const item=step?.name?{type:'function_call',id:`fc_${i}`,call_id:`teams_test_${i}`,namespace:`mcp__${namespace}`,name:step.name,arguments:JSON.stringify(step.args)}:{type:'message',id:`m${i}`,role:'assistant',status:'completed',content:[{type:'output_text',text:'Synthetic collaboration fixture.',annotations:[]}]}
+  emit({type:'response.output_item.added',output_index:0,item});emit({type:'response.output_item.done',output_index:0,item});emit({type:'response.completed',response:{id:`r${i}`,object:'response',status:'completed',output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2}}});res.end()
+ }
+ if(step?.hold)hold=finish;else finish()
+})
+await new Promise(r=>provider.listen(0,'127.0.0.1',r))
+await fs.writeFile(path.join(config,'config.toml'),`model="gpt-5.1-codex"\nmodel_provider="teams_fixture"\napproval_policy="never"\nsandbox_mode="read-only"\n[features]\napps=false\nplugins=false\nhooks=false\ndaemon_auto_start=false\ncode_mode_host=false\nshell_snapshot=false\nenable_request_compression=false\n[analytics]\nenabled=false\n[model_providers.teams_fixture]\nname="Isolated fixture"\nbase_url="http://127.0.0.1:${provider.address().port}/v1"\nwire_api="responses"\nrequires_openai_auth=false\nsupports_websockets=false\n`)
+let child, origin, token, ws, seq=0, pending=new Map(), events=[]
+async function start(){
+ child=spawn(binary,['--serve','--listen','127.0.0.1:0'],{cwd:run,env:{PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8',XDG_CONFIG_HOME:path.join(run,'studio-profile'),CODEX_THREAD_STUDIO_CODEX_CONNECTION:'embedded',LD_LIBRARY_PATH:process.env.LD_LIBRARY_PATH||''},stdio:['ignore','pipe','pipe']})
+ let output='';child.stdout.on('data',b=>{output+=b.toString()});child.stderr.on('data',b=>fs.appendFile(path.join(run,'studio.stderr'),b))
+ await until(()=>{const m=output.match(/(http:\/\/127.0.0.1:\d+)\/#token=([\w-]+)/);if(m){origin=m[1];token=m[2];return true}if(child.exitCode!==null)throw Error(`Studio exited ${child.exitCode}`)})
+ ws=new WebSocket(origin.replace('http','ws')+'/ws/codex',`codex-thread-studio.auth.${token}`,{headers:{Authorization:`Bearer ${token}`,Origin:origin}})
+ ws.on('error',e=>{void log('ws-error.jsonl',{message:e.message})})
+ ws.on('message',raw=>{const v=JSON.parse(raw);events.push(v);void log('rpc.jsonl',v);const p=pending.get(v.id);if(p){pending.delete(v.id);v.error?p.reject(Error(JSON.stringify(v.error))):p.resolve(v.result)}})
+ await until(()=>events.find(e=>e.method==='studio/appServer/status'&&e.params.state==='ready'))
+}
+function rpc(method,params){return new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));setTimeout(()=>{if(pending.delete(id))reject(Error(method+' timeout'))},25000).unref()})}
+async function api(action,params={}){const r=await fetch(origin+'/studio/teams',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Origin:origin},body:JSON.stringify({action,...params})});const v=await r.json();if(!r.ok)throw Error(v.error);return v}
+async function command(group,command){return api('command',{group_id:group.id,request_id:crypto.randomUUID(),command})}
+const checks=[];const check=(name,detail={})=>{checks.push({name,...detail});process.stdout.write(name+'\n')}
+async function newThread(name){const cwd=path.join(run,name);await fs.mkdir(cwd,{recursive:true});const t=await rpc('thread/start',{cwd,model:'gpt-5.1-codex',modelProvider:'teams_fixture',approvalPolicy:'never',sandbox:'read-only'});const turn=await rpc('turn/start',{threadId:t.thread.id,input:[{type:'text',text:'Existing context '+name}]});await until(()=>events.find(e=>e.method==='turn/completed'&&e.params.turn.id===turn.turn.id));return t.thread.id}
+const taskVersion=task=>({task_id:task.id,expected_revision:task.revision,attempt_id:task.attempt_id})
+let success=false
+try{
+ await start()
+ const a=await newThread('A'),b=await newThread('B'),c=await newThread('nonmember')
+ await api('enable')
+ const preview=await api('install_preview',{backend:'codex'})
+ await api('install',{backend:'codex',file:preview.file,version:preview.version})
+ const snap=await api('snapshot');namespace=snap.registrations[0].key
+ const group=await api('create_group',{request_id:crypto.randomUUID(),name:'Fixture group',members:[{session:{backend:'codex',thread:a},name:'A',responsibility:'Application and review'},{session:{backend:'codex',thread:b},name:'B',responsibility:'SDK and tests'}]})
+ check('existing_sessions_and_tools_installed',{a,b,namespace})
+ // A nonmember sees names but has no group access, even with a valid group ID.
+ plan=[{name:'team_context',args:{group_id:group.id}}]
+ let t=await rpc('turn/start',{threadId:c,input:[{type:'text',text:'Attempt nonmember read'}]})
+ await until(()=>events.find(e=>e.method==='turn/completed'&&e.params.turn.id===t.turn.id))
+ const denied=events.find(e=>e.method==='item/completed'&&e.params.threadId===c&&e.params.item.type==='mcpToolCall')
+ assert.ok(JSON.stringify(denied).includes('No matching native tool-call receipt')||JSON.stringify(denied).includes('not a team member'))
+ check('nonmember_tool_access_denied')
+ // Discovery must not require a group ID the existing session has never received.
+ plan=[{name:'team_context',args:{}}]
+ t=await rpc('turn/start',{threadId:a,input:[{type:'text',text:'Discover this session team without a supplied group ID'}]})
+ await until(()=>events.find(e=>e.method==='turn/completed'&&e.params.turn.id===t.turn.id))
+ const discovered=events.find(e=>e.method==='item/completed'&&e.params.threadId===a&&e.params.turnId===t.turn.id&&e.params.item.tool==='team_context')
+ assert.ok(discovered);assert.equal(discovered.params.item.status,'completed')
+ const context=discovered.params.item.result.structuredContent || JSON.parse(discovered.params.item.result.content[0].text)
+ assert.equal(context.data.group_id,group.id);assert.equal(context.data.caller.member_id,group.members[0].id)
+ check('existing_member_discovers_group_without_context_injection')
+ const unmanaged=await api('ordinary_start',{backend:'codex',params:{threadId:c,input:[{type:'text',text:'Legacy nonmember payload'}]}})
+ assert.equal(unmanaged.managed,false)
+ check('nonmember_without_stable_message_id_keeps_original_transport')
+
+ // Keep B busy; delegation must remain queued without generating a second turn.
+ plan=[{hold:true}];t=await rpc('turn/start',{threadId:b,input:[{type:'text',text:'Existing work held open'}]});await until(()=>hold)
+ const delegated=await command(group,{op:'Delegate',delegation:{to_member_id:group.members[1].id,title:'Fixture fix',request:'Fix synthetic behavior and report evidence',acceptance:[{id:'c1',text:'Fixture passes'}],dependencies:[],parent:null,continuation:null}})
+ currentTask=delegated.task.id
+ await until(async()=>{const s=await api('snapshot');return s.queue.some(q=>q.state==='NativeQueued')})
+ assert.equal(events.filter(e=>e.method==='turn/started'&&e.params.threadId===b).at(-1).params.turn.id,t.turn.id)
+ check('busy_member_receives_queue_without_interrupt')
+ plan=[{name:'team_context',args:{group_id:group.id}},async()=>{const s=await api('snapshot'),task=s.tasks.find(t=>t.id===currentTask);return {name:'team_task_update',args:{group_id:group.id,request_id:crypto.randomUUID(),...taskVersion(task),action:'begin'}}},async()=>{const s=await api('snapshot'),task=s.tasks.find(t=>t.id===currentTask);return {name:'team_submit_result',args:{group_id:group.id,request_id:crypto.randomUUID(),...taskVersion(task),summary:'Fixture fixed',evidence:[{kind:'test',locator:'fixture:test',description:'Synthetic test passed'}],criterion_results:[{criterion_id:'c1',status:'met',explanation:'Test passes',evidence_indexes:[0]}],limitations:'Synthetic model only'}}}]
+ hold();hold=null
+ await until(async()=>{const s=await api('snapshot');return s.tasks.find(t=>t.id===currentTask)?.status==='Submitted' && s.queue.length===0})
+ const task=(await api('snapshot')).tasks.find(t=>t.id===currentTask)
+ check('native_tools_begin_submit_and_turn_barrier',{status:task.status})
+ await command(group,{op:'Review',task:taskVersion(task),result_id:task.results.at(-1).id,accept:true,assessment:{summary:'Reproduced and verified fixture',criteria:[{criterion_id:'c1',verdict:'Pass',explanation:'Fixture verified',evidence:[]}]},requested_changes:null})
+ assert.equal((await api('snapshot')).tasks.find(t=>t.id===currentTask).status,'Completed')
+ check('explicit_review_completes_task')
+ // Two browser consumers with the same persisted message must share one native receipt.
+ const ordinaryParams={threadId:a,clientUserMessageId:'persisted-ordinary-message',input:[{type:'text',text:'Ordinary queue message'}],model:'gpt-5.1-codex'}
+ const persistQueue=async(expectedRevision,messages)=>{const response=await fetch(origin+'/studio/session-state/message-queue',{method:'PUT',headers:{Authorization:`Bearer ${token}`,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({sessionKey:`codex:${a}`,expectedRevision,messages})});return response}
+ let queueSaved=await persistQueue(0,[{id:'persisted-ordinary-message',text:'Ordinary queue message',input:[],createdAt:1}]);assert.equal(queueSaved.status,204)
+ const queue_context={message_id:'persisted-ordinary-message',expected_revision:Number(queueSaved.headers.get('x-studio-queue-revision'))}
+ const ordinary=await Promise.all([api('ordinary_start',{backend:'codex',params:ordinaryParams,queue_context}),api('ordinary_start',{backend:'codex',params:ordinaryParams,queue_context})])
+ assert.equal(ordinary[0].result.turn.id,ordinary[1].result.turn.id)
+ await until(()=>events.some(e=>e.method==='turn/completed'&&e.params.turn.id===ordinary[0].result.turn.id))
+ assert.equal(events.filter(e=>e.method==='item/started'&&e.params.item.clientId==='persisted-ordinary-message').length,1)
+ assert.equal((await api('ordinary_start',{backend:'codex',params:ordinaryParams})).result.turn.status,'completed')
+ await assert.rejects(api('ordinary_start',{backend:'codex',params:{...ordinaryParams,input:[{type:'text',text:'Changed payload'}]}}),/different input|Idempotency/)
+ assert.equal((await api('ordinary_start',{backend:'codex',params:{threadId:c,clientUserMessageId:'unmanaged',input:[]}})).managed,false)
+ assert.equal((await persistQueue(0,[])).status,409)
+ assert.equal((await persistQueue(queue_context.expected_revision,[])).status,204)
+ await assert.rejects(api('ordinary_start',{backend:'codex',params:{...ordinaryParams,clientUserMessageId:'deleted-stale-message'},queue_context:{message_id:'deleted-stale-message',expected_revision:queue_context.expected_revision}}),/queue|revision|Queue|Revision/)
+ check('ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message')
+ check('ordinary_multi_page_dispatch_is_once_with_original_options')
+ const holds=await Promise.all(['one','two'].map(owner=>api('reserve',{session:{backend:'codex',thread:a},owner:'fixture-'+owner,reason:'Exclusive reservation'})))
+ assert.equal(holds.filter(h=>h.granted).length,1)
+ for(const h of holds)await api('release',{id:h.id})
+ check('ordinary_and_supervision_reservations_are_exclusive')
+ // Cross-session loop uses per-thread model scripts so A and B can run independently.
+ const getTask=async()=> (await api('snapshot')).tasks.find(t=>t.title==='Agent collaboration')
+ const writeTool=async(name,extra)=>{const task=await getTask();return {name,args:{group_id:group.id,request_id:crypto.randomUUID(),...taskVersion(task),...extra(task)}}}
+ const submit=summary=>writeTool('team_submit_result',()=>({summary,evidence:[{kind:'test',locator:'fixture:test',description:summary}],criterion_results:[{criterion_id:'c1',status:'met',explanation:summary,evidence_indexes:[0]}],limitations:'Synthetic fixture'}))
+ const review=accept=>writeTool('team_review_result',task=>({result_id:task.results.at(-1).id,decision:accept?'accept':'revise',assessment:{summary:accept?'Reproduction passes':'Original reproduction still fails',criteria:[{criterion_id:'c1',verdict:accept?'pass':'fail',explanation:'Verified original reproduction',evidence:[]}]},...(accept?{}:{requested_changes:'Fix the original reproduction'})}))
+ threadPlans.set(a,[
+  {name:'team_delegate',args:{group_id:group.id,request_id:crypto.randomUUID(),to_member_id:group.members[1].id,title:'Agent collaboration',request:'Fix an upstream defect and report a verified result',acceptance:[{criterion_id:'c1',text:'Original reproduction passes'}]}}, {},
+  ()=>writeTool('team_answer',task=>({question_id:task.questions.at(-1).id,answer:'Use the original fixture and preserve behavior'})), {},
+  ()=>review(false), {}, ()=>review(true), {}
+ ])
+ threadPlans.set(b,[
+  ()=>writeTool('team_task_update',()=>({action:'begin'})),
+  ()=>writeTool('team_ask',()=>({to:{kind:'member',member_id:group.members[0].id},question:'Which reproduction should I validate?',blocking:true,continuation:{summary:'Waiting for the acceptance fixture',next_action:'Validate the original reproduction'}})), {},
+  ()=>writeTool('team_task_update',()=>({action:'resume'})), ()=>submit('First implementation'), {},
+  ()=>writeTool('team_task_update',()=>({action:'begin'})), ()=>submit('Corrected implementation'), {}
+ ])
+ await rpc('turn/start',{threadId:a,input:[{type:'text',text:'Begin cross-session collaboration fixture'}]})
+ await until(async()=>{const t=await getTask();return t?.status==='Completed'},40000)
+ const collaboration=await getTask();assert.equal(collaboration.attempts,2);assert.equal(collaboration.questions.length,1);assert.ok(collaboration.questions[0].answer);assert.equal(collaboration.reviews.length,2)
+ check('agent_delegate_question_answer_revise_and_accept',{attempts:collaboration.attempts,reviews:collaboration.reviews.length})
+ const reservation=await api('reserve',{session:{backend:'codex',thread:b},owner:'fixture-supervisor',reason:'Fixture supervision'})
+ assert.equal(reservation.granted,true)
+ await command(group,{op:'Delegate',delegation:{to_member_id:group.members[1].id,title:'Queued while reserved',request:'Synthetic task',acceptance:[{id:'c1',text:'done'}],dependencies:[],parent:null,continuation:null}})
+ await until(async()=>(await api('snapshot')).queue.some(q=>q.state==='Queued'))
+ check('supervision_reservation_blocks_dispatch')
+ const currentGroup=(await api('snapshot')).groups[0]
+ await command(currentGroup,{op:'SetPaused',expected_revision:currentGroup.revision,paused:true})
+ await api('release',{id:reservation.id})
+ assert.equal((await api('snapshot')).queue.length,0)
+ check('pause_withdraws_unsent_messages')
+ // Close/reopen the host with the same profile and IDs; paused work must remain durable.
+ ws.terminate();child.kill('SIGTERM');await until(()=>child.exitCode!==null||child.signalCode!==null);events=[];await start()
+ assert.equal((await api('snapshot')).groups[0].paused,true)
+ const pausedGroup=(await api('snapshot')).groups[0]
+ await command(pausedGroup,{op:'SetPaused',expected_revision:pausedGroup.revision,paused:false})
+ await until(()=>events.some(e=>e.method==='item/started'&&e.params.item.type==='userMessage'&&e.params.item.clientId),20000)
+ await until(async()=>(await api('snapshot')).queue.length===0)
+ check('host_restart_and_withdrawn_delivery_resume')
+ // Actual browser module mounted from Studio, keyboard focus and independent panel.
+ const {chromium}=await import('/media/rui/codex-thread-studio-agent-teams/validation/browser-tools/node_modules/playwright/index.mjs')
+ await fs.mkdir(path.join(run,'browser-tmp'),{recursive:true})
+ const browser=await chromium.launch({env:{...process.env,TMPDIR:path.join(run,'browser-tmp'),XDG_CACHE_HOME:path.join(run,'browser-cache'),XDG_CONFIG_HOME:path.join(run,'browser-config')},executablePath:'/home/rui/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell',args:['--no-sandbox'],headless:true})
+ try {
+  const page=await browser.newPage({viewport:{width:1360,height:1000}})
+  await page.goto(origin+'/#token='+token)
+  await page.locator('#studio-menu-button').click()
+  await page.locator('#teams-button').click()
+  await page.getByRole('dialog',{name:'Agent Teams',exact:true}).waitFor()
+  await page.getByRole('button',{name:'Fixture group',exact:true}).waitFor()
+  await page.getByRole('button',{name:'Agent collaboration',exact:true}).click()
+  await page.getByText('Corrected implementation',{exact:true}).waitFor()
+  await page.screenshot({path:path.join(run,'teams-panel.png')})
+  assert.equal(await page.locator('.teams-error').textContent(),'')
+  check('browser_team_board_and_result_details')
+  await page.getByRole('button',{name:'Back',exact:true}).click()
+  await page.getByRole('button',{name:'Open session',exact:true}).first().click()
+  await page.getByRole('dialog',{name:'Agent Teams',exact:true}).waitFor({state:'hidden'})
+  check('browser_member_navigation_closes_panel')
+ }finally{await browser.close()}
+ // Disable stops new work but preserves the exact active claim's passive result channel.
+ const closingVersion=async()=> (await api('snapshot')).tasks.find(t=>t.title==='Closing receipt')
+ threadPlans.set(b,[async()=>({name:'team_task_update',args:{group_id:group.id,request_id:crypto.randomUUID(),...taskVersion(await closingVersion()),action:'begin'}}),async()=>({hold:true,name:'team_submit_result',args:{group_id:group.id,request_id:crypto.randomUUID(),...taskVersion(await closingVersion()),summary:'In-flight result preserved',evidence:[],criterion_results:[{criterion_id:'c1',status:'met',explanation:'Receipt reached Studio',evidence_indexes:[]}],limitations:'Synthetic fixture'}}),{}])
+ const closingTask=await command((await api('snapshot')).groups[0],{op:'Delegate',delegation:{to_member_id:group.members[1].id,title:'Closing receipt',request:'Report an in-flight result after disable',acceptance:[{id:'c1',text:'Receipt is preserved'}],dependencies:[],parent:null,continuation:null}})
+ await until(()=>hold)
+ await api('disable')
+ assert.equal((await api('snapshot')).phase,'disabling')
+ const blockedRemoval=await api('install_preview',{backend:'codex'})
+ await assert.rejects(api('uninstall',{backend:'codex',file:blockedRemoval.file,version:blockedRemoval.version}),/receipts|Pending/)
+ hold();hold=null
+ await until(async()=>{const s=await api('snapshot');return s.phase==='disabled'&&s.tasks.find(t=>t.id===closingTask.task.id)?.status==='Submitted'})
+ check('disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall')
+ const removal=await api('install_preview',{backend:'codex'})
+ await api('uninstall',{backend:'codex',file:removal.file,version:removal.version})
+ assert.ok(!(await fs.readFile(path.join(config,'config.toml'),'utf8')).includes(namespace))
+ check('disable_and_precise_uninstall')
+ success=true
+}catch(e){await log('failure.jsonl',{message:e.message,stack:e.stack});process.stderr.write(e.stack+'\n')}
+finally{if(hold)hold();ws?.terminate();child?.kill('SIGTERM');provider.closeAllConnections();provider.close();await fs.writeFile(path.join(run,'report.json'),JSON.stringify({success,syntheticModel:true,liveLlmTested:false,checks},null,2));}
+process.exitCode=success?0:1

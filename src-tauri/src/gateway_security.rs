@@ -111,6 +111,10 @@ impl GatewaySecurity {
         format!("{WEBSOCKET_PROTOCOL_PREFIX}{}", self.token)
     }
 
+    pub fn origin(&self) -> &str {
+        &self.expected_origin
+    }
+
     pub fn token(&self) -> &str {
         &self.token
     }

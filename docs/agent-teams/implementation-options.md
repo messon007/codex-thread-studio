@@ -1,5 +1,7 @@
 # Agent Teams 的最小实现方案
 
+> 当前实现与验收见 [implementation status](implementation-status.md)、[host integration](host-integration.md) 和 [实现审查](implementation-review.md)。本文保留早期候选/探针的时间顺序及未通过结论；它们不代表最终适配器状态。
+
 2026-11-18，GPT-6.2-Astra。推荐在**单用户、受信 Codex 宿主**上，用 MCP 实现成员的同步命令，用 Studio 后端的持久队列决定何时向原生队列交接一条已授权消息。两者独立，不要求先给 Codex 增加工具热插拔、队列幂等键或跨应用事务。已有隔离实验支持这条路线的部分前提，尚需 G1b/G2b 检查其余前提。[隔离验证结果](verification-results.md)
 
 **设计裁决为 PASS，分别放行纯领域模块的开发，以及文末 G1b/G2b 两项限定验证。** 领域模块可在 `feat/agent-teams` 用队列替身开发，覆盖状态机、授权角色、任务依赖、问答、验收、事务事件、幂等和 outbox；测试只能证明领域行为。真实接入按两项验证的固定版本与拓扑结果开放。这个裁决不启用产品派发，不批准静默改用户配置或合入 main。本文调整 [原规范](specification.md) 中两处设计前提：成员归属的信任边界，以及授权交接与实际开始的边界。原任务协议、上下文、权限、分组和非抢占要求继续适用。

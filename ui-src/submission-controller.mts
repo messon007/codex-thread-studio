@@ -22,6 +22,7 @@ export interface SubmissionState extends QueueExecutionState {
 }
 export interface SubmissionServices {
   isSupervised?: (ref: SessionRef) => boolean
+  queuedMessageContext?: (ref: SessionRef, id: string) => Record<string, unknown>
   $: (selector: string) => { value: string; disabled: boolean }
   selectedStateKey: (id?: string | null, backend?: string) => string
   shellCommandFromComposer: (text: string) => string | null
@@ -242,7 +243,7 @@ async function runNextQueuedMessage(ref: SessionRef | null) {
           beginTranscriptFollowingLatest(model)
           renderComposerState()
         }
-        const clientUserMessageId = randomId()
+        const clientUserMessageId = message.id
         catalogActivity = setCatalogThreadActivity(ref.backend, ref.id, { status: 'active', touch: true })
         const result = await startTurnWithPreparation({
           registry: sessionDispatch,
@@ -254,6 +255,7 @@ async function runNextQueuedMessage(ref: SessionRef | null) {
             {
               threadId: ref.id,
               clientUserMessageId,
+              ...services.queuedMessageContext?.(ref, message.id),
               input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
               ...queuedTurnOptions(ref),
             },

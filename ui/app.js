@@ -1,3 +1,4 @@
+import { createTeamsClient, createTeamsPanel } from './teams.mjs'
 import { createComposerActions } from './composer-actions.mjs'
 import { createSettingsApplication } from './settings-application.mjs'
 import { createActiveCodexConnection } from './active-codex-connection.mjs'
@@ -12,7 +13,7 @@ import { awaitBackendSelection, completeSessionSelection, SessionWorkspaceMemory
 import { createStartedSessionCatalog } from './started-session-catalog.mjs'
 import { runHiddenUtilitySession } from './hidden-utility-session.mjs'
 import { createTurnSupervision, SUPERVISION_SCHEMA, SUPERVISION_INSTRUCTIONS, supervisionResult } from './turn-supervision.mjs'
-import { createSessionStatePersistence } from './session-state-persistence.mjs'
+import { createSessionStatePersistence, createVersionedMessageQueueWriter } from './session-state-persistence.mjs'
 import { connectLifecycleStream, connectEventStream, waitForEventStream } from './lifecycle-connection.mjs'
 import {
   applyCodexNotification,
@@ -318,6 +319,7 @@ const state = {
   skillCatalog: { cwd: null, skills: [], request: null, loaded: false },
   turnOptions: {},
   messageQueues: {},
+  messageQueueRevisions: {},
   pausedMessageQueues: new Set(),
   runningMessageQueues: new Set(),
   messageQueueErrors: new Map(),
@@ -340,6 +342,11 @@ let preferencesReady = false
 const preferencesWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist preferences', error))
 const sessionStateWriter = createSerializedStateWriter(gatewayFetch, (error) => console.error('Unable to persist session state', error))
 const sessionPersistence = createSessionStatePersistence(state, sessionStateWriter, () => preferencesReady)
+const messageQueueWriter = createVersionedMessageQueueWriter(state, gatewayFetch, () => preferencesReady, (key, error) => {
+  state.pausedMessageQueues.add(key)
+  state.messageQueueErrors.set(key, String(error.message || error))
+  renderComposerState()
+})
 let preferencesPersistTimer = null
 let transcriptFrame = null
 const dirtyStreamItems = new Map()
@@ -614,8 +621,12 @@ const sessionOperations = createSessionOperations(state, {
   renderThreadList, renderWorkspace, renderTranscript, toast, showError,
   connectionReady: () => { $('#native-connection').textContent = t('Connected') },
 })
+const teamsClient = createTeamsClient(gatewayFetch)
+const teamsPanel = createTeamsPanel(teamsClient, async (backend, id) => { if (state.backend !== backend) await switchBackend(backend); await selectThread(id) })
+
 const submissionController = createSubmissionController(state, {
   isSupervised: ref => turnSupervision.activeFor(ref),
+  queuedMessageContext: (ref, id) => isCodexBackend(ref.backend) ? { studioQueuedMessageId: id } : {},
   $, selectedStateKey, shellCommandFromComposer, matchingSlashCommands, executeSlashCommand,
   isRouterThread, threadRouter, rpc, dispatchBackendRpc, sessionDispatch, prepareComposerTurn,
   isCodexBackend, isSupportedBackend, backendDescriptor, currentBackend, threadForRef,
@@ -729,11 +740,13 @@ function enableTurnSupervision(ref, turnId, acceptedPrompt = '') {
     if (!lock) throw new Error(t('This session is already supervised in another window'))
     const latest = messageQueueModel(ref)?.turns.at(-1)
     if (latest?.id !== turnId || latest.status !== 'inProgress') throw new Error(t('No running turn to supervise'))
+    const teamsReservation = await teamsClient.reserve(ref.backend, ref.id, 'Studio turn supervision')
     turnSupervision.start(ref, turnId, acceptedPrompt)
     do {
       await turnSupervision.tick()
       if (turnSupervision.activeFor(ref)) await new Promise(resolve => setTimeout(resolve, 1000))
     } while (turnSupervision.activeFor(ref))
+    if (teamsReservation) await teamsClient.release(teamsReservation)
   }).catch(showError)
 }
 
@@ -1124,6 +1137,7 @@ function bindUI() {
   })
   window.addEventListener('blur', cancelRightRailResize)
   window.addEventListener('keydown', handleRightRailResizeEscape, true)
+  $('#teams-button').addEventListener('click', () => { void teamsPanel.open().catch(showError) })
   $('#connections-button').addEventListener('click', openConnectionsDialog)
   $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
   $('#settings-button').addEventListener('click', () => {
@@ -2254,6 +2268,12 @@ function rpc(method, params = {}, timeoutMs = 30_000, supervised = false) {
 
 async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_000, supervised = false) {
   if (!supervised && params.threadId) turnSupervision.humanAction({ backend, id: params.threadId }, method, params)
+  if (isCodexBackend(backend) && method === 'turn/start' && params.threadId && !supervised) {
+    const nativeParams = { ...params }
+    delete nativeParams.studioQueuedMessageId
+    const queueContext = params.studioQueuedMessageId ? { message_id: params.studioQueuedMessageId, expected_revision: state.messageQueueRevisions[sessionRefKey(backend, params.threadId)] || 0 } : undefined
+    return teamsClient.start(backend, nativeParams, () => dispatchBackendRpc(backend, method, nativeParams, timeoutMs, true), queueContext)
+  }
   if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs, true)
   if (isCodexBackend(backend)) return codexBackgroundRpc(backend, method, params, timeoutMs)
   if (backend === 'opencode') {
@@ -6704,7 +6724,7 @@ function persistSessionTurnOptions(key) {
 }
 
 function persistMessageQueue(key) {
-  return sessionPersistence.messageQueue(key)
+  return messageQueueWriter.write(key)
 }
 
 function deletePersistedSessionState(key) {

@@ -11,6 +11,7 @@ export interface SettingsState extends PreferencesState {
   backend: string; hostPlatform: string; selectedId: string | null
   selectedByBackend: Record<string, string | null>; startupRouterSelectionPending: boolean
   attentionThreads: Set<string>; turnOptions: ReturnType<typeof normalizeStoredTurnOptions>
+  messageQueueRevisions?: Record<string, number>
   messageQueues: ReturnType<typeof normalizeStoredMessageQueues>; pausedMessageQueues: Set<string>
   runningMessageQueues: Set<string>; messageQueueErrors: Map<string, string>
   annotationDrafts: Record<string, CommentDraft[]>; annotationAdditional: Record<string, string>
@@ -111,6 +112,7 @@ async function loadPreferences() {
   state.selectedId = state.selectedByBackend[state.backend]!
   state.turnOptions = normalizeStoredTurnOptions(storedSessionState.turnOptions)
   state.messageQueues = normalizeStoredMessageQueues(storedSessionState.messageQueues)
+  state.messageQueueRevisions = Object.fromEntries(Object.entries(storedSessionState.messageQueueRevisions || {}).filter(([, value]) => Number.isSafeInteger(value) && Number(value) >= 0)) as Record<string, number>
   state.pausedMessageQueues = new Set(Object.keys(state.messageQueues))
   state.runningMessageQueues = new Set()
   state.messageQueueErrors = new Map()

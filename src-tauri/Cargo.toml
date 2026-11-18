@@ -19,6 +19,7 @@ sha2 = "=0.11.1"
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
+studio-teams = { path = "../crates/studio-teams" }
 sha2 = "=0.11.1"
 tower = { version = "0.5.2", features = ["util"] }
 marknoria = { path = "../crates/marknoria", default-features = false, features = ["web", "syntax-reduced"] }

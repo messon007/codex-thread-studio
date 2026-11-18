@@ -91,6 +91,13 @@ pub struct MemberDraft {
     pub responsibility: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberProfile {
+    pub member_id: String,
+    pub display_name: String,
+    pub responsibility: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
     pub session: Session,
@@ -105,6 +112,13 @@ pub struct Group {
     pub paused: bool,
     pub members: Vec<Member>,
     pub orchestrator: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default = "initial_roster_version")]
+    pub roster_version: u64,
+}
+fn initial_roster_version() -> u64 {
+    1
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -152,6 +166,8 @@ impl Status {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Question {
+    #[serde(default)]
+    pub related_question_id: Option<String>,
     pub id: String,
     pub attempt_id: String,
     pub asked_by: Actor,
@@ -256,9 +272,17 @@ pub struct Task {
     pub revision: u64,
     pub attempt_id: String,
     pub attempts: u32,
+    #[serde(default)]
+    pub extra_attempts: u32,
+    #[serde(default)]
+    pub reconciled_claim_id: Option<String>,
+    #[serde(default)]
+    pub reconciled_result_id: Option<String>,
     pub ready: bool,
     pub wait_generation: u64,
     pub claim: Option<Turn>,
+    #[serde(default)]
+    pub claim_id: Option<String>,
     pub questions: Vec<Question>,
     pub blockers: Vec<Blocker>,
     pub results: Vec<TaskResult>,
@@ -272,7 +296,7 @@ pub struct TaskVersion {
     pub expected_revision: u64,
     pub attempt_id: String,
 }
-/// Internal domain commands. The future MCP adapter maps the spec's flat tool parameters here.
+/// Internal domain commands. The MCP adapter maps the spec's flat tool parameters here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", deny_unknown_fields)]
 pub enum Command {
@@ -284,6 +308,25 @@ pub enum Command {
     },
     Resume {
         task: TaskVersion,
+    },
+    ReclaimById {
+        task: TaskVersion,
+        previous_claim_id: String,
+        continuation: Continuation,
+    },
+    AskRelated {
+        task: TaskVersion,
+        to: Actor,
+        question: String,
+        blocking: bool,
+        continuation: Option<Continuation>,
+        related_question_id: String,
+    },
+    ResolveApproved {
+        task: TaskVersion,
+        blocker_id: String,
+        resolution: String,
+        user_decision_id: String,
     },
     Reclaim {
         task: TaskVersion,
@@ -332,6 +375,51 @@ pub enum Command {
         task: TaskVersion,
         reason: String,
     },
+    SetGroupProfile {
+        expected_revision: u64,
+        name: Option<String>,
+        members: Vec<MemberProfile>,
+    },
+    ChangeMembers {
+        expected_revision: u64,
+        add: Vec<MemberDraft>,
+        remove_member_ids: Vec<String>,
+    },
+    ArchiveGroup {
+        expected_revision: u64,
+    },
+    GroupGoal {
+        expected_revision: u64,
+        to_member_id: Option<String>,
+        title: String,
+        request: String,
+        acceptance: Vec<Criterion>,
+        continuation: Option<Continuation>,
+    },
+    GrantReworkBudget {
+        task: TaskVersion,
+        additional_attempts: u32,
+        reason: String,
+    },
+    ReconcileExecution {
+        task: TaskVersion,
+        claim_id: String,
+        confirmed_settled: bool,
+        evidence: Vec<Evidence>,
+    },
+    ReconcileResult {
+        task: TaskVersion,
+        result_id: String,
+        allow_review: bool,
+        evidence: Vec<Evidence>,
+    },
+    ReconcileReview {
+        task: TaskVersion,
+        result_id: String,
+        barrier_turn_id: String,
+        release: bool,
+        evidence: Vec<Evidence>,
+    },
     SetPaused {
         expected_revision: u64,
         paused: bool,
@@ -344,9 +432,16 @@ pub enum Command {
 impl Command {
     pub(crate) fn version(&self) -> Option<&TaskVersion> {
         match self {
-            Self::Begin { task }
+            Self::GrantReworkBudget { task, .. }
+            | Self::ReconcileExecution { task, .. }
+            | Self::ReconcileResult { task, .. }
+            | Self::ReconcileReview { task, .. }
+            | Self::Begin { task }
             | Self::Resume { task }
             | Self::Reclaim { task, .. }
+            | Self::ReclaimById { task, .. }
+            | Self::AskRelated { task, .. }
+            | Self::ResolveApproved { task, .. }
             | Self::Checkpoint { task, .. }
             | Self::Wait { task, .. }
             | Self::Resolve { task, .. }

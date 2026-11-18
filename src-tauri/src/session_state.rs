@@ -39,6 +39,7 @@ pub(crate) struct SessionStateSnapshot {
     pub(crate) pinned_sessions: Vec<String>,
     pub(crate) turn_options: BTreeMap<String, SessionTurnOptions>,
     pub(crate) message_queues: BTreeMap<String, Vec<QueuedMessage>>,
+    pub(crate) message_queue_revisions: BTreeMap<String, u64>,
 }
 
 pub(crate) fn initialize(path: &Path) -> Result<(), String> {
@@ -141,6 +142,19 @@ pub(crate) fn load(path: &Path) -> Result<SessionStateSnapshot, String> {
         snapshot.message_queues.insert(session_key, queue);
     }
 
+    drop(statement);
+    let mut statement = connection
+        .prepare("SELECT session_key,revision FROM session_message_queue_revisions")
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+        })
+        .map_err(sql_error)?;
+    for row in rows {
+        let (key, revision) = row.map_err(sql_error)?;
+        snapshot.message_queue_revisions.insert(key, revision);
+    }
     Ok(snapshot)
 }
 
@@ -249,30 +263,65 @@ pub(crate) fn put_turn_options(
     Ok(())
 }
 
+pub(crate) fn message_queue_current(
+    path: &Path,
+    session_key: &str,
+) -> Result<(u64, Vec<QueuedMessage>), String> {
+    let connection = connection(path)?;
+    let row:(u64,Option<String>)=connection.query_row("SELECT COALESCE((SELECT revision FROM session_message_queue_revisions WHERE session_key=?1),0),(SELECT queue_json FROM session_message_queues WHERE session_key=?1)",[session_key],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql_error)?;
+    let messages = row
+        .1
+        .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+        .transpose()?
+        .unwrap_or_default();
+    Ok((row.0, messages))
+}
+
+#[cfg(test)]
 pub(crate) fn replace_message_queue(
     path: &Path,
     session_key: &str,
     messages: &[QueuedMessage],
 ) -> Result<(), String> {
-    let connection = connection(path)?;
-    if messages.is_empty() {
-        connection
-            .execute(
-                "DELETE FROM session_message_queues WHERE session_key = ?1",
-                [session_key],
-            )
-            .map_err(sql_error)?;
-    } else {
-        let queue_json = serde_json::to_string(messages).map_err(|error| error.to_string())?;
-        connection
-            .execute(
-                "INSERT INTO session_message_queues(session_key, queue_json) VALUES (?1, ?2)
-                 ON CONFLICT(session_key) DO UPDATE SET queue_json = excluded.queue_json",
-                params![session_key, queue_json],
-            )
-            .map_err(sql_error)?;
+    replace_message_queue_checked(path, session_key, messages, None).map(|_| ())
+}
+
+pub(crate) fn replace_message_queue_checked(
+    path: &Path,
+    session_key: &str,
+    messages: &[QueuedMessage],
+    expected_revision: Option<u64>,
+) -> Result<u64, String> {
+    let mut connection = connection(path)?;
+    let tx = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql_error)?;
+    let current: u64 = tx
+        .query_row(
+            "SELECT revision FROM session_message_queue_revisions WHERE session_key=?",
+            [session_key],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?
+        .unwrap_or(0);
+    if expected_revision.is_some_and(|expected| expected != current) {
+        return Err("queue revision conflict: another window changed this queue; reload before editing or sending".into());
     }
-    Ok(())
+    let revision = current.checked_add(1).ok_or("queue revision exhausted")?;
+    if messages.is_empty() {
+        tx.execute(
+            "DELETE FROM session_message_queues WHERE session_key=?",
+            [session_key],
+        )
+        .map_err(sql_error)?;
+    } else {
+        let body = serde_json::to_string(messages).map_err(|e| e.to_string())?;
+        tx.execute("INSERT INTO session_message_queues VALUES(?,?) ON CONFLICT(session_key) DO UPDATE SET queue_json=excluded.queue_json",params![session_key,body]).map_err(sql_error)?;
+    }
+    tx.execute("INSERT INTO session_message_queue_revisions VALUES(?,?) ON CONFLICT(session_key) DO UPDATE SET revision=excluded.revision",params![session_key,revision]).map_err(sql_error)?;
+    tx.commit().map_err(sql_error)?;
+    Ok(revision)
 }
 
 pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), String> {
@@ -314,6 +363,7 @@ pub(crate) fn delete_session(path: &Path, session_key: &str) -> Result<(), Strin
             [session_key],
         )
         .map_err(sql_error)?;
+    transaction.execute("INSERT INTO session_message_queue_revisions VALUES(?,1) ON CONFLICT(session_key) DO UPDATE SET revision=revision+1",[session_key]).map_err(sql_error)?;
     transaction.commit().map_err(sql_error)
 }
 
@@ -412,6 +462,9 @@ fn connection(path: &Path) -> Result<Connection, String> {
                model TEXT NOT NULL,
                effort TEXT NOT NULL,
                service_tier TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE IF NOT EXISTS session_message_queue_revisions (
+               session_key TEXT PRIMARY KEY, revision INTEGER NOT NULL
              );
              CREATE TABLE IF NOT EXISTS session_message_queues (
                session_key TEXT PRIMARY KEY,
@@ -654,6 +707,37 @@ mod tests {
                 .map(String::as_str),
             Some("codex:replacement")
         );
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn stale_queue_pages_cannot_overwrite_edits_or_recreate_deleted_messages() {
+        let path = database_path("queue-cas");
+        let message = QueuedMessage {
+            id: "persisted-id".into(),
+            text: "original".into(),
+            input: vec![],
+            created_at: 1,
+        };
+        assert_eq!(
+            replace_message_queue_checked(&path, "codex:one", &[message.clone()], Some(0)).unwrap(),
+            1
+        );
+        assert!(
+            replace_message_queue_checked(&path, "codex:one", &[], Some(0))
+                .unwrap_err()
+                .contains("revision conflict")
+        );
+        assert_eq!(
+            replace_message_queue_checked(&path, "codex:one", &[], Some(1)).unwrap(),
+            2
+        );
+        assert!(replace_message_queue_checked(&path, "codex:one", &[message], Some(1)).is_err());
+        let snapshot = load(&path).unwrap();
+        assert_eq!(snapshot.message_queue_revisions["codex:one"], 2);
+        assert!(!snapshot.message_queues.contains_key("codex:one"));
+        delete_session(&path, "codex:one").unwrap();
+        assert!(replace_message_queue_checked(&path, "codex:one", &[], Some(2)).is_err());
         fs::remove_file(path).ok();
     }
 

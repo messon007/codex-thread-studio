@@ -526,6 +526,14 @@ impl CodexAppServer {
         }
     }
 
+    pub fn subscribe_events(&self) -> broadcast::Receiver<String> {
+        self.events.subscribe()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
     pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<String> {
         self.lifecycle_events.subscribe()
     }

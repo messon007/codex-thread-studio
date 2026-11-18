@@ -1631,6 +1631,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "studio-teams",
  "tao 0.37.2",
  "tauri",
  "tauri-build",

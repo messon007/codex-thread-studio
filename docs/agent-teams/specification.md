@@ -229,7 +229,7 @@ v1 有界限制：每组 5 成员、每任务最多 20 条验收条件/20 项依
 
 | 工具 | 参数 | 返回与语义 |
 | --- | --- | --- |
-| `team_context` | `group_id` | 组状态、roster_version、本人身份、成员职责、可选协调者、工具规则和能力；不返回别人的完整历史 |
+| `team_context` | `group_id?`（传 `{}` 时由宿主按已认证成员会话确定组） | 组状态、roster_version、本人身份、成员职责、可选协调者、工具规则和能力；不返回别人的完整历史 |
 | `team_task_get` | `group_id, task_id` | 完整当前任务快照与 revision；结果历史分页独立读取 |
 | `team_task_history` | `group_id, task_id, cursor?, limit?` | 按事件序号升序读取执行批次、问题、结果和验收记录；游标绑定任务与读取快照，保留旧 Result 的完整内容 |
 | `team_task_list` | `group_id, status[]?, assignee_member_id?, requester?:ActorRef, cursor?, limit?` | 可明确过滤 user 或 member requester；按稳定任务序号返回摘要；不默认启动或恢复会话 |
@@ -414,7 +414,7 @@ Teams 通过 admit 把 delivery_id 作为 stable_id，普通排队输入走同�
 
 ### 8.1.1 唯一交接裁决
 
-Rust 通用队列保存稳定 message_id、每会话 enqueue_seq、来源、状态和凭证。先迁移旧页面整数组覆盖/消费权，多个页面不得各自启动同一条目；保持普通用户消息、附件和逐轮选项，不为统一队列粗暴改写普通发送。Teams 不另建直接派发器。
+Rust 通用队列保存稳定 message_id、每会话 enqueue_seq、来源、状态和凭证。普通消息仍使用兼容的原有 payload 存储，以逐会话 revision/CAS 拒绝陈旧页面的整数组覆盖；普通发送先核对队列版本与条目，再经共享保留及宿主持久回执账本交接，多个页面不能重复发送同一稳定 ID。保持普通用户消息、附件和逐轮选项；统一的是消费裁决与发送所有权，不要求复制或重写既有 payload。Teams 自动通知只经受保护的通用队列交接。
 
 消费者把队首、暂停、审批/输入等待、失败停顿、监督保留、来源有效性及派发代数与授权放在同一持久裁决序列。默认观察到无活跃工作才领取；随后即使外部 CLI 抢先启动，Teams 路径也只调用 `thread/queue/add`，必须排到后续独立轮次。不得调用 turn/start、queue/start、Steer 或 interrupt 来唤醒成员。
 

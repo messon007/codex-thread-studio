@@ -1214,3 +1214,169 @@ fn superseded_questions_do_not_reserve_future_answer_capacity() {
         )
         .is_ok());
 }
+
+#[test]
+fn user_can_release_a_failed_submission_for_review_without_promoting_its_turn() {
+    let mut f = Fixture::new();
+    let a = f.a.clone();
+    let b = f.b.clone();
+    let user = Caller::user();
+    let t = f.delegate(&a, 1, vec![], None);
+    let t = f
+        .run(&b, Command::Begin { task: v(&t) })
+        .unwrap()
+        .task
+        .unwrap();
+    let t = f
+        .run(
+            &b,
+            Command::Submit {
+                task: v(&t),
+                submission: submission(),
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    let turn = b.turn.as_ref().unwrap();
+    f.store.observe_turn(turn, TurnState::Failed).unwrap();
+    let id = t.results[0].id.clone();
+    let cmd = Command::ReconcileResult {
+        task: v(&t),
+        result_id: id.clone(),
+        allow_review: true,
+        evidence: vec![Evidence {
+            kind: EvidenceKind::Note,
+            locator: "fixture".into(),
+            description: "User inspected completed files".into(),
+        }],
+    };
+    assert_eq!(f.run(&a, cmd.clone()).unwrap_err(), Error::Forbidden);
+    let t = f.run(&user, cmd).unwrap().task.unwrap();
+    let accepted = f
+        .run(
+            &a,
+            Command::Review {
+                task: v(&t),
+                result_id: id,
+                accept: true,
+                assessment: assessment(true),
+                requested_changes: None,
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    assert_eq!(accepted.status, Status::Completed);
+    assert_eq!(f.store.observed_turn(turn).unwrap(), TurnState::Failed);
+}
+
+#[test]
+fn roster_edits_are_atomic_and_archive_releases_only_unused_member_bindings() {
+    let mut f = Fixture::new();
+    let g = f.group.clone();
+    let user = Caller::user();
+    let remove = Command::ChangeMembers {
+        expected_revision: g.revision,
+        add: vec![],
+        remove_member_ids: vec![g.members[2].id.clone()],
+    };
+    assert_eq!(
+        f.store
+            .execute(&f.a, &g.id, "remove", remove.clone())
+            .unwrap_err(),
+        Error::Forbidden
+    );
+    let g = f
+        .store
+        .execute(&user, &g.id, "remove", remove)
+        .unwrap()
+        .group
+        .unwrap();
+    assert_eq!(g.members.len(), 2);
+    assert!(f
+        .store
+        .member_for_session(&f.c.turn.as_ref().unwrap().session)
+        .unwrap()
+        .is_none());
+    let cmd = Command::ArchiveGroup {
+        expected_revision: g.revision,
+    };
+    let archived = f
+        .store
+        .execute(&user, &g.id, "archive", cmd.clone())
+        .unwrap()
+        .group
+        .unwrap();
+    assert!(archived.archived && archived.paused);
+    assert!(
+        f.store
+            .execute(&user, &g.id, "archive", cmd)
+            .unwrap()
+            .replayed
+    );
+    for m in g.members {
+        assert!(f.store.member_for_session(&m.session).unwrap().is_none());
+    }
+}
+
+#[test]
+fn recovered_manual_submission_uses_its_native_terminal_receipt() {
+    let mut f = Fixture::new();
+    let b = f.b.clone();
+    let user = Caller::user();
+    let t = f.delegate(&user, 1, vec![], None);
+    let t = f
+        .run(&b, Command::Begin { task: v(&t) })
+        .unwrap()
+        .task
+        .unwrap();
+    let t = f
+        .run(
+            &b,
+            Command::Submit {
+                task: v(&t),
+                submission: submission(),
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    let turn = b.turn.unwrap();
+    f.store
+        .recover_backend_turns(&turn.session.backend)
+        .unwrap();
+    let cmd = Command::ReconcileResult {
+        task: v(&t),
+        result_id: t.results[0].id.clone(),
+        allow_review: true,
+        evidence: vec![Evidence {
+            kind: EvidenceKind::Note,
+            locator: "receipt".into(),
+            description: "Checked the native turn".into(),
+        }],
+    };
+    assert_eq!(f.run(&user, cmd.clone()).unwrap_err(), Error::InvalidState);
+    f.store
+        .reconcile_native_terminal(&turn.session, &turn.id, TurnState::Succeeded)
+        .unwrap();
+    let refreshed = f.run(&user, cmd).unwrap().task.unwrap();
+    assert_eq!(f.store.observed_turn(&turn).unwrap(), TurnState::Succeeded);
+    assert!(refreshed.reconciled_result_id.is_none());
+    assert_eq!(refreshed.status, Status::Submitted);
+    let complete = f
+        .run(
+            &user,
+            Command::Review {
+                task: v(&refreshed),
+                result_id: t.results[0].id.clone(),
+                accept: true,
+                assessment: assessment(true),
+                requested_changes: None,
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    assert_eq!(complete.status, Status::Completed);
+}

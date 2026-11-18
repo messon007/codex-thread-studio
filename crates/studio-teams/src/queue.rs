@@ -120,6 +120,16 @@ PRAGMA user_version=1; COMMIT;")?;
         Ok(Self { db })
     }
     /// Only the host activates a new scope generation after reconciling its previous generation.
+    pub fn scope_state(&self, scope: &str) -> Result<Option<(u64, bool)>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT generation,enabled FROM scopes WHERE scope=?",
+                [scope],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
     pub fn activate(&mut self, scope: &str, generation: u64) -> Result<()> {
         identifier(scope)?;
         if generation > i64::MAX as u64 {
@@ -250,6 +260,9 @@ PRAGMA user_version=1; COMMIT;")?;
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
+        if old.is_none() && holds(&tx, session)? {
+            return Err(Error::Blocked);
+        }
         let hold_id = if let Some((id, previous, previous_reason)) = old {
             if previous != generation || previous_reason != reason {
                 return Err(Error::RevisionConflict);
@@ -332,6 +345,21 @@ PRAGMA user_version=1; COMMIT;")?;
         Ok(None)
     }
     /// The only permission to issue one native queue/add. Calling twice is an error, not replay.
+    /// Release preparation when the host has not entered the native send path.
+    pub fn return_authorized(&mut self, entry_id: &str, dispatch_id: &str) -> Result<Entry> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut e = get(&tx, entry_id)?;
+        if e.state != State::Authorized || e.dispatch_id.as_deref() != Some(dispatch_id) {
+            return Err(Error::InvalidState);
+        }
+        e.state = State::Queued;
+        e.dispatch_id = None;
+        save(&tx, &e)?;
+        tx.commit()?;
+        Ok(e)
+    }
     pub fn prepare_send(&mut self, entry_id: &str, dispatch_id: &str) -> Result<Entry> {
         let tx = self
             .db
@@ -630,5 +658,105 @@ PRAGMA user_version=1; COMMIT;")?;
     }
     pub fn pending(&self, session: &Session) -> Result<Vec<Entry>> {
         list(&self.db, session)
+    }
+}
+
+/// Host-visible description of a persisted reservation, including pending reservations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReservationInfo {
+    pub id: String,
+    pub session: Session,
+    pub owner: String,
+    pub generation: u64,
+    pub reason: String,
+}
+impl Queue {
+    /// Withdraw work that provably has not reached prepare_send. A native delete requires a receipt.
+    pub fn withdraw_local(&mut self, entry_id: &str) -> Result<Entry> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut e = get(&tx, entry_id)?;
+        match e.state {
+            State::Queued | State::Authorized => {
+                e.state = State::Withdrawn;
+                save(&tx, &e)?;
+            }
+            State::Withdrawn => {}
+            _ => return Err(Error::ReconciliationRequired),
+        }
+        tx.commit()?;
+        Ok(e)
+    }
+    pub fn reservations(&self, session: &Session) -> Result<Vec<ReservationInfo>> {
+        let mut s = self
+            .db
+            .prepare("SELECT id,owner,generation,reason FROM holds WHERE session=? ORDER BY id")?;
+        let rows = s.query_map([json(session)?], |r| {
+            Ok(ReservationInfo {
+                id: r.get(0)?,
+                session: session.clone(),
+                owner: r.get(1)?,
+                generation: r.get(2)?,
+                reason: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+    pub fn by_stable_id(
+        &self,
+        session: &Session,
+        source: &str,
+        stable_id: &str,
+    ) -> Result<Option<Entry>> {
+        self.db
+            .query_row(
+                "SELECT body FROM entries WHERE session=? AND source=? AND stable_id=?",
+                params![json(session)?, source, stable_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(entry)
+            .transpose()
+    }
+    /// Recovery inventory, including Abandoned entries whose native outcome is still unknown.
+    pub fn all_pending(&self) -> Result<Vec<Entry>> {
+        let mut s = self
+            .db
+            .prepare("SELECT body FROM entries WHERE state NOT IN (?,?) ORDER BY seq")?;
+        let rows = s.query_map(
+            params![json(&State::Settled)?, json(&State::Withdrawn)?],
+            |r| r.get::<_, String>(0),
+        )?;
+        rows.map(|r| entry(r?)).collect()
+    }
+}
+impl Queue {
+    /// Re-enable a provably withdrawn input in a newer, already-active scope generation.
+    /// The local ID and FIFO position stay stable. Native receipts belong to the old attempt.
+    pub fn requeue_withdrawn(&mut self, entry_id: &str, generation: u64) -> Result<Entry> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut e = get(&tx, entry_id)?;
+        if e.state != State::Withdrawn || e.native_turn_id.is_some() {
+            return Err(Error::InvalidState);
+        }
+        if generation <= e.generation || !enabled(&tx, &e.scope, generation)? {
+            return Err(Error::RevisionConflict);
+        }
+        let prior = json(&(e.generation, &e.dispatch_id, &e.native_queue_id))?;
+        tx.execute(
+            "INSERT INTO observations(entry_id,kind,detail) VALUES(?,'requeued_withdrawn',?)",
+            params![entry_id, prior],
+        )?;
+        e.generation = generation;
+        e.dispatch_id = None;
+        e.native_queue_id = None;
+        e.native_turn_id = None;
+        e.state = State::Queued;
+        save(&tx, &e)?;
+        tx.commit()?;
+        Ok(e)
     }
 }

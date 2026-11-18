@@ -38,9 +38,9 @@ try {
   assert.equal(state.presentation.notes,'host');assert.equal(state.presentation.selectionMenu,'host')
   report.projectionPages=state.document.projectionPages
   const asset=await (await page.request.get(new URL('reader.mjs',frame.url()).href)).text()
-  assert.equal(asset,await (await page.request.get(new URL('/reader-assets/reader.mjs',url).href)).text(),'Both Studio asset routes must serve the same compatibility layer')
-  assert.match(asset,/function remeasureMountedPages\(\)/)
-  report.derivedAssetSha256=createHash('sha256').update(asset).digest('hex')
+  assert.equal(asset,await (await page.request.get(new URL('/reader-assets/reader.mjs',url).href)).text(),'Both Studio asset routes must serve the fixed upstream asset')
+  assert.equal(asset,await readFile(join(root,'crates/marknoria/web/reader.mjs'),'utf8'),'Reader is the unmodified SDK asset')
+  report.readerAssetSha256=createHash('sha256').update(asset).digest('hex')
  }
  const sample=async(name)=>{
   let geometry,stable=0;const until=Date.now()+5000

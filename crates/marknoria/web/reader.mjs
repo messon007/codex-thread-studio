@@ -2,6 +2,7 @@ import { mountCommentMarks } from './comment-marks.mjs'
 import { sourceCommentContext } from './source-comment-marks.mjs'
 import { commentScopes } from './comment-ranges.mjs'
 import { captureProjectionComment } from './comment-ranges.mjs'
+import { validatePassage, resolveNotePassage, revealNotePassage, focusNotePassage } from './note-passage.mjs'
 import { createTranslator, uiLabels } from './translation.mjs'
 import { readerPresentation } from './presentation.mjs'
 import { readerUiLabels } from './reader-ui.mjs'
@@ -30,6 +31,7 @@ const translate = createTranslator()
 const labels = uiLabels(translate, { signal: mainLifetime.signal })
 const on = (target, type, listener, options = {}) => target.addEventListener(type, listener, { ...options, signal: mainLifetime.signal })
 const embedded = new URLSearchParams(location.search).has('embedded')
+const sourceFlow = new URLSearchParams(location.search).get('sourceFlow')
 const token = location.hash.slice(1)
 let editor = null
 let editable = false
@@ -113,6 +115,7 @@ const goToLine = mountGoToLine(shell, {
   },
   async navigate(line, captured) {
     if (documentId !== captured.identity || position().view !== captured.view) throw Error(translate('The document or view changed. Open Go to line again.'))
+    const intent = beginNavigation()
     search.suspend()
     if (editor?.visible) {
       if (!await editor.go(line)) throw editor.error || Error(translate('Could not navigate to this source line.'))
@@ -120,7 +123,7 @@ const goToLine = mountGoToLine(shell, {
       if (!await source.go(line)) throw Error(translate('Could not navigate to this source line.'))
       source.code?.focus()
     } else {
-      if (await previewLine({ line }) == null) throw Error(translate('Could not navigate to this source line.'))
+      if (await previewLine({ line }, { intent }) == null) throw Error(translate('Could not navigate to this source line.'))
       viewport.focus()
     }
     bridge?.publish('state', publicState())
@@ -146,26 +149,56 @@ function syncReadingTypography() {
   codeSize.disabled = !supported
   for (const id of ['column-width', 'wrap']) document.getElementById(id).disabled = !supported || Boolean(editor?.visible || source?.visible)
 }
+const layoutProperties = ['contentFontSize', 'codeFontSize', 'contentFontFamily', 'codeFontFamily', 'contentFontWeight', 'fontFamily', 'fontSize', 'wrap', 'toolbar']
+const layoutChanged = (before, after) => layoutProperties.some(key => before[key] !== after[key])
 function typographyAnchor() {
   const code = editor?.visible ? editor.code : source?.visible ? source.code : null
-  return { code, scroll: code?.scrollSnapshot(), preview: index && !formatRenderer && !editor?.visible && !source?.visible ? position() : null }
+  const preview = index && !formatRenderer && !editor?.visible && !source?.visible ? position() : null
+  const node = preview && nodes.get(tables.itemForPage[readingAnchor()])
+  const target = node?.dataset.ready ? sourceTarget(node, preview) : null
+  return { code, scroll: code?.scrollSnapshot(), preview, target,
+    top: target?.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+    owner: index, reader: virtualizer, intent: navigationIntent, navigation, pending: forcedPage != null }
 }
-async function refreshTypography(anchor) {
+function remeasurePreview(anchor, invalidate) {
+  const reader = virtualizer
+  if (!reader || anchor.owner !== index || anchor.reader !== reader || source?.visible || editor?.visible || stopped) return
+  // Only mounted nodes are measured. An unchanged DOM never needs a fresh RO
+  // notification, and measureElement may intentionally skip reads while scrolling.
+  const mounted = [...nodes].filter(([, node]) => node.isConnected).map(([item, node]) => [item, node.offsetHeight])
+  const adjust = reader.shouldAdjustScrollPositionOnItemSizeChange
+  reader.shouldAdjustScrollPositionOnItemSizeChange = () => false
+  try {
+    if (invalidate) reader.measure()
+    reader.getTotalSize() // Rebuild the cleared measurement index before resizeItem.
+    for (const [item, height] of mounted) reader.resizeItem(item, height)
+  } finally { reader.shouldAdjustScrollPositionOnItemSizeChange = adjust }
+  commitVirtualGeometry()
+  const target = anchor.target, connected = target instanceof Range ? target.startContainer.isConnected : target?.isConnected
+  // A settings ACK must not restart/cancel a pending jump or pull against a
+  // subsequent user navigation. Keep the same visible source block and offset.
+  if (!anchor.pending && forcedPage == null && anchor.intent === navigationIntent && anchor.navigation === navigation && connected && Number.isFinite(anchor.top)) {
+    const delta = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.top
+    if (Math.abs(delta) > 0.5) viewport.scrollTop += delta
+  }
+}
+async function refreshTypography(anchor, { invalidate = true } = {}) {
   syncReadingTypography()
   anchor.code?.remeasure(anchor.scroll)
-  if (anchor.preview) {
-    virtualizer?.measure()
-    await previewLine(anchor.preview)
-  }
+  if (anchor.preview) remeasurePreview(anchor, invalidate)
   highlights.refresh(); wordHighlights.refresh(); commentMarks?.refresh()
   if (!anchor.code) search.repaint()
   schedule()
 }
+// Fonts can finish loading after a settings acknowledgement. Re-read only the
+// current mounted set; do not revive an earlier settings/navigation anchor.
+on(document.fonts, 'loadingdone', () => { if (!stopped) void refreshTypography(typographyAnchor(), { invalidate: false }) })
 for (const [id, property] of [['reading-text-size', 'contentFontSize'], ['reading-code-size', 'codeFontSize']]) {
   on(document.getElementById(id), 'change', async event => {
     const input = event.target, before = presentation.state()
     const value = input.value === '' && property === 'codeFontSize' ? null : Number(input.value)
     if (value !== null && (!input.value || !Number.isFinite(value) || value < 11 || value > 32)) { input.value = before[property] ?? ''; return }
+    if (value === before[property]) return
     const anchor = typographyAnchor()
     presentation.update({ [property]: value })
     if (!embedded) try {
@@ -216,7 +249,7 @@ function commentContext() {
 function syncNotesOwner() {
   const owned = serviceCapabilities.notes && presentation.state().notes === 'reader'
   if (!owned) { notes?.dispose(); notes = null }
-  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,signal => publicSelection(signal, { textOnly: true }),{documentId,translate,selectionMenu:presentation.state().selectionMenu,onMutation:()=>commentMarks?.refresh(true)})
+  else if (index && !notes) notes = notesController(index,api,()=>!editor?.dirty,signal => publicSelection(signal, { textOnly: true }),{documentId,translate,selectionMenu:presentation.state().selectionMenu,navigate:navigateNote,onMutation:()=>commentMarks?.refresh(true)})
   const identity = index && `${documentId}:${index.revision}:${owned}`
   if (identity !== commentMarksOwner) {
     commentMarks?.dispose(); commentMarks = null; commentMarksOwner = identity
@@ -242,6 +275,15 @@ let stopped = false
 let forcedPage = null
 let navigation = 0
 let navigationIntent = 0
+let passageRequest = null
+let locationRequest = null
+let passageFocus = null
+function beginNavigation() {
+  passageRequest?.abort()
+  locationRequest?.abort()
+  passageFocus = null
+  return ++navigationIntent
+}
 let documentError = null
 let loadError = null
 let searchJump = null
@@ -374,10 +416,21 @@ function schedule() {
 function commitVirtualGeometry(items = virtualizer?.getVirtualItems()) {
   if (!items || stopped || source?.visible || editor?.visible) return
   space.style.height = `${virtualizer.getTotalSize()}px`
-  for (const item of items) {
-    const node = nodes.get(item.index)
-    if (node?.isConnected) node.style.transform = `translateY(${item.start}px)`
+  const measurements = virtualizer.getMeasurements()
+  for (const [index, node] of nodes) {
+    const item = measurements[index]
+    if (item && node.isConnected) node.style.transform = `translateY(${item.start}px)`
   }
+}
+
+// Provider readiness can occur during user scrolling, when TanStack defers
+// measureElement to RO. Commit the known mounted height before publishing ready.
+function measurePage(node) {
+  if (!virtualizer || !node?.isConnected) return
+  virtualizer.measureElement(node)
+  virtualizer.getTotalSize()
+  virtualizer.resizeItem(Number(node.dataset.index), node.offsetHeight)
+  commitVirtualGeometry()
 }
 
 function reconcile() {
@@ -391,6 +444,7 @@ function reconcile() {
   assets?.prune()
   tables.prune()
   virtualizer.measureElement(null)
+  const resized = space.style.width !== `${viewport.clientWidth}px` ? typographyAnchor() : null
   space.style.height = `${virtualizer.getTotalSize()}px`
   space.style.width = `${viewport.clientWidth}px`
   space.style.setProperty('--table-viewport-height', `${Math.max(160, viewport.clientHeight - 100)}px`)
@@ -432,7 +486,7 @@ function reconcile() {
       mount.node.classList.remove('placeholder')
       diagrams.mount(mount.node)
       assets?.mount(mount.node)
-      virtualizer.measureElement(mount.node)
+      measurePage(mount.node)
       if (metrics.firstContentMs == null && !['image','pdf'].includes(index.format)) metrics.firstContentMs = performance.now() - started
       report()
       schedule()
@@ -440,6 +494,7 @@ function reconcile() {
   }
   if (missing != null && !loadError) requestWindow(missing)
   virtualizer._willUpdate()
+  if (resized) remeasurePreview(resized, false)
   tables.position()
   report()
 }
@@ -503,7 +558,7 @@ async function previewLine(location, options = {}) {
   return jump(page, null, row, null, location, '', {}, options)
 }
 
-async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}, { intent = ++navigationIntent, signal, keepMounted = false } = {}) {
+async function jump(sourcePage, heading = null, row = null, anchor = null, location = null, query = '', searchOptions = {}, { intent = beginNavigation(), signal, keepMounted = false } = {}) {
   signal?.throwIfAborted()
   if (intent !== navigationIntent || stopped || !index || !tables || !virtualizer || !index.pages[sourcePage]) return
   if (editor?.visible) {
@@ -518,7 +573,7 @@ async function jump(sourcePage, heading = null, row = null, anchor = null, locat
     activeHeading = heading ?? index.toc.findLast(item => item.page <= sourcePage)?.id ?? null
     outlineView?.active(activeHeading)
     const line = heading == null ? index.pages[sourcePage].line : index.toc.find(item => item.id === heading)?.line
-    await source.go(line)
+    await source.go(line, { signal })
     return
   }
   const page = tables.target(sourcePage, row)
@@ -599,8 +654,8 @@ function setup() {
   if(window.readerExperiment){started=performance.now();Object.assign(metrics,{firstContentMs:null,firstAssetMs:null,maxHeartbeatGapMs:0});heartbeatAt=started}
   readerAbort = new AbortController()
   if (['pdfjs','epubjs'].includes(index.renderer)) { setupFormat(); return }
-  diagrams = diagramController(viewport, article => { virtualizer?.measureElement(article); schedule() }, { documentId, revision: index.revision, token })
-  assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)virtualizer?.measureElement(article);schedule()},{translate})
+  diagrams = diagramController(viewport, article => { measurePage(article); schedule() }, { documentId, revision: index.revision, token })
+  assets = assetController(viewport,index,documentId,article=>{if(metrics.firstAssetMs==null)metrics.firstAssetMs=performance.now()-started;if(metrics.firstContentMs==null&&['image','pdf'].includes(index.format))metrics.firstContentMs=performance.now()-started;if(article)measurePage(article);schedule()},{translate})
   syncNotesOwner()
   documentReferences = index.format === 'markdown' ? mountReferences(space, {
     owner: { documentId, revision: index.revision }, viewport, translate,
@@ -609,7 +664,7 @@ function setup() {
       imageInfo: ({id,signal}) => api(`/api/reference-image?id=${id}&revision=${encodeURIComponent(index.revision)}`,signal),
       imageFrame: ({id,imageRevision,frame,signal}) => api(`/api/reference-image?id=${id}&revision=${encodeURIComponent(index.revision)}&imageRevision=${encodeURIComponent(imageRevision)}&frame=${frame}`,signal,{imageRevision:index.revision}),
     },
-    onChange: article => { if (article) virtualizer?.measureElement(article); bridge?.publish('state',publicState()) },
+    onChange: article => { if (article) measurePage(article); bridge?.publish('state',publicState()) },
     onLink: async value => {
       const target = value.target
       if (target?.startsWith('#')) {
@@ -640,10 +695,13 @@ function setup() {
   source = sourceController(index, api, line => {
     schedule()
     return previewLine(line)
-  }, () => position(), () => {
+  }, () => position(), ({ intent } = {}) => {
+    // A byte-range navigation owns this mode transition. Preserve that exact
+    // intent, but never adopt an obsolete caller's intent over a newer command.
+    if (intent != null && intent !== navigationIntent) throw new DOMException('Navigation superseded', 'AbortError')
     clearTextSelection()
     tables?.closeOverlays()
-    navigationIntent += 1
+    if (intent == null) beginNavigation()
     navigation += 1
     generation += 1
     activeRequest?.abort()
@@ -651,10 +709,20 @@ function setup() {
     requestedTarget = null
     forcePage(null)
     virtualizer.cancelScroll()
-  }, { buttons: !editable, translate, onVisibilityChange: ({ preserveSearch = false } = {}) => { if (!preserveSearch) search.suspend(); clearTextSelection(); highlights.refresh(); wordHighlights.clear() }, onReady: () => { syncWordHighlights(); commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) } })
+  }, {
+    buttons: !editable,
+    flow: comparisonPreview ? 'paged' : sourceFlow,
+    contextual: !comparisonPreview,
+    translate,
+    onVisibilityChange: ({ preserveSearch = false } = {}) => {
+      if (!preserveSearch) search.suspend()
+      clearTextSelection(); highlights.refresh(); wordHighlights.clear()
+    },
+    onReady: () => { syncWordHighlights(); commentMarks?.refresh(); search.repaint(); bridge?.publish('state', publicState()) },
+  })
   tables = tableController(index, api, article => {
     if (article.isConnected) {
-      virtualizer?.measureElement(article)
+      measurePage(article)
       if (article.dataset.ready && metrics.firstContentMs == null) metrics.firstContentMs = performance.now() - started
     }
     schedule()
@@ -663,7 +731,9 @@ function setup() {
     count: tables.items.length,
     getScrollElement: () => viewport,
     estimateSize: item => tables.items[item].table != null ? 500 : Math.max(60, index.pages[tables.items[item].page].bytes / 3),
-    observeElementRect,
+    // The virtualizer only notifies when its visible range changes. A width
+    // resize can keep that range, but our prose/table width still needs layout.
+    observeElementRect: (instance, changed) => observeElementRect(instance, rect => { changed(rect); schedule() }),
     observeElementOffset,
     scrollToFn: elementScroll,
     overscan: 1,
@@ -679,7 +749,7 @@ function setup() {
   void outlineView.setItems(index.toc).then(() => outlineView?.active(activeHeading)).catch(error => { if (!readerAbort.signal.aborted) setStatus(error.message, null) })
   schedule()
   const cancelNavigation = () => {
-    navigationIntent += 1
+    beginNavigation()
     navigation += 1
     forcePage(null)
     virtualizer.cancelScroll()
@@ -692,21 +762,23 @@ function setup() {
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) cancelNavigation()
   }, { signal: readerAbort.signal })
   const changeLayout = update => {
-    const anchor = readingAnchor()
-    const item = tables.items[tables.itemForPage[anchor]]
-    const node = nodes.get(tables.itemForPage[anchor])
-    const row = item?.table == null ? null : tables.anchor(node)
-    update()
-    virtualizer.measure()
-    if (item) jump(anchor, null, row)
+    const anchor = typographyAnchor()
+    if (update() === false) return
+    void refreshTypography(anchor)
   }
   document.querySelector('#column-width').addEventListener('change', event => {
     const width = Math.min(600, Math.max(80, Number(event.target.value) || 180))
     event.target.value = width
-    changeLayout(() => shell.style.setProperty('--column-width', `${width}px`))
+    changeLayout(() => {
+      if (Number.parseFloat(getComputedStyle(shell).getPropertyValue('--column-width')) === width) return false
+      shell.style.setProperty('--column-width', `${width}px`)
+    })
   }, { signal: readerAbort.signal })
   document.querySelector('#wrap').addEventListener('change', event => {
-    changeLayout(() => presentation.update({wrap: event.target.checked}))
+    changeLayout(() => {
+      if (presentation.state().wrap === event.target.checked) return false
+      presentation.update({ wrap: event.target.checked })
+    })
   }, { signal: readerAbort.signal })
   window.readerExperiment = { index, documentId, metrics, jump, virtualizer, cache, readingAnchor, position, diagrams, diagramMetrics, tables, source, editor, wordHighlights, get pendingNavigation() { return forcedPage } }
   syncWordHighlights()
@@ -792,6 +864,7 @@ function clearTextSelection() {
 }
 
 function teardown() {
+  beginNavigation()
   goToLine.close(); wordHighlights.clear(); wordHighlights.update({ enabled: false })
   clearTextSelection()
   clearSearchResults()
@@ -841,6 +914,7 @@ function configureEditor(response) {
     documentId: () => documentId,
     saved(next) { documentId = next.documentId; expectedRevision = next.revision; bridge?.publish('saved', { documentId, revision: next.revision, previewRevision: index?.revision, needsRefresh: true }) },
     pause() {
+      beginNavigation()
       tables?.closeOverlays()
       navigation += 1
       generation += 1
@@ -1115,7 +1189,7 @@ function publicState() {
     outline: {open:!document.querySelector('#reader-outline').hidden,available:Boolean(index&&(formatRenderer||index.toc.length)),total:index?.renderer?formatOutlineTotal:index?.toc.length??0},
     dirty: Boolean(editor?.dirty), busy: Boolean(switching || editor?.busy || queryBusy || formatLoading || formatRenderer?.state().busy), needsRefresh: Boolean(editor?.needsRefresh),
     search: search.state(),
-    capabilities: { ...serviceCapabilities, commentMarks: { version:1, hostReplacement:true, records:512 }, search: search.capabilities(), projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
+    capabilities: { ...serviceCapabilities, commentMarks: { version:1, hostReplacement:true, records:512 }, search: search.capabilities(), projectionWindow: Boolean(index && !formatRenderer), sourceRangeNavigation: sourceAvailable, sourceReading: sourceAvailable && !comparisonPreview ? source?.reading ?? null : null, passageNavigation: !comparisonPreview && (sourceAvailable || index?.renderer) ? { version: 1, focusHandoff: true, maxSegments: 32 } : null, presentation: { version: 1, locale: true, palette: true, fonts: true, notesOwner: true, selectionMenuOwner: true, textSelection: true }, charts: Boolean(serviceCapabilities.charts && index?.tables.length), edit: editable, source: sourceAvailable },
     positionPrecision: editor?.dirty ? 'draft' : formatRenderer?.state().format === 'epub' ? 'exact' : 'approximate',
     position: formatRenderer ? formatRenderer.state().position : index && tables && !editor?.dirty ? { version: 1, resourceId, revision: view === 'edit' ? editor.revision : index.revision, view, location: { kind: 'line', line: position().line } } : null }
 }
@@ -1180,6 +1254,206 @@ function boundedQuote(text) {
   }
   return text.slice(0, end)
 }
+async function navigateNote(note, { signal } = {}) {
+  if (note.stale) throw Error('This note belongs to an earlier document revision')
+  return navigateSavedPassage(note.anchor, note.revision, { signal })
+}
+
+async function navigateSavedPassage(anchor, revision, { signal } = {}) {
+  signal?.throwIfAborted()
+  if (!index || revision !== index.revision)
+    throw Object.assign(Error('This saved passage belongs to an earlier document revision'), { code: 'REVISION' })
+  const precision = validatePassage(anchor, index, formatRenderer?.state())
+  passageRequest?.abort()
+  passageFocus = null
+  const controller = new AbortController()
+  passageRequest = controller
+  const signals = [controller.signal, readerAbort.signal]
+  if (signal) signals.push(signal)
+  try {
+    return await revealSavedPassage(anchor, precision, AbortSignal.any(signals))
+  } finally {
+    if (passageRequest === controller) passageRequest = null
+  }
+}
+
+async function revealSavedPassage({ location, textRange }, precision, signal) {
+  const dirty = () => Object.assign(Error('Save your edits and refresh the reading view before opening a saved passage'), { code: 'DIRTY' })
+  if (editor?.dirty || editor?.needsRefresh)
+    throw dirty()
+  // Notes can open while a preceding mode change finishes restoring its
+  // bounded reading window. Let that operation settle before taking navigation
+  // ownership, with cancellation and a finite wait instead of a spurious Save
+  // instruction for a clean document.
+  const waitingOwner = readerAbort, waitingIndex = index, waitingIntent = navigationIntent
+  for (let attempt = 0; switching || editor?.busy; attempt++) {
+    signal?.throwIfAborted()
+    if (stopped || readerAbort !== waitingOwner || waitingOwner.signal.aborted || index !== waitingIndex || navigationIntent !== waitingIntent)
+      throw new DOMException('Saved passage navigation was superseded', 'AbortError')
+    if (attempt >= 150) throw Object.assign(Error('Reader is busy. Wait for the current operation to finish and try again.'), { code: 'BUSY' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  signal?.throwIfAborted()
+  if (stopped || readerAbort !== waitingOwner || waitingOwner.signal.aborted || index !== waitingIndex || navigationIntent !== waitingIntent)
+    throw new DOMException('Saved passage navigation was superseded', 'AbortError')
+  if (editor?.dirty || editor?.needsRefresh)
+    throw dirty()
+  const segment = textRange?.segments[0]
+  locationRequest?.abort()
+  const owner = readerAbort, snapshot = index, intent = ++navigationIntent
+  const owned = () => !stopped && readerAbort === owner && !owner.signal.aborted && index === snapshot && navigationIntent === intent
+  const current = () => {
+    signal?.throwIfAborted()
+    if (!owned()) throw new DOMException('Saved passage navigation was superseded', 'AbortError')
+    return true
+  }
+  current()
+  search.suspend()
+  clearTextSelection()
+  tables?.closeOverlays()
+  let passage = null, fullCell = null, succeeded = false
+  try {
+    if (segment?.scope.kind === 'projection') {
+      const page = segment.scope.page
+      if (!Number.isSafeInteger(page) || !snapshot.pages[page] || snapshot.pages[page].table != null)
+        throw Error('The saved passage page is unavailable')
+      if (editor?.visible || source?.visible) {
+        if (editable) await switchView('preview', { restorePreview: false })
+        else await source.hide({ restore: false })
+      }
+      current()
+      const ticket = await jump(page, null, null, null, null, '', {}, { intent, signal, keepMounted: true })
+      try {
+        current()
+        if (ticket == null || ticket !== navigation) throw new DOMException('Navigation superseded', 'AbortError')
+        const node = nodes.get(tables.itemForPage[page])
+        passage = await resolveNotePassage(segment, [{ node, scope: segment.scope }], current)
+        if (!passage) throw Object.assign(Error('The saved passage no longer matches the rendered text'), { code: 'PASSAGE_MISMATCH' })
+        revealNotePassage(passage, viewport)
+      } finally {
+        if (ticket != null && ticket === navigation && readerAbort === owner && !owner.signal.aborted) { forcePage(null); schedule() }
+      }
+    } else if (segment?.scope.kind === 'cell') {
+      const scope = segment.scope
+      if (location?.kind !== 'cell' || ['table', 'row', 'column'].some(key => location[key] !== scope[key]))
+        throw Error('The saved passage does not match its table cell')
+      await navigateReadingLocation(location, { signal, intent, afterCell: async () => {
+        passage = await resolveNotePassage(segment, commentScopes(shell, { viewport }), current)
+        if (!passage) {
+          fullCell = tables.openCell(scope.table)
+          passage = await resolveNotePassage(segment, [{ node: fullCell.node, scope }], current)
+        }
+        if (!passage) throw Object.assign(Error('The saved passage no longer matches the rendered cell'), { code: 'PASSAGE_MISMATCH' })
+        revealNotePassage(passage, fullCell?.node || viewport)
+      } })
+    } else await navigateReadingLocation(location, { signal, intent })
+    current()
+    succeeded = true
+    commentMarks?.refresh()
+    bridge?.publish('state', publicState())
+    const sourceState = source?.visible ? source.code?.view.state : null
+    // The Notes modal releases focus only after successful navigation. Restore
+    // the exact selection then, without giving its former list row focus again.
+    return { precision, focus(focusSignal) {
+      const isCurrent = () => { focusSignal?.throwIfAborted(); return owned() && !editor?.visible }
+      if (!isCurrent()) return false
+      if (passage) {
+        return focusNotePassage(passage, fullCell?.node || viewport, isCurrent)
+      } else if (sourceState) {
+        const code = source?.visible && source.code
+        const state = code?.view.state
+        if (state?.doc !== sourceState.doc || !state.selection.eq(sourceState.selection)) return false
+        code.focus()
+      } else if (formatRenderer?.focus) formatRenderer.focus()
+      else viewport.focus({ preventScroll: true })
+      return true
+    } }
+  } catch (error) { fullCell?.close(); throw error }
+  // Source search uses the editor selection for its active match. A successful
+  // note owns that selection until the next explicit search navigation.
+  finally { if (owned() && !(succeeded && source?.visible)) search.repaint() }
+}
+
+async function navigateReadingLocation(location, { signal, intent, afterCell } = {}) {
+  signal?.throwIfAborted()
+  if (intent != null) return revealReadingLocation(location, { signal, intent, afterCell })
+  const nextIntent = beginNavigation()
+  const controller = new AbortController()
+  locationRequest = controller
+  const operation = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  try {
+    return await revealReadingLocation(location, { signal: operation, intent: nextIntent, afterCell })
+  } finally {
+    if (locationRequest === controller) locationRequest = null
+  }
+}
+
+async function revealReadingLocation(location, { signal, intent, afterCell }) {
+  signal?.throwIfAborted()
+  if (!location || !index) throw Error('A reading location is required')
+  const snapshot = index, lifetime = readerAbort
+  const check = () => {
+    signal?.throwIfAborted()
+    if (stopped || index !== snapshot || readerAbort !== lifetime || lifetime.signal.aborted || intent !== navigationIntent)
+      throw new DOMException('Navigation superseded', 'AbortError')
+  }
+  check()
+  if (formatRenderer) { await formatRenderer.navigate(location, { signal }); check(); bridge?.publish('state', publicState()); return }
+  if (location.kind === 'source') {
+    if (!publicState().capabilities.source) throw Error('Source is unavailable for this format')
+    const revision = index.revision
+    if (editor?.visible) {
+      // Leave clean Edit without restoring an unrelated Preview/Source position;
+      // goRange below performs the single owned Source transition.
+      await switchView('preview', { restorePreview: false })
+      if (editor.visible) throw Error('Could not leave the current editing page')
+    }
+    check()
+    if (index.revision !== revision) throw Object.assign(Error('Document revision changed while opening Source'), { code: 'REVISION' })
+    await source.goRange(location.startByte,location.endByte, { signal, intent })
+  } else if (location.kind === 'line') {
+    if (!Number.isSafeInteger(location.line) || location.line < 1 || location.line > index.sourceLines) throw Error('Source line out of range')
+    if (editor?.visible) { if (!await editor.go(location.line)) throw Error('Editor navigation failed') }
+    else if (source?.visible) {
+      if (!await source.go(location.line, { signal })) {
+        check()
+        throw Error('Could not navigate to this source line')
+      }
+    }
+    else await previewLine(location, { intent, signal })
+  } else if (location.kind === 'cell') {
+    const table = Number.isSafeInteger(location.table) && location.table >= 0 ? index.tables[location.table] : null
+    if (!table || !Number.isSafeInteger(location.row) || location.row < 0 || location.row >= table.rows || !Number.isSafeInteger(location.column) || location.column < 0 || location.column >= table.columns.length) throw Error('Table cell out of range')
+    const revision = index.revision, owner = readerAbort, controller = tables
+    const current = () => {
+      signal?.throwIfAborted()
+      if (stopped || owner.signal.aborted || readerAbort !== owner || index?.revision !== revision)
+        throw Object.assign(Error('Document revision changed while opening Preview'), { code: 'REVISION' })
+      if (intent !== navigationIntent) throw new DOMException('Navigation superseded', 'AbortError')
+      return true
+    }
+    // The explicit target replaces Source's implicit position restoration.
+    if (editor?.visible || source?.visible) {
+      if (editable) await switchView('preview', { restorePreview: false })
+      else await source.hide({ restore: false })
+    }
+    current()
+    const ticket = await jump(table.firstPage, null, location.row, null, null, '', {}, { intent, signal, keepMounted: true })
+    try {
+      current()
+      if (ticket == null || ticket !== navigation) throw new DOMException('Navigation superseded', 'AbortError')
+      await controller.go(location.table, location.row, location.column, { signal, isCurrent: () => current() && ticket === navigation })
+      current()
+      await afterCell?.()
+      current()
+    } finally {
+      if (ticket != null && ticket === navigation && readerAbort === owner && !owner.signal.aborted) { forcePage(null); schedule() }
+    }
+  } else throw Object.assign(Error('This renderer cannot resolve this location yet; retain the original location'), { code: 'UNSUPPORTED_LOCATION' })
+  check()
+  bridge?.publish('state', publicState())
+}
+
 function connectBridge() {
   const lifetime = new AbortController()
   let selectionTimer = null, selectionRequest = null, selectionGeneration = 0
@@ -1198,50 +1472,23 @@ function connectBridge() {
       if (publicState().view !== view) throw Error('Could not switch the reader view')
       result.publish('state', publicState())
     },
-    async navigate(location, { signal } = {}) {
-      signal?.throwIfAborted()
-      const intent = ++navigationIntent
-      if (!location || !index) throw Error('A reading location is required')
-      if (formatRenderer) { await formatRenderer.navigate(location); result.publish('state', publicState()); return }
-      if (location.kind === 'source') {
-        if (!publicState().capabilities.source) throw Error('Source is unavailable for this format')
-        const revision = index.revision
-        if (editor?.visible) { await switchView('source'); if (editor.visible) throw Error('Could not leave the current editing page') }
-        if (index.revision !== revision) throw Object.assign(Error('Document revision changed while opening Source'), { code: 'REVISION' })
-        await source.goRange(location.startByte,location.endByte)
-      } else if (location.kind === 'line') {
-        if (!Number.isSafeInteger(location.line) || location.line < 1 || location.line > index.sourceLines) throw Error('Source line out of range')
-        if (editor?.visible) { if (!await editor.go(location.line)) throw Error('Editor navigation failed') }
-        else if (source?.visible) await source.go(location.line)
-        else await previewLine(location, { intent, signal })
-      } else if (location.kind === 'cell') {
-        const table = Number.isSafeInteger(location.table) && location.table >= 0 ? index.tables[location.table] : null
-        if (!table || !Number.isSafeInteger(location.row) || location.row < 0 || location.row >= table.rows || !Number.isSafeInteger(location.column) || location.column < 0 || location.column >= table.columns.length) throw Error('Table cell out of range')
-        const revision = index.revision, owner = readerAbort, controller = tables
-        const current = () => {
-          signal?.throwIfAborted()
-          if (stopped || owner.signal.aborted || readerAbort !== owner || index?.revision !== revision)
-            throw Object.assign(Error('Document revision changed while opening Preview'), { code: 'REVISION' })
-          if (intent !== navigationIntent) throw new DOMException('Navigation superseded', 'AbortError')
-          return true
-        }
-        // The explicit target replaces Source's implicit position restoration.
-        if (editor?.visible || source?.visible) {
-          if (editable) await switchView('preview', { restorePreview: false })
-          else await source.hide({ restore: false })
-        }
-        current()
-        const ticket = await jump(table.firstPage, null, location.row, null, null, '', {}, { intent, signal, keepMounted: true })
-        try {
-          current()
-          if (ticket == null || ticket !== navigation) throw new DOMException('Navigation superseded', 'AbortError')
-          await controller.go(location.table, location.row, location.column, { signal, isCurrent: () => current() && ticket === navigation })
-          current()
-        } finally {
-          if (ticket != null && ticket === navigation && readerAbort === owner && !owner.signal.aborted) { forcePage(null); schedule() }
-        }
-      } else throw Object.assign(Error('This renderer cannot resolve this location yet; retain the original location'), { code: 'UNSUPPORTED_LOCATION' })
-      result.publish('state', publicState())
+    navigate: navigateReadingLocation,
+    async navigatePassage(anchor, signal) {
+      if (!publicState().capabilities.passageNavigation) throw Object.assign(Error('Saved passage navigation is unavailable'), { code: 'CAPABILITY' })
+      const result = await navigateSavedPassage(anchor, anchor.revision, { signal })
+      signal.throwIfAborted()
+      const focusToken = crypto.randomUUID()
+      passageFocus = { focusToken, focus: result.focus }
+      return { version: 1, documentId, revision: index.revision, view: publicState().view, precision: result.precision, focusToken }
+    },
+    async focusPassage(focusToken, signal) {
+      const target = passageFocus
+      if (!target || target.focusToken !== focusToken)
+        throw Object.assign(Error('The saved passage focus has expired'), { code: 'STALE_FOCUS' })
+      passageFocus = null
+      if (!await target.focus(signal))
+        throw Object.assign(Error('The saved passage focus has expired'), { code: 'STALE_FOCUS' })
+      return { version: 1, focused: true }
     },
     selection: publicSelection,
     notesChanged: () => commentMarks?.refresh(true),
@@ -1249,8 +1496,8 @@ function connectBridge() {
     async save() { if (!editable || !editor) throw Object.assign(Error('Editing was not granted'), { code: 'CAPABILITY' }); if (!await editor.save()) throw editor.error || Error('The editing page was not saved') },
     async settings(params) {
       const before = presentation.state()
-      const typography = ['contentFontSize','codeFontSize','contentFontFamily','codeFontFamily','contentFontWeight'].some(key => params[key] !== undefined) ? typographyAnchor() : null
-      presentation.update(params)
+      const typography = typographyAnchor()
+      const after = presentation.update(params)
       syncWordHighlights()
       if (embedded && (params.notes !== undefined || params.selectionMenu !== undefined)) {
         const url = new URL(location.href)
@@ -1265,10 +1512,10 @@ function connectBridge() {
         syncNotesOwner()
       }
       if (params.theme != null) window.dispatchEvent(new CustomEvent('marknoria:theme-request', { detail: { theme: params.theme } }))
-      if (params.wrap != null && params.wrap !== before.wrap) { const input = document.getElementById('wrap'); input.checked = params.wrap; input.dispatchEvent(new Event('change')) }
+      if (params.wrap != null) document.getElementById('wrap').checked = after.wrap
       if (formatRenderer && params.pdf) await formatRenderer.settings(params.pdf)
       if (formatRenderer?.state().format === 'epub' && (params.epub || params.theme)) await formatRenderer.settings({ ...(params.theme ? { theme: params.theme } : {}), ...params.epub })
-      if (typography) await refreshTypography(typography)
+      if (layoutChanged(before, after)) await refreshTypography(typography)
       schedule()
     },
     async dispose() { search.dispose(); mainLifetime.abort(); presentation.dispose(); lifetime.abort(); shell.inert = true; window.readerExperiment = null; clearTimeout(selectionTimer); selectionRequest?.abort(); stopped = true; const closing = formatRenderer?.dispose(); teardown(); editor?.dispose(); files.dispose(); clearInterval(heartbeat); clearInterval(rendererHeartbeat); await closing },

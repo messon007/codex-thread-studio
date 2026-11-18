@@ -44,7 +44,17 @@ export async function commentMarksContract(moduleUrl) {
     await wait(()=>marks.state().rectangles>0)
     check(article.textContent===text && !article.querySelector('[data-comment-ids]'),'Marker rewrote the document/EPUB CFI tree')
     check(selection.toString()===note.quote,'Painting changed the live text selection')
-    if(hasNative){check(snapshots()[0].startOffset===range.startOffset,'Wrong duplicate was underlined');check(snapshots()[0].toString()===note.quote,'Wrong comment quote painted')}
+    let paintAttribute
+    if(hasNative){
+      check(snapshots()[0].startOffset===range.startOffset,'Wrong duplicate was underlined');check(snapshots()[0].toString()===note.quote,'Wrong comment quote painted')
+      paintAttribute=article.getAttributeNames().find(name=>name.startsWith('data-marknoria-comments-'))
+      const rule=[...document.querySelectorAll('[data-comment-style]')].flatMap(style=>[...style.sheet.cssRules]).find(rule=>rule.selectorText?.includes('::highlight('))
+      const selector=rule.selectorText.replace(/::highlight\([^)]+\)/g,'')
+      const title=document.createElement('h2');title.textContent='Notes';root.append(title)
+      check(Boolean(paintAttribute)&&article.matches(selector)&&article.querySelector('em').matches(selector),'Highlight styling must cover the content scope and inline descendants')
+      check(!root.matches(selector)&&!title.matches(selector)&&!document.body.matches(selector),'Comment decoration leaked into reader chrome or Notes title')
+      title.remove()
+    }
     check(registrySize()>0,'No actual painted geometry or CSS range')
     selection.removeAllRanges(); marks.refresh();await new Promise(resolve=>setTimeout(resolve,100))
     check(marks.state().rectangles>0,'Collapsing selection removed a durable mark')
@@ -82,6 +92,7 @@ export async function commentMarksContract(moduleUrl) {
     actions[16].click();check(opened===null,'Translated all-comments action changed its semantics')
     result=[note];marks.refresh(true);await wait(()=>marks.state().records===1)
     marks.dispose();check(registrySize()===0 && !document.querySelector('[data-comment-overlay]'),'Dispose leaked owned marks')
+    if(hasNative)check(!article.hasAttribute(paintAttribute),'Dispose leaked the highlight styling scope')
     const beforeHost=calls
     marks=mountCommentMarks({owner,root,onStatus:value=>error=value})
     marks.replace(result);await wait(()=>marks.state().rectangles>0)
@@ -92,6 +103,16 @@ export async function commentMarksContract(moduleUrl) {
     rejected=false;try{marks.replace([{...note,anchor:true}])}catch{rejected=true}check(rejected,'Non-object anchor accepted')
     rejected=false;try{marks.replace([note,note])}catch{rejected=true}check(rejected,'Duplicate host mark IDs accepted')
     marks.replace([]);await wait(()=>marks.state().rectangles===0);marks.dispose()
+
+    // Host-provided ranges must not apply a highlight style to a shared root
+    // that can also contain Notes or other host UI. Use bounded geometry there.
+    marks=mountCommentMarks({owner,root,context:()=>({scopes:[],resolve:()=>[
+      {id:note.id,range:commentRangeAt(commentTextMap(article),start,end),paintRoot:root}
+    ]})})
+    marks.replace([note]);await wait(()=>marks.state().rectangles>0)
+    check(Boolean(document.querySelector('[data-comment-rect]')),'Broad host paint scope must use rectangle fallback')
+    if(hasNative)check(snapshots().length===0,'Broad host scope registered a leaking highlight')
+    marks.dispose()
 
     // The same registered table component captures and resolves partial cell
     // selections, independently of visible-column order or result pagination.
@@ -162,4 +183,120 @@ export async function commentMarksContract(moduleUrl) {
     check(commentRangeAt(commentTextMap(article),text.indexOf('😀')+1,text.indexOf('😀')+2)===null,'An endpoint split a surrogate pair')
     return { assertions, nativeHighlight:hasNative }
   } finally { marks?.dispose();other?.dispose();table?.dispose();source?.dispose();root.remove() }
+}
+
+// Separate real-input contract: the runner supplies Chromium mouse events or
+// the private Wayland compositor's pointer, never DOM dispatch/element.click.
+export async function commentPointerContract(moduleUrl) {
+  const base = new URL('.', new URL(moduleUrl, location.href))
+  if(moduleUrl.endsWith('#fallback'))Object.defineProperty(CSS,'highlights',{configurable:true,value:undefined})
+  const { mountCommentMarks } = await import(moduleUrl)
+  const { mountNotes } = await import(new URL('notes.mjs', base))
+  const { commentTextMap, commentRangeAt, captureProjectionComment } = await import(new URL('comment-ranges.mjs', base))
+  if (typeof window.marknoriaPointerInput !== 'function') throw Error('Real pointer broker required')
+  const root=document.createElement('section'), toolbar=document.createElement('nav'), article=document.createElement('article')
+  root.style.cssText='position:fixed;inset:32px;background:white;color:black;overflow:auto;font:24px/2 sans-serif'
+  article.dataset.page='0';article.dataset.marknoriaProse=''
+  article.innerHTML='<p>Marked passage with <a href="#owned-link">marked link</a> and <button>control</button> plus tail.</p>'
+  root.append(toolbar,article);document.body.append(root)
+  const owner={documentId:'pointer-owner',revision:'pointer-revision',name:'Pointer fixture.md'}, p=article.querySelector('p')
+  const original=article.innerHTML, anchor={location:{kind:'line',line:1},textRange:await captureProjectionComment(root,commentRangeAt(commentTextMap(article),0,commentTextMap(article).text.length),{kind:'line',line:1})}
+  let assertions=0, marks, notes, opens=[], operations=[], controls=0, pointerEvents=0
+  const gestureEvents=[], traceAbort=new AbortController()
+  for (const type of ['pointerdown','pointerup','click','dblclick','selectionchange']) document.addEventListener(type,event=>{
+    gestureEvents.push({type,detail:event.detail,selected:getSelection().toString().length,opens:opens.length})
+    if(gestureEvents.length>32)gestureEvents.shift()
+  },{signal:traceAbort.signal})
+  const check=(value,message)=>{if(!value)throw Error(message);assertions++}
+  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
+  const wait=async predicate=>{const until=performance.now()+8000;while(!predicate()){if(performance.now()>until)throw Error('Pointer contract timed out');await sleep(20)}}
+  const records=[{...owner,id:'pointer-note',kind:'comment',quote:article.textContent,comment:'Saved original',anchor,created:Date.now(),stale:false}]
+  const storage=async (request,context)=>{
+    check(context.owner.documentId===owner.documentId&&context.owner.revision===owner.revision,'Notes escaped host ownership')
+    operations.push(request.operation)
+    if(request.operation==='list')return {items:structuredClone(records),total:records.length,limit:64}
+    if(request.operation==='get')return structuredClone(records.find(note=>note.id===request.id))
+    if(request.operation==='update'){records.find(note=>note.id===request.id).comment=request.comment;return {updated:true}}
+    throw Error('Unexpected host operation '+request.operation)
+  }
+  const point=node=>{const r=node.getBoundingClientRect();return {x:r.left+Math.min(8,r.width/2),y:r.top+r.height/2}}
+  const textPoint=()=>point(commentRangeAt(commentTextMap(p),2,4))
+  const input=async(type,at)=>{await window.marknoriaPointerInput({type,...at});await sleep(30)}
+  const click=async node=>input('click',point(node))
+  const button=label=>[...document.querySelectorAll('.notes-dialog button')].find(node=>node.textContent===label)
+  const close=async()=>{await click(document.querySelector('.notes-dialog .dialog-close'));await wait(()=>!document.querySelector('.notes-dialog'))}
+  article.querySelector('button').addEventListener('click',()=>controls++)
+  root.addEventListener('pointerdown',event=>{if(event.isTrusted)pointerEvents++})
+  try {
+    notes=mountNotes({owner,root,toolbar,storage,selection:()=>null,selectionMenu:false})
+    marks=mountCommentMarks({owner,root,open:id=>{opens.push(id);notes.openComment(id)}})
+    marks.replace(records);await wait(()=>marks.state().rectangles>0)
+    const originalCursor=getComputedStyle(p).cursor
+    await input('move',textPoint());check(getComputedStyle(p).cursor==='pointer','Marked text has no hand cursor')
+    marks.refresh();await sleep(150)
+    check(getComputedStyle(p).cursor==='pointer','Repainting cleared the hand under a stationary pointer')
+    await input('move',point(toolbar));check(getComputedStyle(p).cursor===originalCursor,'Leaving a mark did not restore the host cursor')
+    await input('click',textPoint());await wait(()=>document.querySelector('.notes-dialog textarea')?.value==='Saved original')
+    await input('screenshot',{label:'single-comment'})
+    check(opens.length===1&&opens[0]==='pointer-note','Ordinary marked-text click did not open its saved comment')
+    check(!document.querySelector('.notes-detail'),'Marked click opened the Notes list instead of the editor')
+    const field=document.querySelector('.notes-dialog textarea');await click(field)
+    // Select the stored draft with the editor API; replacement characters and
+    // every activation still travel through the browser/native input path.
+    field.select();await input('text',{text:'Edited by pointer'})
+    check(field.value==='Edited by pointer','Real keyboard input did not replace the comment draft')
+    await click(button('Save comment'));await wait(()=>!document.querySelector('.notes-dialog'))
+    check(records[0].comment==='Edited by pointer','Save did not persist before closing')
+    getSelection().removeAllRanges();await sleep(600)
+    await input('click',textPoint());await wait(()=>document.querySelector('.notes-dialog textarea')?.value==='Edited by pointer')
+    await input('screenshot',{label:'edited-comment'})
+    check(records[0].comment==='Edited by pointer'&&operations.includes('update')&&opens.length===2,'Edit/save/reopen lost the stored comment')
+    await close();getSelection().removeAllRanges();await sleep(600)
+    let before=opens.length
+    const at=textPoint()
+    await input('double',at);await sleep(650)
+    check(getSelection().toString().trim().length>0&&opens.length===before&&!document.querySelector('.notes-dialog'),'Double click no longer selects a word natively')
+    // The real table controller publishes this synchronously from cell click,
+    // before the document-level mark listener and native selection collapse.
+    p.addEventListener('click',()=>document.dispatchEvent(new Event('selectionchange')),{once:true})
+    // Do not clear the native selection: the first ordinary click must both
+    // collapse it and open the saved comment, as after creating a comment.
+    await input('click',at);await wait(()=>document.querySelector('.notes-dialog textarea'))
+    check(opens.length===before+1,'Collapsing a word selection required a second comment click')
+    await close();before=opens.length
+    getSelection().removeAllRanges();await sleep(600)
+    await input('down',at);await input('move',{x:at.x+70,y:at.y});await input('up',{x:at.x+70,y:at.y});await sleep(650)
+    check(getSelection().toString().length>0&&opens.length===before,'Drag selection opened a comment')
+    await input('click',at);await wait(()=>document.querySelector('.notes-dialog textarea'))
+    check(opens.length===before+1,'Collapsing a drag selection required a second comment click')
+    await close();before=opens.length
+    getSelection().removeAllRanges();await sleep(600)
+    const link=article.querySelector('a')
+    await click(link);await sleep(650)
+    check(location.hash==='#owned-link'&&opens.length===before,'Marked link click was intercepted')
+    await click(article.querySelector('button'));await sleep(650)
+    check(controls===1&&opens.length===before,'Marked control click was intercepted')
+    await input('move',point(link));await wait(()=>!document.querySelector('.comment-mark-popup').hidden)
+    await click(document.querySelector('.comment-mark-popup button'));await wait(()=>document.querySelector('.notes-dialog textarea'))
+    check(opens.length===before+1,'Marked link lost hover access');await close();getSelection().removeAllRanges();await sleep(600)
+    records.push({...structuredClone(records[0]),id:'overlap-note',comment:'Overlapping note'})
+    marks.replace(records);await wait(()=>marks.state().records===2)
+    const prior=opens.length
+    await input('click',textPoint());await wait(()=>!document.querySelector('.comment-mark-popup').hidden)
+    await input('screenshot',{label:'overlap-chooser'})
+    check(document.querySelectorAll('.comment-mark-popup button').length===2&&opens.length===prior,'Overlapping click bypassed the chooser')
+    await click(document.querySelectorAll('.comment-mark-popup button')[1]);await wait(()=>document.querySelector('.notes-dialog textarea')?.value==='Overlapping note')
+    check(opens.at(-1)==='overlap-note','Overlap chooser opened a different saved record');await close();getSelection().removeAllRanges();await sleep(600)
+    marks.replace([records[0]]);await wait(()=>marks.state().records===1)
+    await input('click',textPoint());marks.dispose();const count=opens.length;await sleep(650)
+    check(opens.length===count,'Disposed reader delivered a delayed click callback')
+    check(getComputedStyle(p).cursor===originalCursor,'Disposal left a comment cursor behind')
+    check(article.innerHTML===original,'Comment interaction mutated the source DOM')
+    check(pointerEvents>=9,'Trusted pointer sequence missing: '+pointerEvents)
+    return {assertions,realPointer:true,editSaveReopen:true,doubleClick:true,dragSelection:true,markedLinks:true,overlaps:true}
+  } catch (error) {
+    try { await window.marknoriaPointerInput({type:'screenshot',label:'failure'}) } catch {}
+    error.message+='; gestures='+JSON.stringify(gestureEvents)
+    throw error
+  } finally {traceAbort.abort();marks?.dispose();notes?.dispose();root.remove();getSelection().removeAllRanges()}
 }

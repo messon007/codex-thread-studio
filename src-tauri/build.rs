@@ -1,12 +1,5 @@
-#[path = "build/comment_compat.rs"]
-mod comment_compat;
-#[path = "build/reader_compat.rs"]
-mod reader_compat;
-
 fn main() {
     verify_typescript_assets();
-    reader_compat::generate();
-    comment_compat::generate();
     tauri_build::build()
 }
 

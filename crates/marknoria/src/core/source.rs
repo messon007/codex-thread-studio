@@ -167,6 +167,32 @@ pub fn read_source(
     })
 }
 
+/// Open a bounded source window around an absolute line without splitting its
+/// preceding context at an arbitrary byte offset.
+pub(crate) fn read_source_with_context(
+    directory: &Path,
+    index: &Index,
+    line: usize,
+    before: usize,
+) -> io::Result<SourceWindow> {
+    if line == 0 || line > index.source_lines || before >= SOURCE_LINES {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Source context out of range"));
+    }
+    let mut lines = File::open(directory.join("lines.bin"))?;
+    let target = line_offset(&mut lines, line)?;
+    // Reserve most of the byte budget for the target and following lines.
+    let context_limit = target.saturating_sub(SOURCE_BYTES / 4);
+    let earliest = line_at(&mut lines, index.source_lines, context_limit)?;
+    let earliest = earliest + usize::from(line_offset(&mut lines, earliest)? < context_limit);
+    let start = line.saturating_sub(before).max(earliest);
+    let window = read_source(directory, index, Some(start), None, false)?;
+    if window.end <= target && window.end < index.source_bytes {
+        // An exceptionally long target line may consume the full byte window.
+        return read_source(directory, index, Some(line), None, false);
+    }
+    Ok(window)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +234,12 @@ mod tests {
         let target = read_source(directory.path(), &index, Some(400), None, false).unwrap();
         assert_eq!(target.line, 400);
         assert!(target.text.starts_with("Line 399"));
+        let context = read_source_with_context(directory.path(), &index, 400, 24).unwrap();
+        assert_eq!(context.line, 376);
+        assert_eq!(context.end_line, 575);
+        assert_eq!(context.text, text[context.start..context.end]);
+        assert_eq!(read_source_with_context(directory.path(), &index, 3, 24).unwrap().line, 1);
+        assert!(read_source_with_context(directory.path(), &index, 400, SOURCE_LINES).is_err());
         assert!(read_source(directory.path(), &index, Some(0), None, false).is_err());
         assert!(read_source(directory.path(), &index, None, Some(text.len() + 1), false).is_err());
         assert!(read_source(directory.path(), &index, Some(1), Some(0), false).is_err());
@@ -241,6 +273,11 @@ mod tests {
         .unwrap();
         index.source_bytes = text.len();
         index.source_lines = starts.len();
+        let context = read_source_with_context(directory.path(), &index, 3, 24).unwrap();
+        assert_eq!(context.line, 3);
+        assert!(context.ends_mid_line);
+        let end = read_source_with_context(directory.path(), &index, index.source_lines, 24).unwrap();
+        assert_eq!(end.end, text.len());
         let mut offset = 0;
         let mut combined = String::new();
         let mut continued = false;

@@ -50,7 +50,7 @@ try {
     'host-client.mjs',
     'pdf-reader.mjs',
     'epub-reader.mjs',
-    'notes.mjs','comment-ranges.mjs','comment-marks.mjs','source-comment-marks.mjs',
+    'notes.mjs','note-passage.mjs','comment-ranges.mjs','comment-marks.mjs','source-comment-marks.mjs',
     'table-query.mjs',
     'query-help.mjs',
     'jq-query.mjs'

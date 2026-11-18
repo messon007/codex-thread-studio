@@ -357,6 +357,7 @@ export function mountTableView(article, options) {
     captureSelection: cells.captureSelection,
     isOpen: cells.isOpen,
     closeOverlay: cells.close,
+    openCell: cells.openSelected,
     position: layout.position,
     anchor: anchorRow,
     capture: () => {

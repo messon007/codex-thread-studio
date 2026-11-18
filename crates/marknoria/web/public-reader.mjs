@@ -1,7 +1,7 @@
 import { installReaderBridge } from './reader-bridge.mjs'
 import { queryOperation } from './query-operation.mjs'
 
-export function publicReader({ origins, state, index, api, renderer = () => null, search, setView, navigate, navigateFragment, contents, selection, setCommentMarks, notesChanged, save, settings, dispose }) {
+export function publicReader({ origins, state, index, api, renderer = () => null, search, setView, navigate, navigatePassage, focusPassage, navigateFragment, contents, selection, setCommentMarks, notesChanged, save, settings, dispose }) {
   let imageRequests = 0
   const queryId = id => {
     if (typeof id !== 'string' || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id)) throw Error('Invalid query identity')
@@ -23,6 +23,25 @@ export function publicReader({ origins, state, index, api, renderer = () => null
   return installReaderBridge({ origins, state, onDispose: dispose, commands: {
     setView: checked(async params => { if (!['preview', 'source', 'edit'].includes(params.view)) throw Error('Invalid reader view'); await setView(params.view); return state() }),
     navigate: checked(async (params, signal) => { signal.throwIfAborted(); await navigate(params.location, { signal }); signal.throwIfAborted(); current(params); return state() }),
+    navigatePassage: checked(async (params, signal) => {
+      const { anchor } = params
+      if (anchor?.version !== 1) throw Object.assign(Error('Unsupported saved passage version'), { code: 'VERSION' })
+      const owner = current(params)
+      // Persisted anchors use stable resource identity across reader sessions.
+      // Anchors with only a document ID are scoped to their original session.
+      const sameResource = anchor.resourceId === undefined ? anchor.documentId === owner.documentId
+        : typeof anchor.resourceId === 'string' && anchor.resourceId === owner.resourceId
+      if (!sameResource || anchor.revision !== owner.revision)
+        throw Object.assign(Error('Saved passage document or revision changed'), { code: 'REVISION' })
+      const result = await navigatePassage(anchor, signal)
+      signal.throwIfAborted()
+      current(params)
+      return result
+    }),
+    focusPassage: checked((params, signal) => {
+      signal.throwIfAborted()
+      return focusPassage(params.focusToken, signal)
+    }),
     navigateFragment: checked(async params => {
       if (typeof params.fragment !== 'string' || !params.fragment.length || new TextEncoder().encode(params.fragment).length>8192 || typeof navigateFragment !== 'function') throw Error('Invalid or unsupported document fragment')
       await navigateFragment(params.fragment);return state()
@@ -96,7 +115,7 @@ export function publicReader({ origins, state, index, api, renderer = () => null
       else {
         const heading = index().toc.find(item => item.id === params.id)
         if (!heading) throw Error('Unknown outline identity')
-        await navigate({ kind: 'line', line: heading.line })
+        await navigate({ kind: 'line', line: heading.line }, { signal })
       }
       return state()
     }),

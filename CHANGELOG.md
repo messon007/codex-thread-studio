@@ -13,6 +13,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Changed
 
+- Update the fixed MarkNoria Web SDK to `18d122e`: share bounded continuous Source and contextual line jumps, restore exact saved comment passages through the public protocol, and retire the local layout/comment compatibility assets.
+
 - Update the fixed MarkNoria Web SDK to `0a60f69`, including bounded large Markdown table indexing and original-row access while retaining Studio-owned comments, selection actions and reader lease recovery.
 
 ### Fixed
@@ -23,7 +25,7 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 - Resume long Codex sessions through bounded history pages on cold opens and background refreshes. Preserve complete transcript ordering and report App Server transport failures immediately instead of a misleading resume timeout.
 - Open Markdown reports with oversized or densely formatted table rows using bounded previews and paged original-source access, without truncating complete query input.
-- Send only changed reader presentation settings so theme and language updates do not unnecessarily reset measured page heights. A narrowly pinned temporary reader fix restores mounted-page measurements after actual typography/layout changes, tracked upstream in MarkNoria #38.
+- Send only changed reader presentation settings so theme and language updates do not unnecessarily reset measured page heights. The upstream reader now restores mounted-page measurements after actual typography/layout changes (MarkNoria #38).
 
 ## [0.4.0] - 2026-11-09
 

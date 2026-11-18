@@ -13,6 +13,7 @@
     "check:epub-layout": "node tests/browser/epub-layout-check.mjs",
     "check:search-count": "node tests/server/search-count-check.mjs",
     "check:embedded-search": "node tests/browser/embedded-search-check.mjs",
+    "check:embedded-reading": "node tests/browser/embedded-reading-check.mjs",
     "check:search-controller": "node tests/browser/search-controller-check.mjs",
     "check:markdown-references": "node tests/browser/markdown-references-check.mjs",
     "check:reference-policy": "node tests/browser/reference-policy-check.mjs",
@@ -41,7 +42,8 @@
     "check:comment-notes": "node tests/browser/comment-notes-check.mjs",
     "check:syntax-features": "python3 tests/server/syntax-feature-check.py",
     "check:table-navigation": "node tests/browser/embedded-table-navigation-check.mjs",
-    "check:large-markdown-tables": "node tests/browser/large-markdown-tables-check.mjs"
+    "check:large-markdown-tables": "node tests/browser/large-markdown-tables-check.mjs",
+    "check:reader-layout": "node tests/browser/reader-layout-check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

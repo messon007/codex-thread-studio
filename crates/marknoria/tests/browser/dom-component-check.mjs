@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { readFile, mkdtemp, realpath } from 'node:fs/promises'
+import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-export async function runDomContract({ files, contract, entry, moduleUrl }) {
+export async function runDomContract({ files, contract, entry, moduleUrl, pointer = false }) {
   const server = createServer(async (request, response) => {
     if (request.url === '/') {
       response.setHeader('Content-Type', 'text/html')
@@ -39,7 +40,7 @@ export async function runDomContract({ files, contract, entry, moduleUrl }) {
         (
           await promisify(execFile)(
             '/usr/bin/python3',
-            ['tests/browser/contract-webkit.py', url, ...(compact ? ['480', '480'] : [])],
+            [pointer ? 'tests/browser/comment-pointer-webkit.py' : 'tests/browser/contract-webkit.py', url, ...(compact ? ['480', '480'] : [])],
             {
               timeout: 190000
             }
@@ -53,10 +54,22 @@ export async function runDomContract({ files, contract, entry, moduleUrl }) {
     const page = await browser.newPage(compact ? { viewport: { width: 480, height: 480 } } : {}),
       errors = []
     page.on('pageerror', (e) => errors.push(String(e)))
+    const artifacts = pointer ? await mkdtemp(join(await realpath('target'), 'comment-pointer-')) : null
+    if (pointer) await page.exposeFunction('marknoriaPointerInput', async value => {
+      if (value.type === 'screenshot') { if (!/^[a-z-]{1,40}$/.test(value.label)) throw Error('Invalid screenshot label'); await page.screenshot({ path: join(artifacts, value.label + '.png') }); return }
+      if (value.type === 'text') { await page.keyboard.type(value.text); return }
+      await page.mouse.move(value.x, value.y)
+      if (value.type === 'click') await page.mouse.click(value.x, value.y)
+      else if (value.type === 'double') await page.mouse.dblclick(value.x, value.y)
+      else if (value.type === 'down') await page.mouse.down()
+      else if (value.type === 'up') await page.mouse.up()
+      else if (value.type !== 'move') throw Error('Unknown pointer action')
+      await page.waitForTimeout(50)
+    })
     await page.goto(url)
     const result = await page.evaluate(async () => (await import('/contract.mjs')).run())
     assert.deepEqual(errors, [])
-    return { ok: true, ...result, browserVersion: browser.version() }
+    return { ok: true, ...result, ...(artifacts ? { artifacts } : {}), browserVersion: browser.version() }
   } finally {
     await browser?.close()
     server.closeAllConnections()

@@ -358,6 +358,13 @@ export function mountTableCells(
   return {
     selection,
     isOpen: () => Boolean(dialog?.open),
+    openSelected() {
+      if (!selected?.isConnected || !content.contains(selected) || preview(selected))
+        throw Error('The full saved cell is unavailable in this view')
+      viewCell(selected)
+      const target = dialog
+      return { node: target.querySelector('.table-cell-full'), close: () => { if (dialog === target) close() } }
+    },
     close: () => close(),
     async captureSelection(options = {}, signal) {
       const value = selection(options)

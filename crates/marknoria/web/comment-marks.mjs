@@ -11,13 +11,32 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
   const lifetime = new AbortController(), options = { signal: lifetime.signal }, labels = uiLabels(translate, options)
   let disposed = false, running = false, pending = false, frame = null, timer = null, request = null, generation = 0, fetched = null, records = [], explicit = [], hitboxes = [], hover = null, hideTimer = null
   const hoverRealms = new Map(), modalLayers = new Map(), realms = new Map(), overlay = document.createElement('div'), popup = document.createElement('div')
+  const cursorClass = name + '-pointer'
+  const paintAttribute = 'data-' + name, paintRoots = new Set()
+  let cursorTarget = null, cursorHadClass = false, lastPointer = null
+  function clearCursor() {
+    if(cursorTarget){
+      cursorTarget.classList.remove(cursorClass)
+      if(!cursorHadClass&&cursorTarget.getAttribute('class')==='')cursorTarget.removeAttribute('class')
+    }
+    cursorTarget=null
+  }
+  function pointCursor(target) {
+    if(cursorTarget===target)return
+    clearCursor()
+    if(target?.classList){cursorTarget=target;cursorHadClass=target.hasAttribute('class');target.classList.add(cursorClass)}
+  }
+  function openNote(id) { lastPointer=null; clearCursor(); open(id) }
   overlay.dataset.commentOverlay = ''; overlay.ariaHidden = 'true'
   overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:20;overflow:hidden'
   popup.className = 'comment-mark-popup'; popup.setAttribute('role','group'); labels.set(popup,'Comments',{},'aria-label'); popup.hidden = true
   popup.style.cssText = 'position:fixed;z-index:1500;padding:6px 10px;border:1px solid var(--reader-border,#ccd5d9);border-radius:6px;background:var(--reader-panel,#fff);color:var(--reader-text,#243234);box-shadow:0 3px 12px #0002;cursor:pointer'
   document.body.append(overlay, popup)
-  function clearPaint() {
+  function clearPaint(preserveCursor = false) {
+    if(!preserveCursor)clearCursor()
     for (const [realm, style] of realms) { realm.defaultView?.CSS?.highlights?.delete(name); style.remove() }
+    for (const node of paintRoots) node.removeAttribute(paintAttribute)
+    paintRoots.clear()
     realms.clear(); overlay.replaceChildren(); for (const layer of modalLayers.values()) layer.remove(); modalLayers.clear(); hitboxes = []
   }
   const bounds = node => node.getBoundingClientRect()
@@ -52,7 +71,7 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
         for (const entry of entries) {
           if (entry.hash !== segment.textHash || !entry.node.isConnected) continue
           const resolved = commentRangeAt(entry.map, segment.startUtf16, segment.endUtf16)
-          if (resolved) shapes.push({ id: note.id, range: resolved, clip: entry.clip || current.viewport || viewport })
+          if (resolved) shapes.push({ id: note.id, range: resolved, paintRoot: entry.node, clip: entry.clip || current.viewport || viewport })
         }
       }
     }
@@ -60,7 +79,7 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
     if (extra.length > 512) throw Error('Comment mark resolver exceeds its budget')
     shapes.push(...extra)
     if (ticket !== generation || disposed) return
-    clearPaint()
+    clearPaint(true)
     const fragment = document.createDocumentFragment()
     const proposed = getComputedStyle(root).getPropertyValue('--reader-brand').trim()
     const color = proposed.length < 128 && window.CSS.supports('color',proposed) ? proposed : '#287b79'
@@ -70,8 +89,17 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
       if (rects.length > COMMENT_MARK_PROFILE.rectangles - count) throw Error('Comment marks exceed their rectangle budget')
       const realm = shape.range?.startContainer.ownerDocument, view = realm?.defaultView
       if (realm) { activeRealms.add(realm); listenRealm(realm, shape.frame) }
-      const native = Boolean(view?.CSS?.highlights && typeof view.Highlight === 'function')
-      if (native) { const ranges = grouped.get(realm) || []; ranges.push(shape.range); grouped.set(realm, ranges) }
+      const ancestor = shape.range?.commonAncestorContainer
+      const scope = shape.paintRoot || (ancestor?.nodeType === 1 ? ancestor : ancestor?.parentElement)
+      // A provider spanning the host body must use the bounded rectangle
+      // fallback; styling that ancestor would include unrelated dialog chrome.
+      const contentScope = shape.range && scope && scope.ownerDocument === realm && scope.contains(shape.range.startContainer) && scope.contains(shape.range.endContainer)
+        && !(realm === document && (scope === document.body || scope === document.documentElement || scope.contains(root) || scope.contains(popup)))
+      const native = Boolean(contentScope && view?.CSS?.highlights && typeof view.Highlight === 'function')
+      if (native) {
+        scope.setAttribute(paintAttribute, ''); paintRoots.add(scope)
+        const ranges = grouped.get(realm) || []; ranges.push(shape.range); grouped.set(realm, ranges)
+      }
       for (const rect of rects) {
         count++
         const box = rectangle(rect, shape.clip, shape.frame)
@@ -92,12 +120,16 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
     for (const [realm, ranges] of grouped) {
       const style = realm.createElement('style'); style.dataset.commentStyle='' 
       // Studio's dashed anchor treatment (MIT); see third-party/README.md.
-      style.textContent = `::highlight(${name}){text-decoration-line:underline;text-decoration-style:dashed;text-decoration-color:${color};text-decoration-thickness:1px;text-underline-offset:.24em}`
+      // WebKit can paint a global highlight decoration on unrelated dialog
+      // text. Limit its style to the actual content scopes, without wrapping
+      // text or changing source offsets / EPUB CFI child positions.
+      style.textContent = `:where([${paintAttribute}],[${paintAttribute}] *)::highlight(${name}){text-decoration-line:underline;text-decoration-style:dashed;text-decoration-color:${color};text-decoration-thickness:1px;text-underline-offset:.24em}`
       realm.head.append(style); realms.set(realm, style)
       realm.defaultView.CSS.highlights.set(name, new realm.defaultView.Highlight(...ranges))
     }
     overlay.replaceChildren(fragment)
     for(const [realm,controller] of hoverRealms)if(!activeRealms.has(realm)){controller.abort();hoverRealms.delete(realm)}
+    updateCursor()
     root.dataset.commentMarks = String(hitboxes.length)
   }
   function checked(value) {
@@ -174,47 +206,120 @@ export function mountCommentMarks({ owner, root, viewport = root, load = null, c
   observer.observe(root, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['hidden','data-ready','data-state','style'] })
   const dialogs = new MutationObserver(() => refresh())
   dialogs.observe(document.body, { childList: true })
-  document.addEventListener('scroll', () => { clearHover(); refresh() }, { ...options, capture: true, passive: true })
+  document.addEventListener('scroll', () => { clearCursor(); clearHover(); refresh() }, { ...options, capture: true, passive: true })
   window.addEventListener('resize', () => refresh(), options)
   const theme = new MutationObserver(() => refresh())
   theme.observe(document.documentElement, { attributes:true,attributeFilter:['data-theme','style','class'] })
   theme.observe(root, { attributes:true,attributeFilter:['style','class'] })
   root.addEventListener('marknoria:projectionchange', () => refresh(), options)
-  function clearHover() { clearTimeout(hover); clearTimeout(hideTimer); popup.hidden=true }
+  // A click is committed only after the double-click interval. Do not open a
+  // modal during a native text gesture or consume the host's pointer events.
+  let gesture = null
+  function clearHover() { clearTimeout(timer); timer=null; gesture=null; clearTimeout(hover); clearTimeout(hideTimer); popup.hidden=true }
+  const selecting = realm => Boolean(realm.getSelection?.()?.toString() || document.getSelection()?.toString())
+  const interactive = target => !target?.closest || target.isContentEditable || target.closest('a,button,input,textarea,select,option,summary,audio,video,[role="button"],[role="link"],[role="checkbox"],[role="switch"],[role="menuitem"],.comment-mark-popup')
+  function atPointer(event, frame) {
+    const frameBox=frame?.getBoundingClientRect()
+    return { x:event.clientX+(frameBox?.left||0), y:event.clientY+(frameBox?.top||0) }
+  }
+  const hits = ({x,y}) => hitboxes.filter(box=>x>=box.left&&x<=box.right&&y>=box.top&&y<=box.bottom)
+  function updateCursor() {
+    if(!lastPointer||disposed||lastPointer.buttons){clearCursor();return}
+    const {realm,frame,x,y}=lastPointer, frameBox=frame?.getBoundingClientRect()
+    const surface=document.elementFromPoint(x,y)
+    if(frame&&(!frame.isConnected||surface!==frame)){clearCursor();return}
+    const target=frame?realm.elementFromPoint(x-frameBox.left,y-frameBox.top):surface
+    const host=frame||target
+    const marked=host&&!interactive(target)&&hits({x,y}).some(box=>
+      host.closest?.('dialog[open]')===(box.modal||null)&&(box.modal?box.modal.contains(host):root.contains(host)))
+    pointCursor(marked?target:null)
+  }
+  function showChoices(found) {
+    if(disposed || !found.length)return
+    const ids = [...new Set(found.map(box=>box.id))], box=found[0]
+    const parent=box.modal||document.body
+    if(popup.parentElement!==parent)parent.append(popup)
+    for (const button of popup.querySelectorAll('button')) labels.clear(button)
+    popup.replaceChildren()
+    for (const [index,id] of ids.slice(0,16).entries()) {
+      const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer'
+      labels.set(button,ids.length===1?'View comment':'Comment {current} / {total}',{current:index+1,total:ids.length})
+      button.addEventListener('click',()=>{clearHover();openNote(id)}, {once:true})
+      popup.append(button)
+    }
+    if(ids.length>16){const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';labels.set(button,'View all comments');button.addEventListener('click',()=>{clearHover();openNote(null)});popup.append(button)}
+    popup.style.left = `${Math.max(8, Math.min(innerWidth - 200, box.left))}px`
+    popup.style.top = `${Math.max(8, Math.min(innerHeight - Math.min(400,popup.scrollHeight||40), box.bottom + 4))}px`
+    popup.style.maxHeight='min(400px,80vh)';popup.style.overflow='auto';popup.style.display='';popup.hidden=false
+  }
+  function clickPassage(event, realm, frame) {
+    const down=gesture;gesture=null
+    // Some engines collapse an existing selection as the click's default
+    // action, after dispatch. The delayed activation checks the final selection.
+    if(!down || down.realm!==realm || event.defaultPrevented || event.button!==0 || event.detail!==1 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || interactive(event.target))return
+    const point=atPointer(event,frame), found=hits(point).filter(box=>{
+      const target=frame||event.target
+      return target.closest?.('dialog[open]')===(box.modal||null) && (box.modal ? box.modal.contains(target) : root.contains(target))
+    })
+    if(Math.hypot(point.x-down.x,point.y-down.y)>5 || !found.length)return
+    const ids=[...new Set(found.map(box=>box.id))]
+    if(!ids.some(id=>down.ids.includes(id)))return
+    clearTimeout(hover)
+    timer=setTimeout(()=>{
+      timer=null
+      if(disposed || !event.target.isConnected || frame&&!frame.isConnected || selecting(realm))return
+      const current=hits(point), liveIds=[...new Set(current.map(box=>box.id))]
+      if(liveIds.length!==ids.length || ids.some(id=>!liveIds.includes(id)))return
+      if(ids.length===1){clearHover();openNote(ids[0])}else showChoices(current)
+    },500)
+  }
   function pointerMove(event, frame = null) {
     clearTimeout(hideTimer)
     if (popup.contains(event.target)) return
     clearTimeout(hover)
-    if (event.buttons || (event.target.ownerDocument || event.currentTarget || document).getSelection?.()?.toString() || document.getSelection()?.toString()) { clearHover(); return }
+    if (selecting(event.target.ownerDocument || event.currentTarget || document)) { clearHover(); return }
+    if (event.buttons) { clearTimeout(hover); popup.hidden=true; return }
     const frameBox=frame?.getBoundingClientRect(),x=event.clientX+(frameBox?.left||0),y=event.clientY+(frameBox?.top||0)
     const found=hitboxes.filter(box=>x>=box.left&&x<=box.right&&y>=box.top&&y<=box.bottom)
     if (!found.length) { hideTimer=setTimeout(()=>{if(!popup.contains(document.activeElement))popup.hidden=true},250);return }
-    hover = setTimeout(() => {
-      if (disposed) return
-      const ids = [...new Set(found.map(box=>box.id))], box=found[0]
-      const parent=box.modal||document.body
-      if(popup.parentElement!==parent)parent.append(popup)
-      for (const button of popup.querySelectorAll('button')) labels.clear(button)
-      popup.replaceChildren()
-      for (const [index,id] of ids.slice(0,16).entries()) {
-        const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer'
-        labels.set(button,ids.length===1?'View comment':'Comment {current} / {total}',{current:index+1,total:ids.length})
-        button.addEventListener('click',()=>{clearHover();open(id)}, {once:true})
-        popup.append(button)
-      }
-      if(ids.length>16){const button=document.createElement('button');button.type='button';button.style.cssText='display:block;width:100%;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';labels.set(button,'View all comments');button.addEventListener('click',()=>{clearHover();open(null)});popup.append(button)}
-      popup.style.left = `${Math.max(8, Math.min(innerWidth - 200, box.left))}px`
-      popup.style.top = `${Math.max(8, Math.min(innerHeight - Math.min(400,popup.scrollHeight||40), box.bottom + 4))}px`
-      popup.style.maxHeight='min(400px,80vh)';popup.style.overflow='auto';popup.style.display='';popup.hidden=false
-    },400)
+    hover = setTimeout(() => showChoices(hits(atPointer(event,frame))),400)
   }
+
   function listenRealm(realm, frame = null) {
     if(hoverRealms.has(realm))return
     const controller=new AbortController();hoverRealms.set(realm,controller)
+    // Lease only the element under an exact mark hit. Do not replace the
+    // host's inline cursor or make a whole paragraph permanently clickable.
+    const cursorStyle=realm.createElement('style');cursorStyle.dataset.commentStyle=''
+    cursorStyle.textContent=`.${cursorClass}{cursor:pointer!important}`
+    realm.head.append(cursorStyle)
+    controller.signal.addEventListener('abort',()=>{clearCursor();cursorStyle.remove()},{once:true})
     realm.fonts?.addEventListener('loadingdone',()=>refresh(),{signal:controller.signal})
-    realm.addEventListener('pointermove',event=>pointerMove(event,frame),{signal:controller.signal})
-    realm.addEventListener('pointerdown',event=>{if(!popup.contains(event.target))clearHover()},{signal:controller.signal})
-    if(realm!==document)realm.addEventListener('scroll',()=>{clearHover();refresh()},{signal:controller.signal,capture:true,passive:true})
+    realm.addEventListener('pointermove',event=>{
+      lastPointer={...atPointer(event,frame),realm,frame,buttons:event.buttons}
+      updateCursor()
+      if(gesture){const point=atPointer(event,frame);if(event.buttons&&Math.hypot(point.x-gesture.x,point.y-gesture.y)>5)gesture=null}
+      pointerMove(event,frame)
+    },{signal:controller.signal})
+    realm.addEventListener('pointerout',event=>{if(!event.relatedTarget||!realm.documentElement.contains(event.relatedTarget)){lastPointer=null;clearCursor()}},{signal:controller.signal})
+    realm.addEventListener('pointerdown',event=>{
+      if(popup.contains(event.target))return
+      clearHover()
+      // A normal click may collapse a selection left by adding a comment.
+      // Judge the resulting selection after the gesture, not before it starts.
+      if(event.defaultPrevented || event.button!==0 || event.isPrimary===false || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || interactive(event.target))return
+      const point=atPointer(event,frame), found=hits(point)
+      if(found.length)gesture={...point,realm,ids:[...new Set(found.map(box=>box.id))]}
+    },{signal:controller.signal})
+    realm.addEventListener('click',event=>clickPassage(event,realm,frame),{signal:controller.signal})
+    realm.addEventListener('dblclick',()=>clearHover(),{signal:controller.signal})
+    realm.addEventListener('pointercancel',()=>{lastPointer=null;clearCursor();clearHover()},{signal:controller.signal})
+    // Table cell selection publishes synchronously while click is bubbling,
+    // before the browser has collapsed the previous native text selection.
+    // Keep the candidate until click/default handling finishes; movement and
+    // the delayed final-selection check still reject real selection gestures.
+    realm.addEventListener('selectionchange',()=>{if(!gesture&&selecting(realm))clearHover()},{signal:controller.signal})
+    if(realm!==document)realm.addEventListener('scroll',()=>{clearCursor();clearHover();refresh()},{signal:controller.signal,capture:true,passive:true})
   }
   listenRealm(document)
   refresh()

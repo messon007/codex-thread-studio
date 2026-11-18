@@ -126,6 +126,7 @@ mounting its first view.
 | `setView` | `view: preview/source/edit`, checked against granted format capabilities |
 | `contents` | `open:boolean`; uses the same saved-outline refresh and busy handling as the reader's Contents control |
 | `navigate` | `location: source/line/cell/pdf/epub/epubChapter`; exact source byte ranges open Source and select the LF-normalized DOM range; unsupported locations return an error intact |
+| `navigatePassage`, `focusPassage` | Reveal a revision-owned saved anchor, then hand focus to the passage after the host closes its UI. See [Saved passages](#saved-passages). |
 | `save` | Saves the current editor page; separate edit and preview revisions remain explicit |
 | `assetInfo` | `id` from `state.document.assets`; returns bounded preview dimensions/frame timing without cache filenames |
 | `assetFrame` | `id, frame`; returns `{revision,id,frame,blob}` with a projected PNG `Blob`, at most 20 MiB; two concurrent frame commands |
@@ -147,6 +148,72 @@ mounting its first view.
 | `jqPage`, `jqClose` | `id,page`; or `id` |
 | `settings` | Toolbar owner, light/dark theme, typography/wrap; `pdf:{zoom:'width' or .25–4,continuous:boolean}`, `epub:{theme,flow,fontScale,typography}` |
 | `dispose` | Refuses dirty content with `DIRTY`; `force:true` explicitly discards it, then stops owned DOM listeners, observers, timers, requests and mounted content |
+
+### Source reading flow
+
+For text readers, `capabilities.sourceReading` v1 describes the frame's `flow`
+(`auto` or `paged`), whether this revision qualifies as `continuous`, and the
+limits `wholeFileBytes`, `tableRows`, `tableCells`, `windowBytes`,
+`windowLines` and `contextLines`. The default is the same in browsers and
+WebViews. Source opens continuously up to 128 KiB with at most 50 rows and 512
+body cells in each table. CodeMirror renders the visible lines from one text
+buffer. Set `sourceFlow=paged` on the iframe URL before loading to opt into
+bounded windows for every document. This is a frame startup setting and needs
+no shell object or additional permission.
+
+With Source active, `navigate({ location: { kind: 'line', line } })` and
+Ctrl+G use original, one-based line numbers. Paged Source places the target
+near the viewport center and retains up to 24 prior lines within the 200-line
+and 128-KiB window. Long lines may use multiple windows at UTF-8 boundaries.
+`sourceWindow` remains the bounded data command regardless of the UI flow.
+
+### Saved passages
+
+Check `capabilities.passageNavigation.version === 1` before using
+`navigatePassage`. It works with `notes: 'host'` and without a Notes storage
+grant. When saving a host comment, keep the current state's stable
+`resourceId` and the `revision`, `location` and optional `textRange` from the
+selection. Match the selection's document ID and revision to that state's
+identity at capture time. A stored resource ID and revision allow reopening in
+a new frame or service. An anchor with only `documentId` and `revision` is
+valid within the original reader session.
+
+```js
+const { resourceId, revision, location, textRange } = savedAnchor
+const passage = await client.request('navigatePassage', {
+  anchor: { version: 1, resourceId, revision, location, textRange },
+}, { signal })
+// After success, close the host dialog before handing off keyboard focus.
+hostDialog.close()
+frame.focus({ preventScroll: true })
+await client.request('focusPassage', { focusToken: passage.focusToken })
+```
+
+The result has `version`, `documentId`, `revision`, `view`, `precision` and
+`focusToken`. Close the host UI only after navigation succeeds. `focusPassage`
+consumes one token and returns `{ version: 1, focused: true }`. For rendered
+text, it confirms the saved endpoints after the focus update settles and
+reports `PASSAGE_SELECTION` if the selection still cannot be retained. A new
+navigation, a replaced revision or an unmounted passage can expire the token
+(`STALE_FOCUS`). The host owns its dialog, storage and comment actions.
+
+- `renderedText` resolves and selects the first of at most 32 validated
+  rendered scopes by its stored text fingerprint and UTF-16 endpoints.
+  Repeated quotations resolve by scope and offset. Table cells can use their
+  bounded full-cell viewer. Text omitted from a clipped table preview can be
+  addressed by an original Source byte range.
+- `sourceBytes` opens and selects the exact bounded UTF-8 byte range.
+- `pdfPage` and `pdfRegion` position the first saved page and rectangle,
+  bringing the rectangle into horizontal view when zoomed.
+- `epubCfi` opens the stored CFI. PDF and EPUB positioning keep their
+  saved geometry and locator precision.
+
+The command rejects stale ownership (`REVISION`), malformed selectors
+(`PARAMS`), a changed rendered fingerprint (`PASSAGE_MISMATCH`), query
+snapshots and coarse line/cell references (`UNSUPPORTED_LOCATION`), and
+unpublished edits (`DIRTY`). The plain `navigate` command remains available
+for coarse locations. Use the client's `AbortSignal` to cancel a pending
+request.
 
 Stateful commands include `documentId` and immutable projection `revision`.
 `capabilities.sourceRangeNavigation` declares exact source-range restoration.

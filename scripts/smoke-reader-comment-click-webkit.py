@@ -22,13 +22,13 @@ try{
  await until(()=>document.querySelector('#thread-title').textContent.includes('Document integration fixture'),'thread selected');
  const open=async()=>{
    await __studioDeveloper.openArtifact({root:cfg.project,path:cfg.path});
-   await until(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('#artifact-preview').disabled,'reader');
+   await until(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden')&&!document.querySelector('#artifact-preview').disabled,'reader');
    const frame=document.querySelector('.artifact-large-markdown-frame'),doc=frame.contentDocument;
    await until(()=>Number(doc.querySelector('[data-comment-marks]')?.dataset.commentMarks)>0,'painted comment');
    const range=[...doc.defaultView.CSS.highlights.entries()].filter(([name])=>name.startsWith('marknoria-comments-')).flatMap(([,ranges])=>[...ranges])[0];
    check(range?.toString()==='TARGET','exact comment range');
    const box=range.getBoundingClientRect(),x=box.left+box.width/2,y=box.top+box.height/2,target=doc.elementFromPoint(x,y);
-   const event=(name,detail=1)=>target.dispatchEvent(new doc.defaultView[name.startsWith('pointer')?'PointerEvent':'MouseEvent'](name,{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,detail}));
+   const event=(name,detail=1)=>target.dispatchEvent(new doc.defaultView[name.startsWith('pointer')?'PointerEvent':'MouseEvent'](name,{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,isPrimary:true,pointerId:1,pointerType:'mouse',detail}));
    return {doc,range,event};
  };
  let mark=await open();mark.event('pointerdown');mark.event('pointerup');mark.event('click');
@@ -47,7 +47,17 @@ try{
  await pause(650);check(!document.querySelector('#annotation-dialog').open,'double click does not edit');
  check(mark.doc.getSelection().toString()==='TARGET','selection retained');
  document.querySelector('#close-artifact').click();await pause(350);
- webkit.messageHandlers.commentQa.postMessage(JSON.stringify({ok:true,fullApp:true,pointerInput:'DOM-dispatched',editSaveReopen:true,doubleClickSelection:true}));
+ document.querySelector('#open-thread-comments').click();
+ await until(()=>document.querySelector('.annotation-source'),'comment source action');
+ document.querySelector('.annotation-source').click();
+ await until(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden'),'reopened reference');
+ const frame=document.querySelector('.artifact-large-markdown-frame');
+ const {createReaderClient}=await import('/reader-assets/host-client.mjs');const client=createReaderClient(frame);await client.ready();
+ let selected;const deadline=performance.now()+10000;
+ do{selected=await client.request('selection',{textOnly:true});if(selected?.quote==='TARGET')break;await pause(25)}while(performance.now()<deadline);
+ check(selected?.quote==='TARGET'&&selected.textRange?.segments[0]?.startUtf16>20,'restored second saved occurrence');
+ client.disconnect();document.querySelector('#close-artifact').click();await pause(350);
+ webkit.messageHandlers.commentQa.postMessage(JSON.stringify({ok:true,fullApp:true,pointerInput:'DOM-dispatched',editSaveReopen:true,doubleClickSelection:true,exactSourceReopen:true}));
 }catch(error){webkit.messageHandlers.commentQa.postMessage(JSON.stringify({error:String(error),stack:error.stack}))}
 })();void 0;'''.replace('CONFIG',json.dumps(config))
 def received(_manager,message):

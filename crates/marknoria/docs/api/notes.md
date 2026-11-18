@@ -50,6 +50,33 @@ layer when positioning viewport controls. Default selection events are scoped to
 `root`; the main reader's wrapper explicitly uses its own document for renderer
 modals. A host can supply `eventRoot` or call `selectionChanged()` directly.
 
+The optional `navigate(note, {signal})` adapter enables **Go to passage** in
+saved-note details. It receives the complete persisted record, including its
+revision and anchor. Resolve only that document/revision, honor cancellation,
+and reject unsupported locations; query-result coordinates are not source cells.
+Notes stays open while navigation runs and when it fails. On success it closes
+without restoring list focus. An adapter may return `{focus()}` to focus the
+revealed passage after the modal closes; this is a local callback, not a wire
+protocol field. Without an adapter, the control is omitted. Stale records are
+disabled with an explanation; an adapter's unsupported-location error remains
+visible in the manager.
+
+The main reader restores Source byte ranges, PDF page rectangles, and EPUB CFIs.
+Rendered prose and table selections resolve the saved UTF-16 endpoints only
+after checking the mounted scope's text fingerprint. For a selection spanning
+multiple scopes, navigation reveals its first exact segment, the start of the
+annotated passage. It mounts only that bounded page/cell and never searches the
+whole document for a matching quotation. Full-cell text uses the existing
+bounded cell viewer when needed. Legacy coarse anchors and saved query snapshots
+have no exact passage-navigation fallback.
+
+The comment editor returns to reading after a successful Save or Delete, and
+after Cancel, its close button, or Escape. It does not automatically open the
+Notes manager. A failed mutation keeps the editor and draft available for retry.
+Opening Notes explicitly restores its last category, page and selected record
+when that record remains available; editing from the manager uses the same
+return-to-reading behavior.
+
 `storage(request,{owner,signal})` implements the existing public core Notes
 requests: list/add/update/delete/clear/copy. The owner is captured at mount, not
 read from a later active pane. Add includes the immutable revision and typed
@@ -189,7 +216,9 @@ checks real pointer selection and policy carry through these transitions.
 Saved Comments now have [persistent dashed underlines](notes.md#comment-markers). Use
 `projection.captureSelection()` / `table.captureSelection()` to retain exact
 rendered selectors, `onMutation` to invalidate a mounted marker, and
-`notes.openComment(id)` to show its detail. Embedded hosts can explicitly replace
+`notes.openComment(id)` to fetch that comment and open its editor directly.
+The loading state cannot save an empty draft; closed or replaced dialogs ignore
+late responses. Embedded hosts can explicitly replace
 their own bounded mark set with `setCommentMarks`; host-owned Notes never cause
 implicit local storage reads.
 
@@ -203,9 +232,16 @@ clearing Favorites leaves Comments intact.
 
 Underlines are non-destructive CSS Highlights, with pointer-transparent clipped
 rectangle layers where that API is unavailable or PDF geometry is used. No span
-wrappers are inserted into source text, PDF text layers or EPUB CFI trees. Hover a
-marked passage to choose its associated comment; overlapping comments have separate
-actions. The Notes toolbar also provides keyboard access to saved records. Normal
+wrappers are inserted into source text, PDF text layers or EPUB CFI trees. Click a
+marked passage to open its saved comment editor directly; overlapping comments
+offer a chooser. The pointer becomes a hand only over an actual comment hit and
+returns to the host cursor outside it, during dragging or when marks disappear.
+Activation waits for the text gesture to finish so dragging and double-click word
+selection retain their behavior. An ordinary click that collapses an existing
+selection also opens the comment on that first click. Links and controls keep
+their ordinary click actions; hover remains available for comments on marked links. Host-owned Notes
+continue to use the public `commentRequested` event and host-managed storage.
+The Notes toolbar also provides keyboard access to saved records. Normal
 word selection, links, copy and explicit full-cell viewing retain their behavior.
 
 ### Exact references and compatibility

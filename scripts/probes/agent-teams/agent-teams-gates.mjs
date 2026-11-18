@@ -13,7 +13,8 @@ const run = process.argv[2]
 if (!run?.startsWith('/media/rui/codex-thread-studio-agent-teams/validation/')) throw Error('Dedicated media run directory required')
 const configRoot = process.env.CODEX_HOME || path.join(os.homedir(), '.codex')
 if ((await fs.readFile(path.join(configRoot, '.teams-probe-fixture'), 'utf8')).trim() !== run) throw Error('Missing isolated config mount: refusing to run')
-const report = { version: '0.170.0', syntheticModel: true, liveLlmTested: false, checks: [], errors: [], threads: [] }
+const probeMode = process.argv[3] || 'original'
+const report = { probeMode, version: '0.170.0', syntheticModel: true, liveLlmTested: false, checks: [], errors: [], threads: [] }
 const log = async (name, value) => fs.appendFile(path.join(run, name), JSON.stringify(value) + '\n')
 const pause = ms => new Promise(r => setTimeout(r, ms))
 async function until(fn, timeout = 12000) { const end = Date.now() + timeout; while (Date.now() < end) { const value = await fn(); if (value) return value; await pause(40) } throw Error('Condition timeout') }
@@ -59,8 +60,52 @@ async function turn(c,id,text){const start=await c.call('turn/start',{threadId:i
 const addCheck=(name,data)=>{report.checks.push({name,...data});process.stdout.write(`${name}: recorded\n`)}
 try {
  const c1=await connect('one'),c2=await connect('two')
- for(const name of ['A','B']){const cwd=path.join(run,`workspace-${name}`);await fs.mkdir(cwd,{recursive:true});const response=await c1.call('thread/start',{cwd,model:'gpt-5.1-codex',modelProvider:'teams_fixture',approvalPolicy:'never',sandbox:'read-only'});report.threads.push(response.thread.id);await turn(c1,response.thread.id,`Original fixture context ${name}; do not execute shell commands.`)}
+ for(const name of (probeMode==='thread-config'?['A','B','C']:['A','B'])){const cwd=path.join(run,`workspace-${name}`);await fs.mkdir(cwd,{recursive:true});const response=await c1.call('thread/start',{cwd,model:'gpt-5.1-codex',modelProvider:'teams_fixture',approvalPolicy:'never',sandbox:'read-only'});report.threads.push(response.thread.id);await turn(c1,response.thread.id,`Original fixture context ${name}; do not execute shell commands.`)}
  const [a,b]=report.threads
+ if (probeMode==='thread-config') {
+   const helper=path.join(path.dirname(new URL(import.meta.url).pathname),'agent-teams-echo.py')
+   const callsFile=path.join(run,'mcp-calls.jsonl')
+   const baseline=await c1.call('thread/read',{threadId:a,includeTurns:true})
+   const resumed=await c1.call('thread/resume',{threadId:a,config:{mcp_servers:{teams_probe:{command:'/usr/bin/python3',args:[helper,callsFile],required:false,startup_timeout_sec:5,tool_timeout_sec:10}}}})
+   addCheck('resume_with_member_config',{response:resumed})
+   await pause(500)
+   const inventories=[]
+   for(const id of report.threads) inventories.push({thread:id,result:await c1.call('mcpServerStatus/list',{threadId:id,detail:'toolsAndAuthOnly'})})
+   addCheck('thread_specific_inventory',{inventories})
+   let available=JSON.stringify(inventories[0].result).includes('echo')
+   if(!available){
+     const unsubscribe=await c1.call('thread/unsubscribe',{threadId:a})
+     await until(async()=>!JSON.stringify(await c1.call('thread/loaded/list',{})).includes(a))
+     const reattached=await c1.call('thread/resume',{threadId:a,config:{mcp_servers:{teams_probe:{command:'/usr/bin/python3',args:[helper,callsFile],required:false,startup_timeout_sec:5,tool_timeout_sec:10}}}})
+     await pause(500)
+     const inventory=await c1.call('mcpServerStatus/list',{threadId:a,detail:'toolsAndAuthOnly'})
+     available=JSON.stringify(inventory).includes('echo')
+     addCheck('same_thread_detach_and_resume_config',{unsubscribe,reattached,inventory})
+   }
+   if(available){modelMode='tool';await turn(c1,a,'Synthetic native tool invocation after per-thread configuration');addCheck('native_echo_after_per_thread_config',{calls:(await fs.readFile(callsFile,'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse)})}
+   const after=await c1.call('thread/read',{threadId:a,includeTurns:true})
+   addCheck('original_context_and_global_config',{baseline,after,globalConfigUnchanged:(await fs.readFile(path.join(configRoot,'config.toml'),'utf8'))===configBase})
+   // Independent G2b samples: one queue/add, no queue/start/turn/start for dispatch.
+   const idleOffset=c1.events.length
+   const idle=await c1.call('thread/queue/add',{threadId:b,clientUserMessageId:'idle-add-once',input:[{type:'text',text:'Idle queued fixture'}]})
+   let idleCompleted=false
+   try{await until(()=>c1.events.slice(idleOffset).find(e=>e.method==='turn/completed'&&e.params.threadId===b),2000);idleCompleted=true}catch{}
+   addCheck('idle_queue_add_once',{response:idle,idleCompleted,list:await c1.call('thread/queue/list',{threadId:b}),events:c1.events.slice(idleOffset)})
+   modelMode='hold';const startCount=modelCount
+   const busy=await c1.call('turn/start',{threadId:a,input:[{type:'text',text:'Existing synthetic work, held before queue admission'}]})
+   await until(()=>modelCount>startCount&&holds.length)
+   const busyOffset=c1.events.length
+   const kept=await c2.call('thread/queue/add',{threadId:a,clientUserMessageId:'keep-once',input:[{type:'text',text:'Execute only after original task ends'}]})
+   const withdrawn=await c2.call('thread/queue/add',{threadId:a,clientUserMessageId:'withdraw-once',input:[{type:'text',text:'This fixture must be deleted before original turn ends'}]})
+   const deletion=await c2.call('thread/queue/delete',{threadId:a,queuedSubmissionId:withdrawn.queuedSubmission.id})
+   await pause(200)
+   const duringBusy=c1.events.slice(busyOffset)
+   for(const finish of holds.splice(0))finish()
+   await until(()=>c1.events.slice(busyOffset).some(e=>e.method==='turn/completed'&&e.params.threadId===a&&e.params.turn.id!==busy.turn.id))
+   await pause(150)
+   addCheck('busy_add_once_and_precise_delete',{busyTurn:busy.turn.id,kept,withdrawn,deletion,duringBusy,afterCompletion:c1.events.slice(busyOffset),list:await c1.call('thread/queue/list',{threadId:a})})
+   report.verdict='PARTIAL_G1B_G2B_EVIDENCE: no live model or product adapter tested'
+ } else {
  await c2.call('thread/resume',{threadId:a,excludeTurns:true})
  modelMode='hold';const beforeModel=modelCount
  const busy=await c1.call('turn/start',{threadId:a,input:[{type:'text',text:'Held fixture turn: keep current work active.'}]})
@@ -105,6 +150,7 @@ try {
  addCheck('mcp_receiver_can_distinguish_origin',{identicalIdentityAndArguments:identical,calls:last,verdict:identical?'FAIL for identity-content matching: all metadata except progressToken can be copied by an authenticated direct caller; origin binding remains unproven':'UNKNOWN: further correlation proof required'})
  for(const id of report.threads){const read=await c1.call('thread/read',{threadId:id});await log('thread-metadata.jsonl',read)}
  report.verdict='NOT_APPROVED_FOR_PRODUCT: probes are partial capability evidence only'
+ }
 }catch(e){report.errors.push({message:e.message,rpcError:e.rpcError});report.verdict='INCOMPLETE';process.stdout.write(`Probe stopped: ${e.stack}\n`)}finally{
  for(const finish of holds.splice(0))finish()
  for(const c of clients)c.ws.close()

@@ -49,7 +49,13 @@ try{
  document.querySelector('#close-artifact').click();await pause(350);
  document.querySelector('#open-thread-comments').click();
  await until(()=>document.querySelector('.annotation-source'),'comment source action');
+ check(document.querySelector('.annotation-source').textContent==='Go to source','visible source label');
+ document.querySelector('.annotation-edit').click();
+ await until(()=>document.querySelector('#annotation-dialog').open,'explicit list edit');
+ check(document.querySelector('#annotation-comment').value==='Edited in native WebKit','list edit preserves note');
+ document.querySelector('#annotation-dialog').close();
  document.querySelector('.annotation-source').click();
+ check(!document.querySelector('#annotation-dialog').open,'source action does not edit');
  await until(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden'),'reopened reference');
  const frame=document.querySelector('.artifact-large-markdown-frame');
  const {createReaderClient}=await import('/reader-assets/host-client.mjs');const client=createReaderClient(frame);await client.ready();

@@ -13,6 +13,8 @@ All notable changes to Codex Thread Studio are recorded here. The project follow
 
 ### Changed
 
+- Comments now show explicit Go to source and Edit comment actions; saved SQL results are labeled separately.
+
 - Update the fixed MarkNoria Web SDK to `18d122e`: share bounded continuous Source and contextual line jumps, restore exact saved comment passages through the public protocol, and retire the local layout/comment compatibility assets.
 
 - Update the fixed MarkNoria Web SDK to `0a60f69`, including bounded large Markdown table indexing and original-row access while retaining Studio-owned comments, selection actions and reader lease recovery.

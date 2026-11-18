@@ -84,14 +84,21 @@ try{
  report.checks.push('page reload and document reopen restore the same exact saved underline from SQLite')
  await page.evaluate(()=>window.hostReview?.disconnect())
  await page.locator('#open-thread-comments').click()
- await page.locator(`.annotation-card[data-draft-id="${commentId}"] .annotation-source`).click()
+ const savedCard=page.locator(`.annotation-card[data-draft-id="${commentId}"]`)
+ await savedCard.getByRole('button',{name:'Edit comment',exact:true}).click()
+ await page.locator('#annotation-dialog').waitFor({state:'visible'})
+ assert.equal(await page.locator('#annotation-comment').inputValue(),'Edited through underline')
+ await page.keyboard.press('Escape')
+ const sourceAction=savedCard.getByRole('button',{name:'Go to source',exact:true})
+ await sourceAction.focus();await page.keyboard.press('Enter')
+ assert.equal(await page.locator('#annotation-dialog').isVisible(),false)
  await page.waitForFunction(()=>document.querySelector('.artifact-large-markdown-frame')&&!document.querySelector('.artifact-large-markdown-frame').hasAttribute('aria-hidden'))
  await page.evaluate(async()=>{const {createReaderClient}=await import('/reader-assets/host-client.mjs');window.hostReview=createReaderClient(document.querySelector('.artifact-large-markdown-frame'));await hostReview.ready()})
  let restored
  for(let i=0;i<100;i++){restored=await page.evaluate(()=>hostReview.request('selection',{textOnly:true}));if(restored?.quote==='TARGET'&&restored.textRange?.segments[0]?.startUtf16===selection.textRange.segments[0].startUtf16)break;await pause(25)}
  assert.equal(restored?.quote,'TARGET');assert.deepEqual(restored.textRange,selection.textRange)
  assert.equal((await page.evaluate(()=>hostReview.request('state'))).resourceId,readerState.resourceId)
- report.checks.push('actual saved-comment source action reopens a fresh reader and selects the second repeated occurrence through durable public passage navigation')
+ report.checks.push('explicit Edit comment opens editor; keyboard Go to source skips editor; actual saved-comment source action reopens a fresh reader and selects the second repeated occurrence through durable public passage navigation')
 
  await page.locator('#artifact-search-toggle').click();await page.locator('#artifact-search-input').fill('needle')
  const searchCase=page.locator('#artifact-search-match-case');assert.equal(await searchCase.isChecked(),true)

@@ -462,7 +462,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     if (back) {
       const control = button('', back, 'icon-button teams-back'); control.setAttribute('aria-label', t(backLabel)); control.title = t(backLabel); control.dataset.focusKey = 'teams-back'
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true')
-      const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', 'm14 6-6 6 6 6'); svg.append(path); control.append(svg); surface.heading.append(control)
+      const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', 'm15 6-6 6 6 6'); svg.append(path); control.append(svg); surface.heading.append(control)
     } else if (mark) surface.heading.append(mark.cloneNode(true))
     const title = group && !setup ? el('h2', group.name) : label('h2', setup ? 'Collaboration settings' : 'Agent Teams')
     if (group && !setup) { title.setAttribute('data-no-i18n', ''); title.title = group.name }
@@ -485,7 +485,8 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     const row = el('tr'), cell = label('td', text, 'teams-empty-cell'); cell.colSpan = 3; row.append(cell); body.append(row)
   }
   function groupList() {
-    const controls = el('div', '', 'teams-list-controls')
+    const controls = el('div', '', 'teams-list-controls'), count = el('span', '', 'teams-hint teams-count')
+    controls.append(count)
     if (snapshot.groups.length > 7 || groupSearch) {
       const input = el('input'); input.type = 'search'; input.placeholder = t('Search groups'); input.setAttribute('aria-label', t('Search groups')); input.value = groupSearch
       input.addEventListener('input', () => { groupSearch = input.value; fill() }); controls.append(input)
@@ -493,12 +494,10 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     if (snapshot.enabled) { const create = primary('Create group', createGroup); create.prepend(symbol('M12 5v14M5 12h14')); controls.append(create) }
     content.append(controls)
     const body = table(['Group name', 'Member count', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table')
-    const footer = el('tfoot'), footerRow = el('tr'), count = el('td', '', 'teams-table-summary')
-    count.colSpan = 3; footerRow.append(count); footer.append(footerRow); body.parentElement!.append(footer)
     const fill = () => {
       body.replaceChildren()
       const groups = snapshot.groups.filter((g: ObjectValue) => g.name.toLowerCase().includes(groupSearch.toLowerCase()))
-      count.replaceChildren(label('span', 'Total groups'), el('span', `: ${snapshot.groups.length}`))
+      count.replaceChildren(label('span', 'Groups'), el('span', ` ${snapshot.groups.length}`))
       if (!groups.length) emptyTable(body, groupSearch ? 'No matching groups' : 'No groups yet')
       for (const group of groups) {
         const row = el('tr', '', 'teams-group-row'); row.dataset.groupId = group.id
@@ -514,7 +513,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     fill()
   }
   function showMembers(group: ObjectValue) {
-    const toolbar = el('div', '', 'teams-members-toolbar'), count = el('span', '', 'teams-hint')
+    const toolbar = el('div', '', 'teams-members-toolbar'), count = el('span', '', 'teams-hint teams-count')
     count.append(label('span', 'Members'), el('span', ` ${group.members.length}/5`)); toolbar.append(count)
     const controls = el('div', '', 'teams-toolbar-actions')
     const work = button('Tasks', () => openGroup(group, 'tasks')); work.prepend(symbol('M9 6h11M9 12h11M9 18h11M3 6h1M3 12h1M3 18h1')); work.dataset.focusKey = `tasks-${group.id}`

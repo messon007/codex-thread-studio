@@ -1531,7 +1531,7 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .teams-group-open svg { flex: 0 0 13px; width: 13px; height: 13px; fill: none; stroke: var(--faint); stroke-width: 1.65; }
 .teams-list-controls, .teams-members-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 16px; }
 .teams-members-toolbar { flex-wrap: wrap; }
-.teams-members-toolbar > .teams-hint { white-space: nowrap; }
+.teams-count { white-space: nowrap; }
 .teams-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
 .teams-content .teams-toolbar-actions > button { white-space: nowrap; flex-shrink: 0; }
 .teams-content .primary-button:disabled, .teams-icon-action:disabled { opacity: .45; cursor: not-allowed; }
@@ -1546,10 +1546,10 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .teams-compact-dialog .check-field { padding: 0; border: 0; background: transparent; }
 .teams-compact-dialog { width: min(490px, calc(100vw - 24px)); }
 .teams-rail .resources-heading { min-width: 0; gap: 8px; }
-.teams-rail .resources-heading h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teams-rail .resources-heading h2 { display: block; line-height: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .teams-rail .resources-header-actions { flex-shrink: 0; }
-.teams-back { flex: 0 0 32px; display: grid; place-items: center; }
-.teams-back svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.teams-back { padding: 0; flex: 0 0 32px; display: grid; place-items: center; }
+.teams-back svg { display: block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 .teams-paused-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .teams-menu-trigger { display: grid; place-items: center; flex: 0 0 32px; }
 .teams-menu-trigger svg { width: 16px; height: 16px; fill: currentColor; }
@@ -1560,5 +1560,4 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .teams-removal-diagnostics > .subtle-button { margin: 4px 0; }
 
 .teams-groups-table th:nth-child(2) { white-space: nowrap; }
-.teams-table tfoot .teams-table-summary { padding: 10px; text-align: left; color: var(--muted); font-size: var(--ui-font-label); border-bottom: 0; }
 .teams-list-controls > .primary-button { margin-left: auto; }

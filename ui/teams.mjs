@@ -712,7 +712,7 @@ export function createTeamsPanel(client, navigate, surface) {
             svg.setAttribute('viewBox', '0 0 24 24');
             svg.setAttribute('aria-hidden', 'true');
             const path = document.createElementNS(svg.namespaceURI, 'path');
-            path.setAttribute('d', 'm14 6-6 6 6 6');
+            path.setAttribute('d', 'm15 6-6 6 6 6');
             svg.append(path);
             control.append(svg);
             surface.heading.append(control);
@@ -761,7 +761,8 @@ export function createTeamsPanel(client, navigate, surface) {
         body.append(row);
     }
     function groupList() {
-        const controls = el('div', '', 'teams-list-controls');
+        const controls = el('div', '', 'teams-list-controls'), count = el('span', '', 'teams-hint teams-count');
+        controls.append(count);
         if (snapshot.groups.length > 7 || groupSearch) {
             const input = el('input');
             input.type = 'search';
@@ -778,15 +779,10 @@ export function createTeamsPanel(client, navigate, surface) {
         }
         content.append(controls);
         const body = table(['Group name', 'Member count', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table');
-        const footer = el('tfoot'), footerRow = el('tr'), count = el('td', '', 'teams-table-summary');
-        count.colSpan = 3;
-        footerRow.append(count);
-        footer.append(footerRow);
-        body.parentElement.append(footer);
         const fill = () => {
             body.replaceChildren();
             const groups = snapshot.groups.filter((g) => g.name.toLowerCase().includes(groupSearch.toLowerCase()));
-            count.replaceChildren(label('span', 'Total groups'), el('span', `: ${snapshot.groups.length}`));
+            count.replaceChildren(label('span', 'Groups'), el('span', ` ${snapshot.groups.length}`));
             if (!groups.length)
                 emptyTable(body, groupSearch ? 'No matching groups' : 'No groups yet');
             for (const group of groups) {
@@ -815,7 +811,7 @@ export function createTeamsPanel(client, navigate, surface) {
         fill();
     }
     function showMembers(group) {
-        const toolbar = el('div', '', 'teams-members-toolbar'), count = el('span', '', 'teams-hint');
+        const toolbar = el('div', '', 'teams-members-toolbar'), count = el('span', '', 'teams-hint teams-count');
         count.append(label('span', 'Members'), el('span', ` ${group.members.length}/5`));
         toolbar.append(count);
         const controls = el('div', '', 'teams-toolbar-actions');

@@ -164,7 +164,17 @@ try{
   await page.locator('#studio-menu-button').click()
   await page.locator('#teams-button').click()
   const rail=page.locator('#teams-rail')
+  const assertBackAligned=async()=>{
+   if(!await rail.locator('.teams-back').count())return
+   const alignment=await rail.locator('.resources-heading').evaluate(heading=>{
+    const button=heading.querySelector('.teams-back').getBoundingClientRect(), svg=heading.querySelector('.teams-back svg').getBoundingClientRect(), path=heading.querySelector('.teams-back path').getBoundingClientRect()
+    const range=document.createRange();range.selectNodeContents(heading.querySelector('h2'));const text=range.getBoundingClientRect()
+    return {text:Math.abs((text.top+text.bottom-path.top-path.bottom)/2),button:Math.abs((button.left+button.right-path.left-path.right)/2),svg:Math.abs((svg.top+svg.bottom-path.top-path.bottom)/2)}
+   })
+   assert.ok(Object.values(alignment).every(delta=>delta<1),JSON.stringify(alignment))
+  }
   const goGroups=async()=>{
+   await assertBackAligned()
    if(await rail.getByRole('button',{name:'Back to members',exact:true}).count())await rail.getByRole('button',{name:'Back to members',exact:true}).click()
    await rail.getByRole('button',{name:'Back to groups',exact:true}).click()
   }
@@ -180,6 +190,7 @@ try{
   await rail.getByRole('button',{name:'Agent collaboration',exact:true}).click()
   await rail.getByRole('button',{name:'Results',exact:true}).click()
   await rail.locator('.teams-prose').filter({hasText:/^Corrected implementation$/}).waitFor()
+  await assertBackAligned()
   await page.screenshot({path:path.join(run,'teams-detail.png')})
   check('browser_rail_task_hierarchy_and_result_details')
   await rail.getByRole('button',{name:'Back to tasks',exact:true}).click()
@@ -272,12 +283,12 @@ try{
    await page.setViewportSize({width:720,height:900})
    await page.evaluate(size=>document.documentElement.style.setProperty('--ui-font-size',size+'px'),size)
    const layout=await rail.locator('.teams-groups-table').evaluate(table=>{
-    const header=table.querySelectorAll('th')[1], footer=table.querySelector('tfoot'), body=table.querySelector('tbody')
+    const header=table.querySelectorAll('th')[1]
     const link=table.querySelector('.teams-group-open'), name=link.querySelector('span').getBoundingClientRect(), arrow=link.querySelector('svg').getBoundingClientRect()
     const range=document.createRange();range.selectNodeContents(header)
-    return {lines:range.getClientRects().length, fits:header.scrollWidth<=header.clientWidth+1, footerBelow:footer.getBoundingClientRect().top>=body.getBoundingClientRect().bottom-1, centered:Math.abs((name.top+name.bottom)/2-(arrow.top+arrow.bottom)/2)<1, overflow:table.scrollWidth>table.clientWidth+1}
+    return {lines:range.getClientRects().length, fits:header.scrollWidth<=header.clientWidth+1, centered:Math.abs((name.top+name.bottom)/2-(arrow.top+arrow.bottom)/2)<1, overflow:table.scrollWidth>table.clientWidth+1}
    })
-   assert.deepEqual(layout,{lines:1,fits:true,footerBelow:true,centered:true,overflow:false})
+   assert.deepEqual(layout,{lines:1,fits:true,centered:true,overflow:false})
   }
   await page.screenshot({path:path.join(run,'teams-groups-large-narrow.png')})
   await page.evaluate(()=>document.documentElement.style.setProperty('--ui-font-size','14px'))
@@ -291,15 +302,33 @@ try{
   const groupSearch=rail.getByRole('searchbox',{name:'Search groups',exact:true})
   await groupSearch.fill('No group matches this filter')
   await rail.getByText('No matching groups',{exact:true}).waitFor()
-  assert.match(await rail.locator('tfoot').innerText(),/Total groups: 8/)
+  assert.match(await rail.locator('.teams-list-controls .teams-count').innerText(),/Groups 8/)
   await groupSearch.fill('')
   for(const extra of extraGroups) await api('delete_group',{group_id:extra.id,expected_revision:extra.revision,request_id:crypto.randomUUID()})
   await page.locator('#refresh-teams').click()
   await until(async()=>await rail.locator('.teams-group-row').count()===2)
-  assert.match(await rail.locator('tfoot').innerText(),/Total groups: 2/)
-  check('browser_group_count_footer_single_line_header_and_centered_chevron')
+  assert.match(await rail.locator('.teams-list-controls .teams-count').innerText(),/Groups 2/)
+  check('browser_group_count_toolbar_single_line_header_and_centered_chevron')
   await page.screenshot({path:path.join(run,'teams-incremental-groups.png')})
   await groupRow.getByRole('button',{name:'Incremental group',exact:true}).click()
+  const counterStyle=await rail.locator('.teams-count').evaluate(e=>{const s=getComputedStyle(e);return [s.fontSize,s.fontWeight,s.lineHeight,s.color]})
+  for(const size of [11,14,20]) {
+   await page.evaluate(size=>document.documentElement.style.setProperty('--ui-font-size',size+'px'),size)
+   await assertBackAligned()
+  }
+  await page.evaluate(()=>document.documentElement.style.setProperty('--ui-font-size','14px'))
+  await rail.getByRole('button',{name:'Tasks',exact:true}).click();await assertBackAligned()
+  await rail.getByRole('button',{name:'Back to members',exact:true}).click()
+  await groupMenu('Incremental group');await rail.getByRole('menuitem',{name:'Activity',exact:true}).click();await assertBackAligned()
+  await rail.getByRole('button',{name:'Back to members',exact:true}).click()
+  await goGroups()
+  assert.deepEqual(await rail.locator('.teams-count').evaluate(e=>{const s=getComputedStyle(e);return [s.fontSize,s.fontWeight,s.lineHeight,s.color]}),counterStyle)
+  assert.equal(await rail.locator('tfoot').count(),0)
+  await rail.getByRole('button',{name:'Teams actions',exact:true}).click()
+  await rail.getByRole('menuitem',{name:'Collaboration settings',exact:true}).click();await assertBackAligned()
+  await rail.getByRole('button',{name:'Back to groups',exact:true}).click()
+  await groupRow.getByRole('button',{name:'Incremental group',exact:true}).click()
+  check('browser_back_entries_centered_and_group_member_counter_styles_match')
   const memberRow=id=>rail.locator(`[data-member-id="${id}"]`)
   const second=increment.members[1].id
   await memberRow(second).getByRole('button',{name:'Edit member',exact:true}).click()

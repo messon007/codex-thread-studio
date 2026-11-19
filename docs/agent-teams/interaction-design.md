@@ -9,14 +9,18 @@ Follow [Studio interaction guidelines](../design/interaction-guidelines.md) and
 
 The main menu opens Studio's existing shared right rail. Reuse its title bar for
 Back, current group name, group menu and Close; do not repeat that heading in the
-body. The same resizer and peer-tool exclusivity remain in effect.
+body. The same resizer and peer-tool exclusivity remain in effect. All Back
+entries (members, task list/detail, Activity and settings) use the same centered
+SVG path and button geometry, with normal title line-height for text alignment.
 
 - Group list: a compact table with Group name, Member count and Actions columns.
   Group name plus chevron opens its members. The row's add-member icon opens a
   single-member form. Counts and action icons align vertically; the name column
   uses remaining space; the chevron is centered beside the name. Member count
-  has a wider, font-responsive column and stays on one line. Total groups appears
-  only in the table footer. Create group is the page's primary action.
+  has a wider, font-responsive column and stays on one line. The toolbar shows
+  Groups N in the same label/number styling as Members N/5, without a middle dot
+  or a table footer. It reports all groups even during search. Create group is
+  the page's primary action.
   Collaboration/tool setup is in the header menu, not a duplicate list shortcut.
   Search appears when there are more than seven groups or an active search.
 - Group home: immediately show the Members / Responsibility / Actions table.

@@ -1,0 +1,86 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "changes": [
+    "Shared Back SVG geometry centered horizontally and vertically; reset native button padding and title line-height",
+    "Groups N restored to toolbar using the same typography as Members N/5",
+    "No footer or middle dot; total group count remains stable under filtering"
+  ],
+  "ui_tests": 841,
+  "typecheck": "passed",
+  "build": "locked offline development build passed",
+  "rust": "unchanged, not rerun",
+  "integration": {
+    "success": true,
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/header-alignment-01",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_group_count_toolbar_single_line_header_and_centered_chevron",
+      "browser_back_entries_centered_and_group_member_counter_styles_match",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_and_no_archive_action",
+      "browser_create_empty_group_then_add_one_member_and_optional_single_owner",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ],
+    "report_sha256": "c61cd369c0c4160b0190396007943f34202bb80aa63582173f80e39f5b9f7682"
+  },
+  "source_sha256": {
+    "ui-src/teams.mts": "f57228cd4b09c799ebdcac19c400750a77aac7d64aea2c1264ba74618fcda51c",
+    "ui-src/generated.sha256": "362fb8163230b8d8fd2d540a388894cbcdd964425736f4443b33f43bbc62ebb8",
+    "ui/teams.mjs": "6ce1317a39a98afd9d4dd3961a10d067e28ea4fe27b7f06c44d4c9d308eae6aa",
+    "ui/styles.css": "1cdf9c666cc679685ddf6e48c4d1cf45c761688e69da67648e8f126248f49444",
+    "ui/i18n.mjs": "f0bc33617681ff90ac95669e0f2e8d4d72ecf647f7cbf7b3db7e417d4ff7a907",
+    "scripts/probes/agent-teams/studio-integration.mjs": "333c820a8c119b31f6e16f1aae00cfad6726c693688f11c5d5ee3f98ae4ccfc5"
+  },
+  "screenshots": {
+    "teams-add-member-narrow.png": "af2e4633b118f815f72d1e51f655d0f475b59da5a0f522a06358e0fd5d31f872",
+    "teams-add-member.png": "b9c3f49629612ecc0ee9df3e771cef7f3e415e41892493ff47c82e0c42517c03",
+    "teams-chinese.png": "88d29cb602d240534fb776eb3b7ec0abded1da618c7929b1e1d8997ab9f7346f",
+    "teams-detail.png": "89d625cb3f3154dcb1e592cc4e5736f36a33c8c32c868b118a0cf2743c8a6148",
+    "teams-edit-member-chinese.png": "81c0fd3f226113c78ff2187b21dd67f383a273f2be87a5623a9a256b0bd1fcf5",
+    "teams-edit-member.png": "39ffe6236114934f64f661f2c966774d634f55c683f028369df83dd6c5242dbd",
+    "teams-groups-large-narrow.png": "b868b15a7c9d771fa69bf1ff22066e7e8066248ec621375c80871919db968c25",
+    "teams-incremental-groups.png": "04694e23d15d955ad0cdb8c1abdc4a93bc9687ce793fb3c75a469bb09db3a08a",
+    "teams-member-menu.png": "34f5c8d022229f4da8ddfd7d6a1b70dd8d7221f004cc334121f569da22e61f0a",
+    "teams-members-chinese.png": "3149434117dfc3891d7477c5d3a220b0723da870c4b2dbc3bdc608b0413cee57",
+    "teams-members-light.png": "2116ff2ee984d0100bd3a3757891599132be94e62fc75f6cfb68cba036339e01",
+    "teams-members-narrow-dark.png": "90e8f0280a96ff832bf839a69379d8e82dfe67b5e7861df47e5b1c95ff678e13",
+    "teams-narrow-dark.png": "c8740ba92a2695681072512315925a382123c8370aae1b564a3c49462ad258a3",
+    "teams-panel.png": "34fbb593abcfdc1c5320bfa9b243832b19e448267ae1ef802d2cf92c1ea7f260"
+  },
+  "logs": {
+    "header-alignment-ui-tests.log": "1c3fcd2293cec95b72951da954b7e672a678c4de54facd47ce6b925025319375",
+    "header-alignment-build.log": "d051885709d7c8842d4657544937fb26437efcb61eaa0950a0bcfe4cf50288c7"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "3a45b798faa5592018f75385e1f2d9bec4bebad790f80905ac18f6df9cc89f4a"
+  }
+}

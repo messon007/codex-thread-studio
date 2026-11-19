@@ -487,6 +487,7 @@ pub fn build(
         .with_clipboard(true)
         .with_navigation_handler(|url| intercept_action(&url))
         .build_gtk(&studio_host)?;
+    crate::webview_diagnostics::install(&studio_webview.webview(), "studio");
     log_network_storage("studio", &studio_webview);
 
     toolbar_host.connect_size_allocate(|host, allocation| {
@@ -641,6 +642,7 @@ fn ensure_browser_runtime(workspace: &mut EmbeddedBrowserWorkspace) -> Result<()
         .with_navigation_handler(|url| intercept_action(&url))
         .build_gtk(&toolbar_host)
         .map_err(|error| error.to_string())?;
+    crate::webview_diagnostics::install(&toolbar_webview.webview(), "browser-toolbar");
     log_network_storage("toolbar", &toolbar_webview);
     toolbar_webview
         .webview()
@@ -746,6 +748,7 @@ fn build_browser_tab(
             false
         });
     let webview = builder.build_gtk(&host)?;
+    crate::webview_diagnostics::install(&webview.webview(), "browser");
     install_page_guards(&webview, id);
     webview.webview().connect_key_press_event(move |_, event| {
         use gtk::gdk::{keys::constants, ModifierType};

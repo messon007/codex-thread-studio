@@ -50,6 +50,8 @@ mod session_state;
 mod speech;
 mod table_query;
 mod terminal_runtime;
+#[cfg(target_os = "linux")]
+mod webview_diagnostics;
 #[cfg(all(windows, feature = "windows-native"))]
 mod windows_native;
 mod workspace_watch;
@@ -668,6 +670,20 @@ fn main() {
     let embedded_browser_preferences = startup_preferences.browser.clone();
 
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "linux")]
+            if window.label() == "main" {
+                match event {
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        webview_diagnostics::window_event("close-requested")
+                    }
+                    tauri::WindowEvent::Destroyed => webview_diagnostics::window_event("destroyed"),
+                    _ => {}
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = (window, event);
+        })
         .setup(move |app| {
             let router = gateway_router(state.clone());
             tauri::async_runtime::spawn(async move {
@@ -706,6 +722,10 @@ fn main() {
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(980.0, 660.0)
                     .build()?;
+                #[cfg(target_os = "linux")]
+                _window.with_webview(|webview| {
+                    webview_diagnostics::install(&webview.inner(), "studio")
+                })?;
                 #[cfg(all(target_os = "linux", debug_assertions))]
                 dev_capture::register_tauri_window(&_window)?;
             }

@@ -32,3 +32,5 @@
 2026-11-19 界面重设计验收：Rust 224 项通过（1 项原有助手忽略），UI 840 项通过，真实 Studio/Codex/Chromium 的 23 项隔离端到端场景通过。覆盖共享右侧工具互斥、成员会话的原工具恢复、组删除与取消确认、草稿/校验失败保留、双主题/语言与字体矩阵。见 [重设计验收清单](ui-redesign-validation.json)。此前的 `implementation-validation.json` 为原始实现的历史基线。
 
 2026-11-19 成员流程调整验收：先创建空组，列表入口每次添加一名成员，可选原子指定唯一 orchestrator/owner；已有负责人时禁止重复指定，后续可明确改任或清空。Rust 225 项通过（1 项原有助手忽略），UI 840 项通过，真实 Studio/Codex/Chromium 的 24 项隔离场景通过，包括连续添加与窄屏弹窗。见 [成员流程验收清单](member-flow-validation.json)。
+
+2026-11-19 成员管理重做：组列表直接查看成员；成员页逐人编辑显示名称和职责，通过 Studio 共用菜单打开或移除成员。移除使用真实后端阻断检查，保留原会话；支持并发编辑草稿恢复及移除响应丢失后的状态恢复。GPT-6.2-Astra 对源代码、交互和实际截图复审通过。详见 [审查记录](member-management-review.md) 与 [验收清单](member-management-validation.json)。

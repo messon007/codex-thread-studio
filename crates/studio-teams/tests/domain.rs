@@ -1649,3 +1649,140 @@ fn empty_group_accepts_one_member_at_a_time_with_a_single_atomic_owner() {
         .delete_group(&user, &group.id, "delete-empty", group.revision)
         .unwrap();
 }
+
+#[test]
+fn removal_preview_tracks_requester_question_recipient_and_cancelled_claim() {
+    let mut f = Fixture::new();
+    let (a, b, c) = (f.a.clone(), f.b.clone(), f.c.clone());
+    let ids: Vec<_> = f.group.members.iter().map(|m| m.id.clone()).collect();
+    let task = f.delegate(&a, 1, vec![], None);
+    assert!(matches!(
+        f.store.member_removal_blockers(&a, &f.group.id, &ids[0]),
+        Err(Error::Forbidden)
+    ));
+    let preview = |f: &Fixture, i: usize| {
+        f.store
+            .member_removal_blockers(&Caller::user(), &f.group.id, &ids[i])
+            .unwrap()
+    };
+    assert_eq!(
+        preview(&f, 0)[0].reasons,
+        vec![MemberRemovalReason::UnfinishedWork]
+    );
+    assert!(preview(&f, 2).is_empty());
+    let task = f
+        .run(&b, Command::Begin { task: v(&task) })
+        .unwrap()
+        .task
+        .unwrap();
+    let reply = f
+        .run(
+            &b,
+            Command::Ask {
+                task: v(&task),
+                to: c.actor.clone(),
+                question: "Clarify scope".into(),
+                blocking: true,
+                continuation: Some(checkpoint()),
+            },
+        )
+        .unwrap();
+    let waiting = reply.task.unwrap();
+    assert_eq!(preview(&f, 2)[0].task.id, waiting.id);
+    let answered = f
+        .run(
+            &c,
+            Command::Answer {
+                task: v(&waiting),
+                question_id: reply.entity_id.unwrap(),
+                answer: "Confirmed".into(),
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    assert!(preview(&f, 2).is_empty());
+    f.run(
+        &Caller::user(),
+        Command::Cancel {
+            task: v(&answered),
+            reason: "Cancel fixture".into(),
+        },
+    )
+    .unwrap();
+    assert!(preview(&f, 0).is_empty());
+    assert_eq!(
+        preview(&f, 1)[0].reasons,
+        vec![MemberRemovalReason::UnsettledExecution]
+    );
+    f.store
+        .observe_turn(b.turn.as_ref().unwrap(), TurnState::Unknown)
+        .unwrap();
+    assert_eq!(
+        preview(&f, 1)[0].reasons,
+        vec![MemberRemovalReason::UnsettledExecution]
+    );
+    f.store
+        .observe_turn(b.turn.as_ref().unwrap(), TurnState::Succeeded)
+        .unwrap();
+    assert!(preview(&f, 1).is_empty());
+}
+
+#[test]
+fn removal_preview_keeps_completed_review_blocked_until_native_receipt_settles() {
+    let mut f = Fixture::new();
+    let (a, b) = (f.a.clone(), f.b.clone());
+    let task = f.delegate(&a, 1, vec![], None);
+    let task = f
+        .run(&b, Command::Begin { task: v(&task) })
+        .unwrap()
+        .task
+        .unwrap();
+    let task = f
+        .run(
+            &b,
+            Command::Submit {
+                task: v(&task),
+                submission: submission(),
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    f.store
+        .observe_turn(b.turn.as_ref().unwrap(), TurnState::Succeeded)
+        .unwrap();
+    let task = f
+        .run(
+            &a,
+            Command::Review {
+                task: v(&task),
+                result_id: task.results[0].id.clone(),
+                accept: true,
+                assessment: assessment(true),
+                requested_changes: None,
+            },
+        )
+        .unwrap()
+        .task
+        .unwrap();
+    assert_eq!(task.status, Status::Completed);
+    let member_id = f.group.members[0].id.clone();
+    let blockers = f
+        .store
+        .member_removal_blockers(&Caller::user(), &f.group.id, &member_id)
+        .unwrap();
+    assert_eq!(
+        blockers[0].reasons,
+        vec![MemberRemovalReason::UnsettledReview]
+    );
+    assert_eq!(blockers[0].task.id, task.id);
+    f.store
+        .observe_turn(a.turn.as_ref().unwrap(), TurnState::Succeeded)
+        .unwrap();
+    assert!(f
+        .store
+        .member_removal_blockers(&Caller::user(), &f.group.id, &member_id)
+        .unwrap()
+        .is_empty());
+}

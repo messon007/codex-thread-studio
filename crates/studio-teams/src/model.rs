@@ -506,3 +506,16 @@ pub struct Event {
     pub kind: String,
     pub data: serde_json::Value,
 }
+
+/// Host-only removal diagnostics, produced by the same checks as removal itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberRemovalBlocker {
+    pub task: Task,
+    pub reasons: Vec<MemberRemovalReason>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MemberRemovalReason {
+    UnfinishedWork,
+    UnsettledExecution,
+    UnsettledReview,
+}

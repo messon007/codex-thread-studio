@@ -56,3 +56,13 @@ test('Group deletion preserves its confirmation request ID after an uncertain re
  assert.equal(calls[0].request_id,calls[1].request_id)
  assert.equal(calls[1].expected_revision,4)
 })
+
+
+test('Definite blocked commands can be retried after activity settles without replaying a stale rejection', async () => {
+ const calls=[];let rejected=true
+ const client=createTeamsClient(async (_url,options)=>{calls.push(JSON.parse(options.body));return {ok:!rejected,statusText:'Conflict',json:async()=>rejected?{error:'Blocked'}:{group:{id:'g'}}}})
+ const body={action:'command',group_id:'g',command:{op:'ChangeMembers',expected_revision:3,add:[],remove_member_ids:['m']}}
+ await assert.rejects(client.request(body),/Blocked/);rejected=false
+ await client.request(body)
+ assert.notEqual(calls[0].request_id,calls[1].request_id)
+})

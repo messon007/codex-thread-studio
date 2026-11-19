@@ -1281,6 +1281,32 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                 json!({"enabled":d.settings.enabled,"phase":if d.settings.enabled{"enabled"}else if queues.is_empty()&&!has_closing(&d,None)?{"disabled"}else{"disabling"},"user_dispatches":d.dispatches.pending()?,"groups":groups,"tasks":tasks,"queue":queues,"reservations":reservations,"registrations":registrations,"errors":d.errors,"backends":state.codex_backends.keys().collect::<Vec<_>>()}),
             )
         }
+        "member_removal_preview" => {
+            let d = teams.lock()?;
+            let group_id = string(&v, "group_id")?;
+            let member_id = string(&v, "member_id")?;
+            let group = d.store.context(&Caller::user(), group_id).map_err(err)?;
+            let member = group
+                .members
+                .iter()
+                .find(|m| m.id == member_id)
+                .ok_or("Member no longer belongs to this group")?;
+            let blockers = d
+                .store
+                .member_removal_blockers(&Caller::user(), group_id, member_id)
+                .map_err(err)?;
+            let deliveries = d
+                .queue
+                .all_pending()
+                .map_err(err)?
+                .into_iter()
+                .filter(|e| e.session == member.session)
+                .collect::<Vec<_>>();
+            let reservations = d.queue.reservations(&member.session).map_err(err)?;
+            Ok(
+                json!({"group":group,"blockers":blockers,"deliveries":deliveries,"reservations":reservations}),
+            )
+        }
         "enable" => {
             let _gate = teams.gate.lock().await;
             let groups = {

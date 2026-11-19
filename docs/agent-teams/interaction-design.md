@@ -56,3 +56,51 @@ create two owners or partially add a member on an ownership conflict.
 Empty and single-member groups remain paused; at least two members are required
 to resume collaboration. Adding members does not implicitly resume a paused group.
 Removing the owner clears that slot; removing all members returns to an empty group.
+
+## Member management and Studio consistency (2026-11-19 revision)
+
+The group row exposes **View members · N/5** and **Add member** without requiring
+users to discover a secondary tab. The group title still opens tasks. Its status
+and member summary sit above the actions instead of competing with them in a
+single compressed row. The only primary action on the list is Create group.
+
+Members lists each person's display name, complete responsibility and optional
+orchestrator badge. Each row exposes Edit member and an always-visible, labelled
+Studio more-actions button. That menu contains Open session, a separator and
+Remove member in the existing danger style. Editing affects exactly one member;
+it never renames their Codex session. The optional group orchestrator has one
+selector with explicit replacement and clearing. Archived rosters are read-only.
+
+Use Studio's existing action-menu/thread-action-menu/icon-button classes and its
+toggle/close callbacks through the Teams surface adapter. Do not introduce a
+separate details-based menu. Sections use segmented-control with scoped natural
+height/wrapping, preserving the existing interface typography and theme tokens.
+Menus close on outside click, Escape and Tab; scrolling/resize repositions them
+until the anchor leaves the visible list. Keyboard arrows and Home/End move among items. Menus are constrained to the visible viewport.
+
+Removal confirmation uses a host-only preview from the same Rust predicates as
+actual removal. It includes requester/assignee/question references, unsettled
+execution and review receipts, and pending deliveries/reservations for the exact
+session. It names the member and explains session preservation, owner clearing
+and automatic pause below two members. No blanket pause requirement is imposed.
+The host rechecks on commit. A race rejection reloads diagnostics in the same
+confirmation without automatically retrying. Blocker links return to the original
+member list and member. Read-only preview exposes no new agent tool.
+
+Stable member/group focus keys preserve the originating control across refreshes.
+An open menu or dialog suppresses background redraw, including a snapshot already
+in flight. Removal moves focus to a neighboring member or Add member when empty.
+Returning to groups restores the filter, scroll position and View members entry.
+
+GPT-6.2-Astra reviewed the source/design on 2026-11-19. The direction was approved
+subject to three acceptance blockers: action density, accurate removal diagnostics,
+and focus/return stability. Those requirements are part of this revision's actual
+browser checks; source review alone is not visual acceptance.
+
+Concurrent member edits keep the current draft and reload the latest revision. If
+that member's fields are unchanged, the user explicitly retries Save; otherwise
+the form shows the latest values alongside the draft and requires Use latest
+values or Keep my changes. No automatic overwrite occurs. Removal failures remain
+visible; if a response is lost, the UI reads current state and offers a return to
+the updated roster when the member is gone or the group is archived/deleted. It
+never infers that an unknown request should be sent again.

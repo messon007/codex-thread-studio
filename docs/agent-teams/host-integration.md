@@ -59,3 +59,10 @@ held member reservations block deletion.
 `AddMember` atomically joins one session and optionally assigns the single
 orchestrator/owner slot. A second requested owner is rejected without adding the
 member; intentional replacement uses `SetOrchestrator`.
+
+`member_removal_preview` is a read-only host endpoint. It returns the current group,
+blocking tasks/reasons from the domain's actual removal predicates, plus pending
+native deliveries and reservations for that member's session. It is not an MCP
+agent tool and does not authorize removal: `ChangeMembers` revalidates revision,
+references and live queue constraints when the user confirms. A preview includes
+terminal tasks whose execution or review receipts remain unsettled.

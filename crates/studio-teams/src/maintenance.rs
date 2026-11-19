@@ -6,11 +6,21 @@ pub(super) fn unfinished_member_reference(
     removed: &[String],
     archive: bool,
 ) -> Result<bool> {
+    Ok(!member_removal_blockers(db, g, removed, archive)?.is_empty())
+}
+pub(super) fn member_removal_blockers(
+    db: &Connection,
+    g: &Group,
+    removed: &[String],
+    archive: bool,
+) -> Result<Vec<MemberRemovalBlocker>> {
     let mut q = db.prepare("SELECT body FROM tasks WHERE group_id=?")?;
     let rows = q.query_map([&g.id], |r| r.get::<_, String>(0))?;
+    let mut blockers = Vec::new();
     let includes = |a: &Actor| matches!(a,Actor::Member(m) if removed.contains(m));
     for row in rows {
         let t: Task = decode(row?)?;
+        let mut reasons = Vec::new();
         if !t.status.terminal()
             && (archive
                 || removed.contains(&t.assignee)
@@ -21,7 +31,7 @@ pub(super) fn unfinished_member_reference(
                         && (includes(&q.to) || includes(&q.asked_by))
                 }))
         {
-            return Ok(true);
+            reasons.push(MemberRemovalReason::UnfinishedWork);
         }
         if removed.contains(&t.assignee) || archive {
             if let Some(claim) = &t.claim {
@@ -29,7 +39,7 @@ pub(super) fn unfinished_member_reference(
                     turn_state(db, claim)?,
                     TurnState::Active | TurnState::Unknown
                 ) {
-                    return Ok(true);
+                    reasons.push(MemberRemovalReason::UnsettledExecution);
                 }
             }
         }
@@ -43,12 +53,15 @@ pub(super) fn unfinished_member_reference(
                     && t.barriers.contains(turn)
                     && turn_state(db, turn)? != TurnState::Succeeded
                 {
-                    return Ok(true);
+                    reasons.push(MemberRemovalReason::UnsettledReview);
                 }
             }
         }
+        if !reasons.is_empty() {
+            blockers.push(MemberRemovalBlocker { task: t, reasons });
+        }
     }
-    Ok(false)
+    Ok(blockers)
 }
 /// The host must fence/resolve independent native queue receipts before member removal/archival.
 pub(super) fn manage_group(

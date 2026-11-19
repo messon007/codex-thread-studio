@@ -622,7 +622,7 @@ const sessionOperations = createSessionOperations(state, {
   connectionReady: () => { $('#native-connection').textContent = t('Connected') },
 })
 const teamsClient = createTeamsClient(gatewayFetch)
-const teamsPanel = createTeamsPanel(teamsClient, async (backend, id) => { if (state.backend !== backend) await switchBackend(backend); await selectThread(id) }, { root: $('#teams-content'), activate: () => activateRightWorkspace('teams'), close: () => { if (state.activeRightWorkspace === 'teams') activateRightWorkspace(null) }, translate: t })
+const teamsPanel = createTeamsPanel(teamsClient, async (backend, id) => { if (state.backend !== backend) await switchBackend(backend); await selectThread(id) }, { root: $('#teams-content'), activate: () => activateRightWorkspace('teams'), close: () => { if (state.activeRightWorkspace === 'teams') activateRightWorkspace(null) }, translate: t, toggleMenu: toggleActionMenu, closeMenus: closeActionMenus })
 
 const submissionController = createSubmissionController(state, {
   isSupervised: ref => turnSupervision.activeFor(ref),

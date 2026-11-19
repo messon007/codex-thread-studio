@@ -25,8 +25,16 @@ export function createTeamsClient(fetcher) {
         }
         const response = await fetcher(body.action === 'ordinary_start' ? '/studio/teams/dispatch' : '/studio/teams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const value = await response.json();
-        if (!response.ok)
+        if (!response.ok) {
+            if (mutationKey && ['Blocked', 'RevisionConflict', 'InvalidState', 'InvalidArgument', 'LimitExceeded', 'Forbidden'].includes(value.error)) {
+                pendingMutations.delete(mutationKey);
+                try {
+                    storage?.removeItem(mutationKey);
+                }
+                catch { /* memory fallback */ }
+            }
             throw new Error(String(value.error || response.statusText));
+        }
         if (mutationKey) {
             pendingMutations.delete(mutationKey);
             try {
@@ -65,7 +73,9 @@ export function createTeamsPanel(client, navigate, surface) {
     let selected = '', section = 'tasks', taskId = '', taskSection = 'summary', filter = 'open', search = '', groupSearch = '';
     let archived = false, setup = false, loading = false, timer;
     let dialog = null, dirty = false, submitting = false, opener = null;
-    let listScroll = 0, taskScroll = 0;
+    let listScroll = 0, taskScroll = 0, listFocus = '';
+    let memberReturn = null;
+    let activeMenu = null;
     const terminal = (task) => ['Completed', 'Cancelled'].includes(task.status);
     const el = (tag, text = '', cls = '') => { const e = document.createElement(tag); e.textContent = text; e.className = cls; return e; };
     const label = (tag, text, cls = '') => el(tag, t(text), cls);
@@ -96,9 +106,15 @@ export function createTeamsPanel(client, navigate, surface) {
         b.type = 'button';
         b.dataset.focusKey = text;
         b.addEventListener('click', () => {
-            b.disabled = true;
-            void Promise.resolve().then(action).catch(errorMessage).finally(() => { if (b.isConnected)
-                b.disabled = false; });
+            if (b.disabled || b.getAttribute('aria-disabled') === 'true')
+                return;
+            b.setAttribute('aria-disabled', 'true');
+            void Promise.resolve().then(action).catch(errorMessage).finally(() => {
+                if (b.isConnected) {
+                    b.removeAttribute('aria-disabled');
+                    b.disabled = b.dataset.locked === 'true';
+                }
+            });
         });
         return b;
     };
@@ -156,6 +172,7 @@ export function createTeamsPanel(client, navigate, surface) {
         opener?.focus();
     }
     function subform(title, description = '') {
+        surface.closeMenus();
         if (dialog)
             closeDialog(true);
         opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -197,10 +214,10 @@ export function createTeamsPanel(client, navigate, surface) {
     const command = (group, command) => mutate(() => request({ action: 'command', group_id: group, request_id: crypto.randomUUID(), command }));
     const version = (task) => ({ task_id: task.id, expected_revision: task.revision, attempt_id: task.attempt_id });
     function tabs(parent, entries, active, change, name) {
-        const nav = el('nav', '', 'teams-tabs');
+        const nav = el('nav', '', 'segmented-control teams-tabs');
         nav.setAttribute('aria-label', t(name));
         for (const [key, title] of entries) {
-            const b = button(title, () => change(key), 'teams-tab');
+            const b = button(title, () => change(key), key === active ? 'active' : '');
             b.setAttribute('aria-current', key === active ? 'page' : 'false');
             nav.append(b);
         }
@@ -270,15 +287,223 @@ export function createTeamsPanel(client, navigate, surface) {
         }));
         title.focus();
     }
-    function editMembers(group) {
-        const form = subform('Edit responsibilities');
-        const profiles = group.members.map((m) => {
-            const box = el('fieldset');
-            box.append(el('legend', m.name));
-            form.append(box);
-            return { id: m.id, display: field(box, 'Display name', false, m.name), responsibility: field(box, 'Responsibility', true, m.responsibility) };
+    function formActions(form, title, save) {
+        const actions = el('div', '', 'teams-form-actions');
+        actions.append(button('Cancel', () => closeDialog()), primary(title, save));
+        form.append(actions);
+    }
+    function editMember(initial, member) {
+        const form = subform('Edit member', `${initial.name} · ${member.name}`);
+        let group = initial, baseline = member, unresolved = false;
+        const name = field(form, 'Display name', false, member.name);
+        const responsibility = field(form, 'Responsibility', true, member.responsibility);
+        const conflict = el('div', '', 'teams-member-conflict');
+        form.append(conflict);
+        notice(form, 'These details apply only to this group. The original session is unchanged.');
+        form.addEventListener('input', () => {
+            if (!unresolved && name.value.trim() && responsibility.value.trim())
+                form.querySelector('.teams-error').hidden = true;
         });
-        form.append(primary('Save names and responsibilities', () => command(group.id, { op: 'SetGroupProfile', expected_revision: group.revision, name: null, members: profiles.map((p) => ({ member_id: p.id, display_name: p.display.value, responsibility: p.responsibility.value })) })));
+        formActions(form, 'Save changes', async () => {
+            if (!name.value.trim() || !responsibility.value.trim())
+                throw Error('Enter a display name and responsibility.');
+            if (unresolved)
+                return;
+            try {
+                await command(group.id, { op: 'SetGroupProfile', expected_revision: group.revision, name: null,
+                    members: [{ member_id: member.id, display_name: name.value.trim(), responsibility: responsibility.value.trim() }] });
+            }
+            catch (error) {
+                if (!(error instanceof Error) || error.message !== 'RevisionConflict')
+                    throw error;
+                const latest = await request({ action: 'snapshot' });
+                if (!form.isConnected)
+                    return;
+                snapshot = latest;
+                const updatedGroup = snapshot.groups.find((g) => g.id === group.id);
+                const updated = updatedGroup?.members.find((m) => m.id === member.id);
+                const save = form.querySelector('.primary-button');
+                if (!updated || updatedGroup.archived) {
+                    unresolved = true;
+                    save.disabled = true;
+                    save.dataset.locked = 'true';
+                    errorMessage(Error('This member is no longer editable. Close this dialog to view the current group.'));
+                    return;
+                }
+                group = updatedGroup;
+                if (updated.name === baseline.name && updated.responsibility === baseline.responsibility) {
+                    errorMessage(Error('The group changed elsewhere. Your edits are kept; save again to apply them.'));
+                    return;
+                }
+                unresolved = true;
+                save.disabled = true;
+                save.dataset.locked = 'true';
+                errorMessage(Error('This member was changed elsewhere. Compare the latest values with your draft before saving.'));
+                conflict.replaceChildren(label('strong', 'Latest saved values'), el('p', updated.name), el('p', updated.responsibility));
+                const resolve = (useLatest) => {
+                    if (useLatest) {
+                        name.value = updated.name;
+                        responsibility.value = updated.responsibility;
+                        dirty = false;
+                    }
+                    baseline = updated;
+                    unresolved = false;
+                    conflict.replaceChildren();
+                    save.disabled = false;
+                    delete save.dataset.locked;
+                    form.querySelector('.teams-error').hidden = true;
+                    name.focus();
+                };
+                conflict.append(button('Use latest values', () => resolve(true)), button('Keep my changes', () => resolve(false)));
+            }
+        });
+        name.focus();
+    }
+    function chooseOrchestrator(group) {
+        const form = subform('Choose orchestrator', group.name);
+        const owner = select(form, 'Optional orchestrator · group task owner', [{ value: '', text: t('None · peer collaboration') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
+        notice(form, 'A group has at most one orchestrator / owner. You can change it later in Members.');
+        formActions(form, 'Save changes', () => command(group.id, { op: 'SetOrchestrator', expected_revision: group.revision, member_id: owner.value || null }));
+    }
+    function openGroup(group, destination) {
+        if (!selected) {
+            listScroll = content.scrollTop;
+            listFocus = document.activeElement?.dataset.focusKey || '';
+        }
+        memberReturn = null;
+        selected = group.id;
+        section = destination;
+        taskId = '';
+        render();
+        content.scrollTop = 0;
+        focusDestination();
+    }
+    function focusDestination() { content.querySelector('button')?.focus({ preventScroll: true }); }
+    function focusKey(key) {
+        Array.from(content.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key)?.focus({ preventScroll: true });
+    }
+    function backToMembers() {
+        const target = memberReturn;
+        if (!target)
+            return;
+        memberReturn = null;
+        selected = target.group;
+        section = 'members';
+        taskId = '';
+        render();
+        content.scrollTop = target.scroll;
+        focusKey(`edit-member-${target.member}`);
+    }
+    function removeMember(initial, member) {
+        const memberScroll = content.scrollTop;
+        const form = subform('Remove member', `${initial.name} · ${member.name}`);
+        notice(form, 'Remove this member from the group? Their original session, history and workspace files are kept.');
+        const diagnostics = el('div', '', 'teams-removal-diagnostics'), actions = el('div', '', 'teams-form-actions');
+        let group = initial, ready = false;
+        const cancel = button('Cancel', () => closeDialog());
+        const remove = button('Remove member', async () => {
+            if (!ready)
+                return;
+            try {
+                await mutate(async () => {
+                    await request({ action: 'command', group_id: group.id, command: { op: 'ChangeMembers', expected_revision: group.revision, add: [], remove_member_ids: [member.id] } });
+                    const index = group.members.findIndex((m) => m.id === member.id);
+                    const neighbor = group.members[index + 1] || group.members[index - 1];
+                    const key = neighbor ? `edit-member-${neighbor.id}` : `add-member-${group.id}`;
+                    opener = Array.from(content.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key) || null;
+                });
+            }
+            catch (error) {
+                errorMessage(error);
+                await load();
+            }
+            finally {
+                remove.dataset.locked = String(!ready);
+            }
+        }, 'subtle-button teams-danger');
+        const visit = (task) => {
+            closeDialog(true);
+            selected = group.id;
+            section = task ? 'tasks' : 'activity';
+            taskId = task?.id || '';
+            taskSection = 'summary';
+            memberReturn = { group: group.id, member: member.id, scroll: memberScroll };
+            render();
+            content.scrollTop = 0;
+            focusDestination();
+        };
+        const load = async (clearError = false) => {
+            ready = false;
+            remove.disabled = true;
+            remove.dataset.locked = 'true';
+            diagnostics.replaceChildren(label('p', 'Checking member activity…', 'teams-hint'));
+            try {
+                const preview = await request({ action: 'member_removal_preview', group_id: initial.id, member_id: member.id });
+                if (!form.isConnected)
+                    return;
+                group = preview.group;
+                snapshot.groups = snapshot.groups.map((g) => g.id === group.id ? group : g);
+                diagnostics.replaceChildren();
+                const sameSession = (item) => item.session.backend === member.session.backend && item.session.thread === member.session.thread;
+                snapshot.queue = snapshot.queue.filter((item) => !sameSession(item)).concat(preview.deliveries);
+                snapshot.reservations = snapshot.reservations.filter((item) => !sameSession(item)).concat(preview.reservations);
+                if (group.orchestrator === member.id)
+                    notice(diagnostics, 'This member is the orchestrator / owner. Removing them leaves that role unassigned.');
+                if (group.members.length <= 2)
+                    notice(diagnostics, 'With fewer than two members, the group will be paused.');
+                ready = !preview.blockers.length && !preview.deliveries.length && !preview.reservations.length;
+                if (ready && clearError)
+                    form.querySelector('.teams-error').hidden = true;
+                if (!ready)
+                    notice(diagnostics, 'Finish or resolve this member’s work before removing them.');
+                const reasons = { UnfinishedWork: 'Unfinished task or unanswered question', UnsettledExecution: 'Execution receipt needs resolution', UnsettledReview: 'Review receipt needs resolution' };
+                for (const blocker of preview.blockers) {
+                    snapshot.tasks = snapshot.tasks.filter((task) => task.id !== blocker.task.id);
+                    snapshot.tasks.push(blocker.task);
+                    diagnostics.append(button(blocker.task.title, () => visit(blocker.task)), el('p', blocker.reasons.map((reason) => t(reasons[reason] || reason)).join(' · '), 'teams-hint'));
+                }
+                for (const delivery of preview.deliveries)
+                    diagnostics.append(el('p', `${t('Pending delivery')}: ${t(delivery.state)}`, 'teams-hint'));
+                for (const hold of preview.reservations)
+                    diagnostics.append(el('p', `${t('Session reservation')}: ${hold.reason}`, 'teams-hint'));
+                if (preview.deliveries.length || preview.reservations.length)
+                    diagnostics.append(button('Review activity', () => visit()));
+                if (!ready)
+                    diagnostics.append(button('Check again', () => load(true)));
+            }
+            catch (error) {
+                if (!form.isConnected)
+                    return;
+                try {
+                    const latest = await request({ action: 'snapshot' });
+                    if (!form.isConnected)
+                        return;
+                    const current = latest.groups.find((g) => g.id === initial.id);
+                    if (!current || current.archived || !current.members.some((m) => m.id === member.id)) {
+                        snapshot = latest;
+                        errorMessage(Error(!current ? 'This group no longer exists.' : current.archived ? 'This group is now archived; its members are read-only.' : 'This member is no longer in the group. The list has been refreshed.'));
+                        diagnostics.replaceChildren(button(current ? 'Back to members' : 'Back to groups', () => {
+                            closeDialog(true);
+                            selected = current?.id || '';
+                            section = 'members';
+                            taskId = '';
+                            render();
+                            focusDestination();
+                        }));
+                        return;
+                    }
+                }
+                catch { /* preserve the original error when the state cannot be read */ }
+                errorMessage(error);
+                diagnostics.replaceChildren(button('Retry', () => load(true)));
+            }
+            remove.disabled = !ready;
+            remove.dataset.locked = String(!ready);
+        };
+        actions.append(cancel, remove);
+        form.append(diagnostics, actions);
+        cancel.focus();
+        void load();
     }
     async function addMember(group) {
         const form = subform('Add member', group.name);
@@ -322,16 +547,110 @@ export function createTeamsPanel(client, navigate, surface) {
         const pending = snapshot.queue.filter((q) => q.scope === group.id);
         const holds = group.archived ? [] : snapshot.reservations.filter((h) => group.members.some((m) => m.session.backend === h.session.backend && m.session.thread === h.session.thread));
         if (!unfinished.length && tasks(group).length)
-            form.append(button('Review task executions', () => { closeDialog(true); taskId = ''; section = 'tasks'; filter = 'all'; render(); }));
+            form.append(button('Review task executions', () => { closeDialog(true); filter = 'all'; openGroup(group, 'tasks'); }));
         if (unfinished.length || pending.length || holds.length) {
             form.querySelector('.teams-danger').disabled = true;
             notice(form, 'Resolve the following work before deleting this group:');
             for (const task of unfinished)
-                form.append(button(task.title, () => { closeDialog(true); openTask(task); }));
+                form.append(button(task.title, () => { closeDialog(true); openGroup(group, 'tasks'); openTask(task); focusDestination(); }));
             if (pending.length || holds.length)
-                form.append(button('Review activity', () => { closeDialog(true); section = 'activity'; taskId = ''; render(); }));
+                form.append(button('Review activity', () => { closeDialog(true); openGroup(group, 'activity'); }));
         }
     }
+    function actionMenu(id, title, entries) {
+        const anchor = el('div', '', 'menu-anchor teams-menu-anchor');
+        const menu = el('div', '', 'action-menu thread-action-menu teams-action-menu hidden');
+        menu.id = `teams-menu-${id}`;
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', title);
+        const trigger = button('', () => {
+            surface.toggleMenu(menu.id, trigger.id);
+            if (!menu.classList.contains('hidden')) {
+                activeMenu = { trigger, menu, place };
+                place();
+                menu.querySelector('button')?.focus({ preventScroll: true });
+            }
+        }, 'icon-button teams-menu-trigger');
+        const place = () => {
+            const rect = trigger.getBoundingClientRect(), bounds = content.getBoundingClientRect();
+            if (!trigger.isConnected || rect.bottom <= bounds.top || rect.top >= bounds.bottom) {
+                surface.closeMenus();
+                return;
+            }
+            menu.style.left = `${Math.max(8, Math.min(innerWidth - menu.offsetWidth - 8, rect.right - menu.offsetWidth))}px`;
+            const below = rect.bottom + 7, above = rect.top - menu.offsetHeight - 7;
+            const top = below + menu.offsetHeight <= innerHeight - 8 ? below : above;
+            menu.style.top = `${Math.max(8, Math.min(innerHeight - menu.offsetHeight - 8, top))}px`;
+        };
+        trigger.id = `teams-menu-trigger-${id}`;
+        trigger.dataset.focusKey = trigger.id;
+        trigger.setAttribute('aria-label', title);
+        trigger.title = title;
+        trigger.setAttribute('aria-haspopup', 'menu');
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.setAttribute('aria-controls', menu.id);
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        for (const x of [5, 12, 19]) {
+            const dot = document.createElementNS(svg.namespaceURI, 'circle');
+            dot.setAttribute('cx', String(x));
+            dot.setAttribute('cy', '12');
+            dot.setAttribute('r', '1.35');
+            svg.append(dot);
+        }
+        trigger.append(svg);
+        const entry = (title, path, action, danger = false) => {
+            const item = button('', () => { surface.closeMenus(); trigger.focus(); return action(); }, danger ? 'danger-text' : '');
+            item.setAttribute('role', 'menuitem');
+            const icon = svg.cloneNode(false);
+            const shape = document.createElementNS(svg.namespaceURI, 'path');
+            shape.setAttribute('d', path);
+            icon.append(shape);
+            item.append(icon, label('span', title));
+            menu.append(item);
+        };
+        for (const item of entries) {
+            if (item.danger)
+                menu.append(el('span', '', 'menu-separator'));
+            entry(item.title, item.path, item.action, item.danger);
+        }
+        anchor.append(trigger, menu);
+        anchor.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                surface.closeMenus();
+                trigger.focus();
+            }
+            else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (menu.classList.contains('hidden')) {
+                    trigger.click();
+                    return;
+                }
+                const items = Array.from(menu.querySelectorAll('button:not(:disabled)')), index = items.indexOf(document.activeElement);
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                items[next]?.focus();
+            }
+            else if (event.key === 'Tab')
+                surface.closeMenus();
+        });
+        return anchor;
+    }
+    const removeIcon = 'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5';
+    function groupMenu(group) {
+        const entries = [{ title: 'Group settings', path: 'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4', action: () => openGroup(group, 'settings'), danger: false }];
+        if (!group.archived)
+            entries.push({ title: group.paused ? 'Resume group' : 'Pause group', path: group.paused ? 'm8 5 11 7-11 7z' : 'M8 5v14M16 5v14', action: () => { void command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused }).catch(errorMessage); }, danger: false });
+        entries.push({ title: 'Delete group', path: removeIcon, action: () => deleteGroup(group), danger: true });
+        return actionMenu(group.id, `${t('Group actions')} · ${group.name}`, entries);
+    }
+    const repositionMenu = () => { if (activeMenu && !activeMenu.menu.classList.contains('hidden'))
+        activeMenu.place(); };
+    content.addEventListener('scroll', repositionMenu, { passive: true });
+    window.addEventListener('resize', repositionMenu, { passive: true });
     function groupList() {
         const controls = el('div', '', 'teams-list-controls');
         const input = el('input');
@@ -358,33 +677,25 @@ export function createTeamsPanel(client, navigate, surface) {
             }
             for (const group of groups) {
                 const active = tasks(group).filter((task) => !terminal(task)).length;
-                const { card, copy } = row('', group.members.length ? group.members.map((m) => m.name).join(' · ') : t('No members yet'));
-                const open = button(group.name, () => { listScroll = content.scrollTop; selected = group.id; section = 'tasks'; render(); content.scrollTop = 0; }, 'teams-row-link');
+                const card = el('article', '', 'teams-card teams-group-card'), heading = el('div', '', 'teams-group-heading');
+                const open = button(group.name, () => openGroup(group, 'tasks'), 'teams-row-link');
                 open.dataset.focusKey = group.id;
-                copy.prepend(open);
-                copy.querySelector('strong')?.remove();
-                const meta = el('div', '', 'teams-row-meta');
+                heading.append(open, label('span', group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled', 'teams-status'), groupMenu(group));
+                const summary = el('p', group.members.length ? group.members.map((m) => m.name).join(' · ') : t('No members yet'), 'teams-group-summary');
+                const actions = el('div', '', 'teams-group-actions');
+                const members = button('View members', () => openGroup(group, 'members'));
+                members.dataset.focusKey = `view-members-${group.id}`;
+                members.append(el('span', `${group.members.length}/5`, 'teams-member-count'));
+                actions.append(members);
+                if (!group.archived && group.members.length < 5) {
+                    const add = button('Add member', () => addMember(group));
+                    add.dataset.focusKey = `add-member-${group.id}`;
+                    actions.append(add);
+                }
                 const count = el('span', '', 'teams-task-count teams-hint');
                 count.append(label('span', 'Open tasks'), el('span', String(active)));
-                meta.append(label('span', group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled', 'teams-status'), count);
-                const menu = el('details', '', 'teams-row-menu'), trigger = el('summary', '⋯');
-                trigger.setAttribute('aria-label', `${t('Group actions')} · ${group.name}`);
-                trigger.title = t('Group actions');
-                const options = el('div', '', 'teams-row-menu-options');
-                options.append(button('Group settings', () => { selected = group.id; section = 'settings'; render(); }));
-                if (!group.archived)
-                    options.append(button(group.paused ? 'Resume group' : 'Pause group', () => command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused })));
-                options.append(button('Delete group', () => { menu.open = false; deleteGroup(group); }, 'subtle-button teams-danger'));
-                menu.append(trigger, options);
-                menu.addEventListener('keydown', event => { if (event.key === 'Escape') {
-                    menu.open = false;
-                    trigger.focus();
-                    event.stopPropagation();
-                } });
-                card.append(meta);
-                if (!group.archived && group.members.length < 5)
-                    card.append(button('Add member', () => addMember(group)));
-                card.append(menu);
+                actions.append(count);
+                card.append(heading, summary, actions);
                 list.append(card);
             }
         };
@@ -395,26 +706,45 @@ export function createTeamsPanel(client, navigate, surface) {
         content.append(footer);
     }
     function showMembers(group) {
-        const actions = el('div', '', 'teams-actions');
-        if (!group.archived && group.members.length) {
-            actions.append(button('Edit responsibilities', () => editMembers(group)), button('Choose orchestrator', () => {
-                const form = subform('Choose orchestrator'), owner = select(form, 'Optional orchestrator · group task owner', [{ value: '', text: t('None · peer collaboration') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
-                form.append(primary('Save', () => command(group.id, { op: 'SetOrchestrator', expected_revision: group.revision, member_id: owner.value || null })));
-            }));
-            if (group.members.length < 5)
-                actions.append(primary('Add member', () => addMember(group)));
+        const toolbar = el('div', '', 'teams-members-toolbar');
+        const memberCount = el('strong');
+        memberCount.append(label('span', 'Members'), el('span', ` · ${group.members.length}/5`));
+        toolbar.append(memberCount);
+        if (!group.archived && group.members.length < 5) {
+            const add = primary('Add member', () => addMember(group));
+            add.dataset.focusKey = `add-member-${group.id}`;
+            toolbar.append(add);
         }
-        if (!group.archived && !group.members.length)
-            actions.append(primary('Add member', () => addMember(group)));
-        content.append(actions);
+        content.append(toolbar);
+        if (!group.members.length) {
+            empty('No members yet', 'Add an existing session and describe its responsibility.');
+            return;
+        }
+        const owner = el('div', '', 'teams-owner-summary');
+        const description = el('div');
+        description.append(label('span', 'Orchestrator', 'teams-hint'), el('strong', group.orchestrator ? memberName(group, group.orchestrator) : t('None · peer collaboration')));
+        owner.append(description);
+        if (!group.archived)
+            owner.append(button('Choose orchestrator', () => chooseOrchestrator(group)));
+        content.append(owner);
         for (const member of group.members) {
-            const { card, copy } = row(member.name, member.responsibility);
+            const card = el('article', '', 'teams-card teams-member-card');
+            card.dataset.memberId = member.id;
+            const heading = el('div', '', 'teams-member-heading');
+            heading.append(el('strong', member.name));
             if (group.orchestrator === member.id)
-                copy.append(label('span', 'Orchestrator', 'teams-status'));
-            const controls = el('div', '', 'teams-member-actions');
-            controls.append(button('Open session', async () => { await navigate(member.session.backend, member.session.thread); surface.close(); }));
+                heading.append(label('span', 'Orchestrator', 'teams-status'));
+            card.append(heading, el('p', member.responsibility, 'teams-member-responsibility'));
+            const controls = el('div', '', 'teams-member-controls');
+            if (!group.archived) {
+                const edit = button('Edit member', () => editMember(group, member));
+                edit.dataset.focusKey = `edit-member-${member.id}`;
+                controls.append(edit);
+            }
+            const entries = [{ title: 'Open session', path: 'M14 4h6v6M20 4l-9 9M10 4H4v16h16v-6', action: async () => { await navigate(member.session.backend, member.session.thread); surface.close(); }, danger: false }];
             if (!group.archived)
-                controls.append(button('Remove member', () => confirmAction('Remove member', member.name, 'This removes the member from the group. The original session is kept. Finish its tasks and pause the group first.', () => command(group.id, { op: 'ChangeMembers', expected_revision: group.revision, add: [], remove_member_ids: [member.id] })), 'teams-quiet-action'));
+                entries.push({ title: 'Remove member', path: removeIcon, action: async () => removeMember(group, member), danger: true });
+            controls.append(actionMenu(member.id, `${t('Member actions')} · ${member.name}`, entries));
             card.append(controls);
             content.append(card);
         }
@@ -495,7 +825,7 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     function openTask(task) { taskScroll = content.scrollTop; taskId = task.id; taskSection = task.status === 'Submitted' ? 'results' : 'summary'; render(); content.scrollTop = 0; }
     function taskDetails(group, task) {
-        content.append(button('Back to tasks', () => { taskId = ''; render(); content.scrollTop = taskScroll; }));
+        content.append(memberReturn ? button('Back to members', backToMembers) : button('Back to tasks', () => { taskId = ''; render(); content.scrollTop = taskScroll; }));
         const header = row(task.title, memberName(group, task.assignee));
         header.card.classList.add('teams-detail-heading');
         header.card.append(label('span', task.status, 'teams-status'));
@@ -593,8 +923,10 @@ export function createTeamsPanel(client, navigate, surface) {
         recovery.append(button('Grant rework attempts', () => command(group.id, { op: 'GrantReworkBudget', task: version(task), additional_attempts: Number(attempts.value), reason: verification.value })));
     }
     function showActivity(group) {
-        const queue = snapshot.queue.filter((q) => q.scope === group.id);
-        const belongs = (item) => !group.archived && group.members.some((m) => m.session.backend === item.session.backend && m.session.thread === item.session.thread);
+        const target = memberReturn?.group === group.id ? group.members.find((m) => m.id === memberReturn?.member) : null;
+        const targetsMember = (item) => !target || item.session.backend === target.session.backend && item.session.thread === target.session.thread;
+        const queue = snapshot.queue.filter((q) => target ? targetsMember(q) : q.scope === group.id);
+        const belongs = (item) => targetsMember(item) && !group.archived && group.members.some((m) => m.session.backend === item.session.backend && m.session.thread === item.session.thread);
         const dispatches = (snapshot.user_dispatches || []).filter(belongs), holds = snapshot.reservations.filter(belongs);
         if (!queue.length && !dispatches.length && !holds.length) {
             empty('No pending activity', 'Deliveries and reservations that need attention appear here.');
@@ -659,8 +991,11 @@ export function createTeamsPanel(client, navigate, surface) {
                 }
             }
             else {
-                content.append(button('Back to groups', () => { selected = ''; render(); content.scrollTop = listScroll; }));
-                const heading = row(group.name, `${group.members.length} ${t('Members')} · ${t(group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled')}`);
+                content.append(memberReturn ? button('Back to members', backToMembers) : button('Back to groups', () => { selected = ''; render(); content.scrollTop = listScroll; focusKey(listFocus); }));
+                const heading = row(group.name);
+                const metadata = el('p');
+                metadata.append(el('span', `${group.members.length} `), label('span', 'Members'), el('span', ' · '), label('span', group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled'));
+                heading.copy.append(metadata);
                 heading.card.classList.add('teams-detail-heading');
                 if (section === 'tasks' && !group.archived && !group.paused && snapshot.enabled)
                     heading.card.append(primary('Delegate work', () => newTask(group)));
@@ -686,7 +1021,7 @@ export function createTeamsPanel(client, navigate, surface) {
         loading = true;
         try {
             snapshot = await request({ action: 'snapshot' });
-            if (!dialog)
+            if (!dialog && !content.querySelector('.teams-action-menu:not(.hidden)'))
                 render();
         }
         finally {
@@ -698,6 +1033,7 @@ export function createTeamsPanel(client, navigate, surface) {
         selected = '';
         taskId = '';
         setup = false;
+        memberReturn = null;
         if (!snapshot.groups.length) {
             content.replaceChildren(label('p', 'Loading groups…', 'teams-empty'));
         }
@@ -713,7 +1049,7 @@ export function createTeamsPanel(client, navigate, surface) {
         if (timer)
             clearInterval(timer);
         timer = setInterval(() => {
-            if (content.closest('.hidden') || dialog || content.querySelector('input:focus,textarea:focus,select:focus,.teams-row-menu[open]'))
+            if (content.closest('.hidden') || dialog || content.querySelector('input:focus,textarea:focus,select:focus,.teams-action-menu:not(.hidden)'))
                 return;
             void refresh().catch(errorMessage);
         }, 5000);

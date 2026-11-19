@@ -24,6 +24,13 @@ top of Files/the reader. Opening a referenced
 session leaves the management surface and selects that existing session without
 closing another tool restored by that session.
 
+Menus must reuse Studio's `.action-menu` / `.thread-action-menu`, icon-button
+triggers, separators and danger styles, with shared host dismissal behavior.
+Do not simulate menus with unrelated details elements or stacked bordered buttons.
+Common object actions must be discoverable from their list. Member/person editing
+uses one person's form, with an explicitly labelled edit entry and visible more
+menu per row. Keep object focus stable during periodic refresh and after saves.
+
 Use existing `.dialog`, `.dialog-header`, `.primary-button`, `.subtle-button`,
 `.field`, theme tokens, spacing and focus rings. All feature selectors must be
 scoped. Do not inject an independent theme or inline stylesheet. Reading content

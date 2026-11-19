@@ -683,6 +683,21 @@ PRAGMA user_version=1; COMMIT;")?;
         self.context(caller, group_id)?;
         task(&self.db, group_id, task_id)
     }
+    pub fn member_removal_blockers(
+        &self,
+        caller: &Caller,
+        group_id: &str,
+        member_id: &str,
+    ) -> Result<Vec<MemberRemovalBlocker>> {
+        if caller.actor != Actor::User {
+            return Err(Error::Forbidden);
+        }
+        let g = self.context(caller, group_id)?;
+        if g.archived || !g.members.iter().any(|m| m.id == member_id) {
+            return Err(Error::InvalidState);
+        }
+        maintenance::member_removal_blockers(&self.db, &g, &[member_id.to_owned()], false)
+    }
     pub fn tasks(
         &self,
         caller: &Caller,

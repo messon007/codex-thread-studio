@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawn,execFileSync} from 'node:child_process'
 import {createRequire} from 'node:module'
 import assert from 'node:assert/strict'
 const require=createRequire(import.meta.url)
@@ -164,14 +164,31 @@ try{
   await page.locator('#studio-menu-button').click()
   await page.locator('#teams-button').click()
   const rail=page.locator('#teams-rail')
+  let headerCapture=0
   const assertBackAligned=async()=>{
    if(!await rail.locator('.teams-back').count())return
-   const alignment=await rail.locator('.resources-heading').evaluate(heading=>{
-    const button=heading.querySelector('.teams-back').getBoundingClientRect(), svg=heading.querySelector('.teams-back svg').getBoundingClientRect(), path=heading.querySelector('.teams-back path').getBoundingClientRect()
-    const range=document.createRange();range.selectNodeContents(heading.querySelector('h2'));const text=range.getBoundingClientRect()
-    return {text:Math.abs((text.top+text.bottom-path.top-path.bottom)/2),button:Math.abs((button.left+button.right-path.left-path.right)/2),svg:Math.abs((svg.top+svg.bottom-path.top-path.bottom)/2)}
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+   const boxes=await rail.locator('.resources-heading').evaluate(heading=>{
+    const button=heading.querySelector('.teams-back').getBoundingClientRect(), svg=heading.querySelector('.teams-back svg').getBoundingClientRect(), title=heading.querySelector('h2').getBoundingClientRect()
+    const clip={x:Math.floor(button.left),y:Math.floor(Math.min(button.top,title.top)),width:Math.ceil(title.right)-Math.floor(button.left),height:Math.ceil(Math.max(button.bottom,title.bottom))-Math.floor(Math.min(button.top,title.top))}
+    const local=r=>[Math.max(0,Math.floor(r.left-clip.x)),Math.max(0,Math.floor(r.top-clip.y)),Math.ceil(r.right-clip.x),Math.ceil(r.bottom-clip.y)]
+    return {clip,regions:[local(svg),local(title)]}
    })
-   assert.ok(Object.values(alignment).every(delta=>delta<1),JSON.stringify(alignment))
+   const file=path.join(run,`header-glyph-${++headerCapture}.png`)
+   const pixels=await page.screenshot({path:file,clip:boxes.clip})
+   const measurement=JSON.parse(execFileSync('python3',['-c',`
+import sys,json,io
+from PIL import Image
+im=Image.open(io.BytesIO(sys.stdin.buffer.read())).convert('RGB')
+bg=im.getpixel((0,0));centers=[]
+for l,t,r,b in json.loads(sys.argv[1]):
+ ys=[y for y in range(t,min(b,im.height)) for x in range(l,min(r,im.width)) if max(abs(c-d) for c,d in zip(im.getpixel((x,y)),bg))>=60]
+ assert ys, 'Missing visible header glyph pixels'
+ centers.append((min(ys)+max(ys))/2)
+print(json.dumps({'arrow':centers[0],'text':centers[1],'difference':abs(centers[0]-centers[1])}))
+`,JSON.stringify(boxes.regions)],{input:pixels,encoding:'utf8'}))
+   await log('header-glyph-metrics.jsonl',{file:path.basename(file),...measurement})
+   assert.ok(measurement.difference<=1,JSON.stringify(measurement))
   }
   const goGroups=async()=>{
    await assertBackAligned()
@@ -317,6 +334,13 @@ try{
    await assertBackAligned()
   }
   await page.evaluate(()=>document.documentElement.style.setProperty('--ui-font-size','14px'))
+  const headerText=await rail.locator('.resources-heading h2').evaluate(h=>h.firstChild.textContent)
+  for(const title of ['中文协作组','Group ABC','group gyjp','A'.repeat(100)+'gyjp中文','g'.repeat(100)+'ABC中文']) {
+   await rail.locator('.resources-heading h2').evaluate((h,title)=>{h.firstChild.textContent=title},title)
+   await assertBackAligned()
+  }
+  await rail.locator('.resources-heading h2').evaluate((h,title)=>{h.firstChild.textContent=title},headerText)
+  await page.locator('#refresh-teams').click()
   await rail.getByRole('button',{name:'Tasks',exact:true}).click();await assertBackAligned()
   await rail.getByRole('button',{name:'Back to members',exact:true}).click()
   await groupMenu('Incremental group');await rail.getByRole('menuitem',{name:'Activity',exact:true}).click();await assertBackAligned()

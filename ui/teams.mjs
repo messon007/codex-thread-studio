@@ -680,6 +680,54 @@ export function createTeamsPanel(client, navigate, surface) {
         return actionMenu(group.id, `${t('Group actions')} · ${group.name}`, entries);
     }
     function backToGroups() { selected = ''; taskId = ''; setup = false; memberReturn = null; render(); content.scrollTop = listScroll; focusKey(listFocus); }
+    let headerFrame = 0;
+    const glyphCanvas = document.createElement('canvas');
+    // Center against the visible glyphs; a font's line box can be asymmetric.
+    function alignHeaderGlyph() {
+        headerFrame = 0;
+        const button = surface.heading.querySelector('.teams-back');
+        const svg = button?.querySelector('svg');
+        const title = surface.heading.querySelector('h2');
+        const baseline = title?.querySelector('.teams-title-baseline');
+        const context = glyphCanvas.getContext('2d');
+        if (!button || !svg || !title || !baseline || !context || !button.getClientRects().length)
+            return;
+        const style = getComputedStyle(title);
+        context.font = style.font;
+        let visibleText = title.textContent || '';
+        if (title.scrollWidth > title.clientWidth && title.firstChild?.nodeType === Node.TEXT_NODE) {
+            // Hidden descenders must not move the icon next to an ellipsized prefix.
+            const segments = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(visibleText));
+            const range = document.createRange();
+            range.setStart(title.firstChild, 0);
+            const available = title.clientWidth - context.measureText('…').width - (parseFloat(style.letterSpacing) || 0);
+            let low = 0, high = segments.length;
+            while (low < high) {
+                const middle = Math.ceil((low + high) / 2);
+                const end = segments[middle - 1].index + segments[middle - 1].segment.length;
+                range.setEnd(title.firstChild, end);
+                if (range.getBoundingClientRect().width <= available)
+                    low = middle;
+                else
+                    high = middle - 1;
+            }
+            visibleText = (low ? visibleText.slice(0, segments[low - 1].index + segments[low - 1].segment.length) : '') + '…';
+        }
+        const metrics = context.measureText(visibleText);
+        const center = baseline.getBoundingClientRect().top + (metrics.actualBoundingBoxDescent - metrics.actualBoundingBoxAscent) / 2;
+        const bounds = button.getBoundingClientRect();
+        const offset = center - (bounds.top + bounds.bottom) / 2;
+        if (Number.isFinite(offset))
+            svg.style.transform = `translateY(${offset}px)`;
+    }
+    function scheduleHeaderAlignment() {
+        if (!headerFrame)
+            headerFrame = requestAnimationFrame(alignHeaderGlyph);
+    }
+    new ResizeObserver(scheduleHeaderAlignment).observe(surface.heading);
+    new MutationObserver(scheduleHeaderAlignment).observe(surface.heading, { childList: true, characterData: true, subtree: true });
+    new MutationObserver(scheduleHeaderAlignment).observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+    document.fonts?.addEventListener('loadingdone', scheduleHeaderAlignment);
     function renderHeader() {
         surface.heading.replaceChildren();
         surface.menuSlot.replaceChildren();
@@ -724,7 +772,11 @@ export function createTeamsPanel(client, navigate, surface) {
             title.setAttribute('data-no-i18n', '');
             title.title = group.name;
         }
+        const baseline = el('span', '', 'teams-title-baseline');
+        baseline.setAttribute('aria-hidden', 'true');
+        title.append(baseline);
         surface.heading.append(title);
+        scheduleHeaderAlignment();
         if (group && !setup)
             surface.menuSlot.append(groupMenu(group));
         else if (!setup)

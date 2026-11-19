@@ -11,7 +11,14 @@ The main menu opens Studio's existing shared right rail. Reuse its title bar for
 Back, current group name, group menu and Close; do not repeat that heading in the
 body. The same resizer and peer-tool exclusivity remain in effect. All Back
 entries (members, task list/detail, Activity and settings) use the same centered
-SVG path and button geometry, with normal title line-height for text alignment.
+SVG path and button geometry. A zero-size inline marker locates the real text
+baseline; browser font glyph metrics place the arrow at the visible title
+glyph center. Line-box centering alone is insufficient for asymmetric fonts.
+Measurements are batched in one animation frame and refreshed on heading resize,
+font loading, title text mutations and interface font changes; the 32px button
+hit area stays fixed. For ellipsized names, measure only the visible grapheme
+prefix plus ellipsis, using DOM Range widths. Acceptance compares actual painted
+pixels from screenshots, not line rectangles or the production metric formula.
 
 - Group list: a compact table with Group name, Member count and Actions columns.
   Group name plus chevron opens its members. The row's add-member icon opens a

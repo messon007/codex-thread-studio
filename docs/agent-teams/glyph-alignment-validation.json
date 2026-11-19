@@ -1,0 +1,224 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "problem": "The previous check centered line boxes; screenshot glyphs were offset by 2.5px.",
+  "review": {
+    "model": "GPT-6.2-Astra",
+    "result": "approved, no blocking findings; independently inspected final pixel evidence and long-title boundaries"
+  },
+  "ui_tests": 841,
+  "typecheck": "passed",
+  "build": "locked offline development build passed",
+  "rust": "unchanged, not rerun",
+  "integration": {
+    "success": true,
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/glyph-alignment-02",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_group_count_toolbar_single_line_header_and_centered_chevron",
+      "browser_back_entries_centered_and_group_member_counter_styles_match",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_and_no_archive_action",
+      "browser_create_empty_group_then_add_one_member_and_optional_single_owner",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ]
+  },
+  "glyph_measurements": [
+    {
+      "file": "header-glyph-1.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-2.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-3.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-4.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-5.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-6.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-7.png",
+      "arrow": 17,
+      "text": 17.5,
+      "difference": 0.5
+    },
+    {
+      "file": "header-glyph-8.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-9.png",
+      "arrow": 19.5,
+      "text": 19,
+      "difference": 0.5
+    },
+    {
+      "file": "header-glyph-10.png",
+      "arrow": 16.5,
+      "text": 16.5,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-11.png",
+      "arrow": 18.5,
+      "text": 18.5,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-12.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-13.png",
+      "arrow": 16.5,
+      "text": 16.5,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-14.png",
+      "arrow": 20,
+      "text": 20,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-15.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-16.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-17.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-18.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-19.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    },
+    {
+      "file": "header-glyph-20.png",
+      "arrow": 18,
+      "text": 18,
+      "difference": 0
+    }
+  ],
+  "pixel_acceptance": {
+    "maximum_difference_px": 0.5,
+    "method": "PIL bounding boxes of visible contrasted pixels in actual Chromium screenshots; does not reuse Canvas calculations",
+    "coverage": [
+      "members/tasks/detail/Activity/settings Back entries",
+      "Interface size 11/14/20",
+      "Chinese, uppercase Latin, lowercase descenders",
+      "ellipsized long names with differing hidden trailing glyphs",
+      "in-place title changes without a resize trigger"
+    ],
+    "limits": "Linux Chromium font rasterization; other native webviews and OS font rasterizers were not pixel-tested."
+  },
+  "source_sha256": {
+    "ui-src/teams.mts": "e29e9ba26bf39b828e924413f0367a5ab6d2224dd9b3b421c23b3f66c2e2818f",
+    "ui-src/generated.sha256": "f0e4a8572b699ec688a8dd63a95686cdcbcf162be31c68ee15599dd375a5e7a4",
+    "ui/teams.mjs": "a56162a3d3ef9adbccb78adc09e77bb383ee2d08cb27c1a247d927e0754af4e4",
+    "ui/styles.css": "534b2406e0f345768dd98ee128dd9fcbb70a4954ed9ec3a428774563c1ffd7ac",
+    "scripts/probes/agent-teams/studio-integration.mjs": "c9e056905075ba6dd6cbf3910e4342965852637d631023462ef3e37f96f8031d"
+  },
+  "screenshots": {
+    "header-glyph-1.png": "d3daa3d2ac32be89126f9d32b2c519653bdb9b5c8c5308a09d1c7c903e0b75bd",
+    "header-glyph-10.png": "6e40e72d46f0bd646cf5b4a5b0707f14ff38422d2daa7b98824db8e46a53ef0a",
+    "header-glyph-11.png": "7e167f9ef27d7fdadd2bf425c0e707fb1776608dad6bbb6ecfcd7fd2eb11df9b",
+    "header-glyph-12.png": "8d5a82df88a9fdee99f0ec01f068da8ed01d64989cd8ef3a5cc64d2b0173a424",
+    "header-glyph-13.png": "7b6c75465004af2f6e4275d34d34624a6ebbf6fc916f35a71673ca07b0d730bc",
+    "header-glyph-14.png": "94e09dc547ee933e9a869845b6cbb173746c397a24c9f8b3185ae9920e32fcc4",
+    "header-glyph-15.png": "ab99c07329d60ac0983234e6541b53fa5dab281c9f368e44ff8368cd7ee5e5f2",
+    "header-glyph-16.png": "ab99c07329d60ac0983234e6541b53fa5dab281c9f368e44ff8368cd7ee5e5f2",
+    "header-glyph-17.png": "277dab33fe95b64833433d6366f6affcb7e994e3fa840a8d39aa4325ae183c86",
+    "header-glyph-18.png": "2e9d0eb12ca23470ab2f7972622289e09085e24e4bc54d904b5fbd24fb3c83b6",
+    "header-glyph-19.png": "4dcc40871c3b726e83e74c3fbb117fc5ac0db6a8bdd3a400507583b8d948a0e3",
+    "header-glyph-2.png": "b695bddbe2d234c7a004a1d09d534c16227c951f8492523ae630e88b77c02e27",
+    "header-glyph-20.png": "4dcc40871c3b726e83e74c3fbb117fc5ac0db6a8bdd3a400507583b8d948a0e3",
+    "header-glyph-3.png": "b695bddbe2d234c7a004a1d09d534c16227c951f8492523ae630e88b77c02e27",
+    "header-glyph-4.png": "b695bddbe2d234c7a004a1d09d534c16227c951f8492523ae630e88b77c02e27",
+    "header-glyph-5.png": "ab99c07329d60ac0983234e6541b53fa5dab281c9f368e44ff8368cd7ee5e5f2",
+    "header-glyph-6.png": "53ecbe18b77473d7a1199a212fb6c55f95179bf1aaf01e72bece621cce29aa2a",
+    "header-glyph-7.png": "7b337eb7c5b39ce72eb8131f58e3e3e61786a800e69d1690487be748f06b2310",
+    "header-glyph-8.png": "ab99c07329d60ac0983234e6541b53fa5dab281c9f368e44ff8368cd7ee5e5f2",
+    "header-glyph-9.png": "64f150d2c8f9bf2ba7a60e682cb7005049a69c14642a42de2f6857052051c05a"
+  },
+  "logs": {
+    "glyph-alignment-ui-tests.log": "a7d59cc1d824edad3d1b01c9491b2c0d3b08283179dce8c5b05a33ea25bcd8c1",
+    "glyph-alignment-build.log": "7773fb404db596f974f3bafd216e9de88e15ed4f83ecd309ae86fd0d769e2974"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "821f592f2bc86819d99dfd1e0f6fad9bed981af9155616325a8f2a33a5d52270"
+  }
+}

@@ -2272,9 +2272,11 @@ async function dispatchBackendRpc(backend, method, params = {}, timeoutMs = 30_0
   if (!supervised && params.threadId) turnSupervision.humanAction({ backend, id: params.threadId }, method, params)
   if (isCodexBackend(backend) && method === 'turn/start' && params.threadId && !supervised) {
     const nativeParams = { ...params }
+    const origin = nativeParams.studioUserMessageOrigin
+    delete nativeParams.studioUserMessageOrigin
     delete nativeParams.studioQueuedMessageId
     const queueContext = params.studioQueuedMessageId ? { message_id: params.studioQueuedMessageId, expected_revision: state.messageQueueRevisions[sessionRefKey(backend, params.threadId)] || 0 } : undefined
-    return teamsClient.start(backend, nativeParams, () => dispatchBackendRpc(backend, method, nativeParams, timeoutMs, true), queueContext)
+    return teamsClient.start(backend, nativeParams, () => dispatchBackendRpc(backend, method, nativeParams, timeoutMs, true), queueContext, origin)
   }
   if (backend === state.backend && state.ready) return rpc(method, params, timeoutMs, true)
   if (isCodexBackend(backend)) return codexBackgroundRpc(backend, method, params, timeoutMs)

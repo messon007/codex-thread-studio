@@ -375,6 +375,12 @@ pub enum Command {
         task: TaskVersion,
         reason: String,
     },
+    ConfigureGroup {
+        expected_revision: u64,
+        name: String,
+        orchestrator: Option<String>,
+        paused: bool,
+    },
     SetGroupProfile {
         expected_revision: u64,
         name: Option<String>,

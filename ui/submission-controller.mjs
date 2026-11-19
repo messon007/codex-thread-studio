@@ -132,6 +132,7 @@ export function createSubmissionController(state, services) {
                         start: () => dispatchBackendRpc(backend, 'turn/start', turnStartParams(backendDescriptor(backend).kind, threadForRef(ref), {
                             threadId,
                             clientUserMessageId,
+                            ...(isCodexBackend(backend) ? { studioUserMessageOrigin: 'composer' } : {}),
                             input: turnInput,
                             ...turnOptions,
                         })),
@@ -223,6 +224,7 @@ export function createSubmissionController(state, services) {
                         start: () => dispatchBackendRpc(ref.backend, 'turn/start', turnStartParams(backendDescriptor(ref.backend).kind, threadForRef(ref), {
                             threadId: ref.id,
                             clientUserMessageId,
+                            ...(isCodexBackend(ref.backend) ? { studioUserMessageOrigin: 'queue' } : {}),
                             ...services.queuedMessageContext?.(ref, message.id),
                             input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
                             ...queuedTurnOptions(ref),

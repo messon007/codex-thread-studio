@@ -1786,3 +1786,70 @@ fn removal_preview_keeps_completed_review_blocked_until_native_receipt_settles()
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn group_edit_atomically_configures_name_optional_owner_and_enablement() {
+    let mut f = Fixture::new();
+    let original = f.store.context(&Caller::user(), &f.group.id).unwrap();
+    let command = Command::ConfigureGroup {
+        expected_revision: original.revision,
+        name: "Updated group".into(),
+        orchestrator: Some(original.members[1].id.clone()),
+        paused: true,
+    };
+    assert!(matches!(
+        f.store
+            .execute(&f.a, &original.id, "not-user", command.clone()),
+        Err(Error::Forbidden)
+    ));
+    let mut invalid = command.clone();
+    if let Command::ConfigureGroup { orchestrator, .. } = &mut invalid {
+        *orchestrator = Some("absent".into());
+    }
+    assert!(f
+        .store
+        .execute(&Caller::user(), &original.id, "invalid-owner", invalid)
+        .is_err());
+    assert_eq!(
+        f.store.context(&Caller::user(), &original.id).unwrap().name,
+        original.name
+    );
+    let edited = f
+        .store
+        .execute(&Caller::user(), &original.id, "edit", command.clone())
+        .unwrap()
+        .group
+        .unwrap();
+    assert_eq!(edited.name, "Updated group");
+    assert!(edited.paused);
+    assert_eq!(edited.orchestrator, Some(original.members[1].id.clone()));
+    assert!(
+        f.store
+            .execute(&Caller::user(), &original.id, "edit", command.clone())
+            .unwrap()
+            .replayed
+    );
+    assert!(matches!(
+        f.store
+            .execute(&Caller::user(), &original.id, "stale", command),
+        Err(Error::RevisionConflict)
+    ));
+    let peer = f
+        .store
+        .execute(
+            &Caller::user(),
+            &original.id,
+            "peer-enabled",
+            Command::ConfigureGroup {
+                expected_revision: edited.revision,
+                name: edited.name,
+                orchestrator: None,
+                paused: false,
+            },
+        )
+        .unwrap()
+        .group
+        .unwrap();
+    assert!(!peer.paused);
+    assert_eq!(peer.orchestrator, None);
+}

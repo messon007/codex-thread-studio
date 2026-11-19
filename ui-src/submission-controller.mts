@@ -175,6 +175,7 @@ async function sendComposer(event: { preventDefault(): void }) {
             {
               threadId,
               clientUserMessageId,
+              ...(isCodexBackend(backend) ? { studioUserMessageOrigin: 'composer' } : {}),
               input: turnInput,
               ...turnOptions,
             },
@@ -255,6 +256,7 @@ async function runNextQueuedMessage(ref: SessionRef | null) {
             {
               threadId: ref.id,
               clientUserMessageId,
+              ...(isCodexBackend(ref.backend) ? { studioUserMessageOrigin: 'queue' } : {}),
               ...services.queuedMessageContext?.(ref, message.id),
               input: [...(message.text ? [{ type: 'text', text: message.text }] : []), ...message.input],
               ...queuedTurnOptions(ref),

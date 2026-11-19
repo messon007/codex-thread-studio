@@ -1026,6 +1026,9 @@ async fn ordinary_start(state: &GatewayState, v: &Value) -> Result<Value> {
     let teams = &state.teams;
     let _guard = teams.gate.lock().await;
     let Some(id) = ordinary_message_id(&teams.lock()?.store, &session, params)? else {
+        if teams.lock()?.dispatches.needs_management(&session)? {
+            return Err("Group role updates require a stable clientUserMessageId".into());
+        }
         return Ok(json!({"managed":false}));
     };
     let cached = { teams.lock()?.dispatches.lookup(&session, id, params)? };
@@ -1054,11 +1057,18 @@ async fn ordinary_start(state: &GatewayState, v: &Value) -> Result<Value> {
             .ok_or("Missing submission receipt")?;
         return Ok(json!({"managed":true,"replayed":true,"result":refreshed}));
     }
-    let hold = {
+    let (hold, outgoing) = {
         let mut d = teams.lock()?;
-        if d.store.member_for_session(&session).map_err(err)?.is_none() {
+        let membership = d.store.member_for_session(&session).map_err(err)?;
+        if membership.is_none() && !d.dispatches.needs_management(&session)? {
             return Ok(json!({"managed":false}));
         }
+        let role = matches!(v["origin"].as_str(), Some("composer" | "queue")).then(|| {
+            membership
+                .as_ref()
+                .map(|(g, _)| crate::teams_dispatch::role_context(g, &session, d.settings.enabled))
+                .unwrap_or(Value::Null)
+        });
         if let Some(q) = v.get("queue_context") {
             let expected = q["expected_revision"]
                 .as_u64()
@@ -1087,18 +1097,21 @@ async fn ordinary_start(state: &GatewayState, v: &Value) -> Result<Value> {
             d.queue.release(&hold.id, 1).map_err(err)?;
             return Err("Session has pending work; keep this submission queued".into());
         }
-        if let Err(e) = d.dispatches.prepare(&session, id, params, &hold.id) {
-            d.queue.release(&hold.id, 1).map_err(err)?;
-            return Err(e);
-        }
-        hold.id
+        let outgoing = match d.dispatches.prepare(&session, id, params, &hold.id, role) {
+            Ok(outgoing) => outgoing,
+            Err(e) => {
+                d.queue.release(&hold.id, 1).map_err(err)?;
+                return Err(e);
+            }
+        };
+        (hold.id, outgoing)
     };
     let server = &state
         .codex_backends
         .get(backend)
         .ok_or("Unknown backend")?
         .server;
-    let result = server.request("turn/start", params.clone()).await?;
+    let result = server.request("turn/start", outgoing).await?;
     let mut d = teams.lock()?;
     d.dispatches.accepted(&session, id, &result)?;
     d.queue.release(&hold, 1).map_err(err)?;
@@ -1303,8 +1316,14 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                 .filter(|e| e.session == member.session)
                 .collect::<Vec<_>>();
             let reservations = d.queue.reservations(&member.session).map_err(err)?;
+            let submissions: Vec<_> = d
+                .dispatches
+                .pending()?
+                .into_iter()
+                .filter(|entry| entry["session"] == json!(member.session))
+                .collect();
             Ok(
-                json!({"group":group,"blockers":blockers,"deliveries":deliveries,"reservations":reservations}),
+                json!({"group":group,"blockers":blockers,"deliveries":deliveries,"reservations":reservations,"submissions":submissions}),
             )
         }
         "enable" => {
@@ -1461,6 +1480,13 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                 }
                 if !group.archived {
                     for member in &group.members {
+                        if d.dispatches
+                            .pending()?
+                            .iter()
+                            .any(|entry| entry["session"] == json!(member.session))
+                        {
+                            return Err("Uncertain user submissions must be reconciled in Activity before deleting this group".into());
+                        }
                         if !d
                             .queue
                             .reservations(&member.session)
@@ -1506,6 +1532,7 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                     && matches!(
                         command,
                         Command::SetPaused { paused: false, .. }
+                            | Command::ConfigureGroup { paused: false, .. }
                             | Command::Delegate { .. }
                             | Command::GroupGoal { .. }
                     )
@@ -1518,13 +1545,21 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                         || matches!(&command,Command::ChangeMembers{remove_member_ids,..} if remove_member_ids.contains(&m.id));
                     if dropping
                         && (pending.iter().any(|e| e.session == m.session)
+                            || d.dispatches
+                                .pending()?
+                                .iter()
+                                .any(|entry| entry["session"] == json!(m.session))
                             || !d.queue.reservations(&m.session).map_err(err)?.is_empty())
                     {
                         return Err("Reconcile pending deliveries and reservations before removing member bindings".into());
                     }
                 }
                 if before.paused
-                    && matches!(command, Command::SetPaused { paused: false, .. })
+                    && matches!(
+                        command,
+                        Command::SetPaused { paused: false, .. }
+                            | Command::ConfigureGroup { paused: false, .. }
+                    )
                     && pending.iter().any(|e| e.scope == group_id)
                 {
                     return Err("Reconcile previous-generation deliveries before resuming".into());

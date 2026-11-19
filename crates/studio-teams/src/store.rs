@@ -1095,6 +1095,42 @@ fn apply(tx: &Transaction<'_>, mut g: Group, caller: &Caller, command: Command) 
         }
         other => other,
     };
+    if let Command::ConfigureGroup {
+        expected_revision,
+        name,
+        orchestrator,
+        paused,
+    } = &command
+    {
+        if caller.actor != Actor::User {
+            return Err(Error::Forbidden);
+        }
+        if g.revision != *expected_revision {
+            return Err(Error::RevisionConflict);
+        }
+        text(name, 800)?;
+        if (!paused && g.members.len() < 2)
+            || orchestrator
+                .as_ref()
+                .is_some_and(|id| !g.members.iter().any(|m| &m.id == id))
+        {
+            return Err(Error::InvalidArgument);
+        }
+        g.name.clone_from(name);
+        g.orchestrator.clone_from(orchestrator);
+        g.paused = *paused;
+        g.roster_version += 1;
+        g.revision += 1;
+        save_group(tx, &g)?;
+        event(tx, &g.id, &caller.actor, "group_configuration_changed", &g)?;
+        return Ok(Reply {
+            group: Some(g),
+            task: None,
+            entity_id: None,
+            effect_ids: effects,
+            replayed: false,
+        });
+    }
     if let Command::SetPaused {
         expected_revision,
         paused,

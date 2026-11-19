@@ -1,0 +1,127 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "parent_commit": "deff26ed14294acb4d80a364ab06ddd29f49cc93",
+  "scope": "Group enablement and optional orchestrator configured together; ordinary chat replaces manual task entry.",
+  "review": {
+    "model": "GPT-6.2-Astra",
+    "result": "approved; no blocking findings after final source, report and screenshot review"
+  },
+  "rust": {
+    "passed": 232,
+    "ignored": 1,
+    "failed": 0,
+    "workspace_offline_locked": true,
+    "clippy_studio_teams": "passed",
+    "fmt": "passed"
+  },
+  "ui": {
+    "passed": 842,
+    "failed": 0,
+    "typecheck": "passed",
+    "generated_check": "passed"
+  },
+  "integration": {
+    "success": true,
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/group-chat-04",
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "group_enable_disable_prompts_bind_to_next_ordinary_or_queued_turn_without_interrupt",
+      "role_handover_removal_deleted_group_and_restart_retire_old_orchestrators",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_group_count_toolbar_single_line_header_and_centered_chevron",
+      "browser_orphan_submission_recovery_survives_deleted_group_without_resend",
+      "browser_back_entries_centered_and_group_member_counter_styles_match",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_group_enable_owner_chat_composer_prefix_and_original_input",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_and_no_archive_action",
+      "browser_create_group_add_members_without_role_then_edit_optional_orchestrator",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ],
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "orphan_recovery_ui_receipts": "Injected transport fixture, including legacy archived membership; native role receipt semantics separately exercised through real host and unit tests."
+  },
+  "header_pixels": {
+    "screenshots": 19,
+    "max_center_difference_px": 0.5
+  },
+  "previous_runs": [
+    {
+      "run": "group-chat-01",
+      "result": "failed on obsolete Chinese Tasks locator; removed locator"
+    },
+    {
+      "run": "group-chat-02",
+      "result": "real Composer passed; later failure exposed stale panel view during reopen"
+    },
+    {
+      "run": "group-chat-03",
+      "result": "same panel reopen race; source snapshot predates fix"
+    },
+    {
+      "run": "group-chat-04",
+      "result": "final successful run after immediate group-list render and explicit navigation wait"
+    }
+  ],
+  "source_sha256": {
+    "crates/studio-teams/src/model.rs": "bd429b39583ebe3c45760a68fd9f8f6640eab7778f85ff73b69496d3dba3fac6",
+    "crates/studio-teams/src/store.rs": "3784c3c048187f23c0177bed6485cd9964b2172d537d20ff78b5197f2e3fb8f9",
+    "crates/studio-teams/tests/domain.rs": "c52f750b621563810078d1fa58e0685162a5b6121cd193c878cedb48450040f5",
+    "scripts/probes/agent-teams/studio-integration.mjs": "80f695d850009bf33311277773711496b4a3f7b9926e711a3afaad3be769191a",
+    "src-tauri/src/teams.rs": "a8843f5d38d4f1e2c5695b52396b2f31bba34795f847bcda0645af4e03d35a4b",
+    "src-tauri/src/teams_dispatch.rs": "4ca8b09aff3c7cd2f14c3ae2349f602eb05bdf944bec93595063c7387e984e18",
+    "ui-src/generated.sha256": "9bbe87b0fd1d0afb3e1ce6d8db0c5eab4ca4d30c86a28f235056b2ea6774c245",
+    "ui-src/submission-controller.mts": "edb0081fd9f2700557540ec68f9dc1f958cc4dec2e79af7e54204b16812bd73f",
+    "ui-src/teams.mts": "7f56478fcc183c6b06e63f4c8f2c4ea9b6130253545d3b6d5a3df91e8d6f7a8b",
+    "ui/app.js": "d67ae5bee14584761b149c02df7f438deea7564f1f2da2550c511731ca929fdd",
+    "ui/i18n.mjs": "0d5a0243de217e531f129e446051a865598c6b22e84b92de60951b7ef207c8c1",
+    "ui/styles.css": "c7cb9de6fee8b6a52623d992de839e3461c09449b1ba5a0385eea85c76d2ab0c",
+    "ui/submission-controller.mjs": "71f709010982211037a145b1af0019e078624f73b59910250176ef3312b4da4c",
+    "ui/teams.mjs": "75571534f7930c5fead80cb20fa669df36461002436608f073670fc802aee544",
+    "ui/teams.test.mjs": "508560c6e59a1d23f4bf1e63ef85a6d47023812534d9ca8f837ae80cad12f063"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "6694e84679ce3f0f4a121a399112999af01dce14c3985c78f6e62a480b3c1669"
+  },
+  "evidence_sha256": {
+    "report.json": "3befbb1caa2d9ab3d72d2c9b0f5c460352ff8b7d9949f265ad43f89c1e137d7e",
+    "header-glyph-metrics.jsonl": "c5fcdc10c2afabeca107ad9281d1faece701f035a3dd57cd436b97bb8674961e",
+    "teams-edit-group-enabled.png": "7dd51d4420e72a64e775217b9b4a6fbff8d97d8e01f447f93ca55f155727e3a6",
+    "teams-enabled-chat-entry.png": "675131e10901f83ed501b917493dd349e0d60c8c8b604e06d7490e1493463ea8",
+    "teams-members-narrow-dark.png": "5ca1c80198be04103b5776bd7c6b017c44ba71974df908fb5dedb1c648589aa1",
+    "teams-members-chinese.png": "402527419f3e7579a5d3e51e1505949668faef4156a7271beabd838307d9e97d"
+  },
+  "log_sha256": {
+    "workspace-tests-final.log": "3b876a2997378b5b6dd59fdc7fe46e7cc7acb3d344161e7b8a06333dcf073473",
+    "clippy-final.log": "60752725ea6f194f20ebc7150276eef9d351f09c52a8c6e784e05f6a10ca45df",
+    "group-chat-typecheck.log": "4f61bdc7062e83b029aa20592529ec92323e8c7a87267d3cbd0af2a07a715be6",
+    "group-chat-ui-tests.log": "487a73bce86726bfe9fdfc961786c0e651790c44c2b2959d8274ff81194395ea",
+    "group-chat-build.log": "2acf4c05d44a34be02ca139db00a445934d582f18c306ce80c4d46fdf05e85c3"
+  }
+}

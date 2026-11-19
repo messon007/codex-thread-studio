@@ -10,6 +10,17 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Current work": "当前工作",
+  "Completed work": "已结束的工作",
+  "Edit group": "修改协作组",
+  "Enable collaboration": "启用协作",
+  "Collaboration enabled": "协作已启用",
+  "Collaboration disabled": "协作已停用",
+  "Open orchestrator chat": "打开协调者会话",
+  "Back to activity": "返回活动",
+  "Role changes are included with the next ordinary message in the orchestrator chat.": "角色变化会随协调者会话的下一条普通消息告知。",
+  "The group changed elsewhere. Compare its latest settings before saving.": "协作组已在其他位置修改，请比较最新设置后再保存。",
+
   "Orchestrator": "协调者",
   "No orchestrator": "不指定协调者",
   "This member": "此成员",
@@ -150,9 +161,9 @@ const chinese = {
   "Recent diagnostics": "最近的诊断记录",
   "Another window changed this queue. Reload before editing or sending.": "另一个窗口已修改此队列，请刷新后再编辑或发送。",
   "Agent Teams": "会话协作组",
-  "Teams enabled": "协作已启用",
-  "Teams disabled": "协作已停用",
-  "Enable Teams": "启用协作",
+  "Teams enabled": "协作功能已启用",
+  "Teams disabled": "协作功能已停用",
+  "Enable Teams": "启用协作功能",
   "Disable Teams": "停用协作",
   "Create group": "创建协作组",
   "Tools and backend configuration": "工具与后端配置",

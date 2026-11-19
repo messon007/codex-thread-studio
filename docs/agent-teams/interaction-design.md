@@ -31,33 +31,37 @@ pixels from screenshots, not line rectangles or the production metric formula.
   Collaboration/tool setup is in the header menu, not a duplicate list shortcut.
   Search appears when there are more than seven groups or an active search.
 - Group home: immediately show the Members / Responsibility / Actions table.
-  The toolbar contains member count, Tasks and Add member. Each member's optional
-  owner label appears only beneath their name. Pencil edits this member; the
-  adjacent Studio more menu contains Open session and Remove member. Both icons
-  have accessible labels and hover titles. No owner summary card or four-section
-  navigation precedes the roster.
-- Tasks remains an explicit toolbar entry, including when empty. A paused group
-  explains the blocking condition and resume action here. Task detail returns to
-  its task list; the task list returns to members. The group menu exposes owner
-  selection, Activity, Rename, Pause/Resume and Delete directly.
-- Creation, member editing and owner selection use compact dialogs with Cancel
-  and one primary action. One backend is not shown as a redundant selector.
+  The toolbar contains member count and Add member. The optional Orchestrator
+  label beneath a member name opens that existing session's chat. Pencil edits
+  this member; the adjacent Studio more menu contains Open session and Remove
+  member. Both icons have accessible labels and hover titles.
+- There is no Tasks entry or manual task-dispatch form. Users give requests in
+  the orchestrator's normal chat. The group menu contains Activity, Edit group
+  and Delete group. Activity retains current work, blocked/recovery actions and
+  collapsed completed history; task details return to Activity.
+- Edit group is one compact dialog with name, optional Orchestrator dropdown
+  (default none), and Enable collaboration checkbox. Save applies these together.
+  Create/add/edit/review/delete dialogs use Cancel and one primary action.
   Display name and responsibility are group-specific; native session identity,
   working directory, files and history remain unchanged.
 
 ## Membership and lifecycle
 
 Create group asks only for a name. Add member binds exactly one existing Codex
-session and its responsibility, optionally assigning the unique owner atomically.
-A group has at most five members and at most one orchestrator/owner. A second owner
-is rejected without adding a member. Explicit owner replacement/clearing is in the
-group menu. Empty or single-member groups remain paused; adding members does not
-automatically resume work. Successful addition opens the roster and focuses the
-new member's edit action; cancellation stays at the origin. The add-member form
-uses the same select styling as the group editor, labelled Orchestrator (协调者):
-No orchestrator / This member. An existing assignment is shown by name and cannot
-be replaced as a side effect of adding a member; use the group Orchestrator menu
-to replace or clear it. The member badge uses the same short role name.
+session and its responsibility; it has no role selector. A group has at most five
+members and one optional orchestrator. Choose, replace or clear that role only
+in Edit group. Peer collaboration remains available without an orchestrator.
+Empty or single-member groups remain disabled; adding members does not enable
+a group automatically. Successful addition opens the roster and focuses the
+new member's edit action; cancellation stays at the origin.
+
+Enabling a group does not send a message or interrupt an existing turn. The next
+ordinary user message sent from the orchestrator chat (including an ordinary
+queued message when it is actually sent) receives host-labelled role context.
+Disabling, replacing or removing that owner retires its previous role with the
+next ordinary user message. Auxiliary sends and active-turn Steer do not consume
+this update. Changes before that message coalesce to the latest effective state.
+See [chat coordination](chat-coordination.md) for receipt and restart semantics.
 
 There is no Archive group action or Archived groups navigation. Persisted archived
 data from earlier development remains visible in the ordinary group list, marked
@@ -66,7 +70,7 @@ reactivates that data. Legacy storage/domain compatibility is retained.
 
 Removal confirmation uses the existing host preview from the actual Rust removal
 predicates: requester/assignee/question references, unsettled execution/review
-receipts and exact-session deliveries/reservations. It explains owner clearing and
+receipts, uncertain ordinary submissions and exact-session deliveries/reservations. It explains owner clearing and
 automatic pause below two members. The host rechecks on commit. Blocker links return
 to the original member and scroll position. A race refreshes the same confirmation;
 network failure remains visible, and a lost response reconciles current membership

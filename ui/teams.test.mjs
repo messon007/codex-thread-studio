@@ -66,3 +66,13 @@ test('Definite blocked commands can be retried after activity settles without re
  await client.request(body)
  assert.notEqual(calls[0].request_id,calls[1].request_id)
 })
+
+test('Only explicitly marked ordinary messages carry a role notification origin',async()=>{
+ const {client,calls}=fixture([{managed:true,result:{}},{managed:true,result:{}},{managed:true,result:{}}])
+ const params={threadId:'t',clientUserMessageId:'user-message',input:[{type:'text',text:'request'}]}
+ await client.start('codex',params,()=>assert.fail('managed'),undefined,'composer')
+ await client.start('codex',params,()=>assert.fail('managed'),{message_id:'user-message',expected_revision:3},'queue')
+ await client.start('codex',params,()=>assert.fail('managed'))
+ assert.equal(calls[0].origin,'composer');assert.equal(calls[1].origin,'queue');assert.equal(calls[2].origin,undefined)
+ for(const call of calls)assert.deepEqual(call.params,params)
+})

@@ -64,12 +64,12 @@ flowchart TB
 `Group.orchestrator_member_id` 为可空成员 ID，必须引用本组一个活跃成员。
 它只是现有成员的额外职责，不是新的原生会话、隐藏评估 Agent 或后台 LLM。
 
-- 未指定：用户选择接收成员；成员根据职责目录直接委派。
-- 已指定：用户向“整个组”提交的目标，默认成为交给协调者的根任务；用户仍可显式指定其他成员。
-- 根任务的 requester/reviewer 是用户，assignee 是协调者；“组任务 owner”即这个根任务的负责人，不再增加一个含义重叠的 owner 字段。
-- 协调者把根任务拆成子任务，使用与普通成员相同的协作工具。子任务的 requester/reviewer 是协调者，assignee 是被委派成员。
+- 未指定：用户在选定成员的普通聊天中提出请求；成员根据职责目录直接委派。
+- 已指定：用户直接在协调者原有聊天区提出请求，协调者通过工具拆分、委派和验收；普通聊天本身不会被宿主偷偷转换成任务记录。
+- 领域层保留用户显式创建根任务的兼容能力：该路径 requester/reviewer 是用户、assignee 是指定成员。当前日常界面没有手动创建任务或“给组一个目标”入口；聊天协调者创建的委派由其自身验收。
+- 协调者使用与普通成员相同的协作工具。其委派的 requester/reviewer 是协调者，assignee 是被委派成员。
 - A 直接委派给 B 的任务，requester/reviewer 仍然是 A，不因组中有协调者而改成协调者。
-- 协调者可以承担实现工作。它忙碌时，新组目标、问题和验收请求全部排队。
+- 协调者可以承担实现工作。它忙碌时，自动协作消息排队；用户消息遵循现有聊天区的排队操作。
 
 指定角色不赋予额外仓库、审批或成员管理权限。协调者不能替其他 requester 验收任务。
 用户可以查看和处理全组任务；成员只在协议授权范围内改变任务。
@@ -113,7 +113,7 @@ v1 中 reviewer 固定等于 requester；委派时不开放任意 reviewer 或 c
 
 组可为空或暂存 1 个成员用于设置，运行协作至少需要 2 个，最多 5 个。协调者占其中一个名额。orchestrator/owner 指同一可空角色，每组最多一位。
 Group.state 为 `active/paused/archived`；全局 enabled 是独立开关。Member.state 为 `active/removed`，removed 保留为历史身份，不再接收新工作。离线、忙碌和运行失败是会话可用性，不改写成员身份。
-界面先输入名称创建空组，再通过组列表的 Add member 入口逐个添加已有会话。每次添加只接收一名成员，可选同时指定其为唯一协调者；该操作按组 revision 在同一事务内提交。已有协调者时不允许添加第二位，改任或取消通过单选的 SetOrchestrator 明确进行。少于两名成员时保持暂停；移除全部成员仍保留空组，恢复 active 前再次验证成员数、工具绑定和队列能力。
+界面先输入名称创建空组，再通过组列表的 Add member 入口逐个添加已有会话，每次只添加一名且不指定角色。协调者默认无，只能在修改组对话框中选择。宿主 `ConfigureGroup {expected_revision, name, orchestrator: member_id | null, paused}` 在同一事务保存组名、可选协调者和启停状态；仅用户可调用。少于两名成员不能启用；成员和 revision 验证失败不产生部分修改。已有 `SetOrchestrator` / `SetPaused` / `AddMember.make_orchestrator` 保留领域兼容，日常 UI 使用 ConfigureGroup。移除全部成员保留空组，启用前再次验证成员数、工具绑定和队列能力。聊天提示的发送、回执与恢复语义见 [chat coordination](chat-coordination.md)。
 v1 每个会话只加入一个未归档组；暂停不释放成员绑定。归档需先处理未完成任务，成员绑定才释放。
 成员移除/组归档必须检查非终态任务、待验收结果、open question 的问答双方、未解 blocker、活跃/未知 claim、unknown/在途/待投递消息；有引用则拒绝。移除协调者必须在同一事务清空或改指其他活跃成员，不能通过删成员让任务失踪。
 入组表示组内所有成员可读取全组任务、问题、结果和审计摘要；不授予其他成员的原生完整历史、仓库或凭证读取权。
@@ -372,6 +372,7 @@ paused 状态不阻止已经持有 C 的执行人处理当前任务；不通过�
 | 用户命令 | 参数与规则 |
 | --- | --- |
 | create_group | `request_id, name, members[{session_ref,display_name,responsibility}], orchestrator_session_ref?`；输入的协调者引用精确匹配 members，返回 member_id 映射、group revision、roster_version |
+| ConfigureGroup | 当前宿主命令：`group_id, request_id, command:{op:"ConfigureGroup", expected_revision, name, orchestrator:member_id|null, paused}`；仅用户操作，原子校验并保存，返回完整 group；修改组 UI 的唯一配置入口 |
 | update_group | `group_id, expected_group_revision, request_id, patch`；name、成员显示名/职责、orchestrator_member_id 可更新；null 仅用于清除 orchestrator |
 | change_members | `group_id, expected_group_revision, request_id, add[], remove_member_ids[]`；原子检查人数及全部引用；返回完整新 roster；不能替换 thread ID 继承身份 |
 | pause_group / resume_group | `group_id, expected_group_revision, request_id, reason`；持久变更派发开关，返回新 revision 和 fence receipt，不改变任务业务状态 |
@@ -384,11 +385,9 @@ paused 状态不阻止已经持有 C 的执行人处理当前任务；不通过�
 | reconcile_review | `group_id, task_id, attempt_id, review_id, barrier_id, expected_revision, request_id, decision, evidence[]`；用户仅可核对已 terminal-failed/interrupted 的验收 Turn，decision 为 `release/keep_frozen`；release 只打开指定 barrier，不更改 verdict、不伪造 settled-success。未知或仍活跃 Turn 拒绝 release，保留审计证据 |
 | reconcile_delivery | `group_id, delivery_id, expected_delivery_revision, request_id, decision, evidence[]`；用户 decision 为 `record_receipt/abandon`；前者必须有可核对原生 receipt，后者停用未来派发并保留原结果未知。都不授权重放；潜在在途仍未终结时保留归档阻塞 |
 
-每组独立 Teams 面板：成员/职责/可选协调者、任务列表、问题和结果详情、运行/排队状态。
-“给组一个目标”在有协调者时交给该成员；无协调者时要求选择接收人。用户创建任务复用 delegate 领域命令，UI 创建根任务时 reviewer 是用户。
-选择协调者直接在成员旁标记，不创建新会话、不在侧边栏添加第二个 Router。
+共享右侧 Teams 面板展示组列表，再进入成员/职责表。修改组对话框统一设置组名、启停及可选协调者；添加成员没有角色选择器。没有 Tasks 或“给组一个目标”入口，用户直接在协调者聊天区提出请求。成员表中的 Orchestrator 链接打开原会话，不创建新会话或第二个 Router。
+Activity 保留当前任务、问题、结果详情、验收/退回及不确定交付恢复；已完成工作折叠。任务详情返回 Activity，Activity 返回成员列表。历史 `archive_group` 仅保留领域兼容，不在 UI 提供操作。
 成员队列显示 `Teams · T12 · 来自应用`，点击打开任务；原会话列表、阅读器和编辑器不依赖 Teams 组件。
-用户只看必要操作：打开会话、暂停、取消、查看问题、验收/退回、处理交付不确定性。
 任务状态与会话状态分别显示，例如“任务等待 SDK；会话正在处理另一项工作”。
 Teams 模块懒加载；关闭时隐藏页面和协作工具入口，不在普通会话中常驻团队控件。
 

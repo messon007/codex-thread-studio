@@ -11,7 +11,7 @@ The feature lives on `feat/agent-teams`; it is not merged into `main`. The stand
 
 Teams never uses `turn/start`, `turn/steer`, or `thread/queue/start` for automatic delivery. It records the send intent before a single `thread/queue/add`. Busy members remain busy with their current work; Codex starts queued work when able. A request that may have reached Codex is not automatically retried. Stable message IDs correlate receipts; they are not assumed to deduplicate native queue admission.
 
-Ordinary Studio messages keep their existing payloads, attachments and turn settings. Their dispatch acquires the same durable reservation checked by the Teams worker. Supervision holds a reservation for its entire job. A page closing or an uncertain send retains the reservation for explicit reconciliation. Team waiting is per task, not a session reservation; unrelated work can continue.
+Ordinary Studio messages keep their original inputs, attachments and turn settings. At an orchestrator role transition, the host prepends a separate labelled text input to the next ordinary Composer/queue turn; it does not rewrite original inputs. See [chat coordination](chat-coordination.md). Their dispatch acquires the same durable reservation checked by the Teams worker. Supervision holds a reservation for its entire job. A page closing or an uncertain send retains the reservation for explicit reconciliation. Team waiting is per task, not a session reservation; unrelated work can continue.
 
 ## Tool installation
 
@@ -54,15 +54,17 @@ semantics. `delete_group` is a host-only revision-checked, idempotent operation;
 removes the group, memberships, tasks, effects and visible history in one domain
 transaction. Native sessions, files, command receipts and native queue receipts
 are not deleted. Live/unknown claims, unfinished tasks, pending deliveries or
-held member reservations block deletion.
+held member reservations or uncertain ordinary submissions block deletion.
 
-`AddMember` atomically joins one session and optionally assigns the single
-orchestrator/owner slot. A second requested owner is rejected without adding the
-member; intentional replacement uses `SetOrchestrator`.
+`AddMember` joins one session. The legacy domain option to assign an owner remains
+compatible, but the UI always sends `make_orchestrator: false`. `ConfigureGroup`
+atomically changes name, optional orchestrator and paused state under one revision
+check; the host checks global enablement and pending delivery generations before
+enabling. The UI exposes this only in Edit group.
 
 `member_removal_preview` is a read-only host endpoint. It returns the current group,
 blocking tasks/reasons from the domain's actual removal predicates, plus pending
-native deliveries and reservations for that member's session. It is not an MCP
+native deliveries, uncertain ordinary submissions and reservations for that member's session. It is not an MCP
 agent tool and does not authorize removal: `ChangeMembers` revalidates revision,
 references and live queue constraints when the user confirms. A preview includes
 terminal tasks whose execution or review receipts remain unsettled.

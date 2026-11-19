@@ -82,7 +82,6 @@ const chinese = {
   "Check the native execution receipt in task recovery before continuing.": "请先在任务恢复中核对原生执行回执，再继续操作。",
   "Review task executions": "检查任务执行记录",
 
-  "Set up collaboration": "设置会话协作",
   "Former member": "原组成员",
   "Discard unsaved changes?": "要放弃尚未保存的修改吗？",
   "Edit responsibilities": "编辑成员职责",

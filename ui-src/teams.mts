@@ -496,9 +496,6 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     }
     if (snapshot.enabled && !archived) { const create = primary('Create group', createGroup); create.prepend(symbol('M12 5v14M5 12h14')); controls.append(create) }
     content.append(controls)
-    if (!snapshot.enabled && !archived) {
-      const setupButton = button('Set up collaboration', () => { setup = true; render(); focusDestination() }); content.append(setupButton)
-    }
     const body = table(['Group name', 'Member count', 'Actions'], ['auto', '72px', '76px'], 'teams-groups-table')
     const fill = () => {
       body.replaceChildren()

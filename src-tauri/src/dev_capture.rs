@@ -27,6 +27,7 @@ thread_local! {
 #[serde(tag = "command", rename_all = "kebab-case")]
 enum DeveloperRequest {
     Screenshot,
+    CloseWindow,
     ShowBrowser,
     HideBrowser,
     ExitBrowser,
@@ -60,6 +61,7 @@ pub fn requested(arguments: &[OsString]) -> bool {
             argument.to_str(),
             Some(
                 "--dev-screenshot"
+                    | "--dev-close-window"
                     | "--dev-show-browser"
                     | "--dev-hide-browser"
                     | "--dev-exit-browser"
@@ -128,6 +130,7 @@ fn parse_cli_request(arguments: &[OsString]) -> Result<Option<DeveloperRequest>,
         return Ok(None);
     };
     match command {
+        "--dev-close-window" if arguments.len() == 1 => Ok(Some(DeveloperRequest::CloseWindow)),
         "--dev-screenshot" if arguments.len() == 1 => Ok(Some(DeveloperRequest::Screenshot)),
         "--dev-show-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::ShowBrowser)),
         "--dev-hide-browser" if arguments.len() == 1 => Ok(Some(DeveloperRequest::HideBrowser)),
@@ -384,6 +387,19 @@ fn handle_request(stream: &mut UnixStream) -> Result<Option<PathBuf>, String> {
         }
         let result = match request {
             DeveloperRequest::Screenshot => unreachable!("screenshot handled asynchronously"),
+            DeveloperRequest::CloseWindow => {
+                use gtk::prelude::*;
+                let window = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+                    .find(|window| window.title().as_deref() == Some("Codex Thread Studio"));
+                if let Some(window) = window {
+                    gtk::glib::idle_add_local_once(move || window.close());
+                    Ok(None)
+                } else {
+                    Err("Studio window is unavailable".to_owned())
+                }
+            }
             DeveloperRequest::ShowBrowser => {
                 crate::embedded_browser::show_for_debug(None).map(|_| None)
             }
@@ -628,6 +644,10 @@ mod tests {
 
     #[test]
     fn developer_cli_is_explicit_and_validates_url_arity() {
+        assert!(matches!(
+            parse_cli_request(&arguments(&["--dev-close-window"])).unwrap(),
+            Some(DeveloperRequest::CloseWindow)
+        ));
         assert!(matches!(
             parse_cli_request(&arguments(&["--dev-screenshot"])).unwrap(),
             Some(DeveloperRequest::Screenshot)

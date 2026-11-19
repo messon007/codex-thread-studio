@@ -620,6 +620,7 @@ fn main() {
             argument.to_str(),
             Some(
                 "--dev-screenshot"
+                    | "--dev-close-window"
                     | "--dev-show-browser"
                     | "--dev-hide-browser"
                     | "--dev-exit-browser"

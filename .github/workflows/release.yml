@@ -150,6 +150,8 @@ jobs:
           else
             echo "::warning::Signing without notarization; macOS downloads stay quarantined until notary credentials are added."
           fi
+      - name: Build Teams MCP companion
+        run: node scripts/build-teams-mcp.mjs --release --bundle ${{ matrix.args }}
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -174,4 +176,4 @@ jobs:
           prerelease: false
           generateReleaseNotes: true
           uploadUpdaterJson: false
-          args: ${{ matrix.args }}
+          args: --config src-tauri/tauri.teams.conf.json ${{ matrix.args }}

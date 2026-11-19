@@ -62,3 +62,13 @@ late responses after backend changes, and reopening the dialog. Optional
 `STUDIO_TEAMS_MODULE` selects an earlier generated module for a failing baseline.
 This focused test complements the integrated acceptance fixture above; it does
 not establish real App Server or native WebKit behavior.
+
+
+The integrated fixture now requires both `codex-thread-studio` and
+`studio-teams-mcp` beside one another in the build output. It asserts that Install
+tools publishes a standalone helper at a private stable path, then exercises the
+real Codex tools through that helper. Optional `STUDIO_TEAMS_LEGACY_BINARY` must
+refer to an old binary inside the fresh run directory: the fixture starts and
+unlinks only that copy, reproduces the deleted command, restarts with the new
+host, and verifies migration preserves the registration key/token. Never point
+this variable at an installed or user-running executable.

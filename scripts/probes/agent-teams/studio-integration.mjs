@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 const require=createRequire(import.meta.url)
 const WebSocket=require('/media/rui/codex-thread-studio-agent-teams/validation/probe-deps/node_modules/ws')
 const run=process.argv[2], binary=process.argv[3]
+let launchBinary=process.env.STUDIO_TEAMS_LEGACY_BINARY || binary
 if(!run?.startsWith('/media/rui/codex-thread-studio-agent-teams/validation/'))throw Error('Dedicated validation directory required')
 const config=path.join(os.homedir(),'.codex')
 assert.equal((await fs.readFile(path.join(config,'.teams-probe-fixture'),'utf8')).trim(),run)
@@ -34,7 +35,7 @@ await new Promise(r=>provider.listen(0,'127.0.0.1',r))
 await fs.writeFile(path.join(config,'config.toml'),`model="gpt-5.1-codex"\nmodel_provider="teams_fixture"\napproval_policy="never"\nsandbox_mode="read-only"\n[features]\napps=false\nplugins=false\nhooks=false\ndaemon_auto_start=false\ncode_mode_host=false\nshell_snapshot=false\nenable_request_compression=false\n[analytics]\nenabled=false\n[model_providers.teams_fixture]\nname="Isolated fixture"\nbase_url="http://127.0.0.1:${provider.address().port}/v1"\nwire_api="responses"\nrequires_openai_auth=false\nsupports_websockets=false\n`)
 let child, origin, token, ws, seq=0, pending=new Map(), events=[]
 async function start(){
- child=spawn(binary,['--serve','--listen','127.0.0.1:0'],{cwd:run,env:{PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8',XDG_CONFIG_HOME:path.join(run,'studio-profile'),CODEX_THREAD_STUDIO_CODEX_CONNECTION:'embedded',LD_LIBRARY_PATH:process.env.LD_LIBRARY_PATH||''},stdio:['ignore','pipe','pipe']})
+ child=spawn(launchBinary,['--serve','--listen','127.0.0.1:0'],{cwd:run,env:{PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8',XDG_CONFIG_HOME:path.join(run,'studio-profile'),CODEX_THREAD_STUDIO_CODEX_CONNECTION:'embedded',LD_LIBRARY_PATH:process.env.LD_LIBRARY_PATH||''},stdio:['ignore','pipe','pipe']})
  let output='';child.stdout.on('data',b=>{output+=b.toString()});child.stderr.on('data',b=>fs.appendFile(path.join(run,'studio.stderr'),b))
  await until(()=>{const m=output.match(/(http:\/\/127.0.0.1:\d+)\/#token=([\w-]+)/);if(m){origin=m[1];token=m[2];return true}if(child.exitCode!==null)throw Error(`Studio exited ${child.exitCode}`)})
  ws=new WebSocket(origin.replace('http','ws')+'/ws/codex',`codex-thread-studio.auth.${token}`,{headers:{Authorization:`Bearer ${token}`,Origin:origin}})
@@ -51,10 +52,34 @@ const taskVersion=task=>({task_id:task.id,expected_revision:task.revision,attemp
 let success=false
 try{
  await start()
+ if(process.env.STUDIO_TEAMS_LEGACY_BINARY){
+  assert.ok(launchBinary.startsWith(run+'/'),'Legacy fixture binary must be owned by this run')
+  await fs.unlink(launchBinary)
+ }
  const a=await newThread('A'),b=await newThread('B'),c=await newThread('nonmember')
  await api('enable')
  const preview=await api('install_preview',{backend:'codex'})
  await api('install',{backend:'codex',file:preview.file,version:preview.version})
+ if(process.env.STUDIO_TEAMS_LEGACY_BINARY){
+  const legacy=JSON.parse(await fs.readFile(path.join(run,'studio-profile/codex-thread-studio/teams/runtime.json'),'utf8'))
+  assert.ok(legacy.registrations.codex.value.command.endsWith(' (deleted)'))
+  ws.terminate();child.kill('SIGTERM');await until(()=>child.exitCode!==null||child.signalCode!==null)
+  events=[];launchBinary=binary;await start()
+  const migration=await api('install_preview',{backend:'codex'})
+  await api('install',{backend:'codex',file:migration.file,version:migration.version})
+  const migrated=JSON.parse(await fs.readFile(path.join(run,'studio-profile/codex-thread-studio/teams/runtime.json'),'utf8'))
+  assert.equal(migrated.registrations.codex.key,legacy.registrations.codex.key)
+  assert.equal(migrated.registrations.codex.token,legacy.registrations.codex.token)
+  for(const threadId of [a,b,c])await rpc('thread/resume',{threadId})
+  check('legacy_deleted_studio_command_migrates_without_new_registration')
+ }
+ const descriptor=JSON.parse(await fs.readFile(path.join(run,'studio-profile/codex-thread-studio/teams/runtime.json'),'utf8'))
+ const bridge=descriptor.registrations.codex.value
+ assert.equal(path.basename(bridge.command),'studio-teams-mcp')
+ assert.ok(bridge.command.startsWith(path.join(run,'studio-profile/codex-thread-studio/teams/bin/')))
+ assert.equal(bridge.args[0],'--runtime-file');assert.ok(!bridge.args.includes('--teams-mcp'))
+ await fs.access(bridge.command)
+ check('standalone_mcp_installed_to_stable_private_path')
  const snap=await api('snapshot');namespace=snap.registrations[0].key
  const group=await api('create_group',{request_id:crypto.randomUUID(),name:'Fixture group',members:[{session:{backend:'codex',thread:a},name:'A',responsibility:'Application and review'},{session:{backend:'codex',thread:b},name:'B',responsibility:'SDK and tests'}]})
  check('existing_sessions_and_tools_installed',{a,b,namespace})
@@ -485,6 +510,17 @@ print(json.dumps({'arrow':centers[0],'text':centers[1],'difference':abs(centers[
   assert.equal(await rail.locator('tfoot').count(),0)
   await rail.getByRole('button',{name:'Teams actions',exact:true}).click()
   await rail.getByRole('menuitem',{name:'Collaboration settings',exact:true}).click();await assertBackAligned()
+  const beforeUpdate=await api('snapshot')
+  await rail.getByRole('button',{name:'Update tools',exact:true}).click()
+  const updateDialog=page.getByRole('dialog',{name:'Update Teams tools',exact:true})
+  await updateDialog.getByRole('button',{name:'Confirm update',exact:true}).click()
+  await until(async()=>!await updateDialog.count())
+  const afterUpdate=await api('snapshot')
+  assert.deepEqual(afterUpdate.groups,beforeUpdate.groups)
+  assert.equal(afterUpdate.registrations[0].key,beforeUpdate.registrations[0].key)
+  assert.equal(afterUpdate.registrations[0].installed,true)
+  assert.equal(await rail.getByRole('button',{name:'Uninstall tools',exact:true}).count(),1)
+  check('browser_update_tools_preserves_registration_and_groups_without_uninstall')
   // Only the orphan UI transport is injected here; receipt correctness is tested above with the real host.
   let orphanPending=true, orphanChecks=0
   const orphan={session:{backend:'codex',thread:roleA},id:'orphan-exit-fixture'}

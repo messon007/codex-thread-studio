@@ -25,3 +25,6 @@
 *.sqlite3
 *.sqlite3-*
 /screenshots/
+
+# Generated Teams MCP release sidecars
+/src-tauri/binaries/

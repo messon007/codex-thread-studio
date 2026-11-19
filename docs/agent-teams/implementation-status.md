@@ -61,3 +61,13 @@
 在重复项断言处失败，修复后通过。该检查使用合成响应，不声称完成真实 App Server
 或 WebKit 弹出菜单端到端验证。
 本次验证：842 项 UI 回归、TypeScript 类型/生成产物检查及隔离选择器检查通过；使用现有 `/media` SDK 完成 feature 分支 debug 构建。未合入 main。
+
+
+独立 MCP 程序：协作 stdio 桥接从 Studio 主程序拆到 `studio-teams-mcp` crate，
+没有 GTK/WebKit 或领域数据库依赖。安装时使用 `teams/bin/<sha256>/` 中的私有稳定
+副本，避免运行中的 Studio 被重新编译替换后把 ` (deleted)` 路径写进 Codex 配置，
+也避免安装路径依赖临时 AppImage 挂载。需同时构建两个可执行文件；发布使用 sidecar
+配置打包。旧注册在重启新版本后通过协作设置中的 Update tools 流程迁移，保留 key/token、
+会话和组；不绕过配置 CAS/所有权检查，不自动修改其他 MCP 权限。
+
+验证：239 项 Rust 通过（1 项原有忽略）、842 项 UI 通过、类型/生成产物检查通过；Linux Tauri debug sidecar 构建通过。40 项真实 Studio/Codex/Chromium 隔离场景通过，包括旧 `(deleted)` 命令迁移、独立 helper 工具调用，以及 Update tools 保留注册与组。未改动真实用户配置；须重启新 Studio 后从协作设置更新现有安装。Windows/macOS 安装包仍待对应平台 CI。详见 [独立 MCP 验收记录](standalone-mcp-validation.json)。

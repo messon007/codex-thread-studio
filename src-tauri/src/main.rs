@@ -1,4 +1,5 @@
 mod teams;
+mod teams_bridge;
 mod teams_dispatch;
 mod teams_receipts;
 use std::collections::{BTreeMap, BTreeSet};
@@ -576,7 +577,7 @@ struct WorkspaceConflictError {
 }
 
 fn main() {
-    if let Some(result) = teams::bridge_entry() {
+    if let Some(result) = teams_bridge::legacy_entry() {
         if let Err(error) = result {
             eprintln!("Teams bridge: {error}");
             std::process::exit(1);

@@ -19,7 +19,45 @@ Installing tools is an explicit UI operation. The preview identifies the exact C
 
 The host writes only its own uniquely named MCP entry with compare-and-swap configuration versioning. Named Teams tools receive explicit tool-level approval in the installation; this does not relax shell, filesystem or approval policies for the member's work. The UI describes this scope before installation. It refuses to overwrite an externally changed registration. MCP reload refreshes the MCP configuration category.
 
-The stdio command is this exact Studio executable with `--teams-mcp --runtime-file … --backend …`. That mode does not open a window or start a daemon. A private instance descriptor contains the loopback address and a separate backend credential, not the browser gateway credential. The descriptor is refreshed when Studio starts on a new port. Uninstall removes only the owned entry after pending receipts have been settled.
+The stdio command is the independent `studio-teams-mcp` executable with
+`--runtime-file … --backend …`. It has no Studio UI, GTK/WebKit, Codex credentials,
+scheduler or session store dependencies. It forwards JSON-RPC to the running
+Studio host; it does not start Studio or a Codex daemon. A private instance
+descriptor contains the loopback address and a separate backend credential,
+not the browser gateway credential. The bridge re-reads it on every call so
+host port/token changes do not require a new command path.
+
+Install tools locates the built/bundled companion beside Studio and publishes a
+private, content-addressed executable under `teams/bin/<sha256>/studio-teams-mcp`
+(`.exe` on Windows). Codex's command points to this stable copy, never to Studio,
+`/proc/self/exe`, a temporary AppImage mount or an inode marked ` (deleted)`.
+Rebuilding/replacing Studio or the companion does not change an installed helper.
+A missing companion fails installation explicitly; there is no fallback to the
+Studio executable. Previously installed helper versions are retained rather than
+removed while another client may still use them.
+
+Existing registrations, including the old deleted command, migrate through the
+normal Update tools preview/confirmation and config-version CAS after restarting
+the new Studio. Reuse the registration key and token; replace only the exact
+owned MCP entry. External edits still block overwrite. The old `--teams-mcp`
+entry point only forwards to the companion for compatibility with still-valid old
+commands; new registrations never use it. Uninstall removes only the owned entry
+after pending receipts have been settled.
+
+Build both executables for local development:
+
+```bash
+cargo build --locked -p codex-thread-studio -p studio-teams-mcp
+```
+
+For bundles, first run `node scripts/build-teams-mcp.mjs --release --bundle`
+(add `--target <triple>` when cross-compiling), then
+`npm run tauri -- build --config src-tauri/tauri.teams.conf.json`
+(with the same target). The release workflow stages this companion and uses the
+overlay automatically; ordinary Cargo builds do not require staged bundle assets.
+The companion is signed with the application by the bundler when signing is
+configured. Platform packaging changes still require those platforms' CI.
+
 
 Codex 0.170.0 is the local compatibility baseline. Loaded sessions do not accept new MCP tools through `thread/resume.config`; the verified installation path is configuration CAS plus `config/mcpServer/reload`. Only same-host backends are enabled in this implementation. WSL/remote backend execution needs a separately verified bridge and is rejected rather than implicitly sharing credentials.
 

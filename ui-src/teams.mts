@@ -168,9 +168,10 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
   }
   async function installation(backend: string, removing = false) {
     const preview = await request({ action: 'install_preview', backend })
-    const form = subform(removing ? 'Remove Teams tools' : 'Install Teams tools')
+    const updating = !removing && snapshot.registrations.some((r: ObjectValue) => r.backend === backend && r.installed)
+    const form = subform(removing ? 'Remove Teams tools' : updating ? 'Update Teams tools' : 'Install Teams tools')
     form.append(prose(String(preview.impact)), el('p', String(preview.file), 'teams-path'))
-    form.append(primary(removing ? 'Confirm removal' : 'Confirm installation', () => mutate(() => request({ action: removing ? 'uninstall' : 'install', backend, file: preview.file, version: preview.version }))))
+    form.append(primary(removing ? 'Confirm removal' : updating ? 'Confirm update' : 'Confirm installation', () => mutate(() => request({ action: removing ? 'uninstall' : 'install', backend, file: preview.file, version: preview.version }))))
   }
   async function sessionPicker(parent: HTMLElement) {
     const backend = select(parent, 'Codex backend', snapshot.backends.map((value: string) => ({ value, text: value })))
@@ -667,7 +668,10 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     content.append(label('h4', 'Tools and backend configuration'))
     for (const backend of snapshot.backends) {
       const registration = snapshot.registrations.find((r: ObjectValue) => r.backend === backend)
-      const item = row(backend, t(registration?.installed ? 'Installed' : 'Not installed')); item.card.append(button(registration?.installed ? 'Uninstall tools' : 'Install tools', () => installation(backend, Boolean(registration?.installed)))); content.append(item.card)
+      const item = row(backend, t(registration?.installed ? 'Installed' : 'Not installed'))
+      item.card.append(button(registration?.installed ? 'Update tools' : 'Install tools', () => installation(backend)))
+      if (registration?.installed) item.card.append(button('Uninstall tools', () => installation(backend, true)))
+      content.append(item.card)
     }
     const unbound = (snapshot.user_dispatches || []).filter((d: ObjectValue) => !snapshot.groups.some((g: ObjectValue) => !g.archived && g.members.some((m: ObjectValue) => m.session.backend === d.session.backend && m.session.thread === d.session.thread)))
     if (unbound.length) {

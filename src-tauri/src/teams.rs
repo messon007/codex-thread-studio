@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{BufRead, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -1742,7 +1742,7 @@ async fn install(state: &GatewayState, v: &Value) -> Result<Value> {
                     json!({"approval_mode":"approve"}),
                 );
             }
-            json!({"command":std::env::current_exe().map_err(err)?,"args":["--teams-mcp","--runtime-file",path,"--backend",backend],"required":false,"startup_timeout_sec":5,"tool_timeout_sec":30,"tools":approvals})
+            json!({"command":crate::teams_bridge::install(&teams.directory, &crate::teams_bridge::companion(&std::env::current_exe().map_err(err)?)?)?,"args":["--runtime-file",path,"--backend",backend],"required":false,"startup_timeout_sec":5,"tool_timeout_sec":30,"tools":approvals})
         }
     };
     // Save desired ownership before writing, so a lost config response is recoverable by preview.
@@ -1912,82 +1912,6 @@ async fn call_native(state: &GatewayState, backend: &str, p: &Value) -> Result<V
         studio_teams::call_tool(&mut d.store, &caller, string(p, "name")?, args).map_err(err)?;
     state.teams.wake.notify_one();
     Ok(value)
-}
-
-/// A small stdio bridge only. It never creates a window, starts a daemon, or reads Codex credentials.
-pub fn bridge_entry() -> Option<Result<()>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) != Some("--teams-mcp") {
-        return None;
-    }
-    Some((|| {
-        if args.len() != 6 || args[2] != "--runtime-file" || args[4] != "--backend" {
-            return Err("Invalid Teams bridge arguments".into());
-        }
-        let path = PathBuf::from(&args[3]);
-        if !path.is_absolute() {
-            return Err("Runtime descriptor must be absolute".into());
-        }
-        let backend = &args[5];
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(err)?;
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .map_err(err)?;
-        let input = std::io::stdin();
-        let mut output = std::io::stdout().lock();
-        for line in input.lock().lines() {
-            let line = line.map_err(err)?;
-            if line.len() > 1024 * 1024 {
-                return Err("MCP request exceeds limit".into());
-            }
-            let value: Value = serde_json::from_str(&line).map_err(err)?;
-            let descriptor: Value =
-                serde_json::from_slice(&fs::read(&path).map_err(err)?).map_err(err)?;
-            let origin = string(&descriptor, "origin")?;
-            let parsed = url::Url::parse(origin).map_err(err)?;
-            if !matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) {
-                return Err("Teams runtime must be loopback".into());
-            }
-            let token = string(&descriptor["registrations"][backend], "token")?;
-            let response = runtime.block_on(async {
-                let response = client
-                    .post(format!("{origin}/teams/mcp/{backend}"))
-                    .bearer_auth(token)
-                    .json(&value)
-                    .send()
-                    .await
-                    .map_err(err)?;
-                if response.status() == StatusCode::NO_CONTENT {
-                    return Ok(None);
-                }
-                let response = response
-                    .error_for_status()
-                    .map_err(err)?
-                    .json::<Value>()
-                    .await
-                    .map_err(err)?;
-                Ok::<_, String>(Some(response))
-            });
-            let response = match response {
-                Ok(v) => v,
-                Err(e) => Some(
-                    json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32603,"message":e}}),
-                ),
-            };
-            if value.get("id").is_some() {
-                if let Some(v) = response {
-                    writeln!(output, "{v}").map_err(err)?;
-                    output.flush().map_err(err)?;
-                }
-            }
-        }
-        Ok(())
-    })())
 }
 
 #[cfg(test)]

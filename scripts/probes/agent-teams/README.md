@@ -46,3 +46,19 @@ confirmation cancellation, draft preservation, shared-tool restoration and the
 language/theme/font matrix. Current evidence is in
 [ui-redesign-validation.json](../../../docs/agent-teams/ui-redesign-validation.json);
 the original implementation manifest remains a historical baseline.
+
+## Session picker regression
+
+`session-picker.mjs` renders the actual generated Teams module and Studio CSS in
+Chromium with synthetic catalog responses. It does not launch Studio, contact
+Codex, read real sessions, send model requests or mutate group data. Provide
+`STUDIO_PLAYWRIGHT_MODULE` (absolute module path) and optionally
+`STUDIO_CHROMIUM_PATH`, then run `node scripts/probes/agent-teams/session-picker.mjs`.
+All page requests are intercepted locally; other URLs are blocked.
+
+Coverage: repeated IDs within a page and across pages, different IDs with identical
+names/paths, bound and invalid IDs, preserved selection, backend-scoped identity,
+late responses after backend changes, and reopening the dialog. Optional
+`STUDIO_TEAMS_MODULE` selects an earlier generated module for a failing baseline.
+This focused test complements the integrated acceptance fixture above; it does
+not establish real App Server or native WebKit behavior.

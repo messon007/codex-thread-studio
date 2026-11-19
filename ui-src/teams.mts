@@ -176,15 +176,19 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     const backend = select(parent, 'Codex backend', snapshot.backends.map((value: string) => ({ value, text: value })))
     if (snapshot.backends.length === 1) backend.parentElement!.hidden = true
     const thread = select(parent, 'Existing session', []); let cursor: string | null = null, generation = 0
+    // thread/list can contain multiple rollout records for one logical session.
+    // Keep identity unique across pages, scoped to the selected backend generation.
+    const listed = new Set<string>()
     const more = button('Load more', () => load(true)); more.hidden = true; parent.append(more)
     const load = async (append = false) => {
       const gen = append ? generation : ++generation
-      if (!append) { cursor = null; thread.replaceChildren(); more.hidden = true }
+      if (!append) { cursor = null; listed.clear(); thread.replaceChildren(); more.hidden = true }
       const list = await request({ action: 'sessions', backend: backend.value, cursor })
       if (gen !== generation) return
       const bound = new Set(snapshot.groups.filter((g: ObjectValue) => !g.archived).flatMap((g: ObjectValue) => g.members.map((m: ObjectValue) => `${m.session.backend}:${m.session.thread}`)))
       for (const session of list.data || []) {
-        if (bound.has(`${backend.value}:${session.id}`)) continue
+        if (typeof session.id !== 'string' || !session.id || listed.has(session.id) || bound.has(`${backend.value}:${session.id}`)) continue
+        listed.add(session.id)
         const option = el('option', `${session.name || session.preview || session.id} · ${session.cwd || ''}`); option.value = session.id; thread.append(option)
       }
       cursor = list.nextCursor || null; more.hidden = !cursor

@@ -255,6 +255,9 @@ export function createTeamsPanel(client, navigate, surface) {
             backend.parentElement.hidden = true;
         const thread = select(parent, 'Existing session', []);
         let cursor = null, generation = 0;
+        // thread/list can contain multiple rollout records for one logical session.
+        // Keep identity unique across pages, scoped to the selected backend generation.
+        const listed = new Set();
         const more = button('Load more', () => load(true));
         more.hidden = true;
         parent.append(more);
@@ -262,6 +265,7 @@ export function createTeamsPanel(client, navigate, surface) {
             const gen = append ? generation : ++generation;
             if (!append) {
                 cursor = null;
+                listed.clear();
                 thread.replaceChildren();
                 more.hidden = true;
             }
@@ -270,8 +274,9 @@ export function createTeamsPanel(client, navigate, surface) {
                 return;
             const bound = new Set(snapshot.groups.filter((g) => !g.archived).flatMap((g) => g.members.map((m) => `${m.session.backend}:${m.session.thread}`)));
             for (const session of list.data || []) {
-                if (bound.has(`${backend.value}:${session.id}`))
+                if (typeof session.id !== 'string' || !session.id || listed.has(session.id) || bound.has(`${backend.value}:${session.id}`))
                     continue;
+                listed.add(session.id);
                 const option = el('option', `${session.name || session.preview || session.id} · ${session.cwd || ''}`);
                 option.value = session.id;
                 thread.append(option);

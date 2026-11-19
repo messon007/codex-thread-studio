@@ -1,4 +1,12 @@
-# Public design assets
+# Design guidance and public assets
+
+Start UI work with the [interaction and interface guidelines](interaction-guidelines.md)
+and [typography standard](../typography.md). The guidelines consolidate user
+decisions across the project's conversation history; feature specifications retain
+their detailed behavior contracts. Update the guidelines when a later user decision
+changes a durable convention, and record the scope of exceptions.
+
+## Public assets
 
 Keep intentionally selected, privacy-reviewed design and acceptance images here.
 Use fictional sessions and isolated fixtures; do not commit personal conversation

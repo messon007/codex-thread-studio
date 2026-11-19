@@ -1,5 +1,13 @@
 # Project guidance
 
+## Interaction and interface design
+
+- Before designing or changing UI, read [the interaction and interface guidelines](docs/design/interaction-guidelines.md) and [the typography standard](docs/typography.md). These record project-wide user preferences, not just Agent Teams conventions.
+- Design the user journey before controls. Preserve the central chat and reuse the shared right workspace, existing components, icons, typography and interaction patterns. Prefer compact, aligned tables for comparable objects; make common actions direct and keep low-frequency actions in established menus.
+- Preserve drafts, reading position, focus and shared workspace width across relevant transitions. Accurate status and responsive interaction are part of UI correctness.
+- For substantial new or redesigned interactions, present a representative design/prototype for user review before implementation unless already approved in the current task. Validate the rendered result and actual journeys; source checks alone cannot establish visual quality.
+- Keep durable design decisions in the guidelines and scoped feature documents. Update superseded decisions rather than accumulating contradictory rules; do not generalize a feature-specific removal into a project-wide ban.
+
 ## Performance work
 
 - Prefer the Rust backend for computation that does not require browser APIs. Evaluate backend placement first for parsing, indexing, search, transformations, and shared caches; use bounded CPU parallelism and SIMD-capable libraries where measurements justify them.

@@ -14,8 +14,10 @@ body. The same resizer and peer-tool exclusivity remain in effect.
 - Group list: a compact table with Group name, Member count and Actions columns.
   Group name plus chevron opens its members. The row's add-member icon opens a
   single-member form. Counts and action icons align vertically; the name column
-  uses remaining space. Create group is the page's primary action. Archived groups
-  and collaboration/tool setup are in the header menu, not persistent extra cards.
+  uses remaining space; the chevron is centered beside the name. Member count
+  has a wider, font-responsive column and stays on one line. Total groups appears
+  only in the table footer. Create group is the page's primary action.
+  Collaboration/tool setup is in the header menu, not a duplicate list shortcut.
   Search appears when there are more than seven groups or an active search.
 - Group home: immediately show the Members / Responsibility / Actions table.
   The toolbar contains member count, Tasks and Add member. Each member's optional
@@ -26,7 +28,7 @@ body. The same resizer and peer-tool exclusivity remain in effect.
 - Tasks remains an explicit toolbar entry, including when empty. A paused group
   explains the blocking condition and resume action here. Task detail returns to
   its task list; the task list returns to members. The group menu exposes owner
-  selection, Activity, Rename, Pause/Resume, Archive and Delete directly.
+  selection, Activity, Rename, Pause/Resume and Delete directly.
 - Creation, member editing and owner selection use compact dialogs with Cancel
   and one primary action. One backend is not shown as a redundant selector.
   Display name and responsibility are group-specific; native session identity,
@@ -40,8 +42,16 @@ A group has at most five members and at most one orchestrator/owner. A second ow
 is rejected without adding a member. Explicit owner replacement/clearing is in the
 group menu. Empty or single-member groups remain paused; adding members does not
 automatically resume work. Successful addition opens the roster and focuses the
-new member's edit action; cancellation stays at the origin. Archived rosters are
-read-only and explain this visibly. Chinese uses “负责人” consistently for the role.
+new member's edit action; cancellation stays at the origin. The add-member form
+uses the same select styling as the group editor, labelled Orchestrator (协调者):
+No orchestrator / This member. An existing assignment is shown by name and cannot
+be replaced as a side effect of adding a member; use the group Orchestrator menu
+to replace or clear it. The member badge uses the same short role name.
+
+There is no Archive group action or Archived groups navigation. Persisted archived
+data from earlier development remains visible in the ordinary group list, marked
+Archived and read-only, with deletion still available; no migration destroys or
+reactivates that data. Legacy storage/domain compatibility is retained.
 
 Removal confirmation uses the existing host preview from the actual Rust removal
 predicates: requester/assignee/question references, unsettled execution/review
@@ -51,7 +61,7 @@ to the original member and scroll position. A race refreshes the same confirmati
 network failure remains visible, and a lost response reconciles current membership
 without an automatic resend. The original session is retained.
 
-Group deletion remains distinct from archive and requires revision checks, settled
+Group deletion requires revision checks, settled
 native work and explicit confirmation. Sessions/files and anti-replay receipts
 survive. It never cancels active work implicitly.
 

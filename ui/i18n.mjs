@@ -10,6 +10,10 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Orchestrator": "协调者",
+  "No orchestrator": "不指定协调者",
+  "This member": "此成员",
+  "Total groups": "协作组总数",
   "Each group has at most one owner.": "每个协作组最多指定一名负责人。",
   "This group is archived. Members are read-only.": "此协作组已归档，成员信息仅供查看。",
   "Groups": "协作组",

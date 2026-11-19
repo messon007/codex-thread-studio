@@ -72,7 +72,7 @@ export function createTeamsPanel(client, navigate, surface) {
     const mark = surface.heading.querySelector('.resources-mark')?.cloneNode(true);
     let snapshot = { groups: [], tasks: [], queue: [], reservations: [], registrations: [], backends: [] };
     let selected = '', section = 'tasks', taskId = '', taskSection = 'summary', filter = 'open', search = '', groupSearch = '';
-    let archived = false, setup = false, loading = false, timer;
+    let setup = false, loading = false, timer;
     let dialog = null, dirty = false, submitting = false, opener = null;
     let listScroll = 0, taskScroll = 0, listFocus = '';
     let memberReturn = null;
@@ -194,7 +194,7 @@ export function createTeamsPanel(client, navigate, surface) {
             closeDialog(true);
         opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         dialog = el('dialog', '', 'dialog teams-dialog');
-        if (['Create group', 'Add member', 'Edit member', 'Choose orchestrator', 'Rename group'].includes(title))
+        if (['Create group', 'Add member', 'Edit member', 'Orchestrator', 'Rename group'].includes(title))
             dialog.classList.add('teams-compact-dialog');
         dialog.setAttribute('aria-label', t(title));
         const header = el('header', '', 'dialog-header');
@@ -291,7 +291,6 @@ export function createTeamsPanel(client, navigate, surface) {
             return mutate(async () => {
                 await request({ action: 'create_group', name: name.value.trim(), members: [] });
                 selected = '';
-                archived = false;
                 setup = false;
                 groupSearch = '';
             });
@@ -380,9 +379,8 @@ export function createTeamsPanel(client, navigate, surface) {
         name.focus();
     }
     function chooseOrchestrator(group) {
-        const form = subform('Choose orchestrator', group.name);
-        const owner = select(form, 'Optional orchestrator · group task owner', [{ value: '', text: t('None · peer collaboration') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
-        notice(form, 'Each group has at most one owner.');
+        const form = subform('Orchestrator', group.name);
+        const owner = select(form, 'Orchestrator', [{ value: '', text: t('No orchestrator') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
         formActions(form, 'Save changes', () => command(group.id, { op: 'SetOrchestrator', expected_revision: group.revision, member_id: owner.value || null }));
     }
     function openGroup(group, destination) {
@@ -528,21 +526,17 @@ export function createTeamsPanel(client, navigate, surface) {
     async function addMember(group) {
         const form = subform('Add member', group.name);
         const picker = await sessionPicker(form), name = field(form, 'Display name'), responsibility = field(form, 'Responsibility', true);
-        const role = el('label', '', 'check-field');
-        const owner = el('input');
-        owner.type = 'checkbox';
+        const owner = select(form, 'Orchestrator', group.orchestrator
+            ? [{ value: 'existing', text: memberName(group, group.orchestrator) }]
+            : [{ value: '', text: t('No orchestrator') }, { value: 'new', text: t('This member') }]);
         owner.disabled = Boolean(group.orchestrator);
-        role.append(owner, label('span', 'Set as group orchestrator / owner'));
-        form.append(role);
-        if (group.orchestrator)
-            form.append(el('p', `${t('Current orchestrator / owner')}: ${memberName(group, group.orchestrator)}`, 'teams-hint'));
         formActions(form, 'Add member', async () => {
             if (!picker.thread.value || !name.value.trim() || !responsibility.value.trim())
                 throw Error('Fill in every member and responsibility.');
             let joined = '';
             await mutate(async () => {
                 const result = await request({ action: 'command', group_id: group.id, command: { op: 'AddMember', expected_revision: group.revision,
-                        member: { session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value.trim(), responsibility: responsibility.value.trim() }, make_orchestrator: owner.checked } });
+                        member: { session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value.trim(), responsibility: responsibility.value.trim() }, make_orchestrator: owner.value === 'new' } });
                 joined = result.group?.members.find((m) => m.session.backend === picker.backend.value && m.session.thread === picker.thread.value)?.id || '';
                 if (!selected) {
                     listScroll = content.scrollTop;
@@ -676,12 +670,11 @@ export function createTeamsPanel(client, navigate, surface) {
     function groupMenu(group) {
         const entries = [];
         if (!group.archived && group.members.length)
-            entries.push({ title: 'Choose orchestrator', path: 'M12 3v4M5 10h14M7 10v10M17 10v10M7 20h10', action: () => chooseOrchestrator(group) });
+            entries.push({ title: 'Orchestrator', path: 'M12 3v4M5 10h14M7 10v10M17 10v10M7 20h10', action: () => chooseOrchestrator(group) });
         entries.push({ title: 'Activity', path: 'M3 12h4l3-7 4 14 3-7h4', action: () => openGroup(group, 'activity') });
         if (!group.archived) {
             entries.push({ title: 'Rename group', path: 'M4 20h4l11-11-4-4L4 16zM13.5 6.5l4 4', action: () => renameGroup(group) });
             entries.push({ title: group.paused ? 'Resume group' : 'Pause group', path: group.paused ? 'm8 5 11 7-11 7z' : 'M8 5v14M16 5v14', action: () => command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused }) });
-            entries.push({ title: 'Archive group', path: 'M4 8h16v11H4zM3 4h18v4H3zM9 12h6', action: () => confirmAction('Archive group', group.name, 'Keep task history and release member sessions for other groups.', () => command(group.id, { op: 'ArchiveGroup', expected_revision: group.revision })) });
         }
         entries.push({ title: 'Delete group', path: removeIcon, action: () => deleteGroup(group), danger: true });
         return actionMenu(group.id, `${t('Group actions')} · ${group.name}`, entries);
@@ -726,7 +719,7 @@ export function createTeamsPanel(client, navigate, surface) {
         }
         else if (mark)
             surface.heading.append(mark.cloneNode(true));
-        const title = group && !setup ? el('h2', group.name) : label('h2', setup ? 'Collaboration settings' : archived ? 'Archived groups' : 'Agent Teams');
+        const title = group && !setup ? el('h2', group.name) : label('h2', setup ? 'Collaboration settings' : 'Agent Teams');
         if (group && !setup) {
             title.setAttribute('data-no-i18n', '');
             title.title = group.name;
@@ -736,7 +729,6 @@ export function createTeamsPanel(client, navigate, surface) {
             surface.menuSlot.append(groupMenu(group));
         else if (!setup)
             surface.menuSlot.append(actionMenu('list', t('Teams actions'), [
-                { title: archived ? 'Active groups' : 'Archived groups', path: 'M4 8h16v11H4zM3 4h18v4H3zM9 12h6', action: () => { archived = !archived; render(); focusKey('teams-menu-trigger-list'); } },
                 { title: 'Collaboration settings', path: 'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4', action: () => { setup = true; render(); focusDestination(); } },
             ]));
     }
@@ -769,8 +761,7 @@ export function createTeamsPanel(client, navigate, surface) {
         body.append(row);
     }
     function groupList() {
-        const controls = el('div', '', 'teams-list-controls'), count = el('span', '', 'teams-hint');
-        controls.append(count);
+        const controls = el('div', '', 'teams-list-controls');
         if (snapshot.groups.length > 7 || groupSearch) {
             const input = el('input');
             input.type = 'search';
@@ -780,19 +771,24 @@ export function createTeamsPanel(client, navigate, surface) {
             input.addEventListener('input', () => { groupSearch = input.value; fill(); });
             controls.append(input);
         }
-        if (snapshot.enabled && !archived) {
+        if (snapshot.enabled) {
             const create = primary('Create group', createGroup);
             create.prepend(symbol('M12 5v14M5 12h14'));
             controls.append(create);
         }
         content.append(controls);
-        const body = table(['Group name', 'Member count', 'Actions'], ['auto', '72px', '76px'], 'teams-groups-table');
+        const body = table(['Group name', 'Member count', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table');
+        const footer = el('tfoot'), footerRow = el('tr'), count = el('td', '', 'teams-table-summary');
+        count.colSpan = 3;
+        footerRow.append(count);
+        footer.append(footerRow);
+        body.parentElement.append(footer);
         const fill = () => {
             body.replaceChildren();
-            const groups = snapshot.groups.filter((g) => Boolean(g.archived) === archived && g.name.toLowerCase().includes(groupSearch.toLowerCase()));
-            count.replaceChildren(label('span', 'Groups'), el('span', ` · ${groups.length}`));
+            const groups = snapshot.groups.filter((g) => g.name.toLowerCase().includes(groupSearch.toLowerCase()));
+            count.replaceChildren(label('span', 'Total groups'), el('span', `: ${snapshot.groups.length}`));
             if (!groups.length)
-                emptyTable(body, groupSearch ? 'No matching groups' : archived ? 'No archived groups' : 'No groups yet');
+                emptyTable(body, groupSearch ? 'No matching groups' : 'No groups yet');
             for (const group of groups) {
                 const row = el('tr', '', 'teams-group-row');
                 row.dataset.groupId = group.id;
@@ -805,6 +801,8 @@ export function createTeamsPanel(client, navigate, surface) {
                 title.setAttribute('data-no-i18n', '');
                 open.append(title, symbol('m9 6 6 6-6 6'));
                 name.append(open);
+                if (group.archived)
+                    name.append(label('span', 'Archived', 'teams-hint'));
                 const add = iconAction('Add member', 'M14 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0M4 20v-2a7 7 0 0 1 10-6M19 12v8M15 16h8', () => addMember(group));
                 add.dataset.focusKey = `add-member-${group.id}`;
                 add.disabled = group.archived || group.members.length >= 5;
@@ -851,7 +849,7 @@ export function createTeamsPanel(client, navigate, surface) {
             title.setAttribute('data-no-i18n', '');
             name.append(title);
             if (group.orchestrator === member.id)
-                name.append(label('span', 'Owner', 'teams-owner-label'));
+                name.append(label('span', 'Orchestrator', 'teams-owner-label'));
             const responsibility = el('td', member.responsibility, 'teams-member-responsibility');
             responsibility.setAttribute('data-no-i18n', '');
             const actions = el('td'), controls = el('div', '', 'teams-table-actions');

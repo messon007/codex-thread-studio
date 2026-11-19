@@ -1,0 +1,96 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "review": {
+    "model": "GPT-6.2-Astra",
+    "result": "Five requested UI changes approved, no blocking findings",
+    "scope": "Source and table-polish-01 screenshots/report; final run adds stable total-count search coverage."
+  },
+  "changes": [
+    "Single-line responsive Member count column",
+    "Total groups in tfoot, stable under filtering",
+    "Orchestrator select instead of verbose checkbox",
+    "Group chevron centered beside name",
+    "No group archive action or archive-filter navigation; persisted legacy groups remain readable and deletable"
+  ],
+  "ui_tests": {
+    "passed": 841,
+    "failed": 0,
+    "typecheck": "passed",
+    "generated_modules": 75
+  },
+  "build": "locked offline development build passed",
+  "rust": "No Rust code changed; workspace baseline remains table-ui-validation.json, not rerun for this frontend adjustment.",
+  "integration": {
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/table-polish-03",
+    "success": true,
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_group_count_footer_single_line_header_and_centered_chevron",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_and_no_archive_action",
+      "browser_create_empty_group_then_add_one_member_and_optional_single_owner",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ],
+    "report_sha256": "ae1bb3fc7cdea2976eebfaa051447400fca28b9cc48a3aa0c2676a39068edc11"
+  },
+  "screenshots": {
+    "teams-add-member-narrow.png": "50f343b8206cea9ecd4d06eedd5093c7cbb593c8a6be362ea3edc0127213a8e8",
+    "teams-add-member.png": "3f5b0306f4a2adb0030d6c6daf43508cc76d3203ec315a769ed32dc4448a69f4",
+    "teams-chinese.png": "9faa841da53eb7be40ba8ce083bce08ca4e4981ff56f74f1709852897861ec4e",
+    "teams-detail.png": "186ba667e54e90b1d5755b2323c59be3f99036c2a77f0d92a3c82f27f5a82845",
+    "teams-edit-member-chinese.png": "3ab405df7a3cf338dd47e0c44a579eb145b571e44763089ace00773248cfe786",
+    "teams-edit-member.png": "6072a36d5810a467a20cd7e583ac515d763da7a2fcb30b83b2a36c942a168da5",
+    "teams-groups-large-narrow.png": "1619ae75747f98dcdd1d5cb30a434bc9846776831f0249ebd60a951c30d878e6",
+    "teams-incremental-groups.png": "ddea73767c4453c9d5ec313f82a1323679c80af0ccd4a9e0c077f0c041256343",
+    "teams-member-menu.png": "d1e0f88c569d1633ebade573f93ab98e323bd273af8664f6b419bf92cc0e660c",
+    "teams-members-chinese.png": "2899d0778425b64acb26eaf5e16be27093202e7a99ae1533fea9b671af7db3f9",
+    "teams-members-light.png": "1ae5d57dab75858392319aea8bd361d81f103e4d55ebebe0ebf3ea48e91b8d24",
+    "teams-members-narrow-dark.png": "49159c0129832e21ab07ff2ef71b966e6d0f497c32ffda94980811b9223f07ec",
+    "teams-narrow-dark.png": "b79e8afec02a11b87b63368f0170878a257a7c44f3aef3952f8de57027ddeae1",
+    "teams-panel.png": "63e26cf1d893c86ef307c6d98521ea1094d65ac33866a0d7530a14cbf72bd102"
+  },
+  "source_sha256": {
+    "ui-src/teams.mts": "65fcf9a45194d5cc3b6b3dfcfd80519d3ade17ae8749e548a6d616f4363ce713",
+    "ui-src/generated.sha256": "4b354c6be89568c7ab62ce1f83c593fa5a5298a976395581529d524a98f1ca6c",
+    "ui/teams.mjs": "bf9b83499a71b753bb45a3c8364dbb8c7df8fe33679a5808edc994b6ba292137",
+    "ui/styles.css": "5907d9f7939ed2c4f52343d5d813a2a18b11d98c08c54b2de4a3e5804ebd96c1",
+    "ui/i18n.mjs": "251d3a4f1d5b2936f00fdbd681ba70e99073f16fe81298b5966ce42b24a15c2a",
+    "scripts/probes/agent-teams/studio-integration.mjs": "9d6c5fe60db09ab057a96b545d78fe5a943978776a16172c80435456cc44affd"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "ddd7d46ba67d32fc1fa1c9d00913e30f502a46fd33d6a146328b068700185a5e"
+  },
+  "logs": {
+    "table-polish-ui-tests.log": "718cbab5a7df196c534629ab0f2e7e98ac11ffa171e639a682e1deff2dc8260c",
+    "table-polish-build.log": "93ab393424349e3a0f587904db90a42038b552e3530ff4621955926380711c37"
+  }
+}

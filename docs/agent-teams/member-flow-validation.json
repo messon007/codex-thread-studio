@@ -1,0 +1,170 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "base_commit": "1e696b6f9d81760301a508b3dbf4b7f5c71a784d",
+  "main_unchanged": true,
+  "rust": {
+    "passed": 225,
+    "failed": 0,
+    "ignored": 1
+  },
+  "ui": {
+    "passed": 840,
+    "failed": 0,
+    "generated_modules": 75,
+    "typecheck": "passed"
+  },
+  "clippy": "studio-teams all targets -D warnings passed",
+  "format": "Rust format and git diff checks passed",
+  "integration": {
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/member-flow-04",
+    "success": true,
+    "codex_version": "0.170.0",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      {
+        "name": "existing_sessions_and_tools_installed",
+        "a": "01a1f15d-bf2d-7b01-96ac-7d25a278347b",
+        "b": "01a1f15d-c0de-7d41-933e-8dbe56b98b1d",
+        "namespace": "studio_teams_55db7f3c441046ddba0e8b0d3e27e8f3_73f88bedc23945fe8d0040da85263e69"
+      },
+      {
+        "name": "nonmember_tool_access_denied"
+      },
+      {
+        "name": "existing_member_discovers_group_without_context_injection"
+      },
+      {
+        "name": "nonmember_without_stable_message_id_keeps_original_transport"
+      },
+      {
+        "name": "busy_member_receives_queue_without_interrupt"
+      },
+      {
+        "name": "native_tools_begin_submit_and_turn_barrier",
+        "status": "Submitted"
+      },
+      {
+        "name": "explicit_review_completes_task"
+      },
+      {
+        "name": "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message"
+      },
+      {
+        "name": "ordinary_multi_page_dispatch_is_once_with_original_options"
+      },
+      {
+        "name": "ordinary_and_supervision_reservations_are_exclusive"
+      },
+      {
+        "name": "agent_delegate_question_answer_revise_and_accept",
+        "attempts": 2,
+        "reviews": 2
+      },
+      {
+        "name": "supervision_reservation_blocks_dispatch"
+      },
+      {
+        "name": "pause_withdraws_unsent_messages"
+      },
+      {
+        "name": "host_restart_and_withdrawn_delivery_resume"
+      },
+      {
+        "name": "browser_rail_task_hierarchy_and_result_details"
+      },
+      {
+        "name": "browser_delete_explains_outstanding_work"
+      },
+      {
+        "name": "browser_delete_cancel_confirm_and_preserve_original_sessions"
+      },
+      {
+        "name": "browser_create_empty_group_then_add_one_member_and_optional_single_owner"
+      },
+      {
+        "name": "browser_dirty_form_escape_preserves_draft"
+      },
+      {
+        "name": "browser_shared_rail_exclusivity_themes_fonts_and_chinese"
+      },
+      {
+        "name": "browser_member_navigation_leaves_teams_rail"
+      },
+      {
+        "name": "browser_member_navigation_preserves_restored_workspace"
+      },
+      {
+        "name": "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall"
+      },
+      {
+        "name": "disable_and_precise_uninstall"
+      }
+    ],
+    "script_sha256": "6ec3bdb3dcfc39cc7a617a1a3d35f784977a8eda80eac3523a872688bce0894e",
+    "report_sha256": "67a86cd44026445721604d3d662f5b1bb18bd4c22df002ec5bed27c4454bc6a6"
+  },
+  "browser_matrix": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "interface_sizes": [
+      11,
+      14,
+      20
+    ],
+    "interface_weights": [
+      400,
+      500,
+      600
+    ],
+    "languages": [
+      "en-US",
+      "zh-CN"
+    ],
+    "viewports": [
+      [
+        1360,
+        1000
+      ],
+      [
+        720,
+        900
+      ]
+    ],
+    "new_member_dialog": "Narrow 720px, light/dark, 11/14/20px; explicit accessible select labels",
+    "platform": "Linux Chromium headless"
+  },
+  "screenshots": {
+    "teams-add-member-narrow.png": "7c5194634502f8331aa0ad35686200af30372c84e6ecdc23b175daa3aa28ba78",
+    "teams-add-member.png": "3d2d15a65272eaac04669ae6b7ca046fcf266892e52898d0d1393d5c2dae74aa",
+    "teams-chinese.png": "7090cfafbacbc310048718982337df55ea96f3e993d851fc792e16a9df33b21b",
+    "teams-detail.png": "ccbc60d5d56639868eee1f9ae215c2f8e784dacd763886e08d361a60f699510b",
+    "teams-incremental-groups.png": "e51b3a1969f660496242025ef6c9c27f4588131f7aae9a96affdd216d894016c",
+    "teams-narrow-dark.png": "3b410d1a76e1b7f47e15d6a473fe397834dcf11edb9dd01b529cb98b0c9a2ffc",
+    "teams-panel.png": "bab7e86e0729ac17f2a0aab077ce3f3286bd30eb285c9367ddf9ec9999c67e1c"
+  },
+  "logs": {
+    "workspace-tests-final.log": "4e855ed39ca20eb4fa2b17c1a56f8b7fa6d4ae90a0a2b93491f206d0ac2ffbdd",
+    "member-flow-ui-tests.log": "2b3447ef1076e3abbf4f59fbd4ec815af466104d05aaf0715b9c98711ba75c9b",
+    "clippy-final.log": "d94a68446d155fdaa865949f0687a338fbd18a5643954cf32a394e32ce561741",
+    "build-final.log": "02e3d1bd4722481dee4d0409de24f7bad65c3b575d153ebbec915beb7bedb84a"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "0d813e2dc25126f991635c038a718df9ca927d999b4382a69eaedd68df4a14f5"
+  },
+  "changed_source_hashes": {
+    "crates/studio-teams/src/maintenance.rs": "e8f1f5e8005ff75093c3d68c21dadea0c4dd400779da949800f996c57c4d8388",
+    "crates/studio-teams/src/model.rs": "5fd286720fb0d8a6180f5090a49bbbc2b32e4af4c8fcdd1bf420851da2398600",
+    "crates/studio-teams/src/store.rs": "54f0e2d8f83baaac5a39508198be4d1e2f21fa6faeeeedf0f90046a9b1d565f2",
+    "crates/studio-teams/tests/domain.rs": "813cc202e9fd1d93dc7d48fc2038673367c583cc7f8b3803c9703a4337cbf955",
+    "src-tauri/src/teams.rs": "09133fee56f532c4b76430f2de42bf3092d6b161165f115ca2eae4fd8f095929",
+    "ui-src/generated.sha256": "d36287f84cb30fd73e3c4e1d5769b26e3144b36d4d87987c3b3102344023c10a",
+    "ui-src/teams.mts": "ff9560d5cf536474fb46e8d4c2b62bd92af6f64efc9d6d36889a7872122ec6c2",
+    "ui/i18n.mjs": "ffee67699b8df92810f9a5957cfb85b07a556fead857bc23d315a402810cabf4",
+    "ui/teams.mjs": "f7e7bb47d99792a9df62ab731107eeadc532bfacce5813f7790d34719dc44431"
+  }
+}

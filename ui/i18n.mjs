@@ -10,6 +10,14 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Create the group first, then add members one at a time from the group list.": "先创建协作组，再从组列表逐个添加成员。",
+  "Enter a group name.": "请输入协作组名称。",
+  "Set as group orchestrator / owner": "设为协作组协调者 / 负责人",
+  "Current orchestrator / owner": "当前协调者 / 负责人",
+  "A group has at most one orchestrator / owner. You can change it later in Members.": "每组最多一位协调者 / 负责人，之后可在“组成员”中调整。",
+  "The group stays paused while you add members. Resume it when ready; at least two members are needed.": "添加成员期间协作组保持暂停。至少两名成员就绪后，可恢复协作组。",
+  "No members yet": "尚未添加成员",
+
   "Tasks": "协作任务",
   "Activity": "协作活动",
   "Queued": "等待派发",

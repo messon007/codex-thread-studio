@@ -1497,3 +1497,155 @@ fn deleting_a_cancelled_task_group_still_waits_for_the_native_claim() {
         .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision)
         .unwrap();
 }
+
+#[test]
+fn empty_group_accepts_one_member_at_a_time_with_a_single_atomic_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("teams.sqlite3")).unwrap();
+    let user = Caller::user();
+    let mut group = store
+        .create_group(&user, "create-empty", "New group", vec![])
+        .unwrap();
+    assert!(group.paused && group.members.is_empty() && group.orchestrator.is_none());
+    let draft = |n: usize| MemberDraft {
+        session: Session {
+            backend: "codex".into(),
+            thread: format!("thread-{n}"),
+        },
+        name: format!("Member {n}"),
+        responsibility: "Development".into(),
+    };
+    let add = Command::AddMember {
+        expected_revision: group.revision,
+        member: draft(0),
+        make_orchestrator: true,
+    };
+    group = store
+        .execute(&user, &group.id, "add-first", add.clone())
+        .unwrap()
+        .group
+        .unwrap();
+    assert_eq!(group.members.len(), 1);
+    assert_eq!(
+        group.orchestrator.as_deref(),
+        Some(group.members[0].id.as_str())
+    );
+    assert!(
+        store
+            .execute(&user, &group.id, "add-first", add)
+            .unwrap()
+            .replayed
+    );
+    assert!(matches!(
+        store.execute(
+            &user,
+            &group.id,
+            "resume-one",
+            Command::SetPaused {
+                expected_revision: group.revision,
+                paused: false
+            }
+        ),
+        Err(Error::InvalidState)
+    ));
+    assert!(matches!(
+        store.execute(
+            &user,
+            &group.id,
+            "second-owner",
+            Command::AddMember {
+                expected_revision: group.revision,
+                member: draft(1),
+                make_orchestrator: true
+            }
+        ),
+        Err(Error::InvalidState)
+    ));
+    assert!(store
+        .member_for_session(&draft(1).session)
+        .unwrap()
+        .is_none());
+    let after_rejection = store.context(&user, &group.id).unwrap();
+    assert_eq!(after_rejection.revision, group.revision);
+    for n in 1..5 {
+        group = store
+            .execute(
+                &user,
+                &group.id,
+                &format!("add-{n}"),
+                Command::AddMember {
+                    expected_revision: group.revision,
+                    member: draft(n),
+                    make_orchestrator: false,
+                },
+            )
+            .unwrap()
+            .group
+            .unwrap();
+    }
+    assert_eq!(group.members.len(), 5);
+    assert_eq!(
+        group.orchestrator.as_deref(),
+        Some(group.members[0].id.as_str())
+    );
+    assert!(matches!(
+        store.execute(
+            &user,
+            &group.id,
+            "sixth",
+            Command::AddMember {
+                expected_revision: group.revision,
+                member: draft(5),
+                make_orchestrator: false
+            }
+        ),
+        Err(Error::LimitExceeded)
+    ));
+    assert!(matches!(
+        store.execute(
+            &user,
+            &group.id,
+            "stale-owner",
+            Command::SetOrchestrator {
+                expected_revision: group.revision - 1,
+                member_id: Some(group.members[1].id.clone())
+            }
+        ),
+        Err(Error::RevisionConflict)
+    ));
+    group = store
+        .execute(
+            &user,
+            &group.id,
+            "change-owner",
+            Command::SetOrchestrator {
+                expected_revision: group.revision,
+                member_id: Some(group.members[1].id.clone()),
+            },
+        )
+        .unwrap()
+        .group
+        .unwrap();
+    assert_eq!(
+        group.orchestrator.as_deref(),
+        Some(group.members[1].id.as_str())
+    );
+    group = store
+        .execute(
+            &user,
+            &group.id,
+            "remove-all",
+            Command::ChangeMembers {
+                expected_revision: group.revision,
+                add: vec![],
+                remove_member_ids: group.members.iter().map(|m| m.id.clone()).collect(),
+            },
+        )
+        .unwrap()
+        .group
+        .unwrap();
+    assert!(group.paused && group.members.is_empty() && group.orchestrator.is_none());
+    store
+        .delete_group(&user, &group.id, "delete-empty", group.revision)
+        .unwrap();
+}

@@ -380,6 +380,11 @@ pub enum Command {
         name: Option<String>,
         members: Vec<MemberProfile>,
     },
+    AddMember {
+        expected_revision: u64,
+        member: MemberDraft,
+        make_orchestrator: bool,
+    },
     ChangeMembers {
         expected_revision: u64,
         add: Vec<MemberDraft>,

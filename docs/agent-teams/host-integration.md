@@ -7,7 +7,7 @@ The feature lives on `feat/agent-teams`; it is not merged into `main`. The stand
 - `crates/studio-teams`: transactional tasks, membership, explicit completion/review, idempotent commands, native-turn barriers, outbox, and persistent admission/reservation state.
 - `src-tauri/src/teams.rs`: native-event correlation, backend registration, outbox delivery, control-plane fencing, MCP bridge, and authenticated user API.
 - `ui-src/teams.mts`: a Teams view in the shared right workspace with focused operation dialogs and a small reservation client. Its dependencies are an authenticated gateway request and session navigation.
-- The existing global Thread Router is not a team orchestrator. An optional orchestrator is selected from a group's existing members. Membership stays at 2–5 Codex sessions.
+- The existing global Thread Router is not a team orchestrator. An optional orchestrator is selected from a group's existing members. Groups may be created empty and populated one member at a time (maximum five); fewer than two members cannot resume collaboration.
 
 Teams never uses `turn/start`, `turn/steer`, or `thread/queue/start` for automatic delivery. It records the send intent before a single `thread/queue/add`. Busy members remain busy with their current work; Codex starts queued work when able. A request that may have reached Codex is not automatically retried. Stable message IDs correlate receipts; they are not assumed to deduplicate native queue admission.
 
@@ -55,3 +55,7 @@ removes the group, memberships, tasks, effects and visible history in one domain
 transaction. Native sessions, files, command receipts and native queue receipts
 are not deleted. Live/unknown claims, unfinished tasks, pending deliveries or
 held member reservations block deletion.
+
+`AddMember` atomically joins one session and optionally assigns the single
+orchestrator/owner slot. A second requested owner is rejected without adding the
+member; intentional replacement uses `SetOrchestrator`.

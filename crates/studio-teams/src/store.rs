@@ -385,7 +385,7 @@ PRAGMA user_version=1; COMMIT;")?;
         }
         identifier(request_id)?;
         text(name, 800)?;
-        if !(2..=5).contains(&members.len()) {
+        if members.len() > 5 {
             return Err(Error::LimitExceeded);
         }
         for m in &members {
@@ -426,7 +426,7 @@ PRAGMA user_version=1; COMMIT;")?;
                 id: id(),
                 name: name.into(),
                 revision: 1,
-                paused: false,
+                paused: members.len() < 2,
                 archived: false,
                 roster_version: 1,
                 orchestrator: None,

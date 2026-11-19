@@ -1472,6 +1472,9 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
                 if let Command::ChangeMembers { add, .. } = &command {
                     check_members(state, add).await?;
                 }
+                if let Command::AddMember { member, .. } = &command {
+                    check_members(state, std::slice::from_ref(member)).await?;
+                }
                 let d = teams.lock()?;
                 if !d.settings.enabled
                     && matches!(

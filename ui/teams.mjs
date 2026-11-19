@@ -113,9 +113,10 @@ export function createTeamsPanel(client, navigate, surface) {
         return input;
     }
     function select(parent, text, options, initial = '') {
-        const wrapper = el('label', '', 'field');
-        wrapper.append(label('span', text));
-        const input = el('select');
+        const wrapper = el('label', '', 'field'), caption = label('span', text), input = el('select');
+        caption.id = `teams-field-${crypto.randomUUID()}`;
+        input.setAttribute('aria-labelledby', caption.id);
+        wrapper.append(caption);
         for (const o of options) {
             const option = el('option', o.text);
             option.value = o.value;
@@ -244,29 +245,19 @@ export function createTeamsPanel(client, navigate, surface) {
         return { backend, thread };
     }
     async function createGroup() {
-        const form = subform('Create group', 'Choose 2–5 existing sessions and describe their responsibilities.');
-        const name = field(form, 'Group name'), rows = el('div', '', 'teams-member-drafts');
-        form.append(rows);
-        const drafts = [];
-        const add = async () => {
-            if (drafts.length >= 5)
-                return;
-            const box = el('fieldset');
-            box.append(label('legend', 'Member'));
-            rows.append(box);
-            const picker = await sessionPicker(box), display = field(box, 'Display name'), responsibility = field(box, 'Responsibility', true);
-            const draft = { ...picker, display, responsibility, box };
-            drafts.push(draft);
-            box.append(button('Remove member', () => { if (drafts.length <= 2)
-                throw Error('A group needs at least two members.'); drafts.splice(drafts.indexOf(draft), 1); box.remove(); dirty = true; }));
-        };
-        form.append(button('Add member', add), primary('Create group', () => {
-            if (!name.value.trim() || drafts.some(d => !d.thread.value || !d.display.value.trim() || !d.responsibility.value.trim()))
-                throw Error('Fill in every member and responsibility.');
-            return mutate(async () => { const g = await request({ action: 'create_group', name: name.value.trim(), members: drafts.map(d => ({ session: { backend: d.backend.value, thread: d.thread.value }, name: d.display.value.trim(), responsibility: d.responsibility.value.trim() })) }); selected = g.id; archived = false; setup = false; section = 'tasks'; });
+        const form = subform('Create group', 'Create the group first, then add members one at a time from the group list.');
+        const name = field(form, 'Group name');
+        form.append(primary('Create group', () => {
+            if (!name.value.trim())
+                throw Error('Enter a group name.');
+            return mutate(async () => {
+                await request({ action: 'create_group', name: name.value.trim(), members: [] });
+                selected = '';
+                archived = false;
+                setup = false;
+                groupSearch = '';
+            });
         }));
-        await add();
-        await add();
         name.focus();
     }
     function newTask(group) {
@@ -290,10 +281,25 @@ export function createTeamsPanel(client, navigate, surface) {
         form.append(primary('Save names and responsibilities', () => command(group.id, { op: 'SetGroupProfile', expected_revision: group.revision, name: null, members: profiles.map((p) => ({ member_id: p.id, display_name: p.display.value, responsibility: p.responsibility.value })) })));
     }
     async function addMember(group) {
-        const form = subform('Add existing session');
-        notice(form, 'Pause the group and settle pending deliveries before changing members or archiving.');
+        const form = subform('Add member', group.name);
         const picker = await sessionPicker(form), name = field(form, 'Display name'), responsibility = field(form, 'Responsibility', true);
-        form.append(primary('Add member', () => command(group.id, { op: 'ChangeMembers', expected_revision: group.revision, add: [{ session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value, responsibility: responsibility.value }], remove_member_ids: [] })));
+        const role = el('label', '', 'check-field');
+        const owner = el('input');
+        owner.type = 'checkbox';
+        owner.disabled = Boolean(group.orchestrator);
+        role.append(owner, label('span', 'Set as group orchestrator / owner'));
+        form.append(role);
+        if (group.orchestrator)
+            form.append(el('p', `${t('Current orchestrator / owner')}: ${memberName(group, group.orchestrator)}`, 'teams-hint'));
+        notice(form, 'A group has at most one orchestrator / owner. You can change it later in Members.');
+        if (group.paused)
+            notice(form, 'The group stays paused while you add members. Resume it when ready; at least two members are needed.');
+        form.append(primary('Add member', () => {
+            if (!picker.thread.value || !name.value.trim() || !responsibility.value.trim())
+                throw Error('Fill in every member and responsibility.');
+            return command(group.id, { op: 'AddMember', expected_revision: group.revision,
+                member: { session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value.trim(), responsibility: responsibility.value.trim() }, make_orchestrator: owner.checked });
+        }));
     }
     function confirmAction(title, name, description, action) {
         const form = subform(title);
@@ -352,7 +358,7 @@ export function createTeamsPanel(client, navigate, surface) {
             }
             for (const group of groups) {
                 const active = tasks(group).filter((task) => !terminal(task)).length;
-                const { card, copy } = row('', group.members.map((m) => m.name).join(' · '));
+                const { card, copy } = row('', group.members.length ? group.members.map((m) => m.name).join(' · ') : t('No members yet'));
                 const open = button(group.name, () => { listScroll = content.scrollTop; selected = group.id; section = 'tasks'; render(); content.scrollTop = 0; }, 'teams-row-link');
                 open.dataset.focusKey = group.id;
                 copy.prepend(open);
@@ -375,7 +381,10 @@ export function createTeamsPanel(client, navigate, surface) {
                     trigger.focus();
                     event.stopPropagation();
                 } });
-                card.append(meta, menu);
+                card.append(meta);
+                if (!group.archived && group.members.length < 5)
+                    card.append(button('Add member', () => addMember(group)));
+                card.append(menu);
                 list.append(card);
             }
         };
@@ -387,7 +396,7 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     function showMembers(group) {
         const actions = el('div', '', 'teams-actions');
-        if (!group.archived) {
+        if (!group.archived && group.members.length) {
             actions.append(button('Edit responsibilities', () => editMembers(group)), button('Choose orchestrator', () => {
                 const form = subform('Choose orchestrator'), owner = select(form, 'Optional orchestrator · group task owner', [{ value: '', text: t('None · peer collaboration') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
                 form.append(primary('Save', () => command(group.id, { op: 'SetOrchestrator', expected_revision: group.revision, member_id: owner.value || null })));
@@ -395,6 +404,8 @@ export function createTeamsPanel(client, navigate, surface) {
             if (group.members.length < 5)
                 actions.append(primary('Add member', () => addMember(group)));
         }
+        if (!group.archived && !group.members.length)
+            actions.append(primary('Add member', () => addMember(group)));
         content.append(actions);
         for (const member of group.members) {
             const { card, copy } = row(member.name, member.responsibility);
@@ -651,7 +662,7 @@ export function createTeamsPanel(client, navigate, surface) {
                 content.append(button('Back to groups', () => { selected = ''; render(); content.scrollTop = listScroll; }));
                 const heading = row(group.name, `${group.members.length} ${t('Members')} · ${t(group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled')}`);
                 heading.card.classList.add('teams-detail-heading');
-                if (section === 'tasks' && !group.archived && snapshot.enabled)
+                if (section === 'tasks' && !group.archived && !group.paused && snapshot.enabled)
                     heading.card.append(primary('Delegate work', () => newTask(group)));
                 content.append(heading.card);
                 tabs(content, [['tasks', 'Tasks'], ['members', 'Members'], ['activity', 'Activity'], ['settings', 'Group settings']], section, key => { section = key; render(); content.scrollTop = 0; }, 'Group sections');

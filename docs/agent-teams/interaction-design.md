@@ -40,3 +40,19 @@ The initial single-page-modal screenshot is superseded. [Validation manifest](ui
 records 23 integrated checks, including confirmation cancellation, deletion with
 original sessions retained, invalid/dirty draft retention, peer-rail exclusivity
 and restoration, both UI languages/themes and font size/weight extremes.
+
+## Group creation and joining
+
+Create group asks only for a name and returns to the group list. The new group is
+empty and paused. Each non-archived row below the five-member limit exposes **Add
+member** directly. That dialog selects exactly one existing session, its name and
+responsibility. An optional checkbox assigns that member as orchestrator/owner;
+these are two names for the same single slot, not separate roles. If already set,
+the checkbox is disabled and the current owner is identified. Users may explicitly
+replace/clear the owner later in Members. Joining and assigning ownership commit
+atomically with the expected group revision. Concurrent/stale requests cannot
+create two owners or partially add a member on an ownership conflict.
+
+Empty and single-member groups remain paused; at least two members are required
+to resume collaboration. Adding members does not implicitly resume a paused group.
+Removing the owner clears that slot; removing all members returns to an empty group.

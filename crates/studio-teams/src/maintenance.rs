@@ -61,6 +61,9 @@ pub(super) fn manage_group(
         Command::SetGroupProfile {
             expected_revision, ..
         }
+        | Command::AddMember {
+            expected_revision, ..
+        }
         | Command::ChangeMembers {
             expected_revision, ..
         }
@@ -73,6 +76,30 @@ pub(super) fn manage_group(
     if expected != g.revision {
         return Err(Error::RevisionConflict);
     }
+    // Joining and choosing the optional owner are one revision-checked transaction.
+    let normalized;
+    let mut owner_session = None;
+    let cmd = if let Command::AddMember {
+        expected_revision,
+        member,
+        make_orchestrator,
+    } = cmd
+    {
+        if *make_orchestrator {
+            if g.orchestrator.is_some() {
+                return Err(Error::InvalidState);
+            }
+            owner_session = Some(&member.session);
+        }
+        normalized = Command::ChangeMembers {
+            expected_revision: *expected_revision,
+            add: vec![member.clone()],
+            remove_member_ids: vec![],
+        };
+        &normalized
+    } else {
+        cmd
+    };
     match cmd {
         Command::SetGroupProfile { name, members, .. } => {
             if name.is_none() && members.is_empty() {
@@ -112,7 +139,7 @@ pub(super) fn manage_group(
             {
                 return Err(Error::InvalidArgument);
             }
-            if !(1..=5).contains(&(g.members.len() - remove_member_ids.len() + add.len())) {
+            if g.members.len() - remove_member_ids.len() + add.len() > 5 {
                 return Err(Error::LimitExceeded);
             }
             if unfinished_member_reference(tx, g, remove_member_ids, false)? {
@@ -165,6 +192,16 @@ pub(super) fn manage_group(
             g.paused = true;
         }
         _ => unreachable!(),
+    }
+    if let Some(session) = owner_session {
+        g.orchestrator = Some(
+            g.members
+                .iter()
+                .find(|m| &m.session == session)
+                .ok_or(Error::InvalidState)?
+                .id
+                .clone(),
+        );
     }
     g.revision += 1;
     g.roster_version += 1;

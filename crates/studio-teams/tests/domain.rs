@@ -1380,3 +1380,120 @@ fn recovered_manual_submission_uses_its_native_terminal_receipt() {
         .unwrap();
     assert_eq!(complete.status, Status::Completed);
 }
+
+#[test]
+fn delete_group_requires_user_and_revision_and_replays_after_reopen() {
+    let mut f = Fixture::new();
+    let g = f.group.clone();
+    assert!(matches!(
+        f.store.delete_group(&f.a, &g.id, "delete", g.revision),
+        Err(Error::Forbidden)
+    ));
+    assert!(matches!(
+        f.store
+            .delete_group(&Caller::user(), &g.id, "delete", g.revision + 1),
+        Err(Error::RevisionConflict)
+    ));
+    f.store
+        .delete_group(&Caller::user(), &g.id, "delete", g.revision)
+        .unwrap();
+    assert!(f.store.groups().unwrap().is_empty());
+    assert!(f
+        .store
+        .member_for_session(&g.members[0].session)
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        f.store.context(&Caller::user(), &g.id),
+        Err(Error::NotFound)
+    ));
+    let mut reopened = Store::open(f.dir.path().join("teams.sqlite3")).unwrap();
+    reopened
+        .delete_group(&Caller::user(), &g.id, "delete", g.revision)
+        .unwrap();
+    assert!(reopened
+        .delete_group(&Caller::user(), &g.id, "delete", g.revision + 1)
+        .is_err());
+    let members = g
+        .members
+        .iter()
+        .map(|m| MemberDraft {
+            session: m.session.clone(),
+            name: m.name.clone(),
+            responsibility: m.responsibility.clone(),
+        })
+        .collect();
+    reopened
+        .create_group(&Caller::user(), "replacement", "Replacement", members)
+        .unwrap();
+}
+
+#[test]
+fn delete_group_rejects_live_work_and_removes_cancelled_history() {
+    let mut f = Fixture::new();
+    let task = f.delegate(&Caller::user(), 0, vec![], None);
+    assert!(matches!(
+        f.store
+            .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision),
+        Err(Error::Blocked)
+    ));
+    f.run(
+        &Caller::user(),
+        Command::Cancel {
+            task: TaskVersion {
+                task_id: task.id.clone(),
+                expected_revision: task.revision,
+                attempt_id: task.attempt_id,
+            },
+            reason: "No longer needed".into(),
+        },
+    )
+    .unwrap();
+    f.store
+        .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision)
+        .unwrap();
+    assert!(matches!(
+        f.store.task(&Caller::user(), &f.group.id, &task.id),
+        Err(Error::NotFound)
+    ));
+    assert!(f.store.groups().unwrap().is_empty());
+}
+
+#[test]
+fn deleting_a_cancelled_task_group_still_waits_for_the_native_claim() {
+    let mut f = Fixture::new();
+    let task = f.delegate(&Caller::user(), 0, vec![], None);
+    let actor = f.a.clone();
+    let working = f
+        .run(&actor, Command::Begin { task: v(&task) })
+        .unwrap()
+        .task
+        .unwrap();
+    f.run(
+        &Caller::user(),
+        Command::Cancel {
+            task: v(&working),
+            reason: "Stop the collaboration".into(),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        f.store
+            .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision),
+        Err(Error::Blocked)
+    ));
+    f.store
+        .observe_turn(actor.turn.as_ref().unwrap(), TurnState::Unknown)
+        .unwrap();
+    assert!(matches!(
+        f.store
+            .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision),
+        Err(Error::Blocked)
+    ));
+    f.store
+        .observe_turn(actor.turn.as_ref().unwrap(), TurnState::Succeeded)
+        .unwrap();
+    f.store
+        .delete_group(&Caller::user(), &f.group.id, "delete", f.group.revision)
+        .unwrap();
+}

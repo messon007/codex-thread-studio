@@ -40,3 +40,9 @@ The early `agent-teams-gates.mjs` experiments above are retained as historical e
 Use a fresh `validation/integration-NN/codex-config` and the same marker/mount isolation as above. Run `studio-integration.mjs RUN_DIRECTORY STUDIO_BINARY` instead of the gates script. The integration fixture also uses Playwright 1.58.2 from `validation/browser-tools/node_modules` and the cached Chromium headless shell identified in the script; browser profile/cache state stays in the fixture. Those are development-only prerequisites, not application or public-CI dependencies. This host's full Chromium build crashes in the restricted fixture; its headless-shell build has been verified there.
 
 Coverage includes existing-session registration, nonmember rejection, busy delivery without interruption, explicit submission/review, stale queue CAS, identical multi-page sends, supervision reservations, A→B delegation/question/answer/rework/acceptance, pause, host restart, browser task/result details, in-flight result reporting while disabling, and precise uninstall. Inspect the final `report.json`: every named check must be present and `success` true. No test uses a live model, original user config or real user sessions. See the sanitized [validation manifest](../../../docs/agent-teams/implementation-validation.json) for final counts and source hashes.
+
+The right-workspace redesign adds group/task navigation, contextual deletion,
+confirmation cancellation, draft preservation, shared-tool restoration and the
+language/theme/font matrix. Current evidence is in
+[ui-redesign-validation.json](../../../docs/agent-teams/ui-redesign-validation.json);
+the original implementation manifest remains a historical baseline.

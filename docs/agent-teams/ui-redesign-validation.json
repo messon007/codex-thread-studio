@@ -1,0 +1,114 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "base_commit": "cc3d6923c3044a1542cb7bef9708f6fdd3777402",
+  "main_unchanged": true,
+  "rust": {
+    "passed": 224,
+    "failed": 0,
+    "ignored": 1
+  },
+  "ui": {
+    "passed": 840,
+    "failed": 0,
+    "generated_modules": 75,
+    "typecheck": "passed"
+  },
+  "clippy": "studio-teams all targets -D warnings passed",
+  "format": "Rust format and git diff checks passed",
+  "integration": {
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/redesign-05",
+    "success": true,
+    "codex_version": "0.170.0",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ],
+    "report_sha256": "52b357ec2c626607f9550633c86388f9552628dde6fe5d5ece7e57c7446cab33",
+    "script_sha256": "92498f185aa98d17593bab109746d0ca07d06c917f8c4bc28dc9e9b5367b1591"
+  },
+  "browser_matrix": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "interface_sizes": [
+      11,
+      14,
+      20
+    ],
+    "interface_weights": [
+      400,
+      500,
+      600
+    ],
+    "languages": [
+      "en-US",
+      "zh-CN"
+    ],
+    "viewports": [
+      [
+        1360,
+        1000
+      ],
+      [
+        720,
+        900
+      ]
+    ],
+    "platform": "Linux Chromium headless; no Windows font/IME claim"
+  },
+  "screenshots": {
+    "teams-chinese.png": "41d6fc9ae0298c7d3bdf9e34ea3e3c9f931a485bffc9a3f38b2bc837f0f56d92",
+    "teams-detail.png": "ccbc60d5d56639868eee1f9ae215c2f8e784dacd763886e08d361a60f699510b",
+    "teams-narrow-dark.png": "00f592ea18836c9bdf5a083e4d3bb87e0f2f3e782946d8b69bc1d1997b76a47c",
+    "teams-panel.png": "930c524fad63dbd4b8bb4f01e6f53ebdf219e95f85abbda944ea8b1c4746a470"
+  },
+  "logs": {
+    "redesign-rust-tests.log": "32195210e2d85de83d4b2332f45c13a2b0d03e6ec779b46d4cbaf11114174a21",
+    "redesign-ui-tests.log": "04476d5ec33342f7b9ce3372ed80a2d67586941b6376e4fb02abee1785592b8e",
+    "redesign-clippy.log": "780584b9fdf2cc600108b5f0f5aedfacc10d2fcfae15727cc9c8b3ff00ce35ac",
+    "redesign-build.log": "3f43e07fa0b2ef6c89e0fa8fbbace77458fe332087dbb42f7c63d05f7864669a"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "320925fd25fd0edaf8b670191258c90cc1daa5767e14bd31f6ea08acff45c31c"
+  },
+  "changed_source_hashes": {
+    "crates/studio-teams/src/maintenance.rs": "2b6509b925e783a6235ad88883ddec31fc15b7929698d51a9f3987956ceb82f1",
+    "crates/studio-teams/src/store.rs": "a2f2a5753bd9ca69540fc51ebc7c0e9521c1a24cd0e486bbe704fe0c4541c436",
+    "crates/studio-teams/tests/domain.rs": "bf5ea30509c55f9034448da9433f5cbae781177b97dd97821cf03738d0a80d96",
+    "src-tauri/src/teams.rs": "3a592ab9445af3f8b6ac888405370a4d80cc257f72b3d4a4e8d66d28431f1573",
+    "ui-src/generated.sha256": "6f0ae5cd015ff69b9e1be16c7caad2889f02eb10e3bb222b262c8599927a26ba",
+    "ui-src/teams.mts": "e7ba788612ad81b149839312d86307ccdd4187d7196bfdfe5657c96bc36c2020",
+    "ui/app.js": "3b9dd4010958312b711a3f4900a547d05c8002349a7f935e828e19c64fdd2c74",
+    "ui/i18n.mjs": "63ece9d65b3b858aeb225989fbfb8245e23c1ad30e53d7a6c7ccd8a70df66b2e",
+    "ui/index.html": "d5128013c2d932f1184639f78152727028f85ac0455b0855ebd1eeef06ec3953",
+    "ui/styles.css": "871c95b2f03b04fc4630d11dddd31138222c9896710b4504b36c4585d043af54",
+    "ui/teams.mjs": "859ecedce593a260df79caa4ddd3fd57179d75afbebd1cfe1fdcdb9c2f28ac86",
+    "ui/teams.test.mjs": "92f2e4b4fa2c6738b6da382bcef02604724126e62fef32750b1d36c05ee58699"
+  }
+}

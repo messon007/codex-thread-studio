@@ -17,3 +17,6 @@ Changing this example does not change an installed Studio profile.
 The obsolete EPT patch was removed: it targeted generated JavaScript and no longer
 applied. Maintained response presentation and regression tests live in
 `ui-src/transcript-presentation.mts` and `ui/transcript-presentation.test.mjs`.
+
+Project-wide interaction guidance lives in [interaction-guidelines.md](interaction-guidelines.md).
+It complements [Typography](../typography.md) and feature-specific interaction specifications.

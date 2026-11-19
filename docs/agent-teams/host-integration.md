@@ -6,7 +6,7 @@ The feature lives on `feat/agent-teams`; it is not merged into `main`. The stand
 
 - `crates/studio-teams`: transactional tasks, membership, explicit completion/review, idempotent commands, native-turn barriers, outbox, and persistent admission/reservation state.
 - `src-tauri/src/teams.rs`: native-event correlation, backend registration, outbox delivery, control-plane fencing, MCP bridge, and authenticated user API.
-- `ui-src/teams.mts`: an independent Teams dialog and a small reservation client. Its dependencies are an authenticated gateway request and session navigation.
+- `ui-src/teams.mts`: a Teams view in the shared right workspace with focused operation dialogs and a small reservation client. Its dependencies are an authenticated gateway request and session navigation.
 - The existing global Thread Router is not a team orchestrator. An optional orchestrator is selected from a group's existing members. Membership stays at 2–5 Codex sessions.
 
 Teams never uses `turn/start`, `turn/steer`, or `thread/queue/start` for automatic delivery. It records the send intent before a single `thread/queue/add`. Busy members remain busy with their current work; Codex starts queued work when able. A request that may have reached Codex is not automatically retried. Stable message IDs correlate receipts; they are not assumed to deduplicate native queue admission.
@@ -46,3 +46,12 @@ Disabling Teams preserves its audit and tasks. Physically unloading the MCP regi
 `scripts/probes/agent-teams/studio-integration.mjs` runs the actual Studio executable and actual Codex App Server with an isolated empty Codex configuration and synthetic Responses provider. It is intended to run inside the documented Bubblewrap fixture, with all writable state under `/media/rui/codex-thread-studio-agent-teams/validation`. It does not validate real-model reasoning quality or authorize changes to real user sessions.
 
 The authentication model is a single user's trusted Studio/App Server host. Native-event correlation prevents absent-event and wrong-session calls; it is not an unforgeable identity guarantee against another malicious client holding equivalent authenticated App Server host authority. This limitation, observed in the earlier echo probe, is retained explicitly. It does not grant browser pages or ordinary members the host control credential.
+
+The entry opens the group list in Studio’s shared right workspace. Group sections
+and task details stay in that rail; edit/create/review/delete actions use focused
+dialogs. See [interaction design](interaction-design.md) for navigation and deletion
+semantics. `delete_group` is a host-only revision-checked, idempotent operation; it
+removes the group, memberships, tasks, effects and visible history in one domain
+transaction. Native sessions, files, command receipts and native queue receipts
+are not deleted. Live/unknown claims, unfinished tasks, pending deliveries or
+held member reservations block deletion.

@@ -15,3 +15,9 @@
 - Reuse verified, fixed-version upstream library/component deliveries. Do not infer compatibility from matching feature names or a closed issue; preserve source mappings, resource budgets, platform support and independent builds.
 - Use the union of both Web readers' generic capabilities: upstream Studio-only reading features, follow upstream improvements, and converge shared behavior/defaults with common fixtures. Do not waive reader differences merely as product differences. Keep AI and host-specific behavior in adapters. A necessary urgent generic fix may land locally with tests, an upstream issue and a recorded patch-removal condition; return it upstream and remove the temporary patch when adopted.
 - Ordinary builds and public PR CI must not depend on private MarkNoria credentials or a sibling checkout's sources, build assets, caches or runtime. Do not change another session's development worktree to synchronize shared code.
+
+## Interaction and interface design
+
+- Follow [the interaction guidelines](docs/design/interaction-guidelines.md) and [typography standard](docs/typography.md) for UI changes.
+- Define user journeys, navigation levels, return paths and destructive-action recovery before implementing controls. Separate everyday work, setup and diagnostics; reuse existing Studio surfaces and theme tokens.
+- Validate changed interaction paths in a rendered browser, including keyboard use, narrow layouts, both themes/languages, draft preservation and deletion confirmation. Do not treat source-only checks as UI acceptance.

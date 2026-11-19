@@ -1409,6 +1409,48 @@ async fn operation(state: &GatewayState, v: Value) -> Result<Value> {
             teams.wake.notify_one();
             Ok(json!(g))
         }
+        "delete_group" => {
+            let _gate = teams.gate.lock().await;
+            let group_id = string(&v, "group_id")?;
+            let request_id = string(&v, "request_id")?;
+            let revision = v["expected_revision"]
+                .as_u64()
+                .ok_or("Missing group revision")?;
+            let mut d = teams.lock()?;
+            // Checking the live store and queue under the same gate prevents dispatch racing deletion.
+            if let Some(group) = d
+                .store
+                .groups()
+                .map_err(err)?
+                .into_iter()
+                .find(|g| g.id == group_id)
+            {
+                if d.queue
+                    .all_pending()
+                    .map_err(err)?
+                    .iter()
+                    .any(|e| e.scope == group_id)
+                {
+                    return Err("Pending deliveries must be resolved in Activity before deleting this group".into());
+                }
+                if !group.archived {
+                    for member in &group.members {
+                        if !d
+                            .queue
+                            .reservations(&member.session)
+                            .map_err(err)?
+                            .is_empty()
+                        {
+                            return Err("Session reservations must be resolved in Activity before deleting this group".into());
+                        }
+                    }
+                }
+            }
+            d.store.delete_group(&Caller::user(), group_id, request_id, revision).map_err(|e| {
+                if matches!(e, studio_teams::Error::Blocked) { "Finish or cancel outstanding tasks and reconcile active executions before deleting this group".into() } else { err(e) }
+            })?;
+            Ok(json!({"deleted":true}))
+        }
         "command" => {
             let _gate = teams.gate.lock().await;
             let group_id = string(&v, "group_id")?;

@@ -46,3 +46,13 @@ test('Managed user start uses the host receipt and preserves exact options',asyn
 test('Unmanaged session starts retain the original transport',async()=>{
  const {client}=fixture([{managed:false}]);assert.equal(await client.start('codex',{threadId:'outside'},async()=>19),19)
 })
+
+test('Group deletion preserves its confirmation request ID after an uncertain response',async()=>{
+ const {client,calls}=fixture([Error('response lost'),{deleted:true}])
+ const body={action:'delete_group',group_id:'group',expected_revision:4}
+ await assert.rejects(client.request(body),/response lost/)
+ await client.request(body)
+ assert.ok(calls[0].request_id)
+ assert.equal(calls[0].request_id,calls[1].request_id)
+ assert.equal(calls[1].expected_revision,4)
+})

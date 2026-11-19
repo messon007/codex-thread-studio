@@ -1,6 +1,6 @@
 use super::*;
 
-fn unfinished_member_reference(
+pub(super) fn unfinished_member_reference(
     db: &Connection,
     g: &Group,
     removed: &[String],

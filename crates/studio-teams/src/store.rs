@@ -509,6 +509,65 @@ PRAGMA user_version=1; COMMIT;")?;
         tx.commit()?;
         Ok(decision)
     }
+    /// Host-only deletion. The host holds its dispatch gate and rejects live queue receipts.
+    /// Native sessions are untouched; command receipts survive to prevent replay.
+    pub fn delete_group(
+        &mut self,
+        caller: &Caller,
+        group_id: &str,
+        request_id: &str,
+        expected_revision: u64,
+    ) -> Result<()> {
+        if caller.actor != Actor::User {
+            return Err(Error::Forbidden);
+        }
+        identifier(request_id)?;
+        let payload = json(&(group_id, expected_revision))?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(value) = cached(
+            &tx,
+            "instance:delete_group",
+            &Actor::User,
+            request_id,
+            &payload,
+        )? {
+            return decode(value)?;
+        }
+        let g = group(&tx, group_id)?;
+        if g.revision != expected_revision {
+            return Err(Error::RevisionConflict);
+        }
+        if maintenance::unfinished_member_reference(&tx, &g, &[], true)? {
+            return Err(Error::Blocked);
+        }
+        tx.execute("DELETE FROM members WHERE group_id=?", [group_id])?;
+        tx.execute("DELETE FROM tasks WHERE group_id=?", [group_id])?;
+        tx.execute("DELETE FROM effects WHERE group_id=?", [group_id])?;
+        tx.execute("DELETE FROM blocker_decisions WHERE group_id=?", [group_id])?;
+        tx.execute("DELETE FROM events WHERE group_id=?", [group_id])?;
+        tx.execute("DELETE FROM groups WHERE id=?", [group_id])?;
+        event(
+            &tx,
+            group_id,
+            &Actor::User,
+            "group_deleted",
+            &serde_json::json!({"group_id":group_id}),
+        )?;
+        let result: Result<()> = Ok(());
+        cache(
+            &tx,
+            "instance:delete_group",
+            &Actor::User,
+            request_id,
+            &payload,
+            &json(&result)?,
+        )?;
+        tx.commit()?;
+        result
+    }
+
     /// Host-only listing. Do not expose this on the member MCP transport.
     pub fn groups(&self) -> Result<Vec<Group>> {
         let mut query = self.db.prepare("SELECT body FROM groups ORDER BY rowid")?;

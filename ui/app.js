@@ -622,7 +622,7 @@ const sessionOperations = createSessionOperations(state, {
   connectionReady: () => { $('#native-connection').textContent = t('Connected') },
 })
 const teamsClient = createTeamsClient(gatewayFetch)
-const teamsPanel = createTeamsPanel(teamsClient, async (backend, id) => { if (state.backend !== backend) await switchBackend(backend); await selectThread(id) })
+const teamsPanel = createTeamsPanel(teamsClient, async (backend, id) => { if (state.backend !== backend) await switchBackend(backend); await selectThread(id) }, { root: $('#teams-content'), activate: () => activateRightWorkspace('teams'), close: () => { if (state.activeRightWorkspace === 'teams') activateRightWorkspace(null) }, translate: t })
 
 const submissionController = createSubmissionController(state, {
   isSupervised: ref => turnSupervision.activeFor(ref),
@@ -1138,6 +1138,8 @@ function bindUI() {
   window.addEventListener('blur', cancelRightRailResize)
   window.addEventListener('keydown', handleRightRailResizeEscape, true)
   $('#teams-button').addEventListener('click', () => { void teamsPanel.open().catch(showError) })
+  $('#refresh-teams').addEventListener('click', () => { void teamsPanel.refresh().catch(showError) })
+  $('#close-teams').addEventListener('click', () => teamsPanel.close())
   $('#connections-button').addEventListener('click', openConnectionsDialog)
   $('#close-connections').addEventListener('click', () => $('#connections-dialog').close())
   $('#settings-button').addEventListener('click', () => {
@@ -6635,6 +6637,7 @@ function activateRightWorkspace(tool) {
     comments: 'annotation-rail',
     favorites: 'favorites-rail',
     resources: 'resources-rail',
+    teams: 'teams-rail',
   }
   for (const [candidate, id] of Object.entries(rails)) {
     $(`#${id}`).classList.toggle('hidden', candidate !== tool)

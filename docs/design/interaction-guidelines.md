@@ -36,6 +36,17 @@ Use existing `.dialog`, `.dialog-header`, `.primary-button`, `.subtle-button`,
 scoped. Do not inject an independent theme or inline stylesheet. Reading content
 uses the Reading profile; technical labels/paths are still Interface, not Code.
 
+## Tables and visual simplicity
+
+Use a compact semantic table when objects share fields such as name, responsibility,
+count and actions. Align headers and cell edges, give the action column a fixed
+width, center numeric counts, and let descriptions wrap within their column.
+Use Studio's standard icon strokes and button geometry for add/edit/more actions;
+every icon needs an accessible name, hover title and keyboard focus. Menus retain
+text labels. Avoid repeating the same count, state or role in separate cards.
+The first screen of a member manager should show the members, not a stack of
+navigation and status panels. Reuse the right-rail header for back/title/actions.
+
 ## Hierarchy and navigation
 
 - Object selection, object sections and object details are distinct levels.

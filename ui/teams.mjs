@@ -68,7 +68,8 @@ export function createTeamsClient(fetcher) {
     return { request, reserve, guarded, start, release: (id) => request({ action: 'release', id }) };
 }
 export function createTeamsPanel(client, navigate, surface) {
-    const content = surface.root, t = surface.translate, request = client.request;
+    const content = surface.root, panel = content.parentElement, t = surface.translate, request = client.request;
+    const mark = surface.heading.querySelector('.resources-mark')?.cloneNode(true);
     let snapshot = { groups: [], tasks: [], queue: [], reservations: [], registrations: [], backends: [] };
     let selected = '', section = 'tasks', taskId = '', taskSection = 'summary', filter = 'open', search = '', groupSearch = '';
     let archived = false, setup = false, loading = false, timer;
@@ -119,6 +120,22 @@ export function createTeamsPanel(client, navigate, surface) {
         return b;
     };
     const primary = (text, action) => button(text, action, 'primary-button');
+    function symbol(path) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        const shape = document.createElementNS(svg.namespaceURI, 'path');
+        shape.setAttribute('d', path);
+        svg.append(shape);
+        return svg;
+    }
+    function iconAction(text, path, action) {
+        const control = button('', action, 'icon-button teams-icon-action');
+        control.setAttribute('aria-label', t(text));
+        control.title = t(text);
+        control.append(symbol(path));
+        return control;
+    }
     function field(parent, text, multiline = false, value = '') {
         const wrapper = el('label', '', 'field');
         wrapper.append(label('span', text));
@@ -177,13 +194,15 @@ export function createTeamsPanel(client, navigate, surface) {
             closeDialog(true);
         opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         dialog = el('dialog', '', 'dialog teams-dialog');
+        if (['Create group', 'Add member', 'Edit member', 'Choose orchestrator', 'Rename group'].includes(title))
+            dialog.classList.add('teams-compact-dialog');
         dialog.setAttribute('aria-label', t(title));
         const header = el('header', '', 'dialog-header');
         const copy = el('div');
         copy.append(label('h2', title));
         if (description)
             copy.append(label('p', description));
-        header.append(copy, button('Close', () => closeDialog()));
+        header.append(copy, iconAction('Close', 'm7 7 10 10M17 7 7 17', () => closeDialog()));
         const form = el('section', '', 'teams-form');
         const error = el('p', '', 'teams-error form-error');
         error.hidden = true;
@@ -231,6 +250,8 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     async function sessionPicker(parent) {
         const backend = select(parent, 'Codex backend', snapshot.backends.map((value) => ({ value, text: value })));
+        if (snapshot.backends.length === 1)
+            backend.parentElement.hidden = true;
         const thread = select(parent, 'Existing session', []);
         let cursor = null, generation = 0;
         const more = button('Load more', () => load(true));
@@ -262,9 +283,9 @@ export function createTeamsPanel(client, navigate, surface) {
         return { backend, thread };
     }
     async function createGroup() {
-        const form = subform('Create group', 'Create the group first, then add members one at a time from the group list.');
+        const form = subform('Create group');
         const name = field(form, 'Group name');
-        form.append(primary('Create group', () => {
+        formActions(form, 'Create group', () => {
             if (!name.value.trim())
                 throw Error('Enter a group name.');
             return mutate(async () => {
@@ -274,7 +295,7 @@ export function createTeamsPanel(client, navigate, surface) {
                 setup = false;
                 groupSearch = '';
             });
-        }));
+        });
         name.focus();
     }
     function newTask(group) {
@@ -299,7 +320,6 @@ export function createTeamsPanel(client, navigate, surface) {
         const responsibility = field(form, 'Responsibility', true, member.responsibility);
         const conflict = el('div', '', 'teams-member-conflict');
         form.append(conflict);
-        notice(form, 'These details apply only to this group. The original session is unchanged.');
         form.addEventListener('input', () => {
             if (!unresolved && name.value.trim() && responsibility.value.trim())
                 form.querySelector('.teams-error').hidden = true;
@@ -362,7 +382,7 @@ export function createTeamsPanel(client, navigate, surface) {
     function chooseOrchestrator(group) {
         const form = subform('Choose orchestrator', group.name);
         const owner = select(form, 'Optional orchestrator · group task owner', [{ value: '', text: t('None · peer collaboration') }, ...group.members.map((m) => ({ value: m.id, text: m.name }))], group.orchestrator || '');
-        notice(form, 'A group has at most one orchestrator / owner. You can change it later in Members.');
+        notice(form, 'Each group has at most one owner.');
         formActions(form, 'Save changes', () => command(group.id, { op: 'SetOrchestrator', expected_revision: group.revision, member_id: owner.value || null }));
     }
     function openGroup(group, destination) {
@@ -378,9 +398,9 @@ export function createTeamsPanel(client, navigate, surface) {
         content.scrollTop = 0;
         focusDestination();
     }
-    function focusDestination() { content.querySelector('button')?.focus({ preventScroll: true }); }
+    function focusDestination() { surface.heading.querySelector('button')?.focus({ preventScroll: true }); }
     function focusKey(key) {
-        Array.from(content.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key)?.focus({ preventScroll: true });
+        Array.from(panel.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key)?.focus({ preventScroll: true });
     }
     function backToMembers() {
         const target = memberReturn;
@@ -410,7 +430,7 @@ export function createTeamsPanel(client, navigate, surface) {
                     const index = group.members.findIndex((m) => m.id === member.id);
                     const neighbor = group.members[index + 1] || group.members[index - 1];
                     const key = neighbor ? `edit-member-${neighbor.id}` : `add-member-${group.id}`;
-                    opener = Array.from(content.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key) || null;
+                    opener = Array.from(panel.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === key) || null;
                 });
             }
             catch (error) {
@@ -481,7 +501,7 @@ export function createTeamsPanel(client, navigate, surface) {
                     const current = latest.groups.find((g) => g.id === initial.id);
                     if (!current || current.archived || !current.members.some((m) => m.id === member.id)) {
                         snapshot = latest;
-                        errorMessage(Error(!current ? 'This group no longer exists.' : current.archived ? 'This group is now archived; its members are read-only.' : 'This member is no longer in the group. The list has been refreshed.'));
+                        errorMessage(Error(!current ? 'This group no longer exists.' : current.archived ? 'This group is archived. Members are read-only.' : 'This member is no longer in the group. The list has been refreshed.'));
                         diagnostics.replaceChildren(button(current ? 'Back to members' : 'Back to groups', () => {
                             closeDialog(true);
                             selected = current?.id || '';
@@ -516,15 +536,28 @@ export function createTeamsPanel(client, navigate, surface) {
         form.append(role);
         if (group.orchestrator)
             form.append(el('p', `${t('Current orchestrator / owner')}: ${memberName(group, group.orchestrator)}`, 'teams-hint'));
-        notice(form, 'A group has at most one orchestrator / owner. You can change it later in Members.');
-        if (group.paused)
-            notice(form, 'The group stays paused while you add members. Resume it when ready; at least two members are needed.');
-        form.append(primary('Add member', () => {
+        formActions(form, 'Add member', async () => {
             if (!picker.thread.value || !name.value.trim() || !responsibility.value.trim())
                 throw Error('Fill in every member and responsibility.');
-            return command(group.id, { op: 'AddMember', expected_revision: group.revision,
-                member: { session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value.trim(), responsibility: responsibility.value.trim() }, make_orchestrator: owner.checked });
-        }));
+            let joined = '';
+            await mutate(async () => {
+                const result = await request({ action: 'command', group_id: group.id, command: { op: 'AddMember', expected_revision: group.revision,
+                        member: { session: { backend: picker.backend.value, thread: picker.thread.value }, name: name.value.trim(), responsibility: responsibility.value.trim() }, make_orchestrator: owner.checked } });
+                joined = result.group?.members.find((m) => m.session.backend === picker.backend.value && m.session.thread === picker.thread.value)?.id || '';
+                if (!selected) {
+                    listScroll = content.scrollTop;
+                    listFocus = `view-members-${group.id}`;
+                }
+                selected = group.id;
+                section = 'members';
+                taskId = '';
+                memberReturn = null;
+            });
+            if (joined) {
+                focusKey(`edit-member-${joined}`);
+                panel.querySelector(`[data-member-id="${joined}"]`)?.scrollIntoView({ block: 'nearest' });
+            }
+        });
     }
     function confirmAction(title, name, description, action) {
         const form = subform(title);
@@ -572,7 +605,7 @@ export function createTeamsPanel(client, navigate, surface) {
             }
         }, 'icon-button teams-menu-trigger');
         const place = () => {
-            const rect = trigger.getBoundingClientRect(), bounds = content.getBoundingClientRect();
+            const rect = trigger.getBoundingClientRect(), bounds = (content.contains(trigger) ? content : panel).getBoundingClientRect();
             if (!trigger.isConnected || rect.bottom <= bounds.top || rect.top >= bounds.bottom) {
                 surface.closeMenus();
                 return;
@@ -641,103 +674,193 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     const removeIcon = 'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5';
     function groupMenu(group) {
-        const entries = [{ title: 'Group settings', path: 'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4', action: () => openGroup(group, 'settings'), danger: false }];
-        if (!group.archived)
-            entries.push({ title: group.paused ? 'Resume group' : 'Pause group', path: group.paused ? 'm8 5 11 7-11 7z' : 'M8 5v14M16 5v14', action: () => { void command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused }).catch(errorMessage); }, danger: false });
+        const entries = [];
+        if (!group.archived && group.members.length)
+            entries.push({ title: 'Choose orchestrator', path: 'M12 3v4M5 10h14M7 10v10M17 10v10M7 20h10', action: () => chooseOrchestrator(group) });
+        entries.push({ title: 'Activity', path: 'M3 12h4l3-7 4 14 3-7h4', action: () => openGroup(group, 'activity') });
+        if (!group.archived) {
+            entries.push({ title: 'Rename group', path: 'M4 20h4l11-11-4-4L4 16zM13.5 6.5l4 4', action: () => renameGroup(group) });
+            entries.push({ title: group.paused ? 'Resume group' : 'Pause group', path: group.paused ? 'm8 5 11 7-11 7z' : 'M8 5v14M16 5v14', action: () => command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused }) });
+            entries.push({ title: 'Archive group', path: 'M4 8h16v11H4zM3 4h18v4H3zM9 12h6', action: () => confirmAction('Archive group', group.name, 'Keep task history and release member sessions for other groups.', () => command(group.id, { op: 'ArchiveGroup', expected_revision: group.revision })) });
+        }
         entries.push({ title: 'Delete group', path: removeIcon, action: () => deleteGroup(group), danger: true });
         return actionMenu(group.id, `${t('Group actions')} · ${group.name}`, entries);
+    }
+    function backToGroups() { selected = ''; taskId = ''; setup = false; memberReturn = null; render(); content.scrollTop = listScroll; focusKey(listFocus); }
+    function renderHeader() {
+        surface.heading.replaceChildren();
+        surface.menuSlot.replaceChildren();
+        const group = groupNow();
+        let back = null, backLabel = 'Back to groups';
+        if (setup)
+            back = backToGroups;
+        else if (group) {
+            if (memberReturn) {
+                back = backToMembers;
+                backLabel = 'Back to members';
+            }
+            else if (taskId) {
+                backLabel = 'Back to tasks';
+                back = () => { taskId = ''; render(); content.scrollTop = taskScroll; focusDestination(); };
+            }
+            else if (section !== 'members') {
+                backLabel = 'Back to members';
+                back = () => { section = 'members'; render(); content.scrollTop = 0; focusDestination(); };
+            }
+            else
+                back = backToGroups;
+        }
+        if (back) {
+            const control = button('', back, 'icon-button teams-back');
+            control.setAttribute('aria-label', t(backLabel));
+            control.title = t(backLabel);
+            control.dataset.focusKey = 'teams-back';
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('aria-hidden', 'true');
+            const path = document.createElementNS(svg.namespaceURI, 'path');
+            path.setAttribute('d', 'm14 6-6 6 6 6');
+            svg.append(path);
+            control.append(svg);
+            surface.heading.append(control);
+        }
+        else if (mark)
+            surface.heading.append(mark.cloneNode(true));
+        const title = group && !setup ? el('h2', group.name) : label('h2', setup ? 'Collaboration settings' : archived ? 'Archived groups' : 'Agent Teams');
+        if (group && !setup) {
+            title.setAttribute('data-no-i18n', '');
+            title.title = group.name;
+        }
+        surface.heading.append(title);
+        if (group && !setup)
+            surface.menuSlot.append(groupMenu(group));
+        else if (!setup)
+            surface.menuSlot.append(actionMenu('list', t('Teams actions'), [
+                { title: archived ? 'Active groups' : 'Archived groups', path: 'M4 8h16v11H4zM3 4h18v4H3zM9 12h6', action: () => { archived = !archived; render(); focusKey('teams-menu-trigger-list'); } },
+                { title: 'Collaboration settings', path: 'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4', action: () => { setup = true; render(); focusDestination(); } },
+            ]));
     }
     const repositionMenu = () => { if (activeMenu && !activeMenu.menu.classList.contains('hidden'))
         activeMenu.place(); };
     content.addEventListener('scroll', repositionMenu, { passive: true });
     window.addEventListener('resize', repositionMenu, { passive: true });
+    function table(headers, widths, kind) {
+        const result = el('table', '', `teams-table ${kind}`), columns = el('colgroup'), head = el('thead'), titles = el('tr'), body = el('tbody');
+        result.setAttribute('aria-label', t(kind === 'teams-groups-table' ? 'Groups' : 'Members'));
+        for (const width of widths) {
+            const col = el('col');
+            col.style.width = width;
+            columns.append(col);
+        }
+        for (const title of headers) {
+            const th = label('th', title);
+            th.scope = 'col';
+            titles.append(th);
+        }
+        head.append(titles);
+        result.append(columns, head, body);
+        content.append(result);
+        return body;
+    }
+    function emptyTable(body, text) {
+        const row = el('tr'), cell = label('td', text, 'teams-empty-cell');
+        cell.colSpan = 3;
+        row.append(cell);
+        body.append(row);
+    }
     function groupList() {
-        const controls = el('div', '', 'teams-list-controls');
-        const input = el('input');
-        input.type = 'search';
-        input.placeholder = t('Search groups');
-        input.setAttribute('aria-label', t('Search groups'));
-        input.value = groupSearch;
-        controls.append(input);
-        if (snapshot.enabled)
-            controls.append(primary('Create group', createGroup));
+        const controls = el('div', '', 'teams-list-controls'), count = el('span', '', 'teams-hint');
+        controls.append(count);
+        if (snapshot.groups.length > 7 || groupSearch) {
+            const input = el('input');
+            input.type = 'search';
+            input.placeholder = t('Search groups');
+            input.setAttribute('aria-label', t('Search groups'));
+            input.value = groupSearch;
+            input.addEventListener('input', () => { groupSearch = input.value; fill(); });
+            controls.append(input);
+        }
+        if (snapshot.enabled && !archived) {
+            const create = primary('Create group', createGroup);
+            create.prepend(symbol('M12 5v14M5 12h14'));
+            controls.append(create);
+        }
         content.append(controls);
-        tabs(content, [['active', 'Active groups'], ['archived', 'Archived groups']], archived ? 'archived' : 'active', key => { archived = key === 'archived'; render(); }, 'Group filters');
-        const list = el('div', '', 'teams-list');
-        content.append(list);
+        if (!snapshot.enabled && !archived) {
+            const setupButton = button('Set up collaboration', () => { setup = true; render(); focusDestination(); });
+            content.append(setupButton);
+        }
+        const body = table(['Group name', 'Member count', 'Actions'], ['auto', '72px', '76px'], 'teams-groups-table');
         const fill = () => {
-            list.replaceChildren();
+            body.replaceChildren();
             const groups = snapshot.groups.filter((g) => Boolean(g.archived) === archived && g.name.toLowerCase().includes(groupSearch.toLowerCase()));
-            if (!groups.length) {
-                const box = el('div', '', 'teams-empty');
-                box.append(label('h3', groupSearch ? 'No matching groups' : archived ? 'No archived groups' : 'No groups yet'), label('p', 'Create a group to coordinate existing sessions without interrupting their work.'));
-                if (!snapshot.enabled && !archived && !groupSearch)
-                    box.append(primary('Set up collaboration', () => { setup = true; render(); }));
-                list.append(box);
-            }
+            count.replaceChildren(label('span', 'Groups'), el('span', ` · ${groups.length}`));
+            if (!groups.length)
+                emptyTable(body, groupSearch ? 'No matching groups' : archived ? 'No archived groups' : 'No groups yet');
             for (const group of groups) {
-                const active = tasks(group).filter((task) => !terminal(task)).length;
-                const card = el('article', '', 'teams-card teams-group-card'), heading = el('div', '', 'teams-group-heading');
-                const open = button(group.name, () => openGroup(group, 'tasks'), 'teams-row-link');
-                open.dataset.focusKey = group.id;
-                heading.append(open, label('span', group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled', 'teams-status'), groupMenu(group));
-                const summary = el('p', group.members.length ? group.members.map((m) => m.name).join(' · ') : t('No members yet'), 'teams-group-summary');
-                const actions = el('div', '', 'teams-group-actions');
-                const members = button('View members', () => openGroup(group, 'members'));
-                members.dataset.focusKey = `view-members-${group.id}`;
-                members.append(el('span', `${group.members.length}/5`, 'teams-member-count'));
-                actions.append(members);
-                if (!group.archived && group.members.length < 5) {
-                    const add = button('Add member', () => addMember(group));
-                    add.dataset.focusKey = `add-member-${group.id}`;
-                    actions.append(add);
-                }
-                const count = el('span', '', 'teams-task-count teams-hint');
-                count.append(label('span', 'Open tasks'), el('span', String(active)));
-                actions.append(count);
-                card.append(heading, summary, actions);
-                list.append(card);
+                const row = el('tr', '', 'teams-group-row');
+                row.dataset.groupId = group.id;
+                const name = el('td'), members = el('td', `${group.members.length}/5`, 'teams-number'), actions = el('td'), buttons = el('div', '', 'teams-table-actions');
+                const open = button('', () => openGroup(group, 'members'), 'teams-group-open');
+                open.dataset.focusKey = `view-members-${group.id}`;
+                open.setAttribute('aria-label', group.name);
+                open.title = t('View members');
+                const title = el('span', group.name);
+                title.setAttribute('data-no-i18n', '');
+                open.append(title, symbol('m9 6 6 6-6 6'));
+                name.append(open);
+                const add = iconAction('Add member', 'M14 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0M4 20v-2a7 7 0 0 1 10-6M19 12v8M15 16h8', () => addMember(group));
+                add.dataset.focusKey = `add-member-${group.id}`;
+                add.disabled = group.archived || group.members.length >= 5;
+                buttons.append(add);
+                actions.append(buttons);
+                row.append(name, members, actions);
+                body.append(row);
             }
         };
-        input.addEventListener('input', () => { groupSearch = input.value; fill(); });
         fill();
-        const footer = el('div', '', 'teams-list-footer');
-        footer.append(label('span', snapshot.enabled ? 'Teams enabled' : 'Teams disabled', 'teams-hint'), button('Collaboration settings', () => { setup = true; render(); }));
-        content.append(footer);
     }
     function showMembers(group) {
-        const toolbar = el('div', '', 'teams-members-toolbar');
-        const memberCount = el('strong');
-        memberCount.append(label('span', 'Members'), el('span', ` · ${group.members.length}/5`));
-        toolbar.append(memberCount);
-        if (!group.archived && group.members.length < 5) {
+        const toolbar = el('div', '', 'teams-members-toolbar'), count = el('span', '', 'teams-hint');
+        count.append(label('span', 'Members'), el('span', ` ${group.members.length}/5`));
+        toolbar.append(count);
+        const controls = el('div', '', 'teams-toolbar-actions');
+        const work = button('Tasks', () => openGroup(group, 'tasks'));
+        work.prepend(symbol('M9 6h11M9 12h11M9 18h11M3 6h1M3 12h1M3 18h1'));
+        work.dataset.focusKey = `tasks-${group.id}`;
+        const active = tasks(group).filter((task) => !terminal(task)).length;
+        if (active)
+            work.append(el('span', ` ${active}`, 'teams-member-count'));
+        controls.append(work);
+        if (!group.archived) {
             const add = primary('Add member', () => addMember(group));
+            add.prepend(symbol('M12 5v14M5 12h14'));
             add.dataset.focusKey = `add-member-${group.id}`;
-            toolbar.append(add);
+            add.disabled = group.members.length >= 5;
+            controls.append(add);
         }
+        toolbar.append(controls);
         content.append(toolbar);
+        if (group.archived)
+            notice(content, 'This group is archived. Members are read-only.');
+        const body = table(['Member', 'Responsibility', 'Actions'], ['28%', 'auto', '76px'], 'teams-members-table');
         if (!group.members.length) {
-            empty('No members yet', 'Add an existing session and describe its responsibility.');
+            emptyTable(body, 'No members yet');
             return;
         }
-        const owner = el('div', '', 'teams-owner-summary');
-        const description = el('div');
-        description.append(label('span', 'Orchestrator', 'teams-hint'), el('strong', group.orchestrator ? memberName(group, group.orchestrator) : t('None · peer collaboration')));
-        owner.append(description);
-        if (!group.archived)
-            owner.append(button('Choose orchestrator', () => chooseOrchestrator(group)));
-        content.append(owner);
         for (const member of group.members) {
-            const card = el('article', '', 'teams-card teams-member-card');
-            card.dataset.memberId = member.id;
-            const heading = el('div', '', 'teams-member-heading');
-            heading.append(el('strong', member.name));
+            const row = el('tr', '', 'teams-member-row');
+            row.dataset.memberId = member.id;
+            const name = el('td'), title = el('span', member.name, 'teams-person-name');
+            title.setAttribute('data-no-i18n', '');
+            name.append(title);
             if (group.orchestrator === member.id)
-                heading.append(label('span', 'Orchestrator', 'teams-status'));
-            card.append(heading, el('p', member.responsibility, 'teams-member-responsibility'));
-            const controls = el('div', '', 'teams-member-controls');
+                name.append(label('span', 'Owner', 'teams-owner-label'));
+            const responsibility = el('td', member.responsibility, 'teams-member-responsibility');
+            responsibility.setAttribute('data-no-i18n', '');
+            const actions = el('td'), controls = el('div', '', 'teams-table-actions');
             if (!group.archived) {
-                const edit = button('Edit member', () => editMember(group, member));
+                const edit = iconAction('Edit member', 'M4 20h4l11-11-4-4L4 16zM13.5 6.5l4 4', () => editMember(group, member));
                 edit.dataset.focusKey = `edit-member-${member.id}`;
                 controls.append(edit);
             }
@@ -745,11 +868,21 @@ export function createTeamsPanel(client, navigate, surface) {
             if (!group.archived)
                 entries.push({ title: 'Remove member', path: removeIcon, action: async () => removeMember(group, member), danger: true });
             controls.append(actionMenu(member.id, `${t('Member actions')} · ${member.name}`, entries));
-            card.append(controls);
-            content.append(card);
+            actions.append(controls);
+            row.append(name, responsibility, actions);
+            body.append(row);
         }
     }
     function showTasks(group) {
+        if (group.paused && !group.archived) {
+            const paused = el('div', '', 'teams-paused-notice');
+            notice(paused, group.members.length < 2 ? 'Add at least two members to start collaboration.' : 'This group is paused. Resume it to delegate work.');
+            if (group.members.length >= 2 && snapshot.enabled)
+                paused.append(button('Resume group', () => command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: false })));
+            content.append(paused);
+        }
+        if (!group.archived && !group.paused && snapshot.enabled)
+            content.append(primary('Delegate work', () => newTask(group)));
         tabs(content, [['open', 'Open tasks'], ['attention', 'Needs attention'], ['completed', 'Finished tasks'], ['all', 'All tasks']], filter, key => { filter = key; render(); }, 'Task filters');
         const input = el('input');
         input.type = 'search';
@@ -780,31 +913,17 @@ export function createTeamsPanel(client, navigate, surface) {
         input.addEventListener('input', () => { search = input.value; fill(); });
         fill();
     }
-    function showSettings(group) {
-        const identity = row(group.name, t('Group name'));
-        if (!group.archived)
-            identity.card.append(button('Rename', () => {
-                const form = subform('Rename group');
-                const name = field(form, 'Group name', false, group.name);
-                form.append(primary('Save', () => command(group.id, { op: 'SetGroupProfile', expected_revision: group.revision, name: name.value.trim(), members: [] })));
-                name.focus();
-            }));
-        content.append(identity.card);
-        if (!group.archived) {
-            const pause = row(t(group.paused ? 'Resume group' : 'Pause group'), t('Pausing stops new deliveries without interrupting running work.'));
-            pause.card.append(button(group.paused ? 'Resume group' : 'Pause group', () => command(group.id, { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused })));
-            content.append(pause.card);
-            const archive = row(t('Archive group'), t('Keep task history and release member sessions for other groups.'));
-            archive.card.append(button('Archive group', () => confirmAction('Archive group', group.name, 'Pause the group and settle pending deliveries before changing members or archiving.', () => command(group.id, { op: 'ArchiveGroup', expected_revision: group.revision }))));
-            content.append(archive.card);
-        }
-        const remove = row(t('Delete group'), t('Remove the group and task history. Original sessions and files are kept.'));
-        remove.card.classList.add('teams-danger-zone');
-        remove.card.append(button('Delete group', () => deleteGroup(group), 'subtle-button teams-danger'));
-        content.append(remove.card);
+    function renameGroup(group) {
+        const form = subform('Rename group');
+        const name = field(form, 'Group name', false, group.name);
+        formActions(form, 'Save changes', () => {
+            if (!name.value.trim())
+                throw Error('Enter a group name.');
+            return command(group.id, { op: 'SetGroupProfile', expected_revision: group.revision, name: name.value.trim(), members: [] });
+        });
+        name.focus();
     }
     function showSetup() {
-        content.append(button('Back to groups', () => { setup = false; selected = ''; render(); }), label('h3', 'Collaboration settings'));
         const enabled = row(t(snapshot.phase === 'disabling' ? 'Teams stopping · awaiting execution receipts' : snapshot.enabled ? 'Teams enabled' : 'Teams disabled'), t('Enable collaboration, then install tools for the backends your members use.'));
         enabled.card.append(primary(snapshot.enabled ? 'Disable Teams' : 'Enable Teams', () => mutate(() => request({ action: snapshot.enabled ? 'disable' : 'enable' }))));
         content.append(enabled.card);
@@ -825,7 +944,6 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     function openTask(task) { taskScroll = content.scrollTop; taskId = task.id; taskSection = task.status === 'Submitted' ? 'results' : 'summary'; render(); content.scrollTop = 0; }
     function taskDetails(group, task) {
-        content.append(memberReturn ? button('Back to members', backToMembers) : button('Back to tasks', () => { taskId = ''; render(); content.scrollTop = taskScroll; }));
         const header = row(task.title, memberName(group, task.assignee));
         header.card.classList.add('teams-detail-heading');
         header.card.append(label('span', task.status, 'teams-status'));
@@ -965,8 +1083,9 @@ export function createTeamsPanel(client, navigate, surface) {
     }
     function render() {
         const top = content.scrollTop;
-        const focus = content.contains(document.activeElement) ? document.activeElement.dataset.focusKey : '';
+        const focus = panel.contains(document.activeElement) ? document.activeElement.dataset.focusKey : '';
         content.replaceChildren();
+        renderHeader();
         const error = el('p', '', 'teams-error form-error');
         error.hidden = true;
         error.setAttribute('role', 'alert');
@@ -991,16 +1110,6 @@ export function createTeamsPanel(client, navigate, surface) {
                 }
             }
             else {
-                content.append(memberReturn ? button('Back to members', backToMembers) : button('Back to groups', () => { selected = ''; render(); content.scrollTop = listScroll; focusKey(listFocus); }));
-                const heading = row(group.name);
-                const metadata = el('p');
-                metadata.append(el('span', `${group.members.length} `), label('span', 'Members'), el('span', ' · '), label('span', group.archived ? 'Archived' : group.paused ? 'Paused' : 'Group enabled'));
-                heading.copy.append(metadata);
-                heading.card.classList.add('teams-detail-heading');
-                if (section === 'tasks' && !group.archived && !group.paused && snapshot.enabled)
-                    heading.card.append(primary('Delegate work', () => newTask(group)));
-                content.append(heading.card);
-                tabs(content, [['tasks', 'Tasks'], ['members', 'Members'], ['activity', 'Activity'], ['settings', 'Group settings']], section, key => { section = key; render(); content.scrollTop = 0; }, 'Group sections');
                 if (section === 'tasks')
                     showTasks(group);
                 else if (section === 'members')
@@ -1008,12 +1117,12 @@ export function createTeamsPanel(client, navigate, surface) {
                 else if (section === 'activity')
                     showActivity(group);
                 else
-                    showSettings(group);
+                    showMembers(group);
             }
         }
         content.scrollTop = top;
         if (focus)
-            Array.from(content.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === focus)?.focus({ preventScroll: true });
+            Array.from(panel.querySelectorAll('[data-focus-key]')).find(node => node.dataset.focusKey === focus)?.focus({ preventScroll: true });
     }
     async function refresh() {
         if (loading)
@@ -1021,7 +1130,7 @@ export function createTeamsPanel(client, navigate, surface) {
         loading = true;
         try {
             snapshot = await request({ action: 'snapshot' });
-            if (!dialog && !content.querySelector('.teams-action-menu:not(.hidden)'))
+            if (!dialog && !panel.querySelector('.teams-action-menu:not(.hidden)'))
                 render();
         }
         finally {
@@ -1049,7 +1158,7 @@ export function createTeamsPanel(client, navigate, surface) {
         if (timer)
             clearInterval(timer);
         timer = setInterval(() => {
-            if (content.closest('.hidden') || dialog || content.querySelector('input:focus,textarea:focus,select:focus,.teams-action-menu:not(.hidden)'))
+            if (content.closest('.hidden') || dialog || panel.querySelector('input:focus,textarea:focus,select:focus,.teams-action-menu:not(.hidden)'))
                 return;
             void refresh().catch(errorMessage);
         }, 5000);

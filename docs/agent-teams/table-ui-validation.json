@@ -1,0 +1,147 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "base_commit": "db875789353b2b1f947634bed9c84ec02d1f67ca",
+  "main_unchanged": true,
+  "review": {
+    "model": "GPT-6.2-Astra",
+    "record": "table-ui-review.md",
+    "result": "approved, no blocking findings"
+  },
+  "rust": {
+    "passed": 227,
+    "failed": 0,
+    "ignored": 1
+  },
+  "ui": {
+    "passed": 841,
+    "failed": 0,
+    "generated_modules": 75,
+    "typecheck": "passed"
+  },
+  "clippy": "studio-teams all targets -D warnings passed",
+  "format": "Rust format and git diff checks passed",
+  "integration": {
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/table-ui-05",
+    "success": true,
+    "codex_version": "0.170.0",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_archive_cancel_confirm_and_readonly_roster",
+      "browser_create_empty_group_then_add_one_member_and_optional_single_owner",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ],
+    "script_sha256": "1a91a3094064a2fdb4937cb926dec1f21cf60787ab7eb5eb516428f185ba688a",
+    "report_sha256": "4b7c4505ae7a134b6e662a4dcfade188fdb1eebce46c79e10909a7e2da0f3ac8"
+  },
+  "browser_matrix": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "interface_sizes": [
+      11,
+      14,
+      20
+    ],
+    "interface_weights": [
+      400,
+      500,
+      600
+    ],
+    "languages": [
+      "en-US",
+      "zh-CN"
+    ],
+    "viewports": [
+      [
+        1360,
+        1000
+      ],
+      [
+        720,
+        900
+      ]
+    ],
+    "checks": [
+      "aligned native table cells",
+      "first two members visible at narrow widths",
+      "toolbar button labels do not wrap or overflow",
+      "add success opens roster and focuses new member",
+      "menu keyboard/outside dismissal and focus",
+      "owner replacement and clearing",
+      "rename/archive cancellation and confirmation",
+      "archived readonly roster",
+      "edit conflict and removal lost-response recovery"
+    ]
+  },
+  "screenshots": {
+    "teams-add-member-narrow.png": "9f462c2cd5d95196a471e44d40ec91b076c8d7da1b62450acc3aafa5ce7efd82",
+    "teams-add-member.png": "42fabfcab997969fb5c796cb6f735dc12f8dd5d8ce46d94f2e9bc419750ef594",
+    "teams-archived-members.png": "9a502d77d04598bea204a06666c540901794c6451b0b58878eeca624c568dc19",
+    "teams-chinese.png": "6be5ab28c63fb7c242c00a7a5df29f3d73b7bfd41ca58445b2b00f3541ed2de2",
+    "teams-detail.png": "186ba667e54e90b1d5755b2323c59be3f99036c2a77f0d92a3c82f27f5a82845",
+    "teams-edit-member-chinese.png": "3ab405df7a3cf338dd47e0c44a579eb145b571e44763089ace00773248cfe786",
+    "teams-edit-member.png": "30760fb01da61f212bff2397f40664968a0781c747e4f6d138a065b15e2461b3",
+    "teams-incremental-groups.png": "12539931ba0bdcd3aff5fa40cbd660d2b7c69acbd8d93ab5e6a8baaa5118e65e",
+    "teams-member-menu.png": "27834c545ff291e0180f54ec949efce7fb553765776fc304311ceac36df88135",
+    "teams-members-chinese.png": "feedda67d6c54cfd391ec58854884b4d9da10d6ec038fea5456e9ff8e77b720c",
+    "teams-members-light.png": "c7f9caeecb31ab8d1709523a8d192af799bb98061cbfe85d3afaec67f81a77f5",
+    "teams-members-narrow-dark.png": "9ea5124d94b1c95d8a48c9f84db312042f7631a45a33f84ea15d4cb35f4bad9b",
+    "teams-narrow-dark.png": "49e59c8771fa2b4e9c9f4cac5061234332dc21476287b4f89ce87812d37b7b4e",
+    "teams-panel.png": "a52924b3959ca6e811ad09fcd4fbe51127bc977df8d510bb24313fd695411a3d"
+  },
+  "logs": {
+    "workspace-tests-final.log": "67e499117d4c6f52e439941e474fbc430628e5a68aa1f882f57e8d2941f81fd1",
+    "table-ui-tests.log": "f1d429c812994a039ed7302ec1b7b0c160d3ec8cc68147075070a23ec0cf9f11",
+    "clippy-final.log": "f02734b637165f1848ae606cd6ac1579db30c6ada6e2013eba2db071a4724d33",
+    "build-final.log": "913e6948ae4aa1643115f0bfc9a1c4f60d43b0bea65835b4f96e33fd3af7c3fd"
+  },
+  "binary": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/target/debug/codex-thread-studio",
+    "sha256": "d7cb5e263e0b6810bbd604a93a8bd480b21e78191509c982a1d6e416b4a0fc70"
+  },
+  "changed_source_hashes": {
+    "ui-src/teams.mts": "ffaa8de6ebfe1182ae585ab8d3b9bc544ea863d3706efcf8aae324943c0cb654",
+    "ui-src/generated.sha256": "d98e5958b3cd8c14160780cf13edfd889c459c1cfdfc7e122f70d1f08a896a30",
+    "ui/teams.mjs": "a012344107de34876a911117a72dd960fc956aed4d6ec44af013933e1ed41c8c",
+    "ui/styles.css": "4dae757a1386f89707a9f09df5f3d0ae18df07ef4adc12d2c0d9ddb0b6c43795",
+    "ui/app.js": "330da1f947093471e4d74a52737964fc00c20f1c52cc4b57368dc46cf520789d",
+    "ui/index.html": "e261ce195559b3630289214958341a62f505941a4b3c3ea2c7c4fad623d73eb8",
+    "ui/i18n.mjs": "1e6935dd89a039d31032e71d1c3c4703135281f82478c4ac8903341cec3cbf90",
+    "scripts/probes/agent-teams/studio-integration.mjs": "1a91a3094064a2fdb4937cb926dec1f21cf60787ab7eb5eb516428f185ba688a"
+  },
+  "prototype": {
+    "path": "/media/rui/codex-thread-studio-agent-teams/design/table-review/index.html",
+    "sha256": "7a1dc5c7d166d27dc056cd481e1af60e9e7ba165ef0703547dd5444a2ff416aa",
+    "approval": "User approved table prototype before implementation."
+  }
+}

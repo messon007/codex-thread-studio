@@ -1572,4 +1572,12 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .teams-dialog .teams-member-conflict:empty { display: none; }
 
 .teams-table-scroll { overflow-x: auto; max-width: 100%; min-width: 0; }
-.teams-groups-table { min-width: calc(21.5 * var(--ui-font-compact) + 136px); }
+.teams-groups-table { min-width: calc(21.5 * var(--ui-font-compact) + 168px); }
+
+.teams-groups-table th:nth-child(3), .teams-group-status { text-align: center; }
+.teams-status-switch { position: relative; display: inline-block; width: 36px; height: 30px; padding: 0; border: 0; background: transparent; vertical-align: middle; cursor: pointer; }
+.teams-status-switch::before { content: ""; position: absolute; inset: 6px 2px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel-soft); }
+.teams-status-switch::after { content: ""; position: absolute; top: 9px; left: 5px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+.teams-status-switch[aria-checked="true"]::before { background: var(--brand); border-color: var(--brand); }
+.teams-status-switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--panel); }
+.teams-status-switch:disabled, .teams-status-switch[aria-disabled="true"] { opacity: .45; cursor: default; }

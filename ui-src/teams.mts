@@ -68,6 +68,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
   let selected = '', section = 'activity', taskId = '', taskSection = 'summary', groupSearch = ''
   let setup = false, loading = false, timer: ReturnType<typeof setInterval> | undefined
   let dialog: HTMLDialogElement | null = null, dirty = false, submitting = false, opener: HTMLElement | null = null
+  const togglingGroups = new Set<string>()
   let listScroll = 0, taskScroll = 0, listFocus = ''
   let memberReturn: { group: string; member: string; scroll: number } | null = null
   let activeMenu: { trigger: HTMLElement; menu: HTMLElement; place: () => void } | null = null
@@ -79,8 +80,8 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
   const sessionName = (group: ObjectValue, session: ObjectValue) => group.members.find((m: ObjectValue) => m.session.backend === session.backend && m.session.thread === session.thread)?.name || t('Former member')
   const tasks = (group: ObjectValue) => snapshot.tasks.filter((task: ObjectValue) => task.group_id === group.id)
   const groupNow = () => snapshot.groups.find((g: ObjectValue) => g.id === selected)
-  function errorMessage(error: unknown) {
-    const target = dialog?.querySelector<HTMLElement>('.teams-error') || content.querySelector<HTMLElement>('.teams-error')
+  function errorMessage(error: unknown, inPanel = false) {
+    const target = (!inPanel && dialog?.querySelector<HTMLElement>('.teams-error')) || content.querySelector<HTMLElement>('.teams-error')
     if (target) {
       const raw = error instanceof Error ? error.message : String(error)
       const messages: Record<string, string> = {
@@ -516,6 +517,25 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
   function emptyTable(body: HTMLTableSectionElement, text: string) {
     const row = el('tr'), cell = label('td', text, 'teams-empty-cell'); cell.colSpan = body.closest('table')?.querySelectorAll('thead th').length || 1; row.append(cell); body.append(row)
   }
+  async function toggleGroup(group: ObjectValue) {
+    if (togglingGroups.has(group.id)) return
+    togglingGroups.add(group.id)
+    let failure: unknown
+    try {
+      const reply = await request({ action: 'command', group_id: group.id, command: { op: 'SetPaused', expected_revision: group.revision, paused: !group.paused } })
+      snapshot.groups = snapshot.groups.map((current: ObjectValue) => current.id === group.id && current.revision <= reply.group.revision ? reply.group : current)
+    } catch (error) {
+      failure = error instanceof Error && error.message === 'RevisionConflict' ? Error('The group changed elsewhere. Review its current status before switching again.') : error
+      try { snapshot = await request({ action: 'snapshot' }) } catch { /* retain last confirmed state and surface the original failure */ }
+    } finally {
+      togglingGroups.delete(group.id)
+      // Inline changes never own a dialog. Preserve any editor opened while awaiting a receipt.
+      const openerKey = dialog ? opener?.dataset.focusKey : undefined
+      render()
+      if (openerKey) opener = Array.from(panel.querySelectorAll<HTMLElement>('[data-focus-key]')).find(node => node.dataset.focusKey === openerKey) || null
+      if (failure) errorMessage(failure, true)
+    }
+  }
   function groupList() {
     const controls = el('div', '', 'teams-list-controls'), count = el('span', '', 'teams-hint teams-count')
     controls.append(count)
@@ -525,7 +545,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     }
     if (snapshot.enabled) { const create = primary('Create group', createGroup); create.prepend(symbol('M12 5v14M5 12h14')); controls.append(create) }
     content.append(controls)
-    const body = table(['Group name', 'Member count', 'Status', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', 'calc(5.5 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table')
+    const body = table(['Group name', 'Member count', 'Status', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', 'calc(5.5 * var(--ui-font-compact) + 20px)', '108px'], 'teams-groups-table')
     const fill = () => {
       body.replaceChildren()
       const groups = snapshot.groups.filter((g: ObjectValue) => g.name.toLowerCase().includes(groupSearch.toLowerCase()))
@@ -535,13 +555,30 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
         const row = el('tr', '', 'teams-group-row'); row.dataset.groupId = group.id
         const name = el('td'), members = el('td', `${group.members.length}/5`, 'teams-number'), actions = el('td'), buttons = el('div', '', 'teams-table-actions')
         name.classList.add('teams-group-name'); name.textContent = group.name; name.setAttribute('data-no-i18n', '')
-        const status = label('td', group.archived ? 'Archived' : group.paused ? 'Disabled' : 'Enabled', 'teams-group-status')
-        status.title = t(group.archived ? 'Archived' : group.paused ? 'Collaboration disabled' : 'Collaboration enabled')
+        const status = el('td', '', 'teams-group-status')
+        if (group.archived) status.append(label('span', 'Archived'))
+        else {
+          const reason = group.paused && group.members.length < 2 ? 'Add at least two members to enable collaboration.'
+            : group.paused && !snapshot.enabled ? 'Enable Teams in Collaboration settings first.' : ''
+          const toggle = button('', () => toggleGroup(group), 'teams-status-switch')
+          toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(!group.paused))
+          toggle.setAttribute('aria-label', `${t('Enable collaboration')} · ${group.name}`)
+          toggle.title = t(reason || (group.paused ? 'Enable collaboration' : 'Disable collaboration'))
+          toggle.disabled = Boolean(reason); toggle.dataset.locked = String(Boolean(reason)); toggle.dataset.focusKey = `toggle-group-${group.id}`
+          if (togglingGroups.has(group.id)) toggle.setAttribute('aria-disabled', 'true')
+          if (reason) {
+            const hint = label('span', reason, 'visually-hidden'); hint.id = `teams-toggle-help-${group.id}`
+            toggle.setAttribute('aria-describedby', hint.id); status.append(hint); status.title = t(reason)
+          }
+          status.append(toggle)
+        }
         const view = iconAction('View members', 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0', () => openGroup(group, 'members'))
         view.dataset.focusKey = `view-members-${group.id}`
         const add = iconAction('Add member', 'M14 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0M4 20v-2a7 7 0 0 1 10-6M19 12v8M15 16h8', () => addMember(group))
         add.dataset.focusKey = `add-member-${group.id}`; add.disabled = group.archived || group.members.length >= 5
-        buttons.append(view, add); actions.append(buttons); row.append(name, members, status, actions); body.append(row)
+        const edit = iconAction('Edit group', 'M4 20h4l11-11-4-4L4 16zM13.5 6.5l4 4', () => editGroup(group))
+        edit.dataset.focusKey = `edit-group-${group.id}`; edit.disabled = group.archived
+        buttons.append(view, edit, add); actions.append(buttons); row.append(name, members, status, actions); body.append(row)
       }
     }
     fill()
@@ -718,7 +755,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
     }
   }
   function render() {
-    const top = content.scrollTop
+    const top = content.scrollTop, horizontal = content.querySelector<HTMLElement>('.teams-table-scroll')?.scrollLeft || 0
     const focus = panel.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.focusKey : ''
     content.replaceChildren(); renderHeader()
     const error = el('p', '', 'teams-error form-error'); error.hidden = true; error.setAttribute('role', 'alert'); content.append(error)
@@ -737,6 +774,7 @@ export function createTeamsPanel(client: ReturnType<typeof createTeamsClient>, n
       }
     }
     content.scrollTop = top
+    const tableScroll = content.querySelector<HTMLElement>('.teams-table-scroll'); if (tableScroll) tableScroll.scrollLeft = horizontal
     if (focus) Array.from(panel.querySelectorAll<HTMLElement>('[data-focus-key]')).find(node => node.dataset.focusKey === focus)?.focus({ preventScroll: true })
   }
   async function refresh() {

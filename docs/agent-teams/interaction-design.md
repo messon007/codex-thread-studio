@@ -22,9 +22,17 @@ pixels from screenshots, not line rectangles or the production metric formula.
 
 - Group list: a compact table with Group name, Member count, Status and Actions
   columns. Group names are plain text. The eye icon in Actions opens members; the
-  adjacent add-member icon opens a single-member form. Status uses Enabled/Disabled
-  (Archived for legacy data), instead of a subtitle below the name. Headers/cells,
-  counts and both action icons align; the name column uses remaining space. Member count
+  adjacent pencil opens Edit group and the add-member icon opens a single-member
+  form. Status contains a directly operable, labelled switch (Archived remains
+  read-only). Enablement requires two members and global Teams enablement; disabled
+  controls explain why through hover/accessibility help. Switching only changes
+  paused state using the current revision and existing host checks; it never
+  starts or interrupts a turn. Wait for acknowledgement before changing the switch;
+  on error refresh authoritative state without automatic resend. Keep focus and
+  horizontal table position after updates. Inline requests have independent per-group
+  pending state; their receipts never close or lock a subsequently opened editor,
+  and their errors stay in the panel rather than an unrelated form. Headers/cells,
+  counts and all three action icons align; the name column uses remaining space. Member count
   has a wider, font-responsive column and stays on one line. The name retains at
   least eight compact-font ems plus padding; if four columns cannot fit, only the
   focusable table region scrolls horizontally, without clipping actions or

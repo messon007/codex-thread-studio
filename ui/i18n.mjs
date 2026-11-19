@@ -10,6 +10,8 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Disable collaboration": "停用组协作",
+  "The group changed elsewhere. Review its current status before switching again.": "协作组已在其他位置修改，请检查当前状态后再切换。",
   "Send group requests in this member’s chat.": "在该成员的会话中提出组任务。",
   "Optional. Members can delegate directly to each other.": "可选。不指定时，成员也可直接相互委派任务。",
   "Add at least two members to enable collaboration.": "至少添加两名成员后才能启用协作。",

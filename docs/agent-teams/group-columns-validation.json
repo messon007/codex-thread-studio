@@ -1,0 +1,84 @@
+{
+  "date": "2026-11-19",
+  "branch": "feat/agent-teams",
+  "review": {
+    "model": "GPT-6.2-Astra",
+    "result": "approved after resolving narrow-table name-column collapse"
+  },
+  "ui_tests": 842,
+  "typecheck": "passed",
+  "generated": "passed",
+  "build": "locked offline debug build passed",
+  "integration": {
+    "success": true,
+    "run": "/media/rui/codex-thread-studio-agent-teams/validation/group-columns-04",
+    "synthetic_model": true,
+    "live_model_tested": false,
+    "checks": [
+      "existing_sessions_and_tools_installed",
+      "nonmember_tool_access_denied",
+      "existing_member_discovers_group_without_context_injection",
+      "nonmember_without_stable_message_id_keeps_original_transport",
+      "busy_member_receives_queue_without_interrupt",
+      "native_tools_begin_submit_and_turn_barrier",
+      "explicit_review_completes_task",
+      "ordinary_queue_cas_rejects_stale_edit_and_stale_unsent_message",
+      "ordinary_multi_page_dispatch_is_once_with_original_options",
+      "ordinary_and_supervision_reservations_are_exclusive",
+      "agent_delegate_question_answer_revise_and_accept",
+      "supervision_reservation_blocks_dispatch",
+      "pause_withdraws_unsent_messages",
+      "host_restart_and_withdrawn_delivery_resume",
+      "group_enable_disable_prompts_bind_to_next_ordinary_or_queued_turn_without_interrupt",
+      "role_handover_removal_deleted_group_and_restart_retire_old_orchestrators",
+      "browser_rail_task_hierarchy_and_result_details",
+      "browser_delete_explains_outstanding_work",
+      "browser_member_removal_blocker_links_return_to_member",
+      "browser_delete_cancel_confirm_and_preserve_original_sessions",
+      "browser_group_status_column_eye_action_and_aligned_table",
+      "browser_orphan_submission_recovery_survives_deleted_group_without_resend",
+      "browser_back_entries_centered_and_group_member_counter_styles_match",
+      "browser_individual_member_edit_validation_conflict_and_focus",
+      "browser_fifth_member_menu_keyboard_removal_race_and_session_preserved",
+      "browser_group_enable_owner_chat_composer_prefix_and_original_input",
+      "browser_members_owner_changes_themes_languages_and_return_focus",
+      "browser_member_removal_network_error_and_lost_response_recovery",
+      "browser_header_rename_and_no_archive_action",
+      "browser_create_group_add_members_without_role_then_edit_optional_orchestrator",
+      "browser_dirty_form_escape_preserves_draft",
+      "browser_shared_rail_exclusivity_themes_fonts_and_chinese",
+      "browser_member_navigation_leaves_teams_rail",
+      "browser_member_navigation_preserves_restored_workspace",
+      "disable_keeps_only_inflight_result_receipt_and_blocks_early_uninstall",
+      "disable_and_precise_uninstall"
+    ]
+  },
+  "acceptance": [
+    "Group name is plain text; eye SVG and Add member are aligned in Actions",
+    "Status is its own Enabled/Disabled column",
+    "Empty group table spans all four columns",
+    "Group name minimum readable width and measured header text bounds; only table scrolls at narrow widths",
+    "Eye action reachable after horizontal scrolling and table keyboard focus",
+    "Edit group conditional field help and empty conflict space removed",
+    "Both themes/languages, narrow width and font matrix, original task/member/queue/recovery paths"
+  ],
+  "limitations": [
+    "Earlier group-columns-02 tests missed large-font first-column collapse; independent screenshot review caught it",
+    "group-columns-03 failed because test parsed unresolved CSS max() as a number; final check reads resolved header font size"
+  ],
+  "source_sha256": {
+    "ui-src/teams.mts": "3746fa20e5135e50109840ab74c66afa68db7b28d01c21561994c2244081b433",
+    "ui/teams.mjs": "cf47c3a78700127831cbc850593c78d632603c29693696224ba4a7893f0aebec",
+    "ui/styles.css": "cbdae66c5e7843177ecb63abd532d57b022a9b1d8b0c7f57bea8d442dea84dd1",
+    "ui/i18n.mjs": "58921a11300266cb641a2b2ba9e0343206560edad08c97b901391b6da690f43d",
+    "scripts/probes/agent-teams/studio-integration.mjs": "95ff8eaf61d4353af2c35bdd44b1c456593dc73622960661708fd72a72a7d54d"
+  },
+  "evidence_sha256": {
+    "report.json": "f6f6ef134a32cdb8cfd57e7ececa0dfc87f4027bd0f8d59264260f0947a0d208",
+    "teams-incremental-groups.png": "d94cdd03a423cb6196b5b053681a399184663f4cfd2956a26e7692337c6762ca",
+    "teams-edit-empty-group.png": "fa99b30fdf383cd096a26b7a227a4c3e66b2d8d20224b0e3080e85d1a9ed9d8b",
+    "teams-edit-group-enabled.png": "22bcf9a7f19c6e08591f0a9ee27d429f9645b850130af47f87dc8ddce4c1c813",
+    "teams-groups-large-narrow.png": "9673b77e5f2f496ae9bfb170c1a59b4bdb0055b34cffcdcf8642c937d608f41b",
+    "teams-groups-large-narrow-actions.png": "c7aec4ac7b1a0a7f7417a412545a7c481b04dbd66958d7e950db5c2da667c9d4"
+  }
+}

@@ -1525,10 +1525,9 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 .teams-table-actions .icon-button { width: 30px; height: 30px; border-radius: 6px; flex: 0 0 30px; }
 .teams-icon-action { display: inline-grid; place-items: center; }
 .teams-icon-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
-.teams-group-open { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: var(--ui-font-emphasis); text-align: left; cursor: pointer; }
-.teams-group-open:hover { color: var(--brand); }
-.teams-group-open > span { min-width: 0; overflow-wrap: anywhere; }
-.teams-group-open svg { flex: 0 0 13px; width: 13px; height: 13px; fill: none; stroke: var(--faint); stroke-width: 1.65; }
+.teams-group-name { font-weight: var(--ui-font-emphasis); }
+.teams-groups-table td { vertical-align: middle; }
+.teams-group-status { color: var(--muted); }
 .teams-list-controls, .teams-members-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 16px; }
 .teams-members-toolbar { flex-wrap: wrap; }
 .teams-count { white-space: nowrap; }
@@ -1564,7 +1563,13 @@ body.resizing-table-column, body.resizing-table-column * { cursor: col-resize !i
 
 .teams-title-baseline { display: inline-block; width: 0; height: 0; vertical-align: baseline; pointer-events: none; }
 
-.teams-group-state { display: block; color: var(--muted); font-size: var(--ui-font-label); margin-top: 3px; }
 .teams-orchestrator-link { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; font: inherit; font-size: var(--ui-font-label); color: var(--brand); cursor: pointer; }
 .teams-orchestrator-link svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.65; }
 .teams-orchestrator-link:hover { text-decoration: underline; }
+
+.teams-group-enablement { display: grid; gap: 6px; }
+.teams-group-enablement > .teams-hint { margin: 0; padding-left: 25px; }
+.teams-dialog .teams-member-conflict:empty { display: none; }
+
+.teams-table-scroll { overflow-x: auto; max-width: 100%; min-width: 0; }
+.teams-groups-table { min-width: calc(21.5 * var(--ui-font-compact) + 136px); }

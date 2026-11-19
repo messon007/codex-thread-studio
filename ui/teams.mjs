@@ -785,12 +785,21 @@ export function createTeamsPanel(client, navigate, surface) {
         }
         head.append(titles);
         result.append(columns, head, body);
-        content.append(result);
+        if (kind === 'teams-groups-table') {
+            const scroll = el('div', '', 'teams-table-scroll');
+            scroll.tabIndex = 0;
+            scroll.setAttribute('role', 'region');
+            scroll.setAttribute('aria-label', t('Groups'));
+            scroll.append(result);
+            content.append(scroll);
+        }
+        else
+            content.append(result);
         return body;
     }
     function emptyTable(body, text) {
         const row = el('tr'), cell = label('td', text, 'teams-empty-cell');
-        cell.colSpan = 3;
+        cell.colSpan = body.closest('table')?.querySelectorAll('thead th').length || 1;
         row.append(cell);
         body.append(row);
     }
@@ -812,7 +821,7 @@ export function createTeamsPanel(client, navigate, surface) {
             controls.append(create);
         }
         content.append(controls);
-        const body = table(['Group name', 'Member count', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table');
+        const body = table(['Group name', 'Member count', 'Status', 'Actions'], ['auto', 'calc(8 * var(--ui-font-compact) + 20px)', 'calc(5.5 * var(--ui-font-compact) + 20px)', '76px'], 'teams-groups-table');
         const fill = () => {
             body.replaceChildren();
             const groups = snapshot.groups.filter((g) => g.name.toLowerCase().includes(groupSearch.toLowerCase()));
@@ -823,21 +832,19 @@ export function createTeamsPanel(client, navigate, surface) {
                 const row = el('tr', '', 'teams-group-row');
                 row.dataset.groupId = group.id;
                 const name = el('td'), members = el('td', `${group.members.length}/5`, 'teams-number'), actions = el('td'), buttons = el('div', '', 'teams-table-actions');
-                const open = button('', () => openGroup(group, 'members'), 'teams-group-open');
-                open.dataset.focusKey = `view-members-${group.id}`;
-                open.setAttribute('aria-label', group.name);
-                open.title = t('View members');
-                const title = el('span', group.name);
-                title.setAttribute('data-no-i18n', '');
-                open.append(title, symbol('m9 6 6 6-6 6'));
-                name.append(open);
-                name.append(label('span', group.archived ? 'Archived' : group.paused ? 'Collaboration disabled' : 'Collaboration enabled', 'teams-group-state'));
+                name.classList.add('teams-group-name');
+                name.textContent = group.name;
+                name.setAttribute('data-no-i18n', '');
+                const status = label('td', group.archived ? 'Archived' : group.paused ? 'Disabled' : 'Enabled', 'teams-group-status');
+                status.title = t(group.archived ? 'Archived' : group.paused ? 'Collaboration disabled' : 'Collaboration enabled');
+                const view = iconAction('View members', 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0', () => openGroup(group, 'members'));
+                view.dataset.focusKey = `view-members-${group.id}`;
                 const add = iconAction('Add member', 'M14 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0M4 20v-2a7 7 0 0 1 10-6M19 12v8M15 16h8', () => addMember(group));
                 add.dataset.focusKey = `add-member-${group.id}`;
                 add.disabled = group.archived || group.members.length >= 5;
-                buttons.append(add);
+                buttons.append(view, add);
                 actions.append(buttons);
-                row.append(name, members, actions);
+                row.append(name, members, status, actions);
                 body.append(row);
             }
         };
@@ -901,11 +908,27 @@ export function createTeamsPanel(client, navigate, surface) {
         enabled.type = 'checkbox';
         enabled.checked = !group.paused;
         enabled.disabled = group.members.length < 2 || !snapshot.enabled;
+        const ownerHelp = el('small');
+        ownerHelp.id = 'teams-orchestrator-help';
+        owner.setAttribute('aria-describedby', ownerHelp.id);
+        owner.parentElement.append(ownerHelp);
+        const enablement = el('div', '', 'teams-group-enablement'), help = el('p', '', 'teams-hint');
+        help.id = 'teams-enablement-help';
+        enabled.setAttribute('aria-describedby', help.id);
         enabledLabel.append(enabled, label('span', 'Enable collaboration'));
-        form.append(enabledLabel);
-        if (group.members.length < 2)
-            notice(form, 'Add at least two members to start collaboration.');
-        notice(form, 'Role changes are included with the next ordinary message in the orchestrator chat.');
+        enablement.append(enabledLabel, help);
+        form.append(enablement);
+        const updateHelp = () => {
+            ownerHelp.textContent = t(owner.value ? 'Send group requests in this member’s chat.' : 'Optional. Members can delegate directly to each other.');
+            help.textContent = t(group.members.length < 2 ? 'Add at least two members to enable collaboration.'
+                : !snapshot.enabled ? 'Enable Teams in Collaboration settings first.'
+                    : enabled.checked ? owner.value ? 'Group instructions are added to the orchestrator’s next ordinary message.' : 'Members can delegate work using the collaboration tools.'
+                        : !group.paused && group.orchestrator ? 'New handoffs stop after saving. The previous orchestrator is notified with its next ordinary message.'
+                            : 'Enable to allow members to delegate work.');
+        };
+        owner.addEventListener('change', updateHelp);
+        enabled.addEventListener('change', updateHelp);
+        updateHelp();
         const conflict = el('div', '', 'teams-member-conflict');
         form.append(conflict);
         formActions(form, 'Save changes', async () => {
@@ -946,6 +969,7 @@ export function createTeamsPanel(client, navigate, surface) {
                     enabled.disabled = group.members.length < 2 || !snapshot.enabled;
                     if (enabled.disabled)
                         enabled.checked = false;
+                    updateHelp();
                     save.disabled = false;
                     delete save.dataset.locked;
                     conflict.replaceChildren();

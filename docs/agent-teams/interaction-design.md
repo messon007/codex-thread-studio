@@ -20,11 +20,15 @@ hit area stays fixed. For ellipsized names, measure only the visible grapheme
 prefix plus ellipsis, using DOM Range widths. Acceptance compares actual painted
 pixels from screenshots, not line rectangles or the production metric formula.
 
-- Group list: a compact table with Group name, Member count and Actions columns.
-  Group name plus chevron opens its members. The row's add-member icon opens a
-  single-member form. Counts and action icons align vertically; the name column
-  uses remaining space; the chevron is centered beside the name. Member count
-  has a wider, font-responsive column and stays on one line. The toolbar shows
+- Group list: a compact table with Group name, Member count, Status and Actions
+  columns. Group names are plain text. The eye icon in Actions opens members; the
+  adjacent add-member icon opens a single-member form. Status uses Enabled/Disabled
+  (Archived for legacy data), instead of a subtitle below the name. Headers/cells,
+  counts and both action icons align; the name column uses remaining space. Member count
+  has a wider, font-responsive column and stays on one line. The name retains at
+  least eight compact-font ems plus padding; if four columns cannot fit, only the
+  focusable table region scrolls horizontally, without clipping actions or
+  expanding the surrounding rail. The toolbar shows
   Groups N in the same label/number styling as Members N/5, without a middle dot
   or a table footer. It reports all groups even during search. Create group is
   the page's primary action.
@@ -41,6 +45,9 @@ pixels from screenshots, not line rectangles or the production metric formula.
   collapsed completed history; task details return to Activity.
 - Edit group is one compact dialog with name, optional Orchestrator dropdown
   (default none), and Enable collaboration checkbox. Save applies these together.
+  Help sits directly beneath the field it explains: optional role and chat entry
+  below Orchestrator, and the current activation requirement/effect below the
+  enable checkbox. Empty conflict containers take no space.
   Create/add/edit/review/delete dialogs use Cancel and one primary action.
   Display name and responsibility are group-specific; native session identity,
   working directory, files and history remain unchanged.

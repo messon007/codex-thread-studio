@@ -10,6 +10,16 @@ export const annotationPromptDefaults = Object.freeze({
 })
 
 const chinese = {
+  "Send group requests in this member’s chat.": "在该成员的会话中提出组任务。",
+  "Optional. Members can delegate directly to each other.": "可选。不指定时，成员也可直接相互委派任务。",
+  "Add at least two members to enable collaboration.": "至少添加两名成员后才能启用协作。",
+  "Enable Teams in Collaboration settings first.": "请先在协作设置中启用协作功能。",
+  "Group instructions are added to the orchestrator’s next ordinary message.": "组职责说明将附加到协调者的下一条普通消息中。",
+  "Members can delegate work using the collaboration tools.": "成员可通过协作工具相互委派任务。",
+  "New handoffs stop after saving. The previous orchestrator is notified with its next ordinary message.": "保存后停止新的任务交接；原协调者将在下一条普通消息中收到停用通知。",
+  "Enable to allow members to delegate work.": "启用后，成员可以相互委派任务。",
+  "Enabled": "已启用",
+  "Disabled": "已停用",
   "Current work": "当前工作",
   "Completed work": "已结束的工作",
   "Edit group": "修改协作组",
